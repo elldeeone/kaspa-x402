@@ -1,0 +1,41 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/kaspa-batch-extra.schema.json",
+  "title": "Kaspa x402 Batch Settlement Extra",
+  "type": "object",
+  "required": ["binding", "templateId", "serverPublicKey", "minDepositSompi", "refundTimeoutDaa"],
+  "properties": {
+    "binding": {
+      "const": "kaspa-escrow-v1"
+    },
+    "templateId": {
+      "const": "kaspa-x402-escrow-v1"
+    },
+    "serverPublicKey": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "minDepositSompi": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "refundTimeoutDaa": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "claimPolicy": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "channelState": {
+      "type": "object",
+      "additionalProperties": true
+    },
+    "voucherState": {
+      "type": "object",
+      "additionalProperties": true
+    }
+  },
+  "additionalProperties": true
+}
+

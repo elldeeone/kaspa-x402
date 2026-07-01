@@ -1,0 +1,27 @@
+{
+  "name": "kaspa-x402",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Specification and reference implementation for Kaspa x402 batch-settlement payments.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elldeeone/kaspa-x402.git"
+  },
+  "keywords": [
+    "kaspa",
+    "x402",
+    "payments",
+    "micropayments",
+    "batch-settlement",
+    "covenants"
+  ],
+  "type": "module",
+  "workspaces": [
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20"
+  }
+}
+

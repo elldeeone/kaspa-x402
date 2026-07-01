@@ -1,0 +1,9 @@
+{
+  "name": "@kaspa-x402/server",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Server SDK for Kaspa x402.",
+  "license": "MIT",
+  "type": "module"
+}
+

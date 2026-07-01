@@ -1,0 +1,36 @@
+# Error Codes
+
+Status: draft
+
+Kaspa x402 errors use the prefix:
+
+```text
+invalid_kaspa_batch_*
+```
+
+Initial error set:
+
+```text
+invalid_kaspa_batch_scheme
+invalid_kaspa_batch_network
+invalid_kaspa_batch_asset
+invalid_kaspa_batch_binding
+invalid_kaspa_batch_template
+invalid_kaspa_batch_channel_id
+invalid_kaspa_batch_funding_outpoint
+invalid_kaspa_batch_funding_amount
+invalid_kaspa_batch_voucher_signature
+invalid_kaspa_batch_voucher_network
+invalid_kaspa_batch_voucher_script
+invalid_kaspa_batch_voucher_outpoint
+invalid_kaspa_batch_cumulative_amount_mismatch
+invalid_kaspa_batch_cumulative_below_claimed
+invalid_kaspa_batch_insufficient_channel_balance
+invalid_kaspa_batch_channel_busy
+invalid_kaspa_batch_payment_identifier_conflict
+invalid_kaspa_batch_refund_not_mature
+invalid_kaspa_batch_claim_dust
+invalid_kaspa_batch_compute_budget
+invalid_kaspa_batch_settlement_failed
+```
+
