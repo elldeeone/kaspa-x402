@@ -2,12 +2,14 @@
 
 Server SDK for direct-mode Kaspa x402 payments.
 
-The current implementation covers framework-neutral HTTP gating for `batch-settlement` escrow channels:
+The current implementation covers framework-neutral HTTP gating for `exact` one-shot transfers and `batch-settlement` escrow channels:
 
 - builds x402 v2 `PAYMENT-REQUIRED` offers;
 - extracts and validates `PAYMENT-SIGNATURE` retries;
+- verifies exact transaction output amount, pay-to script, transaction id, and finality through an injected verifier;
 - verifies funding outpoints, escrow scripts, and cumulative vouchers through injected adapters;
-- serializes per-channel verification, handler execution, and state commit;
+- serializes per-transaction or per-channel verification, handler execution, and state commit;
+- stores exact transaction replay records before returning protected content;
 - stores per-request settlement commitments before advancing channel charge state;
 - supports payment identifier idempotency for exact payment-payload retries;
 - returns corrective `402` responses with channel state where possible;

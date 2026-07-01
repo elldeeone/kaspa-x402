@@ -4,11 +4,13 @@ import {
   X402_VERSION,
   channelId,
   decodePaymentRequiredHeader,
+  decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   sha256Hex,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
+  type ExactPaymentRequirements,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -38,6 +40,8 @@ const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
 const TOP_UP_TX = "99".repeat(32);
 const CLAIM_TX = "55".repeat(32);
+const EXACT_TX_ID = "77".repeat(32);
+const EXACT_TX = "aa".repeat(96);
 const RESOURCE = { url: "https://api.example.test/data" };
 
 describe("direct-mode server", () => {
@@ -58,6 +62,183 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(402);
     const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
     expect(required.accepts[0]?.amount).toBe("75");
+  });
+
+  it("offers exact requirements for exact paid routes", async () => {
+    const { server } = makeServer({ amount: "100" });
+
+    const response = await server.handlePaidRequest({ url: RESOURCE.url, paymentAmount: "75", paymentScheme: "exact" }, async () => ({
+      body: "secret",
+    }));
+
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts[0]?.scheme).toBe("exact");
+    expect(required.accepts[0]?.amount).toBe("75");
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
+  });
+
+  it("accepts an exact transfer and commits replay state after handler success", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => ({
+      body: "download",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("download");
+    const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(settlement.transaction).toBe(EXACT_TX_ID);
+    expect(settlement.amount).toBe("100");
+    expect(settlement.extra?.paymentOutputIndex).toBe(1);
+    const stored = await setup.store.loadExactPayment(EXACT_TX_ID, 1);
+    expect(stored?.amount).toBe("100");
+    expect(stored?.paymentOutputIndex).toBe(1);
+    expect(stored?.response.status).toBe(200);
+  });
+
+  it("rejects batch payments submitted to exact routes", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment.payload, { paymentScheme: "exact" }), async () => {
+      executed = true;
+      return { body: "secret" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts[0]?.scheme).toBe("exact");
+  });
+
+  it("rejects exact payments submitted to batch routes", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "batch-settlement" }), async () => {
+      executed = true;
+      return { body: "secret" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts[0]?.scheme).toBe("batch-settlement");
+  });
+
+  it("rejects exact payload request hashes that do not match the server fingerprint", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup, { requestHash: "12".repeat(32) });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash: "13".repeat(32) }), async () => {
+      executed = true;
+      return { body: "download" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_x402_payload" });
+    expect(executed).toBe(false);
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
+  });
+
+  it("returns the cached response for an identical exact payment retry", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+    const requestHash = "12".repeat(32);
+    await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), async () => ({
+      body: "download",
+    }));
+
+    let executed = false;
+    const replay = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), async () => {
+      executed = true;
+      return { body: "second" };
+    });
+
+    expect(replay.status).toBe(200);
+    expect(replay.body).toBe("download");
+    expect(executed).toBe(false);
+  });
+
+  it("rejects exact transaction replay against a different request", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+    await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash: "12".repeat(32) }), async () => ({
+      body: "download",
+    }));
+
+    let executed = false;
+    const replay = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash: "13".repeat(32) }), async () => {
+      executed = true;
+      return { body: "second" };
+    });
+
+    expect(replay.status).toBe(409);
+    expect(replay.body).toEqual({ error: "exact_payment_replay" });
+    expect(executed).toBe(false);
+  });
+
+  it("serializes concurrent exact requests that share one transaction", async () => {
+    const setup = makeServer();
+    const firstPayment = makeExactPayment(setup, { paymentOutputIndex: 1 });
+    const secondPayment = makeExactPayment(setup, { paymentOutputIndex: 2 });
+    let activeHandlers = 0;
+    let maxActiveHandlers = 0;
+    let executions = 0;
+    const handler = async () => {
+      activeHandlers += 1;
+      maxActiveHandlers = Math.max(maxActiveHandlers, activeHandlers);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      executions += 1;
+      activeHandlers -= 1;
+      return { body: `download-${executions}` };
+    };
+
+    const [first, second] = await Promise.all([
+      setup.server.handlePaidRequest(requestWithPayment(firstPayment, { paymentScheme: "exact", requestHash: "21".repeat(32) }), handler),
+      setup.server.handlePaidRequest(requestWithPayment(secondPayment, { paymentScheme: "exact", requestHash: "22".repeat(32) }), handler),
+    ]);
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(executions).toBe(2);
+    expect(maxActiveHandlers).toBe(1);
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeTruthy();
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 2)).resolves.toBeTruthy();
+  });
+
+  it("rejects exact transfers whose verified output does not match the offer", async () => {
+    const setup = makeServer({
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          return {
+            transactionId: EXACT_TX_ID,
+            paymentOutput: {
+              amount: "99",
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            finality: "accepted",
+          };
+        },
+      },
+    });
+    const payment = makeExactPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => {
+      executed = true;
+      return { body: "download" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_x402_amount" });
+    expect(executed).toBe(false);
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
   });
 
   it("accepts an initial deposit-voucher and commits channel state after handler success", async () => {
@@ -1043,6 +1224,19 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         return voucher.signature === `${digest}${digest}`;
       },
     },
+    exactTransactionVerifier: {
+      verifyExactPayment(request) {
+        return {
+          transactionId: request.transactionId ?? EXACT_TX_ID,
+          paymentOutput: {
+            amount: request.amount,
+            scriptPublicKey: request.payToScriptPublicKey,
+          },
+          finality: "accepted",
+          payerAddress: "kaspatest:refund",
+        };
+      },
+    },
     ...overrides,
   });
   return {
@@ -1054,6 +1248,27 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         return voucher.signature === `${digest}${digest}`;
       },
     },
+  };
+}
+
+function makeExactPayment(
+  setup: ReturnType<typeof makeServer>,
+  options: { paymentIdentifier?: string; transactionId?: Hash32Hex; paymentOutputIndex?: number; requestHash?: Hash32Hex } = {},
+): PaymentPayload {
+  const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
+  const accepted = required.accepts[0] as ExactPaymentRequirements;
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "exact-transfer",
+      payerAddress: "kaspatest:refund",
+      transaction: EXACT_TX,
+      transactionId: options.transactionId ?? EXACT_TX_ID,
+      paymentOutputIndex: options.paymentOutputIndex ?? 1,
+      ...(options.requestHash ? { requestHash: options.requestHash } : {}),
+    },
+    ...(options.paymentIdentifier ? paymentIdentifierExtension(options.paymentIdentifier) : {}),
   };
 }
 
@@ -1147,11 +1362,15 @@ function makeVoucherPayment(
   };
 }
 
-function requestWithPayment(paymentPayload: PaymentPayload, options: { requestHash?: Hash32Hex; paymentAmount?: string } = {}) {
+function requestWithPayment(
+  paymentPayload: PaymentPayload,
+  options: { requestHash?: Hash32Hex; paymentAmount?: string; paymentScheme?: "exact" | "batch-settlement" } = {},
+) {
   return {
     url: RESOURCE.url,
     resource: RESOURCE,
     paymentAmount: options.paymentAmount,
+    paymentScheme: options.paymentScheme,
     requestHash: options.requestHash,
     headers: {
       [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),

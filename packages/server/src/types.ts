@@ -4,6 +4,8 @@ import type {
   ChannelConfig,
   ClaimPolicy,
   ChannelState,
+  ExactPaymentRequirements,
+  ExactTransferPayload,
   FundingOutpoint,
   Hash32Hex,
   NetworkId,
@@ -60,6 +62,35 @@ export interface VoucherVerifier {
   verifyVoucher(request: VoucherVerificationRequest): Promise<boolean> | boolean;
 }
 
+export interface ExactTransactionOutput {
+  amount: SompiString;
+  scriptPublicKey: ByteHex;
+  address?: string;
+}
+
+export interface ExactTransactionVerificationRequest {
+  network: NetworkId;
+  transaction: ByteHex;
+  transactionId?: Hash32Hex;
+  paymentOutputIndex: number;
+  amount: SompiString;
+  payTo: string;
+  payToScriptPublicKey: ByteHex;
+  requiredFinality: "accepted" | "confirmed";
+  requestHash?: Hash32Hex;
+}
+
+export interface ExactTransactionVerification {
+  transactionId: Hash32Hex;
+  paymentOutput: ExactTransactionOutput;
+  finality: "mempool" | "accepted" | "confirmed";
+  payerAddress?: string;
+}
+
+export interface ExactTransactionVerifier {
+  verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> | ExactTransactionVerification;
+}
+
 export interface TopUpVerificationRequest {
   previous: ServerChannelRecord;
   next: ServerChannelRecord;
@@ -99,7 +130,10 @@ export interface PaymentIdentifierRecord {
   paymentPayloadHash: Hash32Hex;
   response: ServerResponse;
   settlement: SettlementResponse;
-  channelId: Hash32Hex;
+  paymentScopeId: Hash32Hex;
+  channelId?: Hash32Hex;
+  transactionId?: Hash32Hex;
+  paymentOutputIndex?: number;
 }
 
 export interface BatchCommitmentRecord {
@@ -127,6 +161,19 @@ export interface IdempotencyStore {
   loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined>;
 }
 
+export interface ExactPaymentRecord {
+  transactionId: Hash32Hex;
+  paymentOutputIndex: number;
+  requestFingerprint: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
+  amount: SompiString;
+  payerAddress?: string;
+  finality: "mempool" | "accepted" | "confirmed";
+  settlement: SettlementResponse;
+  response: ServerResponse;
+}
+
 export interface SettlementCommit {
   channel: ServerChannelRecord;
   commitment: BatchCommitmentRecord;
@@ -144,6 +191,16 @@ export interface SettlementCommit {
 
 export interface SettlementCommitStore {
   commitSettlement(record: SettlementCommit): Promise<void>;
+}
+
+export interface ExactSettlementCommit {
+  payment: ExactPaymentRecord;
+  paymentIdentifier?: PaymentIdentifierRecord;
+}
+
+export interface ExactPaymentStore {
+  loadExactPayment(transactionId: Hash32Hex, paymentOutputIndex: number): Promise<ExactPaymentRecord | undefined>;
+  commitExactPayment(record: ExactSettlementCommit): Promise<void>;
 }
 
 export type ClaimAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
@@ -176,7 +233,13 @@ export interface ClaimAttemptStore {
   abandonClaimAttempt(attemptId: Hash32Hex, reason?: string): Promise<void>;
 }
 
-export interface ServerStateStore extends ServerChannelStore, CommitmentStore, IdempotencyStore, SettlementCommitStore, ClaimAttemptStore {}
+export interface ServerStateStore
+  extends ServerChannelStore,
+    CommitmentStore,
+    IdempotencyStore,
+    SettlementCommitStore,
+    ExactPaymentStore,
+    ClaimAttemptStore {}
 
 export interface ChannelLockManager {
   runExclusive<T>(channelId: Hash32Hex, fn: () => Promise<T>): Promise<T>;
@@ -234,6 +297,7 @@ export interface DirectModeServerConfig {
   chainProvider: ServerChainProvider;
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
+  exactTransactionVerifier?: ExactTransactionVerifier;
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
@@ -245,6 +309,7 @@ export interface DirectModeServerConfig {
 export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;
   amount?: SompiString;
+  scheme?: "exact" | "batch-settlement";
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
 }
@@ -256,6 +321,7 @@ export interface PaidRequest {
   body?: unknown;
   resource?: ResourceInfo;
   paymentAmount?: SompiString;
+  paymentScheme?: "exact" | "batch-settlement";
   requestHash?: Hash32Hex;
 }
 
@@ -274,7 +340,8 @@ export interface ProtectedHandlerResult {
   chargedAmount?: SompiString;
 }
 
-export interface VerifiedPayment {
+export interface VerifiedBatchPayment {
+  scheme: "batch-settlement";
   paymentRequired: PaymentRequired;
   paymentPayload: PaymentPayload;
   accepted: BatchPaymentRequirements;
@@ -283,6 +350,19 @@ export interface VerifiedPayment {
   voucher: Voucher;
   openedChannel: boolean;
 }
+
+export interface VerifiedExactPayment {
+  scheme: "exact";
+  paymentRequired: PaymentRequired;
+  paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransferPayload };
+  accepted: ExactPaymentRequirements;
+  transactionId: Hash32Hex;
+  paymentOutputIndex: number;
+  payerAddress?: string;
+  finality: "mempool" | "accepted" | "confirmed";
+}
+
+export type VerifiedPayment = VerifiedBatchPayment | VerifiedExactPayment;
 
 export interface HandlerContext {
   request: PaidRequest;

@@ -3,6 +3,8 @@ import type {
   BatchCommitmentRecord,
   ChannelLockManager,
   ClaimAttemptRecord,
+  ExactPaymentRecord,
+  ExactSettlementCommit,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   ServerStateStore,
@@ -12,6 +14,7 @@ import type {
 export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
+  readonly #exactPayments = new Map<string, ExactPaymentRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
@@ -48,6 +51,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return record ? clone(record) : undefined;
   }
 
+  async loadExactPayment(transactionId: Hash32Hex, paymentOutputIndex: number): Promise<ExactPaymentRecord | undefined> {
+    const record = this.#exactPayments.get(exactPaymentKey(transactionId, paymentOutputIndex));
+    return record ? clone(record) : undefined;
+  }
+
   async commitSettlement(record: SettlementCommit): Promise<void> {
     const current = this.#channels.get(record.expected.channelId);
     if (!matchesExpectedChannel(current, record.expected)) {
@@ -59,6 +67,35 @@ export class MemoryServerChannelStore implements ServerStateStore {
     this.#commitments.set(commitment.commitmentId, commitment);
     if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
     this.#channels.set(channel.channelId, channel);
+  }
+
+  async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
+    const payment = clone(record.payment);
+    const key = exactPaymentKey(payment.transactionId, payment.paymentOutputIndex);
+    const existing = this.#exactPayments.get(key);
+    if (existing) {
+      if (
+        existing.requestFingerprint !== payment.requestFingerprint ||
+        existing.paymentPayloadHash !== payment.paymentPayloadHash ||
+        existing.paymentOutputIndex !== payment.paymentOutputIndex
+      ) {
+        throw new Error("exact payment transaction was already committed for a different request");
+      }
+      return;
+    }
+    if (record.paymentIdentifier) {
+      const existingIdentifier = this.#paymentIdentifiers.get(record.paymentIdentifier.id);
+      if (
+        existingIdentifier &&
+        (existingIdentifier.fingerprint !== record.paymentIdentifier.fingerprint ||
+          existingIdentifier.paymentPayloadHash !== record.paymentIdentifier.paymentPayloadHash ||
+          existingIdentifier.paymentScopeId !== record.paymentIdentifier.paymentScopeId)
+      ) {
+        throw new Error("payment identifier was already committed for a different payment");
+      }
+      this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
+    }
+    this.#exactPayments.set(key, payment);
   }
 
   async loadOpenClaimAttempt(channelId: Hash32Hex): Promise<ClaimAttemptRecord | undefined> {
@@ -133,6 +170,10 @@ export function activeChargedAmount(channel: ServerChannelRecord): bigint {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function exactPaymentKey(transactionId: Hash32Hex, paymentOutputIndex: number): string {
+  return `${transactionId.toLowerCase()}:${paymentOutputIndex}`;
 }
 
 function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {

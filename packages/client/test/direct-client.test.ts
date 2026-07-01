@@ -4,6 +4,7 @@ import { X402_VERSION, encodePaymentRequiredHeader, encodePaymentResponseHeader,
 import type {
   BatchPaymentRequirements,
   ChannelState,
+  ExactPaymentRequirements,
   Hash32Hex,
   KaspaPaymentPayload,
   NetworkId,
@@ -38,6 +39,8 @@ const SALT = "33".repeat(32);
 const COMMITMENT = "44".repeat(32);
 const FUNDING_TX = "55".repeat(32);
 const REFUND_TX = "66".repeat(32);
+const EXACT_TX_ID = "77".repeat(32);
+const EXACT_TX = "aa".repeat(96);
 
 describe("direct-mode client", () => {
   it("opens a deposit-voucher channel for the first paid request", async () => {
@@ -114,6 +117,118 @@ describe("direct-mode client", () => {
     ).rejects.toThrow("funding provider network");
     expect(provider.deposits).toHaveLength(0);
     await expect(store.loadChannels({})).resolves.toHaveLength(0);
+  });
+
+  it("creates an exact transfer payload through the funding adapter", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "250" });
+
+    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
+      url: "https://api.example.test/file",
+      requestHash: "99".repeat(32),
+    });
+
+    expect(payment.scheme).toBe("exact");
+    expect(payment.openedChannel).toBe(false);
+    expect(payment.channel).toBeUndefined();
+    expect(provider.deposits).toHaveLength(0);
+    expect(provider.exactPayments).toEqual([
+      {
+        amount: "250",
+        payTo: "kaspatest:payout",
+        requestHash: "99".repeat(32),
+      },
+    ]);
+    expect(payment.paymentPayload.payload).toMatchObject({
+      type: "exact-transfer",
+      transaction: EXACT_TX,
+      transactionId: EXACT_TX_ID,
+      paymentOutputIndex: 1,
+      requestHash: "99".repeat(32),
+    });
+  });
+
+  it("falls back to batch settlement on mixed offers when exact funding is unavailable", async () => {
+    const provider = new FakeFundingProvider();
+    Object.defineProperty(provider, "payExact", { value: undefined });
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    const payment = await client.createPayment(encodePaymentRequiredHeader(makeMixedRequired({ amount: "100" })), {
+      url: "https://api.example.test/file",
+    });
+
+    expect(payment.scheme).toBe("batch-settlement");
+    expect(payment.paymentPayload.payload.type).toBe("deposit-voucher");
+    expect(provider.deposits).toHaveLength(1);
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("applies successful exact settlement without channel state", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })), {
+      url: "https://api.example.test/file",
+    });
+
+    const settlement = await client.applySettlement(payment, {
+      success: true,
+      transaction: EXACT_TX_ID,
+      network: "kaspa:testnet-10",
+      amount: "250",
+      extra: {
+        paymentOutputIndex: 1,
+        finality: "accepted",
+      },
+    });
+
+    expect(settlement.channel).toBeUndefined();
+    expect(settlement.chargedAmount).toBe("250");
+    expect(settlement.transactionId).toBe(EXACT_TX_ID);
+  });
+
+  it("rejects exact settlement below the advertised finality", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", finality: "confirmed" })), {
+      url: "https://api.example.test/file",
+    });
+
+    await expect(
+      client.applySettlement(payment, {
+        success: true,
+        transaction: EXACT_TX_ID,
+        network: "kaspa:testnet-10",
+        amount: "250",
+        extra: {
+          paymentOutputIndex: 1,
+          finality: "accepted",
+        },
+      }),
+    ).rejects.toThrow("required finality");
+  });
+
+  it("rejects exact settlement with a mismatched request hash echo", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })), {
+      url: "https://api.example.test/file",
+      requestHash: "99".repeat(32),
+    });
+
+    await expect(
+      client.applySettlement(payment, {
+        success: true,
+        transaction: EXACT_TX_ID,
+        network: "kaspa:testnet-10",
+        amount: "250",
+        extra: {
+          paymentOutputIndex: 1,
+          finality: "accepted",
+          requestHash: "98".repeat(32),
+        },
+      }),
+    ).rejects.toThrow("request hash");
   });
 
   it("rejects ambiguous txid-only deposit results", async () => {
@@ -637,6 +752,39 @@ function makeRequired(input: {
   };
 }
 
+function makeExactRequired(input: { amount: string; finality?: "mempool" | "accepted" | "confirmed" }): PaymentRequired {
+  return {
+    x402Version: X402_VERSION,
+    resource: {
+      url: "https://api.example.test/file",
+    },
+    accepts: [
+      {
+        scheme: "exact",
+        network: "kaspa:testnet-10",
+        amount: input.amount,
+        asset: "KAS",
+        payTo: "kaspatest:payout",
+        maxTimeoutSeconds: 60,
+        extra: {
+          binding: "kaspa-exact-v1",
+          ...(input.finality ? { finality: input.finality } : {}),
+        },
+      } satisfies ExactPaymentRequirements,
+    ],
+  };
+}
+
+function makeMixedRequired(input: { amount: string }): PaymentRequired {
+  return {
+    x402Version: X402_VERSION,
+    resource: {
+      url: "https://api.example.test/file",
+    },
+    accepts: [makeExactRequired(input).accepts[0], makeRequired(input).accepts[0]],
+  };
+}
+
 function makeSettlement(channel: DirectModeChannel, chargedAmount: string, stateOverrides: Partial<ChannelState> = {}): SettlementResponse {
   return {
     success: true,
@@ -701,6 +849,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
+  readonly exactPayments: Array<{ amount: string; payTo: string; requestHash?: string }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" = "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
@@ -740,6 +889,22 @@ class FakeFundingProvider implements FundingProvider {
     }
     return {
       outpoint,
+      fundingSource: this.sourceKind,
+    };
+  }
+
+  async payExact(request: { amount: string; payTo: string; requestHash?: string }) {
+    this.exactPayments.push({
+      amount: request.amount,
+      payTo: request.payTo,
+      ...(request.requestHash ? { requestHash: request.requestHash } : {}),
+    });
+    return {
+      transaction: EXACT_TX,
+      transactionId: EXACT_TX_ID,
+      paymentOutputIndex: 1,
+      payerAddress: "kaspatest:refund",
+      finality: "accepted" as const,
       fundingSource: this.sourceKind,
     };
   }

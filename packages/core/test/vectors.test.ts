@@ -155,17 +155,19 @@ describe("channel id vectors", () => {
 });
 
 describe("x402 HTTP vectors", () => {
-  it("roundtrips deterministic base64 headers", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+  for (const file of listJson("vectors/x402-http")) {
+    it(`roundtrips deterministic base64 headers for ${file}`, () => {
+      const vector = readJson<HttpVector>(file);
 
-    expect(encodePaymentRequiredHeader(vector.paymentRequired)).toBe(vector.headers.paymentRequired);
-    expect(encodePaymentSignatureHeader(vector.paymentPayload)).toBe(vector.headers.paymentSignature);
-    expect(encodePaymentResponseHeader(vector.settlementResponse)).toBe(vector.headers.paymentResponse);
+      expect(encodePaymentRequiredHeader(vector.paymentRequired)).toBe(vector.headers.paymentRequired);
+      expect(encodePaymentSignatureHeader(vector.paymentPayload)).toBe(vector.headers.paymentSignature);
+      expect(encodePaymentResponseHeader(vector.settlementResponse)).toBe(vector.headers.paymentResponse);
 
-    expect(decodePaymentRequiredHeader(vector.headers.paymentRequired)).toEqual(vector.paymentRequired);
-    expect(decodePaymentSignatureHeader(vector.headers.paymentSignature)).toEqual(vector.paymentPayload);
-    expect(decodePaymentResponseHeader(vector.headers.paymentResponse)).toEqual(vector.settlementResponse);
-  });
+      expect(decodePaymentRequiredHeader(vector.headers.paymentRequired)).toEqual(vector.paymentRequired);
+      expect(decodePaymentSignatureHeader(vector.headers.paymentSignature)).toEqual(vector.paymentPayload);
+      expect(decodePaymentResponseHeader(vector.headers.paymentResponse)).toEqual(vector.settlementResponse);
+    });
+  }
 
   it("rejects non-JSON values before encoding headers", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");

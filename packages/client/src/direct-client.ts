@@ -13,8 +13,10 @@ import {
   type BatchPaymentRequirements,
   type ChannelConfig,
   type ChannelState,
+  type ExactPaymentRequirements,
   type FundingOutpoint,
   type PaymentPayload,
+  type PaymentRequirements,
   type SettlementResponse,
   type SompiString,
   type Voucher,
@@ -48,28 +50,41 @@ export class DirectModeClient {
 
   async createPayment(header: string, context: PaymentRequestContext): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
-    const parsed = parsePaymentRequiredHeaderValue(header, { supportedNetworks: this.#options.supportedNetworks });
+    const parsed = parsePaymentRequiredHeaderValue(header, {
+      supportedNetworks: this.#options.supportedNetworks,
+      supportedSchemes: supportedSchemesForClient(this.#options),
+    });
     assertProviderNetwork(this.#options, parsed.accepted.network);
+    if (parsed.accepted.scheme === "exact") {
+      return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, context);
+    }
+    if (parsed.accepted.scheme !== "batch-settlement") {
+      throw new KaspaX402Error("invalid_kaspa_x402_scheme", "unsupported Kaspa x402 requirement was selected");
+    }
+
     const origin = context.origin ?? originForUrl(context.url);
     const resourceUrl = parsed.paymentRequired.resource.url;
-    const existing = await this.#selectExistingChannel(parsed.accepted, origin, resourceUrl);
+    const accepted = parsed.accepted;
+    const existing = await this.#selectExistingChannel(accepted, origin, resourceUrl);
 
     if (existing) {
-      const { channel, paymentPayload } = await this.#buildVoucherPayload(existing, parsed.accepted, parsed.paymentRequired, context);
+      const { channel, paymentPayload } = await this.#buildVoucherPayload(existing, accepted, parsed.paymentRequired, context);
       return {
         paymentRequired: parsed.paymentRequired,
-        accepted: parsed.accepted,
+        accepted,
         paymentPayload,
+        scheme: "batch-settlement",
         channel,
         openedChannel: false,
       };
     }
 
-    const { channel, paymentPayload } = await this.#openDepositVoucherChannel(parsed.accepted, parsed.paymentRequired, context, origin);
+    const { channel, paymentPayload } = await this.#openDepositVoucherChannel(accepted, parsed.paymentRequired, context, origin);
     return {
       paymentRequired: parsed.paymentRequired,
-      accepted: parsed.accepted,
+      accepted,
       paymentPayload,
+      scheme: "batch-settlement",
       channel,
       openedChannel: true,
     };
@@ -121,6 +136,15 @@ export class DirectModeClient {
   }
 
   async applySettlement(payment: CreatePaymentResult, response: SettlementResponse): Promise<ApplySettlementResult> {
+    if (payment.accepted.scheme === "exact") {
+      return applyExactSettlement(payment, response);
+    }
+
+    if (!payment.channel) {
+      throw new KaspaX402Error("invalid_kaspa_settlement_response", "batch settlement is missing local channel state");
+    }
+    const accepted = payment.accepted as BatchPaymentRequirements;
+
     if (!response.success) {
       return {
         channel: payment.channel,
@@ -137,8 +161,8 @@ export class DirectModeClient {
         throw new KaspaX402Error("invalid_kaspa_channel_id", "settlement response channel id does not match local channel");
       }
 
-      const chargedAmount = readChargedAmount(response, payment.accepted);
-      if (parseSompiString(chargedAmount) > parseSompiString(payment.accepted.amount)) {
+      const chargedAmount = readChargedAmount(response, accepted);
+      if (parseSompiString(chargedAmount) > parseSompiString(accepted.amount)) {
         throw new KaspaX402Error("invalid_kaspa_settlement_response", "charged amount exceeds accepted amount");
       }
       if (payment.paymentPayload.payload.type === "deposit-voucher" && response.extra?.fundingAmount !== payment.channel.fundingAmount) {
@@ -346,6 +370,51 @@ export class DirectModeClient {
     return { channel: signedChannel, paymentPayload };
   }
 
+  async #createExactPayment(
+    accepted: ExactPaymentRequirements,
+    paymentRequired: CreatePaymentResult["paymentRequired"],
+    context: PaymentRequestContext,
+  ): Promise<CreatePaymentResult> {
+    if (!this.#options.fundingProvider.payExact) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter is required");
+    }
+    const exact = await this.#options.fundingProvider.payExact({
+      network: accepted.network,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      requestHash: context.requestHash,
+      requiredFinality: accepted.extra.finality,
+      fundingSource: this.#options.fundingPolicy?.requiredSource,
+    });
+    if (this.#options.fundingPolicy?.requiredSource && exact.fundingSource && exact.fundingSource !== this.#options.fundingPolicy.requiredSource) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payment funding source does not satisfy policy");
+    }
+    if (!Number.isInteger(exact.paymentOutputIndex) || exact.paymentOutputIndex < 0) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment output index is invalid");
+    }
+    const identity = exact.payerAddress ? undefined : await this.#options.fundingProvider.getPublicIdentity();
+    const paymentPayload = buildPaymentPayload(paymentRequired, accepted, context, {
+      type: "exact-transfer",
+      payerAddress: exact.payerAddress ?? identity?.address,
+      transaction: exact.transaction,
+      ...(exact.transactionId ? { transactionId: exact.transactionId } : {}),
+      paymentOutputIndex: exact.paymentOutputIndex,
+      ...(context.requestHash ? { requestHash: context.requestHash } : {}),
+    });
+    const retryValidation = validatePaymentRetry({ paymentRequired, paymentPayload });
+    if (!retryValidation.ok) throw retryValidation.error;
+    return {
+      paymentRequired,
+      accepted,
+      paymentPayload,
+      scheme: "exact",
+      openedChannel: false,
+      transactionId: exact.transactionId,
+      paymentOutputIndex: exact.paymentOutputIndex,
+      payerAddress: exact.payerAddress ?? identity?.address,
+    };
+  }
+
   async #buildVoucherPayload(
     channel: DirectModeChannel,
     accepted: BatchPaymentRequirements,
@@ -475,9 +544,14 @@ function assertProviderNetwork(options: DirectModeClientOptions, network: string
   }
 }
 
+function supportedSchemesForClient(options: DirectModeClientOptions): readonly ("exact" | "batch-settlement")[] | undefined {
+  if (options.supportedSchemes) return options.supportedSchemes;
+  return options.fundingProvider.payExact ? undefined : ["batch-settlement"];
+}
+
 function buildPaymentPayload(
   paymentRequired: CreatePaymentResult["paymentRequired"],
-  accepted: BatchPaymentRequirements,
+  accepted: PaymentRequirements,
   context: PaymentRequestContext,
   payload: PaymentPayload["payload"],
 ): PaymentPayload {
@@ -489,6 +563,66 @@ function buildPaymentPayload(
     ...(extensions ? { extensions } : {}),
   };
   return paymentPayload;
+}
+
+function applyExactSettlement(payment: CreatePaymentResult, response: SettlementResponse): ApplySettlementResult {
+  if (!response.success) {
+    return {
+      chargedAmount: "0",
+      response,
+    };
+  }
+  const payload = payment.paymentPayload.payload;
+  const accepted = payment.accepted as ExactPaymentRequirements;
+  if (payload.type !== "exact-transfer") {
+    throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "exact settlement does not correspond to an exact payment payload");
+  }
+  if (response.network !== accepted.network) {
+    throw new KaspaX402Error("invalid_kaspa_settlement_response", "settlement response network does not match accepted requirement");
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(response.transaction)) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "successful exact settlement must include a transaction id");
+  }
+  if (payload.transactionId && response.transaction.toLowerCase() !== payload.transactionId.toLowerCase()) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "settlement transaction id does not match exact payment payload");
+  }
+  if (response.amount !== accepted.amount) {
+    throw new KaspaX402Error("invalid_kaspa_settlement_response", "exact settlement amount does not match accepted requirement");
+  }
+  if (response.extra?.paymentOutputIndex === undefined) {
+    throw new KaspaX402Error("invalid_kaspa_outpoint", "exact settlement must include the payment output index");
+  }
+  if (response.extra.paymentOutputIndex !== payload.paymentOutputIndex) {
+    throw new KaspaX402Error("invalid_kaspa_outpoint", "settlement payment output index does not match exact payment payload");
+  }
+  const finality = readExactFinality(response.extra?.finality);
+  const requiredFinality = readExactFinality(accepted.extra.finality);
+  if (requiredFinality && (!finality || !exactFinalityMeets(finality, requiredFinality))) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement has not reached required finality");
+  }
+  if (payload.requestHash) {
+    const responseRequestHash = response.extra?.requestHash;
+    if (typeof responseRequestHash !== "string" || responseRequestHash.toLowerCase() !== payload.requestHash.toLowerCase()) {
+      throw new KaspaX402Error("invalid_kaspa_settlement_response", "exact settlement request hash does not match payment payload");
+    }
+  }
+  return {
+    chargedAmount: response.amount,
+    response,
+    transactionId: response.transaction,
+    finality,
+  };
+}
+
+function exactFinalityMeets(actual: "mempool" | "accepted" | "confirmed", required: "mempool" | "accepted" | "confirmed"): boolean {
+  const rank = { mempool: 0, accepted: 1, confirmed: 2 } as const;
+  return rank[actual] >= rank[required];
+}
+
+function readExactFinality(value: unknown): "mempool" | "accepted" | "confirmed" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
+  throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement finality is invalid");
 }
 
 function paymentIdentifierExtensions(paymentRequired: CreatePaymentResult["paymentRequired"], context: PaymentRequestContext): PaymentPayload["extensions"] {

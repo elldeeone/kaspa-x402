@@ -40,7 +40,15 @@ This repository is starting as a standard and reference implementation workspace
 
 ## Current Status
 
-Planning and specification scaffold.
+The repository now contains the v0 reference scaffold:
+
+- protocol profiles for `exact`, `upto`, and `batch-settlement`;
+- JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
+- TypeScript core helpers for canonical headers, validation, IDs, digests, and amounts;
+- covenant helpers and escrow fixtures for `batch-settlement`;
+- client and server direct-mode packages for channel-backed batch payments.
+
+The current implementation focus is first-class direct-mode `exact`, then `upto`, then transaction-builder adapters and live proof harnesses.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 

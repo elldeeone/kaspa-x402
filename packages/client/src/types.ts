@@ -2,11 +2,14 @@ import type {
   BatchPaymentRequirements,
   ByteHex,
   ChannelConfig,
+  ExactPaymentRequirements,
   FundingOutpoint,
   Hash32Hex,
   NetworkId,
   PaymentPayload,
+  PaymentRequirements,
   PaymentRequired,
+  PaymentScheme,
   PublicKeyHex,
   SettlementResponse,
   SignatureHex,
@@ -53,9 +56,27 @@ export interface EscrowDepositResult {
   transaction?: ByteHex;
 }
 
+export interface ExactPaymentRequest {
+  network: NetworkId;
+  amount: SompiString;
+  payTo: string;
+  requestHash?: Hash32Hex;
+  requiredFinality?: "mempool" | "accepted" | "confirmed";
+  fundingSource?: FundingSourceKind;
+}
+
+export interface ExactPaymentResult {
+  transaction: ByteHex;
+  transactionId?: Hash32Hex;
+  paymentOutputIndex: number;
+  payerAddress?: string;
+  finality?: "broadcast" | "mempool" | "accepted" | "confirmed";
+  fundingSource?: FundingSourceKind;
+}
+
 export interface FeeEstimateRequest {
   network: NetworkId;
-  action: "deposit" | "refund";
+  action: "deposit" | "exact" | "refund";
   amount?: SompiString;
 }
 
@@ -73,6 +94,7 @@ export interface FundingProvider {
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
   fundEscrowDeposit(request: EscrowDepositRequest): Promise<EscrowDepositResult>;
+  payExact?(request: ExactPaymentRequest): Promise<ExactPaymentResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
@@ -158,21 +180,27 @@ export interface PaymentRequestContext {
 
 export interface ParsedPaymentRequired {
   paymentRequired: PaymentRequired;
-  accepted: BatchPaymentRequirements;
+  accepted: PaymentRequirements;
 }
 
 export interface CreatePaymentResult {
   paymentRequired: PaymentRequired;
-  accepted: BatchPaymentRequirements;
+  accepted: PaymentRequirements;
   paymentPayload: PaymentPayload;
-  channel: DirectModeChannel;
+  scheme: "exact" | "batch-settlement";
+  channel?: DirectModeChannel;
   openedChannel: boolean;
+  transactionId?: Hash32Hex;
+  paymentOutputIndex?: number;
+  payerAddress?: string;
 }
 
 export interface ApplySettlementResult {
-  channel: DirectModeChannel;
+  channel?: DirectModeChannel;
   chargedAmount: SompiString;
   response: SettlementResponse;
+  transactionId?: Hash32Hex;
+  finality?: "mempool" | "accepted" | "confirmed";
 }
 
 export interface HeaderBag {
@@ -237,4 +265,5 @@ export interface DirectModeClientOptions {
   refundBuilder?: RefundTransactionBuilder;
   verifyVoucherSignature?: (voucher: Voucher, channel: DirectModeChannel) => Promise<boolean> | boolean;
   maxPaymentRetries?: number;
+  supportedSchemes?: readonly Extract<PaymentScheme, "exact" | "batch-settlement">[];
 }

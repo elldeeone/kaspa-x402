@@ -197,6 +197,9 @@ export interface SettlementResponseExtra extends JsonRecord {
   commitmentId?: Hash32Hex;
   chargedAmount?: SompiString;
   fundingAmount?: SompiString;
+  paymentOutputIndex?: number;
+  finality?: "mempool" | "accepted" | "confirmed";
+  requestHash?: Hash32Hex;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;
