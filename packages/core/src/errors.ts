@@ -22,6 +22,7 @@ export type KaspaX402ErrorCode =
   | "invalid_kaspa_upto_expired"
   | "invalid_kaspa_upto_recipient"
   | "invalid_kaspa_upto_max_amount"
+  | "invalid_kaspa_exact_replay"
   | "invalid_kaspa_upto_replay"
   | "invalid_kaspa_upto_settlement_amount"
   | "invalid_kaspa_upto_authorization_outpoint"

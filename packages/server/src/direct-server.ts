@@ -3,9 +3,11 @@ import {
   bytesToHex,
   channelId,
   concatBytes,
+  decodePaymentResponseHeader,
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  encodePaymentSignatureHeader,
   formatSompiString,
   hexToBytes,
   le32,
@@ -16,6 +18,8 @@ import {
   stableStringify,
   uptoAuthorizationDigest,
   uptoAuthorizationPreimageHex,
+  validatePaymentPayload,
+  validatePaymentRequired,
   validatePaymentRetry,
   voucherDigest,
   voucherPreimageHex,
@@ -28,9 +32,11 @@ import {
   type Hash32Hex,
   type PaymentPayload,
   type PaymentRequired,
+  type PaymentRequirements,
   type ResourceInfo,
   type SettlementResponse,
   type SompiString,
+  type SupportedKind,
   type UptoAuthorizationPayload,
   type UptoPaymentRequirements,
   type Voucher,
@@ -50,6 +56,9 @@ import {
   type ClaimAttemptRecord,
   type ClaimPreview,
   type ClaimRecoveryInput,
+  type DirectPaymentSettlementOptions,
+  type DirectPaymentVerification,
+  type DirectPaymentVerificationOptions,
   type DirectModeServerConfig,
   type ExactPaymentRecord,
   type HandlerContext,
@@ -128,6 +137,97 @@ export class DirectModeServer {
 
   async extractPayment(header: string): Promise<PaymentPayload> {
     return decodePaymentSignatureHeader(header);
+  }
+
+  supportedKinds(): SupportedKind[] {
+    const kinds: SupportedKind[] = [];
+    if (this.#config.exactTransactionVerifier) {
+      kinds.push({
+        x402Version: X402_VERSION,
+        scheme: "exact",
+        network: this.#config.network,
+        extra: {
+          asset: this.#config.asset,
+          binding: "kaspa-exact-v1",
+          modes: ["verify", "settle"],
+        },
+      });
+    }
+    if (this.#config.uptoScriptDeriver && this.#config.uptoAuthorizationVerifier) {
+      kinds.push({
+        x402Version: X402_VERSION,
+        scheme: "upto",
+        network: this.#config.network,
+        extra: {
+          asset: this.#config.asset,
+          binding: "kaspa-upto-v1",
+          authorizationTemplateId: this.#config.authorizationTemplateId,
+          modes: this.#config.uptoSettlementBuilder && this.#config.uptoSettlementVerifier ? ["verify", "settle"] : ["verify"],
+        },
+      });
+    }
+    kinds.push(
+      {
+        x402Version: X402_VERSION,
+        scheme: "batch-settlement",
+        network: this.#config.network,
+        extra: {
+          asset: this.#config.asset,
+          binding: "kaspa-escrow-v1",
+          templateId: this.#config.templateId,
+          modes: this.#config.claimBuilder ? ["verify", "settle", "claim"] : ["verify", "settle"],
+        },
+      },
+    );
+    return kinds;
+  }
+
+  async verifyPayment(options: DirectPaymentVerificationOptions): Promise<DirectPaymentVerification> {
+    const resource = options.resource ?? facilitatorResource();
+    const paymentPayload = validatedPaymentPayload(options.paymentPayload);
+    const paymentRequired = validatedPaymentRequired(this.#facilitatorPaymentRequired(resource, options.paymentRequirements));
+    const requestFingerprint = facilitatorRequestFingerprint({ ...options, paymentPayload, paymentRequirements: paymentRequired.accepts[0], resource });
+    await this.#assertExactPayloadHintNotReplayed(paymentPayload, requestFingerprint);
+    const payment = await this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
+    await this.#assertVerifyNotReplayed(payment, requestFingerprint, paymentPayload);
+    return {
+      payment,
+      requestFingerprint,
+      ...verifiedPaymentSummary(payment),
+    };
+  }
+
+  async settlePayment(options: DirectPaymentSettlementOptions): Promise<SettlementResponse> {
+    const paymentPayload = validatedPaymentPayload(options.paymentPayload);
+    const resource = options.resource ?? facilitatorResource();
+    const settlementPaymentRequired = validatedPaymentRequired(this.#facilitatorPaymentRequired(resource, options.paymentRequirements));
+    const settlementRequirements = settlementPaymentRequired.accepts[0];
+    assertSettlementRequirements(paymentPayload.accepted, settlementRequirements);
+    const requestFingerprint = facilitatorRequestFingerprint({
+      ...options,
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted,
+      resource,
+    });
+    const response = await this.handlePaidRequest(
+      {
+        method: "FACILITATOR",
+        url: resource.url,
+        resource,
+        body: null,
+        paymentAmount: paymentPayload.accepted.amount,
+        paymentScheme: paymentPayload.accepted.scheme,
+        requestHash: requestFingerprint,
+        headers: {
+          [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),
+        },
+      },
+      async () => ({
+        status: 200,
+        chargedAmount: settlementRequirements.amount,
+      }),
+    );
+    return settlementFromServerResponse(response, this.#config.network);
   }
 
   async handlePaidRequest(request: PaidRequest, handler: ProtectedHandler): Promise<ServerResponse> {
@@ -430,6 +530,14 @@ export class DirectModeServer {
     requestedScheme?: "exact" | "upto" | "batch-settlement",
   ): Promise<VerifiedPayment> {
     const paymentRequired = await this.#expectedPaymentRequired(resource, paymentPayload, paymentAmount, requestedScheme);
+    return this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
+  }
+
+  async #verifyPaymentAgainstRequired(
+    paymentRequired: PaymentRequired,
+    paymentPayload: PaymentPayload,
+    requestFingerprint: Hash32Hex,
+  ): Promise<VerifiedPayment> {
     const retry = validatePaymentRetry({ paymentRequired, paymentPayload });
     if (!retry.ok) throw retry.error;
 
@@ -1327,6 +1435,35 @@ export class DirectModeServer {
     };
   }
 
+  async #assertVerifyNotReplayed(verified: VerifiedPayment, fingerprint: Hash32Hex, paymentPayload: PaymentPayload): Promise<void> {
+    if (verified.scheme === "exact") {
+      const record = await this.#config.store.loadExactPayment(verified.transactionId, verified.paymentOutputIndex);
+      if (!record) return;
+      if (
+        record.requestFingerprint === fingerprint &&
+        record.paymentPayloadHash === paymentPayloadHash(paymentPayload) &&
+        record.paymentOutputIndex === verified.paymentOutputIndex
+      ) {
+        return;
+      }
+      throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
+    }
+    if (verified.scheme === "upto") {
+      const record = verified.existingConsumption;
+      if (!record) return;
+      if (record.requestFingerprint === fingerprint && record.paymentPayloadHash === paymentPayloadHash(paymentPayload)) return;
+      throw new KaspaX402Error("invalid_kaspa_upto_replay", "upto authorization was already consumed by another request");
+    }
+  }
+
+  async #assertExactPayloadHintNotReplayed(paymentPayload: PaymentPayload, fingerprint: Hash32Hex): Promise<void> {
+    if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer" || !paymentPayload.payload.transactionId) return;
+    const record = await this.#config.store.loadExactPayment(paymentPayload.payload.transactionId, paymentPayload.payload.paymentOutputIndex);
+    if (!record) return;
+    if (record.requestFingerprint === fingerprint && record.paymentPayloadHash === paymentPayloadHash(paymentPayload)) return;
+    throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
+  }
+
   async #recoverUptoSettlement(
     record: UptoPendingAuthorizationRecord | UptoBroadcastAuthorizationRecord,
     options: { releaseStoredResponse?: boolean } = {},
@@ -1451,6 +1588,25 @@ export class DirectModeServer {
       voucherState: latestVoucher(channel),
     });
   }
+
+  #facilitatorPaymentRequired(resource: ResourceInfo, paymentRequirements: PaymentRequirements): PaymentRequired {
+    return {
+      x402Version: X402_VERSION,
+      resource,
+      accepts: [paymentRequirements],
+      ...(this.#config.requirePaymentIdentifier
+        ? {
+            extensions: {
+              "payment-identifier": {
+                info: {
+                  required: true,
+                },
+              },
+            },
+          }
+        : {}),
+    };
+  }
 }
 
 function makePaymentRequired(config: ResolvedServerConfig, options: BuildPaymentRequiredOptions): PaymentRequired {
@@ -1553,6 +1709,116 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
         }
       : {}),
   };
+}
+
+function facilitatorResource(): ResourceInfo {
+  return { url: "kaspa-x402:facilitator" };
+}
+
+function facilitatorRequestFingerprint(options: DirectPaymentVerificationOptions): Hash32Hex {
+  if (options.requestHash !== undefined) return normalizedFacilitatorRequestHash(options.requestHash);
+  const payload = options.paymentPayload.payload;
+  if (payload.type === "upto-authorization") return payload.authorization.requestHash.toLowerCase();
+  if (payload.type === "exact-transfer" && payload.requestHash) return payload.requestHash.toLowerCase();
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:facilitator-request:v1",
+      resource: options.resource ?? null,
+      paymentRequirements: options.paymentRequirements,
+      paymentPayloadHash: paymentPayloadHash(options.paymentPayload),
+    }),
+  );
+}
+
+function normalizedFacilitatorRequestHash(requestHash: unknown): Hash32Hex {
+  hexToBytes(requestHash, { expectedLength: 32, errorCode: "invalid_kaspa_x402_payload", label: "requestHash" });
+  return (requestHash as string).toLowerCase();
+}
+
+function validatedPaymentPayload(paymentPayload: unknown): PaymentPayload {
+  const result = validatePaymentPayload(paymentPayload);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function validatedPaymentRequired(paymentRequired: unknown): PaymentRequired {
+  const result = validatePaymentRequired(paymentRequired);
+  if (!result.ok) throw result.error;
+  return result.value;
+}
+
+function verifiedPaymentSummary(payment: VerifiedPayment): Pick<DirectPaymentVerification, "payer" | "extra"> {
+  if (payment.scheme === "exact") {
+    return {
+      ...(payment.payerAddress ? { payer: payment.payerAddress } : {}),
+      extra: {
+        paymentOutputIndex: payment.paymentOutputIndex,
+        finality: payment.finality,
+      },
+    };
+  }
+  if (payment.scheme === "upto") {
+    const payload = payment.paymentPayload.payload;
+    return {
+      payer: payload.refundAddress,
+      extra: {
+        maxAmountSompi: payload.authorization.maxAmountSompi,
+        authorizationOutpoint: payload.authorizationOutpoint,
+      },
+    };
+  }
+  return {
+    payer: payment.channel.channelConfig.refundAddress,
+    extra: {
+      channelState: channelState(payment.channel),
+    },
+  };
+}
+
+function assertSettlementRequirements(authorized: PaymentRequirements, settlement: PaymentRequirements): void {
+  const authorizedComparable = comparableRequirements(authorized);
+  const settlementComparable = comparableRequirements(settlement);
+  if (stableStringify(authorizedComparable) !== stableStringify(settlementComparable)) {
+    throw new KaspaX402Error("invalid_kaspa_x402_accepted", "settlement requirements do not match the authorized payment requirements");
+  }
+
+  const authorizedAmount = parseSompiString(authorized.amount);
+  const settlementAmount = parseSompiString(settlement.amount);
+  if (authorized.scheme === "exact" && settlementAmount !== authorizedAmount) {
+    throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact settlement amount must equal the authorized amount");
+  }
+  if (settlementAmount > authorizedAmount) {
+    throw new KaspaX402Error("invalid_kaspa_x402_amount", "settlement amount exceeds the authorized amount");
+  }
+}
+
+function comparableRequirements(requirements: PaymentRequirements): PaymentRequirements {
+  return {
+    ...requirements,
+    amount: "0",
+  } as PaymentRequirements;
+}
+
+function settlementFromServerResponse(response: ServerResponse, network: PaymentRequirements["network"]): SettlementResponse {
+  const paymentResponseHeader = readResponseHeader(response.headers, PAYMENT_RESPONSE_HEADER);
+  if (paymentResponseHeader) return decodePaymentResponseHeader(paymentResponseHeader);
+  return {
+    success: false,
+    errorReason: errorMessageFromBody(response.body),
+    transaction: "",
+    network,
+  };
+}
+
+function readResponseHeader(headers: Record<string, string>, name: string): string | undefined {
+  const found = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  return found?.[1];
+}
+
+function errorMessageFromBody(body: unknown): string {
+  if (typeof body === "string") return body;
+  if (isRecord(body) && typeof body.error === "string") return body.error;
+  return "invalid_kaspa_x402_payload";
 }
 
 function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPaymentRequirements): void {

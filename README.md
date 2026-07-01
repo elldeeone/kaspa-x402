@@ -46,9 +46,10 @@ The repository now contains the v0 reference scaffold:
 - JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
 - TypeScript core helpers for canonical headers, validation, IDs, voucher and upto authorization digests, and amounts;
 - covenant helpers, escrow fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement`;
-- client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments over HTTP and MCP helper surfaces.
+- client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments over HTTP and MCP helper surfaces;
+- an optional self-hosted facilitator package exposing framework-neutral `/supported`, `/verify`, and `/settle` handlers over the direct-mode verifier.
 
-The current implementation focus is native transaction-builder adapters and live proof harnesses. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
+The current implementation focus is runnable examples, CLI workflows, native transaction-builder adapters, and live proof harnesses. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 
@@ -73,7 +74,7 @@ The intended npm scope is:
 @kaspa-x402/*
 ```
 
-Initial package placeholders:
+Reference package workspace:
 
 ```text
 @kaspa-x402/core

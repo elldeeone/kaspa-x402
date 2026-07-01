@@ -16,6 +16,7 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - supports payment identifier idempotency for exact, upto, and batch payment-payload retries;
 - returns corrective `402` responses with channel state where possible;
 - returns MCP payment-required tool results, reads `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]` without exposing protected content on settlement failure;
+- exposes direct verifier and settlement helpers used by optional self-hosted facilitator endpoints;
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
 - exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.
 

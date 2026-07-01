@@ -3,6 +3,7 @@ export * from "./binary.js";
 export * from "./channel.js";
 export * from "./constants.js";
 export * from "./errors.js";
+export * from "./facilitator.js";
 export * from "./headers.js";
 export * from "./mcp.js";
 export * from "./network.js";

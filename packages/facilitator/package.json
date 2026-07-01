@@ -4,6 +4,24 @@
   "private": true,
   "description": "Self-hosted facilitator endpoints for Kaspa x402.",
   "license": "MIT",
-  "type": "module"
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/server run build && tsup src/index.ts --format esm --dts --clean",
+    "test": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/server run build && vitest run"
+  },
+  "dependencies": {
+    "@kaspa-x402/core": "0.0.0",
+    "@kaspa-x402/server": "0.0.0"
+  }
 }
-

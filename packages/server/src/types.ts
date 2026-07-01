@@ -16,6 +16,7 @@ import type {
   SettlementResponse,
   SignatureHex,
   SompiString,
+  SupportedKind,
   UptoAuthorizationPayload,
   UptoPaymentRequirements,
   Voucher,
@@ -457,6 +458,22 @@ export interface BuildPaymentRequiredOptions {
   voucherState?: Voucher;
 }
 
+export interface DirectPaymentVerificationOptions {
+  paymentPayload: PaymentPayload;
+  paymentRequirements: PaymentPayload["accepted"];
+  resource?: ResourceInfo;
+  requestHash?: Hash32Hex;
+}
+
+export interface DirectPaymentVerification {
+  payment: VerifiedPayment;
+  requestFingerprint: Hash32Hex;
+  payer?: string;
+  extra?: Record<string, unknown>;
+}
+
+export interface DirectPaymentSettlementOptions extends DirectPaymentVerificationOptions {}
+
 export interface PaidRequest {
   method?: string;
   url: string;
@@ -526,3 +543,5 @@ export interface HandlerContext {
 }
 
 export type ProtectedHandler = (context: HandlerContext) => Promise<ProtectedHandlerResult> | ProtectedHandlerResult;
+
+export type DirectModeSupportedKind = SupportedKind;
