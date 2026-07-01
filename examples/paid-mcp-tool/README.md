@@ -2,6 +2,11 @@
 
 This example shows the framework-neutral flow for protecting an MCP tool with Kaspa x402.
 
+```sh
+npm run build
+node examples/paid-mcp-tool/index.mjs
+```
+
 Server-side tool wrapper:
 
 ```ts
@@ -52,3 +57,5 @@ console.log(paid.result._meta?.["x402/payment-response"]);
 ```
 
 The server returns `structuredContent` plus text fallback for unpaid calls. The client retries with `_meta["x402/payment"]`. Successful paid results carry `_meta["x402/payment-response"]`.
+
+The runnable script uses the same helper flow in mock mode with an `upto` quote tool. It prints the charged amount and confirms that payment response metadata is present.

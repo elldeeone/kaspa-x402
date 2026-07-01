@@ -5,8 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const schemasDir = path.join(root, "schemas");
-const vectorsDir = path.join(root, "vectors");
 const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
@@ -514,21 +512,38 @@ function validateVector(ajv, file, vector) {
   }
 }
 
-const ajv = new Ajv2020({ allErrors: true, strict: false });
-for (const file of listJsonFiles(schemasDir)) {
-  const schema = readJson(file);
-  ajv.addSchema(schema);
-}
+export function validateSchemasAndVectors(options = {}) {
+  const rootDir = path.resolve(options.root ?? root);
+  const schemasDir = path.join(rootDir, "schemas");
+  const vectorsDir = path.join(rootDir, "vectors");
+  const schemaFiles = listJsonFiles(schemasDir);
+  const vectorFiles = listJsonFiles(vectorsDir);
+  const ajv = new Ajv2020({ allErrors: true, strict: false });
 
-for (const file of listJsonFiles(schemasDir)) {
-  const schema = readJson(file);
-  if (!ajv.getSchema(schema.$id)) {
-    throw new Error(`schema failed to register: ${file}`);
+  for (const file of schemaFiles) {
+    const schema = readJson(file);
+    ajv.addSchema(schema);
   }
+
+  for (const file of schemaFiles) {
+    const schema = readJson(file);
+    if (!ajv.getSchema(schema.$id)) {
+      throw new Error(`schema failed to register: ${file}`);
+    }
+  }
+
+  for (const file of vectorFiles) {
+    validateVector(ajv, path.relative(rootDir, file), readJson(file));
+  }
+
+  return {
+    root: rootDir,
+    schemaCount: schemaFiles.length,
+    vectorCount: vectorFiles.length,
+  };
 }
 
-for (const file of listJsonFiles(vectorsDir)) {
-  validateVector(ajv, path.relative(root, file), readJson(file));
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+  validateSchemasAndVectors();
+  console.log("schemas and vectors ok");
 }
-
-console.log("schemas and vectors ok");
