@@ -1,0 +1,102 @@
+{
+  "kind": "voucher-digest",
+  "description": "Voucher digest vectors proving network, script, outpoint, vout, and amount binding.",
+  "cases": [
+    {
+      "name": "base",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "outpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "amount": "2500000"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493637fa461ae4db84a7a25c27b679f9adae6347ff14c123c6e920f8b0c497bbf93d111111111111111111111111111111111111111111111111111111111111111102000000a025260000000000",
+        "digest": "b7a09633d148e8ae55c141cce062b31efde3121cdc2aa080df3ebcb5e88cc00b"
+      }
+    },
+    {
+      "name": "wrong-network",
+      "input": {
+        "network": "kaspa:mainnet",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "outpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "amount": "2500000"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d126ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac37fa461ae4db84a7a25c27b679f9adae6347ff14c123c6e920f8b0c497bbf93d111111111111111111111111111111111111111111111111111111111111111102000000a025260000000000",
+        "digest": "2a03d9322354c23dd02bc7ba03cb3bc0197dd8223d50a3626dc86eb9ace39664"
+      }
+    },
+    {
+      "name": "wrong-script",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ad",
+        "outpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "amount": "2500000"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd64936ab026de0f56beb61772bc7778499d6c8fe93dda18f822ba056193583dd98d8ae111111111111111111111111111111111111111111111111111111111111111102000000a025260000000000",
+        "digest": "a8a3923a1f5ad14efd7c28fb36a824ded2ea2c36de31ecfcb6f754784174c21e"
+      }
+    },
+    {
+      "name": "same-txid-different-vout",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "outpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 3
+        },
+        "amount": "2500000"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493637fa461ae4db84a7a25c27b679f9adae6347ff14c123c6e920f8b0c497bbf93d111111111111111111111111111111111111111111111111111111111111111103000000a025260000000000",
+        "digest": "d11deaa680f04a58856acc1a0c716c94362b9c1ff672b0b62056c11211a8f39c"
+      }
+    },
+    {
+      "name": "different-txid-same-vout",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "outpoint": {
+          "txid": "2222222222222222222222222222222222222222222222222222222222222222",
+          "index": 2
+        },
+        "amount": "2500000"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493637fa461ae4db84a7a25c27b679f9adae6347ff14c123c6e920f8b0c497bbf93d222222222222222222222222222222222222222222222222222222222222222202000000a025260000000000",
+        "digest": "6dfb5e0242cd6203c8fdd17e670d0cbff4262b11a8fb6b6a4b6f451ec114f263"
+      }
+    },
+    {
+      "name": "amount-plus-one",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "outpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "amount": "2500001"
+      },
+      "expected": {
+        "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493637fa461ae4db84a7a25c27b679f9adae6347ff14c123c6e920f8b0c497bbf93d111111111111111111111111111111111111111111111111111111111111111102000000a125260000000000",
+        "digest": "ce50ee70ab5b46a28c28cfe7389fbb22d065d71ec61a48b72d5d35f37f0f6098"
+      }
+    }
+  ]
+}

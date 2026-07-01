@@ -1,0 +1,26 @@
+{
+  "kind": "negative",
+  "name": "invalid-asset",
+  "description": "Kaspa x402 v0.1 uses asset KAS only.",
+  "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
+  "expectedError": "invalid_kaspa_x402_asset",
+  "value": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/download.bin"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "SOMPI",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v1"
+        }
+      }
+    ]
+  }
+}

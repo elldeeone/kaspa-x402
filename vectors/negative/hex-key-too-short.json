@@ -1,0 +1,21 @@
+{
+  "kind": "negative",
+  "name": "hex-key-too-short",
+  "description": "Public keys must be 32-byte hex strings.",
+  "schema": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
+  "expectedError": "invalid_kaspa_public_key",
+  "value": {
+    "type": "voucher",
+    "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+    "clientPublicKey": "33",
+    "fundingOutpoint": {
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+      "index": 2
+    },
+    "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    "voucher": {
+      "amount": "2500000",
+      "signature": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+    }
+  }
+}

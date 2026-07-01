@@ -1,0 +1,27 @@
+{
+  "kind": "settlement-response",
+  "description": "Deposit-voucher success reports escrow funding in extra, not top-level amount.",
+  "response": {
+    "success": true,
+    "transaction": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "extra": {
+      "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "fundingAmount": "90000000",
+      "chargedAmount": "700000",
+      "channelState": {
+        "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+        "activeOutpoint": {
+          "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+          "index": 0
+        },
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "fundingAmount": "90000000",
+        "chargedCumulativeAmount": "700000",
+        "claimedCumulativeAmount": "0",
+        "signedMaxClaimable": "1000000"
+      }
+    }
+  }
+}

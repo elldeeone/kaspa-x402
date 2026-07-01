@@ -75,6 +75,8 @@ All x402 amount fields are decimal strings in atomic sompi units:
 
 This includes top-level `amount`, voucher amounts, funding amounts, charged amounts, claim amounts, and refund amounts unless a field explicitly says otherwise.
 
+Amount and DAA-height strings are canonical unsigned 64-bit decimal strings. They must be `"0"` or a non-zero digit followed by digits, with no leading zeroes, and their numeric value must not exceed `18446744073709551615`.
+
 Display layers may show KAS or tKAS. Wire fields must not use floating point KAS values.
 
 The optional metadata fields below may be included in `extra` for clarity, but clients must not require them to understand native KAS:

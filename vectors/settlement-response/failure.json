@@ -1,0 +1,11 @@
+{
+  "kind": "settlement-response",
+  "description": "Generic settlement failure response.",
+  "response": {
+    "success": false,
+    "errorReason": "invalid_kaspa_batch_cumulative_amount_mismatch",
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+  }
+}

@@ -1,0 +1,42 @@
+{
+  "kind": "tx-v1-plan",
+  "description": "Required transaction v1 vectors before mainnet covenant-backed support is complete.",
+  "requiredFutureVectors": [
+    {
+      "name": "upto-settlement-transaction-body",
+      "description": "Serialized transaction v1 body that consumes an upto authorization outpoint and pays the actual amount."
+    },
+    {
+      "name": "upto-zero-charge-refund-transaction-body",
+      "description": "Serialized transaction v1 body for the explicit zero-charge/no-value-moved success path."
+    },
+    {
+      "name": "batch-claim-transaction-body",
+      "description": "Serialized transaction v1 body that claims the active charged amount and creates the continuation output."
+    },
+    {
+      "name": "batch-refund-transaction-body",
+      "description": "Serialized transaction v1 body that refunds remaining escrow value after timeout."
+    },
+    {
+      "name": "transaction-id",
+      "description": "Canonical transaction id for each body."
+    },
+    {
+      "name": "tx-hash",
+      "description": "Canonical tx::hash value for each body."
+    },
+    {
+      "name": "sighash",
+      "description": "Signature hash preimage and digest for every signed input path."
+    },
+    {
+      "name": "compute-budget",
+      "description": "compute_budget values required for each covenant-backed path."
+    },
+    {
+      "name": "script-units-estimate",
+      "description": "Estimated script unit cost for claim, continuation, refund, and upto settlement paths."
+    }
+  ]
+}

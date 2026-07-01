@@ -1,0 +1,21 @@
+{
+  "kind": "negative",
+  "name": "voucher-signature-wrong-length",
+  "description": "Voucher signatures must be 64-byte hex strings.",
+  "schema": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
+  "expectedError": "invalid_kaspa_signature",
+  "value": {
+    "type": "voucher",
+    "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+    "clientPublicKey": "3333333333333333333333333333333333333333333333333333333333333333",
+    "fundingOutpoint": {
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+      "index": 2
+    },
+    "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+    "voucher": {
+      "amount": "2500000",
+      "signature": "66"
+    }
+  }
+}

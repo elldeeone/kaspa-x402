@@ -1,0 +1,15 @@
+{
+  "kind": "negative",
+  "name": "deposit-success-missing-commitment",
+  "description": "Deposit-voucher success must include funding, commitment, charge, and channel state together.",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "expectedError": "invalid_kaspa_settlement_response",
+  "value": {
+    "success": true,
+    "transaction": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+    "network": "kaspa:testnet-10",
+    "extra": {
+      "fundingAmount": "90000000"
+    }
+  }
+}

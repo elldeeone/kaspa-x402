@@ -1,0 +1,88 @@
+{
+  "kind": "x402-http",
+  "description": "HTTP header vector for a batch-settlement voucher-only request.",
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/report.pdf",
+      "description": "Research report",
+      "mimeType": "application/pdf"
+    },
+    "accepts": [
+      {
+        "scheme": "batch-settlement",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v1",
+          "templateId": "kaspa-x402-escrow-v1",
+          "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
+          "minDepositSompi": "90000000",
+          "refundTimeoutDaa": "123456789"
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "batch-settlement",
+      "network": "kaspa:testnet-10",
+      "amount": "1000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-escrow-v1",
+        "templateId": "kaspa-x402-escrow-v1",
+        "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
+        "minDepositSompi": "90000000",
+        "refundTimeoutDaa": "123456789"
+      }
+    },
+    "payload": {
+      "type": "voucher",
+      "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+      "clientPublicKey": "3333333333333333333333333333333333333333333333333333333333333333",
+      "fundingOutpoint": {
+        "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+        "index": 2
+      },
+      "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+      "voucher": {
+        "amount": "2500000",
+        "signature": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+      }
+    }
+  },
+  "settlementResponse": {
+    "success": true,
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "extra": {
+      "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "chargedAmount": "700000",
+      "channelState": {
+        "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+        "activeOutpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "fundingAmount": "90000000",
+        "chargedCumulativeAmount": "1700000",
+        "claimedCumulativeAmount": "0",
+        "signedMaxClaimable": "2500000"
+      }
+    }
+  },
+  "headers": {
+    "paymentRequired": "eyJhY2NlcHRzIjpbeyJhbW91bnQiOiIxMDAwMDAwIiwiYXNzZXQiOiJLQVMiLCJleHRyYSI6eyJiaW5kaW5nIjoia2FzcGEtZXNjcm93LXYxIiwibWluRGVwb3NpdFNvbXBpIjoiOTAwMDAwMDAiLCJyZWZ1bmRUaW1lb3V0RGFhIjoiMTIzNDU2Nzg5Iiwic2VydmVyUHVibGljS2V5IjoiNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWVzY3Jvdy12MSJ9LCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5VG8iOiJrYXNwYXRlc3Q6cXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcSIsInNjaGVtZSI6ImJhdGNoLXNldHRsZW1lbnQifV0sInJlc291cmNlIjp7ImRlc2NyaXB0aW9uIjoiUmVzZWFyY2ggcmVwb3J0IiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9wZGYiLCJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLmNvbS9yZXBvcnQucGRmIn0sIng0MDJWZXJzaW9uIjoyfQ==",
+    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIxMDAwMDAwIiwiYXNzZXQiOiJLQVMiLCJleHRyYSI6eyJiaW5kaW5nIjoia2FzcGEtZXNjcm93LXYxIiwibWluRGVwb3NpdFNvbXBpIjoiOTAwMDAwMDAiLCJyZWZ1bmRUaW1lb3V0RGFhIjoiMTIzNDU2Nzg5Iiwic2VydmVyUHVibGljS2V5IjoiNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWVzY3Jvdy12MSJ9LCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5VG8iOiJrYXNwYXRlc3Q6cXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcSIsInNjaGVtZSI6ImJhdGNoLXNldHRsZW1lbnQifSwicGF5bG9hZCI6eyJhY3RpdmVTY3JpcHRQdWJsaWNLZXkiOiIyMDc5YmU2NjdlZjlkY2JiYWM1NWEwNjI5NWNlODcwYjA3MDI5YmZjZGIyZGNlMjhkOTU5ZjI4MTViMTZmODE3OThhYyIsImNoYW5uZWxJZCI6IjFkZTBlZmE1OGY3OWFhZTE1NDdmYWQ1YmJmYTcyZTgzZTQ5YzUyYzczMmRiNWUzZjIxYThmYTNmNGEzZGRhYmMiLCJjbGllbnRQdWJsaWNLZXkiOiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwiZnVuZGluZ091dHBvaW50Ijp7ImluZGV4IjoyLCJ0eGlkIjoiMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMSJ9LCJ0eXBlIjoidm91Y2hlciIsInZvdWNoZXIiOnsiYW1vdW50IjoiMjUwMDAwMCIsInNpZ25hdHVyZSI6IjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2NjY2In19LCJ4NDAyVmVyc2lvbiI6Mn0=",
+    "paymentResponse": "eyJleHRyYSI6eyJjaGFubmVsU3RhdGUiOnsiYWN0aXZlT3V0cG9pbnQiOnsiaW5kZXgiOjIsInR4aWQiOiIxMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExIn0sImFjdGl2ZVNjcmlwdFB1YmxpY0tleSI6IjIwNzliZTY2N2VmOWRjYmJhYzU1YTA2Mjk1Y2U4NzBiMDcwMjliZmNkYjJkY2UyOGQ5NTlmMjgxNWIxNmY4MTc5OGFjIiwiY2hhbm5lbElkIjoiMWRlMGVmYTU4Zjc5YWFlMTU0N2ZhZDViYmZhNzJlODNlNDljNTJjNzMyZGI1ZTNmMjFhOGZhM2Y0YTNkZGFiYyIsImNoYXJnZWRDdW11bGF0aXZlQW1vdW50IjoiMTcwMDAwMCIsImNsYWltZWRDdW11bGF0aXZlQW1vdW50IjoiMCIsImZ1bmRpbmdBbW91bnQiOiI5MDAwMDAwMCIsInNpZ25lZE1heENsYWltYWJsZSI6IjI1MDAwMDAifSwiY2hhcmdlZEFtb3VudCI6IjcwMDAwMCIsImNvbW1pdG1lbnRJZCI6Ijc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3NzcifSwibmV0d29yayI6Imthc3BhOnRlc3RuZXQtMTAiLCJwYXllciI6Imthc3BhdGVzdDpxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxcXFxIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiIifQ=="
+  }
+}

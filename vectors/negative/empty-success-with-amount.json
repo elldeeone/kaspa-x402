@@ -1,0 +1,29 @@
+{
+  "kind": "negative",
+  "name": "empty-success-with-amount",
+  "description": "Voucher-only success must omit top-level amount because no on-chain value moved.",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "expectedError": "invalid_kaspa_settlement_response",
+  "value": {
+    "success": true,
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "amount": "700000",
+    "extra": {
+      "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "chargedAmount": "700000",
+      "channelState": {
+        "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+        "activeOutpoint": {
+          "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+          "index": 2
+        },
+        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "fundingAmount": "90000000",
+        "chargedCumulativeAmount": "1700000",
+        "claimedCumulativeAmount": "0",
+        "signedMaxClaimable": "2500000"
+      }
+    }
+  }
+}

@@ -1,0 +1,52 @@
+{
+  "kind": "settlement-response",
+  "description": "Corrective 402 carrying channel and voucher state.",
+  "response": {
+    "success": false,
+    "errorReason": "invalid_kaspa_batch_cumulative_amount_mismatch",
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+  },
+  "correctivePaymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/report.pdf",
+      "description": "Research report",
+      "mimeType": "application/pdf"
+    },
+    "accepts": [
+      {
+        "scheme": "batch-settlement",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v1",
+          "templateId": "kaspa-x402-escrow-v1",
+          "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
+          "minDepositSompi": "90000000",
+          "refundTimeoutDaa": "123456789",
+          "channelState": {
+            "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+            "activeOutpoint": {
+              "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+              "index": 2
+            },
+            "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+            "fundingAmount": "90000000",
+            "chargedCumulativeAmount": "1700000",
+            "claimedCumulativeAmount": "0",
+            "signedMaxClaimable": "2500000"
+          },
+          "voucherState": {
+            "amount": "2500000",
+            "signature": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+          }
+        }
+      }
+    ]
+  }
+}

@@ -19,10 +19,16 @@
     "covenants"
   ],
   "type": "module",
+  "scripts": {
+    "validate:schemas": "node scripts/validate-schemas.mjs"
+  },
   "workspaces": [
     "packages/*"
   ],
   "engines": {
     "node": ">=20"
+  },
+  "devDependencies": {
+    "ajv": "^8.17.1"
   }
 }

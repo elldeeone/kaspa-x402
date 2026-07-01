@@ -1,0 +1,35 @@
+{
+  "kind": "negative",
+  "name": "scheme-payload-mismatch",
+  "description": "The selected exact requirement cannot be satisfied by a batch voucher payload.",
+  "schema": "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+  "expectedError": "invalid_kaspa_payment_payload_type",
+  "value": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "1000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v1"
+      }
+    },
+    "payload": {
+      "type": "voucher",
+      "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+      "clientPublicKey": "3333333333333333333333333333333333333333333333333333333333333333",
+      "fundingOutpoint": {
+        "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+        "index": 2
+      },
+      "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+      "voucher": {
+        "amount": "2500000",
+        "signature": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
+      }
+    }
+  }
+}
