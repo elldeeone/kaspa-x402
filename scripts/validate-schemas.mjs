@@ -11,6 +11,7 @@ const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
+const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
 
 function readJson(file) {
@@ -189,6 +190,89 @@ function assertAcceptedOffered(paymentRequired, paymentPayload, label) {
   }
 }
 
+function assertHexBytes(value, label) {
+  if (typeof value !== "string" || !HEX_BYTES_PATTERN.test(value)) {
+    throw new Error(`${label} must be an even-length hex byte string`);
+  }
+}
+
+function assertHash32(value, label) {
+  if (typeof value !== "string" || !HEX32_PATTERN.test(value)) {
+    throw new Error(`${label} must be a 32-byte hex string`);
+  }
+}
+
+function assertTxV1Vector(file, vector, expectedKind) {
+  if (!vector.input || !vector.expected) {
+    throw new Error(`${file}: tx-v1 vectors require input and expected`);
+  }
+  const artifact = vector.expected;
+  if (artifact.format !== "kaspa-x402-tx-v1-reference-v1") {
+    throw new Error(`${file}: unexpected tx-v1 artifact format`);
+  }
+  if (artifact.kind !== expectedKind) {
+    throw new Error(`${file}: expected artifact kind ${expectedKind}`);
+  }
+  if (artifact.transaction?.version !== 1) {
+    throw new Error(`${file}: transaction version must be 1`);
+  }
+  if (!isUint64String(artifact.transaction.mass)) throw new Error(`${file}: transaction.mass must be a uint64 string`);
+  if (!Number.isSafeInteger(artifact.transaction.estimatedSerializedSize) || artifact.transaction.estimatedSerializedSize <= 0) {
+    throw new Error(`${file}: estimatedSerializedSize must be a positive safe integer`);
+  }
+  assertHexBytes(artifact.serializedTransaction, `${file}:serializedTransaction`);
+  assertHash32(artifact.transactionId, `${file}:transactionId`);
+  assertHash32(artifact.transactionHash, `${file}:transactionHash`);
+  assertEqual(artifact.serializedTransaction, artifact.hash?.preimage, `${file}:hash.preimage`);
+  assertEqual(artifact.transactionId, artifact.txid?.digest, `${file}:txid.digest`);
+  assertEqual(artifact.transactionHash, artifact.hash?.digest, `${file}:hash.digest`);
+  assertHash32(artifact.txid?.payloadDigest, `${file}:txid.payloadDigest`);
+  assertHexBytes(artifact.txid?.restPreimage, `${file}:txid.restPreimage`);
+  assertHash32(artifact.txid?.restDigest, `${file}:txid.restDigest`);
+  assertHexBytes(artifact.sighash?.preimage, `${file}:sighash.preimage`);
+  assertHash32(artifact.sighash?.digest, `${file}:sighash.digest`);
+  if (artifact.sighash?.hashType !== "all") {
+    throw new Error(`${file}: only sighash-all vectors are supported`);
+  }
+  const computeBudget = artifact.compute?.computeBudget;
+  const scriptUnitsEstimate = artifact.compute?.scriptUnitsEstimate;
+  const scriptUnitAllowance = artifact.compute?.scriptUnitAllowance;
+  if (!Number.isInteger(computeBudget) || computeBudget < 0 || computeBudget > 0xffff) {
+    throw new Error(`${file}: compute budget must fit in uint16`);
+  }
+  if (!Number.isSafeInteger(scriptUnitsEstimate) || scriptUnitsEstimate < 0) {
+    throw new Error(`${file}: script-unit estimate must be a non-negative integer`);
+  }
+  assertEqual(computeBudget * 10000 + 9999, scriptUnitAllowance, `${file}:scriptUnitAllowance`);
+  if (scriptUnitAllowance < scriptUnitsEstimate) {
+    throw new Error(`${file}: compute budget does not cover script-unit estimate`);
+  }
+  for (const [index, input] of (artifact.transaction.inputs ?? []).entries()) {
+    assertHash32(input.previousOutpoint?.txid, `${file}:inputs[${index}].previousOutpoint.txid`);
+    if (!isUint32(input.previousOutpoint?.index)) throw new Error(`${file}:inputs[${index}].previousOutpoint.index must fit in uint32`);
+    assertHexBytes(input.signatureScript, `${file}:inputs[${index}].signatureScript`);
+    if (!isUint64String(input.sequence)) throw new Error(`${file}:inputs[${index}].sequence must be a uint64 string`);
+    if (input.computeBudget !== computeBudget) throw new Error(`${file}:inputs[${index}].computeBudget must match artifact compute budget`);
+    assertHexBytes(input.utxo?.scriptPublicKey, `${file}:inputs[${index}].utxo.scriptPublicKey`);
+    if (!isUint64String(input.utxo?.amount)) throw new Error(`${file}:inputs[${index}].utxo.amount must be a uint64 string`);
+  }
+  for (const [index, output] of (artifact.transaction.outputs ?? []).entries()) {
+    if (!isUint64String(output.amount)) throw new Error(`${file}:outputs[${index}].amount must be a uint64 string`);
+    assertHexBytes(output.scriptPublicKey, `${file}:outputs[${index}].scriptPublicKey`);
+  }
+
+  if (expectedKind === "batch-claim") {
+    if (artifact.fee?.source !== "server-output") throw new Error(`${file}: claim fee source must be server-output`);
+    if ((artifact.transaction.outputs ?? []).length !== 2) throw new Error(`${file}: claim vector must have two outputs`);
+    assertHash32(artifact.voucherDigest, `${file}:voucherDigest`);
+    assertEqual(artifact.continuation?.outputIndex, 1, `${file}:continuation.outputIndex`);
+    assertEqual(artifact.continuation?.outpoint?.txid, artifact.transactionId, `${file}:continuation.outpoint.txid`);
+  } else if (expectedKind === "batch-refund") {
+    if (artifact.fee?.source !== "refund-output") throw new Error(`${file}: refund fee source must be refund-output`);
+    if ((artifact.transaction.outputs ?? []).length !== 1) throw new Error(`${file}: refund vector must have one output`);
+  }
+}
+
 function validateVector(ajv, file, vector) {
   switch (vector.kind) {
     case "voucher-digest": {
@@ -278,6 +362,14 @@ function validateVector(ajv, file, vector) {
       if (!Array.isArray(vector.requiredFutureVectors) || vector.requiredFutureVectors.length === 0) {
         throw new Error(`${file}: tx-v1 plan must list required future vectors`);
       }
+      break;
+    }
+    case "tx-v1-batch-claim": {
+      assertTxV1Vector(file, vector, "batch-claim");
+      break;
+    }
+    case "tx-v1-batch-refund": {
+      assertTxV1Vector(file, vector, "batch-refund");
       break;
     }
     default:

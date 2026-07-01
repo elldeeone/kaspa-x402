@@ -5,21 +5,31 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  CLAIM_COMPUTE_BUDGET,
+  CLAIM_SCRIPT_UNITS_ESTIMATE,
   ESCROW_VOUCHER_DOMAIN,
   ESCROW_VOUCHER_DOMAIN_TAG,
+  REFUND_COMPUTE_BUDGET,
+  REFUND_SCRIPT_UNITS_ESTIMATE,
+  buildBatchClaimTxV1Artifact,
+  buildBatchRefundTxV1Artifact,
   buildClaimArgs,
   buildEscrowRedeemScript,
   buildRefundArgs,
+  checkEscrowFixtureReproducibility,
+  computeBudgetForScriptUnits,
   deriveEscrowAddress,
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
+  scriptUnitAllowance,
   serializedScriptPublicKey,
   validateClaimOutputPlan,
   validateRefundOutputPlan,
+  vectorBackedBatchTransactionBuilder,
   voucherDigest,
   voucherPreimage,
 } from "../src/index.js";
-import type { EscrowTemplateParams } from "../src/index.js";
+import type { BatchClaimTxV1Artifact, BatchClaimTxV1Input, BatchRefundTxV1Artifact, BatchRefundTxV1Input, EscrowTemplateParams } from "../src/index.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
@@ -29,6 +39,17 @@ type Fixture = {
   sourceSha256: string;
   domainTag: string;
   domainTagHash: string;
+  compiler: {
+    checkedCommit: string;
+  };
+  computeBudget: {
+    claim: number;
+    refund: number;
+  };
+  scriptUnitsEstimate: {
+    claim: number;
+    refund: number;
+  };
   sample: {
     params: EscrowTemplateParams;
     redeemScript: string;
@@ -64,6 +85,10 @@ function fixture(): Fixture {
   return JSON.parse(fs.readFileSync(path.join(repoRoot, "contracts/fixtures/kaspa-x402-escrow-v1.json"), "utf8")) as Fixture;
 }
 
+function vector<TInput, TExpected>(relativePath: string): { input: TInput; expected: TExpected } {
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8")) as { input: TInput; expected: TExpected };
+}
+
 describe("escrow covenant template", () => {
   it("keeps fixture source and domain hashes reproducible", () => {
     const item = fixture();
@@ -72,6 +97,19 @@ describe("escrow covenant template", () => {
     expect(crypto.createHash("sha256").update(ESCROW_VOUCHER_DOMAIN).digest("hex")).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
     expect(item.domainTag).toBe(ESCROW_VOUCHER_DOMAIN);
     expect(item.domainTagHash).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
+    expect(checkEscrowFixtureReproducibility(item, source).ok).toBe(true);
+  });
+
+  it("keeps Toccata compute budgets aligned with script-unit estimates", () => {
+    const item = fixture();
+    expect(computeBudgetForScriptUnits(CLAIM_SCRIPT_UNITS_ESTIMATE)).toBe(20);
+    expect(computeBudgetForScriptUnits(REFUND_SCRIPT_UNITS_ESTIMATE)).toBe(10);
+    expect(CLAIM_COMPUTE_BUDGET).toBe(20);
+    expect(REFUND_COMPUTE_BUDGET).toBe(10);
+    expect(scriptUnitAllowance(CLAIM_COMPUTE_BUDGET)).toBeGreaterThanOrEqual(CLAIM_SCRIPT_UNITS_ESTIMATE);
+    expect(scriptUnitAllowance(REFUND_COMPUTE_BUDGET)).toBeGreaterThanOrEqual(REFUND_SCRIPT_UNITS_ESTIMATE);
+    expect(item.computeBudget).toEqual({ claim: CLAIM_COMPUTE_BUDGET, refund: REFUND_COMPUTE_BUDGET });
+    expect(item.scriptUnitsEstimate).toEqual({ claim: CLAIM_SCRIPT_UNITS_ESTIMATE, refund: REFUND_SCRIPT_UNITS_ESTIMATE });
   });
 
   it("builds the fixture redeem script deterministically", () => {
@@ -233,5 +271,141 @@ describe("escrow covenant template", () => {
         expectedRefundScriptPublicKeyHash: item.sample.refundScriptPublicKey.hash,
       }),
     ).toThrow("refund input sequence must be 0");
+  });
+
+  it("reproduces the batch claim transaction-v1 vector", () => {
+    const item = vector<BatchClaimTxV1Input, BatchClaimTxV1Artifact>("vectors/tx-v1/batch-claim.json");
+    expect(buildBatchClaimTxV1Artifact(item.input)).toEqual(item.expected);
+    expect(vectorBackedBatchTransactionBuilder.buildBatchClaimTxV1(item.input)).toEqual(item.expected);
+    expect(item.expected.fee.source).toBe("server-output");
+    expect(item.expected.fee.serverOutputAmount).toBe("24999000");
+    expect(item.expected.fee.continuationOutputAmount).toBe("65000000");
+    expect(item.expected.transaction.inputs[0]?.computeBudget).toBe(CLAIM_COMPUTE_BUDGET);
+    expect(item.expected.transaction.mass).toBe("44274");
+    expect(item.expected.transaction.estimatedSerializedSize).toBe(734);
+  });
+
+  it("rejects malformed batch claim transaction-v1 plans", () => {
+    const item = vector<BatchClaimTxV1Input, BatchClaimTxV1Artifact>("vectors/tx-v1/batch-claim.json");
+    const outputs = item.expected.transaction.outputs;
+
+    expect(() =>
+      buildBatchClaimTxV1Artifact({
+        ...item.input,
+        outputs: [outputs[1]!, outputs[0]!],
+      }),
+    ).toThrow("claim output 0 must be the server output");
+    expect(() =>
+      buildBatchClaimTxV1Artifact({
+        ...item.input,
+        outputs: [
+          outputs[0]!,
+          {
+            ...outputs[1]!,
+            scriptPublicKey: fixture().sample.refundScriptPublicKey.serialized,
+          },
+        ],
+      }),
+    ).toThrow("claim output 1 must be the continuation escrow output");
+    expect(() =>
+      buildBatchClaimTxV1Artifact({
+        ...item.input,
+        outputs: [
+          outputs[0]!,
+          {
+            ...outputs[1]!,
+            amount: "64999000",
+          },
+        ],
+      }),
+    ).toThrow("fees must come from the server output");
+    expect(() =>
+      buildBatchClaimTxV1Artifact({
+        ...item.input,
+        computeBudget: undefined,
+      } as unknown as BatchClaimTxV1Input),
+    ).toThrow("claim compute budget is required");
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, claimAmount: item.input.activeAmount, voucherAmount: item.input.activeAmount })).toThrow(
+      "claim continuation output must be positive",
+    );
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, voucherAmount: "90000001" })).toThrow(
+      "voucher amount cannot exceed active input amount",
+    );
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, mass: "734" })).toThrow("storage mass must match contextual storage mass");
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, gas: "1" })).toThrow("batch transaction-v1 artifacts must use zero gas");
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, subnetworkId: "11".repeat(20) })).toThrow(
+      "batch transaction-v1 artifacts must use the native subnetwork",
+    );
+    expect(() =>
+      buildBatchClaimTxV1Artifact({
+        ...item.input,
+        outputs: [
+          item.expected.transaction.outputs[0]!,
+          {
+            ...item.expected.transaction.outputs[1]!,
+            covenant: {
+              authorizingInput: 0,
+              covenantId: "11".repeat(32),
+            },
+          },
+        ],
+      }),
+    ).toThrow("batch transaction-v1 artifacts do not support output covenant bindings yet");
+  });
+
+  it("reproduces the batch refund transaction-v1 vector", () => {
+    const item = vector<BatchRefundTxV1Input, BatchRefundTxV1Artifact>("vectors/tx-v1/batch-refund.json");
+    expect(buildBatchRefundTxV1Artifact(item.input)).toEqual(item.expected);
+    expect(vectorBackedBatchTransactionBuilder.buildBatchRefundTxV1(item.input)).toEqual(item.expected);
+    expect(item.expected.fee.source).toBe("refund-output");
+    expect(item.expected.fee.refundOutputAmount).toBe("64999100");
+    expect(item.expected.transaction.inputs[0]?.computeBudget).toBe(REFUND_COMPUTE_BUDGET);
+    expect(item.expected.transaction.mass).toBe("0");
+    expect(item.expected.transaction.estimatedSerializedSize).toBe(607);
+  });
+
+  it("rejects malformed batch refund transaction-v1 plans", () => {
+    const item = vector<BatchRefundTxV1Input, BatchRefundTxV1Artifact>("vectors/tx-v1/batch-refund.json");
+
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, lockTimeDaa: "123455" })).toThrow(
+      "refund lock time must be greater than or equal to timeoutDaa",
+    );
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, inputSequence: "1" })).toThrow("refund input sequence must be 0");
+    expect(() =>
+      buildBatchRefundTxV1Artifact({
+        ...item.input,
+        computeBudget: undefined,
+      } as unknown as BatchRefundTxV1Input),
+    ).toThrow("refund compute budget is required");
+    expect(() =>
+      buildBatchRefundTxV1Artifact({
+        ...item.input,
+        outputs: [
+          {
+            ...item.expected.transaction.outputs[0]!,
+            scriptPublicKey: fixture().sample.payoutScriptPublicKey.serialized,
+          },
+        ],
+      }),
+    ).toThrow("refund output script public key must match");
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, mass: "607" })).toThrow("storage mass must match contextual storage mass");
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, gas: "1" })).toThrow("batch transaction-v1 artifacts must use zero gas");
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, subnetworkId: "11".repeat(20) })).toThrow(
+      "batch transaction-v1 artifacts must use the native subnetwork",
+    );
+    expect(() =>
+      buildBatchRefundTxV1Artifact({
+        ...item.input,
+        outputs: [
+          {
+            ...item.expected.transaction.outputs[0]!,
+            covenant: {
+              authorizingInput: 0,
+              covenantId: "11".repeat(32),
+            },
+          },
+        ],
+      }),
+    ).toThrow("batch transaction-v1 artifacts do not support output covenant bindings yet");
   });
 });

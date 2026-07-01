@@ -47,8 +47,8 @@
     }
   ],
   "computeBudget": {
-    "claim": 3,
-    "refund": 1
+    "claim": 20,
+    "refund": 10
   },
   "scriptUnitsEstimate": {
     "claim": 200544,

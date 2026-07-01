@@ -68,10 +68,12 @@ export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v1";
 export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v1";
 export const ESCROW_VOUCHER_DOMAIN_TAG = "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12";
 
-export const CLAIM_COMPUTE_BUDGET = 3;
-export const REFUND_COMPUTE_BUDGET = 1;
 export const CLAIM_SCRIPT_UNITS_ESTIMATE = 200_544;
 export const REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
+export const SCRIPT_UNITS_PER_COMPUTE_BUDGET = 10_000;
+export const FREE_SCRIPT_UNITS_PER_INPUT = 9_999;
+export const CLAIM_COMPUTE_BUDGET = computeBudgetForScriptUnits(CLAIM_SCRIPT_UNITS_ESTIMATE);
+export const REFUND_COMPUTE_BUDGET = computeBudgetForScriptUnits(REFUND_SCRIPT_UNITS_ESTIMATE);
 
 const U32_MAX = 0xffff_ffff;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
@@ -215,6 +217,27 @@ export function validateRefundOutputPlan(plan: RefundOutputPlan): true {
     throw new Error("refund output script public key must match the configured refund hash");
   }
   return true;
+}
+
+export function computeBudgetForScriptUnits(scriptUnits: number): number {
+  if (!Number.isSafeInteger(scriptUnits) || scriptUnits < 0) {
+    throw new Error("script units must be a non-negative safe integer");
+  }
+  if (scriptUnits <= FREE_SCRIPT_UNITS_PER_INPUT) {
+    return 0;
+  }
+  const budget = Math.ceil((scriptUnits - FREE_SCRIPT_UNITS_PER_INPUT) / SCRIPT_UNITS_PER_COMPUTE_BUDGET);
+  if (budget > 0xffff) {
+    throw new Error("script units exceed the v1 compute budget range");
+  }
+  return budget;
+}
+
+export function scriptUnitAllowance(computeBudget: number): number {
+  if (!Number.isInteger(computeBudget) || computeBudget < 0 || computeBudget > 0xffff) {
+    throw new Error("compute budget must fit in uint16");
+  }
+  return computeBudget * SCRIPT_UNITS_PER_COMPUTE_BUDGET + FREE_SCRIPT_UNITS_PER_INPUT;
 }
 
 export function payToScriptHashScript(redeemScript: string | Uint8Array): ScriptPublicKey {
