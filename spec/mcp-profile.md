@@ -2,7 +2,9 @@
 
 Status: draft
 
-Kaspa x402 treats MCP as a first-class transport for paid tools.
+Kaspa x402 treats MCP as a first-class transport for paid tools using `exact`, `upto`, and `batch-settlement`.
+
+MCP tools should advertise the cheapest safe scheme for the tool call. Fixed-price tools can use `exact`; variable token or compute tools should use `upto`; frequently called metered tools should also offer `batch-settlement`.
 
 ## Payment Required
 
@@ -31,4 +33,3 @@ result._meta["x402/payment-response"] = SettleResponse
 ```
 
 Servers should require the `payment-identifier` extension for idempotent agent retries.
-

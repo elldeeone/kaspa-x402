@@ -1,0 +1,50 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+  "title": "Kaspa x402 PaymentRequirements Extra",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": ["binding"],
+      "properties": {
+        "binding": {
+          "const": "kaspa-exact-v1"
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["binding"],
+      "properties": {
+        "binding": {
+          "const": "kaspa-upto-v1"
+        },
+        "serverPublicKey": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "authorizationTimeoutDaa": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "additionalProperties": true
+    },
+    {
+      "$ref": "kaspa-batch-extra.schema.json"
+    }
+  ]
+}

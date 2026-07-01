@@ -3,10 +3,50 @@
   "$id": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
   "title": "Kaspa x402 Payment Payload",
   "type": "object",
-  "required": ["type", "channelId", "clientPublicKey"],
+  "required": ["type"],
   "properties": {
     "type": {
-      "enum": ["deposit-voucher", "voucher", "refund", "claim"]
+      "enum": ["exact-transfer", "upto-authorization", "deposit-voucher", "voucher", "refund", "claim"]
+    },
+    "payerAddress": {
+      "type": "string"
+    },
+    "transaction": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]+$"
+    },
+    "requestHash": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "authorization": {
+      "type": "object",
+      "properties": {
+        "maxAmountSompi": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "payTo": {
+          "type": "string"
+        },
+        "validAfterDaa": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "validBeforeDaa": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "nonce": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{128}$"
+        }
+      },
+      "additionalProperties": true
     },
     "channelId": {
       "type": "string",
@@ -56,4 +96,3 @@
   },
   "additionalProperties": true
 }
-

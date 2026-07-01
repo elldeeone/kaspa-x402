@@ -5,16 +5,34 @@ Status: draft
 Kaspa x402 errors use the prefix:
 
 ```text
-invalid_kaspa_batch_*
+invalid_kaspa_x402_*
 ```
 
-Initial error set:
+Common initial error set:
 
 ```text
-invalid_kaspa_batch_scheme
-invalid_kaspa_batch_network
-invalid_kaspa_batch_asset
-invalid_kaspa_batch_binding
+invalid_kaspa_x402_scheme
+invalid_kaspa_x402_network
+invalid_kaspa_x402_asset
+invalid_kaspa_x402_amount
+invalid_kaspa_x402_pay_to
+invalid_kaspa_x402_binding
+invalid_kaspa_x402_payload
+invalid_kaspa_x402_payment_identifier_conflict
+invalid_kaspa_x402_settlement_failed
+```
+
+Scheme-specific initial error set:
+
+```text
+invalid_kaspa_exact_transaction
+invalid_kaspa_exact_payment_output
+invalid_kaspa_exact_replay
+invalid_kaspa_upto_authorization
+invalid_kaspa_upto_expired
+invalid_kaspa_upto_recipient
+invalid_kaspa_upto_max_amount
+invalid_kaspa_upto_replay
 invalid_kaspa_batch_template
 invalid_kaspa_batch_channel_id
 invalid_kaspa_batch_funding_outpoint
@@ -27,10 +45,7 @@ invalid_kaspa_batch_cumulative_amount_mismatch
 invalid_kaspa_batch_cumulative_below_claimed
 invalid_kaspa_batch_insufficient_channel_balance
 invalid_kaspa_batch_channel_busy
-invalid_kaspa_batch_payment_identifier_conflict
 invalid_kaspa_batch_refund_not_mature
 invalid_kaspa_batch_claim_dust
 invalid_kaspa_batch_compute_budget
-invalid_kaspa_batch_settlement_failed
 ```
-

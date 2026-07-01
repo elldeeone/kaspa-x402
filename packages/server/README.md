@@ -1,6 +1,5 @@
 # @kaspa-x402/server
 
-Server middleware for x402 v2 `batch-settlement` on Kaspa, including voucher verification, idempotency, channel state, and claim helpers.
+Server middleware for x402 v2 on Kaspa, including `exact`, `upto`, and `batch-settlement` payment flows.
 
 This package is not implemented yet.
-

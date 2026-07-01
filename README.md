@@ -1,27 +1,40 @@
 # Kaspa x402
 
-Kaspa x402 is a proposed x402 v2 network binding for native Kaspa micropayments.
+Kaspa x402 is a proposed set of x402 v2 network bindings for native Kaspa payments.
 
-The initial direction is:
+The initial standard targets three first-class x402 schemes:
+
+```json
+{
+  "scheme": "exact",
+  "network": "kaspa:<network>",
+  "asset": "KAS",
+  "amount": "<sompi>"
+}
+```
+
+```json
+{
+  "scheme": "upto",
+  "network": "kaspa:<network>",
+  "asset": "KAS",
+  "amount": "<max sompi>"
+}
+```
 
 ```json
 {
   "scheme": "batch-settlement",
   "network": "kaspa:<network>",
   "asset": "KAS",
+  "amount": "<max per-request sompi>",
   "extra": {
     "binding": "kaspa-escrow-v1"
   }
 }
 ```
 
-The binding is designed for capital-backed escrow channels on Kaspa:
-
-1. A client funds a Kaspa covenant escrow once.
-2. Each paid request carries a cumulative signed voucher.
-3. The server verifies the voucher and serves immediately.
-4. The server claims later.
-5. The client can refund unspent funds after the timeout.
+Use `exact` for fixed-price one-shot purchases, `upto` for one-shot variable usage with a client-authorized cap, and `batch-settlement` for repeated micropayments backed by escrow/channel state.
 
 This repository is starting as a standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
 
@@ -42,7 +55,7 @@ examples/   Runnable examples
 docs/       Architecture notes and roadmap
 ```
 
-Start with [spec/kaspa-batch-settlement-v1.md](spec/kaspa-batch-settlement-v1.md), then read the HTTP, MCP, facilitator, and error profiles in `spec/`.
+Start with [spec/kaspa-x402-v1.md](spec/kaspa-x402-v1.md), then read the scheme bindings and transport profiles in `spec/`.
 
 ## Package Scope
 
@@ -67,5 +80,7 @@ Initial package placeholders:
 - x402 v2: https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md
 - x402 HTTP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md
 - x402 MCP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md
+- x402 exact: https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact.md
+- x402 upto: https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md
 - x402 batch-settlement: https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md
 - Kaspa Toccata docs: https://github.com/kaspanet/docs/tree/main/content/docs/toccata
