@@ -17,7 +17,15 @@ export type KaspaX402ErrorCode =
   | "invalid_kaspa_channel_id"
   | "invalid_kaspa_payment_identifier"
   | "missing_kaspa_payment_identifier"
-  | "kaspa_payment_identifier_conflict";
+  | "kaspa_payment_identifier_conflict"
+  | "invalid_kaspa_upto_authorization"
+  | "invalid_kaspa_upto_expired"
+  | "invalid_kaspa_upto_recipient"
+  | "invalid_kaspa_upto_max_amount"
+  | "invalid_kaspa_upto_replay"
+  | "invalid_kaspa_upto_settlement_amount"
+  | "invalid_kaspa_upto_authorization_outpoint"
+  | "invalid_kaspa_upto_template";
 
 export class KaspaX402Error extends Error {
   readonly code: KaspaX402ErrorCode;

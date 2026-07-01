@@ -7,6 +7,7 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   sha256Hex,
+  uptoAuthorizationDigest,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
@@ -15,6 +16,7 @@ import {
   type Hash32Hex,
   type NetworkId,
   type PaymentPayload,
+  type UptoPaymentRequirements,
 } from "@kaspa-x402/core";
 import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
@@ -32,6 +34,8 @@ import {
   type ServerChannelStore,
   type SettlementCommit,
   type SettlementFinality,
+  type UptoPendingAuthorizationRecord,
+  type UptoSettlementCommit,
 } from "../src/index.js";
 
 const SERVER_KEY = "11".repeat(32);
@@ -42,6 +46,8 @@ const TOP_UP_TX = "99".repeat(32);
 const CLAIM_TX = "55".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
+const UPTO_TX_ID = "88".repeat(32);
+const UPTO_SCRIPT = "0000" + "12".repeat(34);
 const RESOURCE = { url: "https://api.example.test/data" };
 
 describe("direct-mode server", () => {
@@ -76,6 +82,25 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.scheme).toBe("exact");
     expect(required.accepts[0]?.amount).toBe("75");
     expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
+  });
+
+  it("offers upto requirements for capped variable paid routes", async () => {
+    const { server } = makeServer({ amount: "100", authorizationTimeoutDaa: "1500" });
+
+    const response = await server.handlePaidRequest({ url: RESOURCE.url, paymentAmount: "75", paymentScheme: "upto" }, async () => ({
+      body: "secret",
+    }));
+
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts[0]?.scheme).toBe("upto");
+    expect(required.accepts[0]?.amount).toBe("75");
+    expect(required.accepts[0]?.extra).toMatchObject({
+      binding: "kaspa-upto-v1",
+      authorizationTemplateId: "kaspa-x402-upto-v1",
+      serverPublicKey: SERVER_KEY,
+      authorizationTimeoutDaa: "1500",
+    });
   });
 
   it("accepts an exact transfer and commits replay state after handler success", async () => {
@@ -239,6 +264,568 @@ describe("direct-mode server", () => {
     expect(response.body).toEqual({ error: "invalid_kaspa_x402_amount" });
     expect(executed).toBe(false);
     await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
+  });
+
+  it("accepts an upto authorization and commits nonzero settlement after handler success", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "variable",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("variable");
+    const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(settlement.transaction).toBe(UPTO_TX_ID);
+    expect(settlement.amount).toBe("70");
+    expect(settlement.extra?.authorizationOutpoint).toEqual({ txid: UPTO_TX_ID, index: 0 });
+    expect(settlement.extra?.maxAmountSompi).toBe("100");
+    const stored = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(stored?.chargedAmount).toBe("70");
+    expect(stored?.response.status).toBe(200);
+    expect(setup.chain.sendCount).toBe(1);
+  });
+
+  it("commits zero-charge upto consumption without broadcasting", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "free",
+      chargedAmount: "0",
+    }));
+
+    expect(response.status).toBe(200);
+    const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(settlement.transaction).toBe("");
+    expect(settlement.amount).toBeUndefined();
+    expect(settlement.extra?.chargedAmount).toBe("0");
+    expect(setup.chain.sendCount).toBe(0);
+    const stored = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(stored?.chargedAmount).toBe("0");
+  });
+
+  it("rejects invalid upto signatures without executing the handler", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32), badSignature: true });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executed = true;
+      return { body: "wrong" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_signature" });
+    expect(executed).toBe(false);
+    await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+  });
+
+  it("rejects expired upto authorizations", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    setup.chain.daa = "1501";
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executed = true;
+      return {};
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_upto_expired" });
+    expect(executed).toBe(false);
+  });
+
+  it("rejects upto recipient, server-key, and max-amount mismatches", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const recipient = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32), payTo: "kaspatest:wrong" });
+    const wrongRecipient = await setup.server.handlePaidRequest(requestWithPayment(recipient, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "wrong",
+    }));
+    expect(wrongRecipient.status).toBe(402);
+    expect(wrongRecipient.body).toEqual({ error: "invalid_kaspa_upto_recipient" });
+
+    const serverKey = makeUptoPayment(setup, { amount: "100", requestHash: "13".repeat(32), serverPublicKey: "aa".repeat(32), index: 1 });
+    const wrongServerKey = await setup.server.handlePaidRequest(requestWithPayment(serverKey, { paymentScheme: "upto", requestHash: "13".repeat(32) }), async () => ({
+      body: "wrong",
+    }));
+    expect(wrongServerKey.status).toBe(402);
+    expect(wrongServerKey.body).toEqual({ error: "invalid_kaspa_public_key" });
+
+    const maxAmount = makeUptoPayment(setup, { amount: "100", requestHash: "14".repeat(32), maxAmount: "99", index: 2 });
+    const wrongMax = await setup.server.handlePaidRequest(requestWithPayment(maxAmount, { paymentScheme: "upto", requestHash: "14".repeat(32) }), async () => ({
+      body: "wrong",
+    }));
+    expect(wrongMax.status).toBe(402);
+    expect(wrongMax.body).toEqual({ error: "invalid_kaspa_upto_max_amount" });
+  });
+
+  it("rejects reused upto outpoints for different requests", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "first",
+      chargedAmount: "70",
+    }));
+
+    let executed = false;
+    const replay = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "13".repeat(32) }), async () => {
+      executed = true;
+      return { body: "wrong" };
+    });
+
+    expect(replay.status).toBe(409);
+    expect(replay.body).toEqual({ error: "upto_authorization_replay" });
+    expect(executed).toBe(false);
+  });
+
+  it("rejects reused upto nonces on different outpoints", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const first = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32), index: 0, nonce: SALT });
+    const second = makeUptoPayment(setup, { amount: "100", requestHash: "13".repeat(32), index: 1, nonce: SALT });
+    await setup.server.handlePaidRequest(requestWithPayment(first, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      chargedAmount: "70",
+    }));
+
+    let executed = false;
+    const replay = await setup.server.handlePaidRequest(requestWithPayment(second, { paymentScheme: "upto", requestHash: "13".repeat(32) }), async () => {
+      executed = true;
+      return {};
+    });
+
+    expect(replay.status).toBe(409);
+    expect(executed).toBe(false);
+  });
+
+  it("does not consume upto authorization when the handler fails", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      throw new Error("handler failed");
+    });
+
+    expect(response.status).toBe(500);
+    await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+  });
+
+  it("returns cached idempotent upto responses without double executing", async () => {
+    const setup = makeServer({ requirePaymentIdentifier: true, authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0",
+    });
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "cached", chargedAmount: "70" };
+    });
+    const second = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body).toBe("cached");
+    expect(executions).toBe(1);
+  });
+
+  it("does not broadcast nonzero upto settlement when reservation persistence fails", async () => {
+    const store = new FailingUptoReserveStore();
+    const setup = makeServer({ store, authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "charged",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(500);
+    expect(setup.chain.sendCount).toBe(0);
+    await expect(store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+  });
+
+  it("keeps a recoverable upto reservation when broadcast fails", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    setup.chain.sendFailure = new Error("node unavailable");
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executions = 0;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return {
+        body: "charged",
+        chargedAmount: "70",
+      };
+    });
+
+    expect(response.status).toBe(500);
+    expect(setup.chain.sendCount).toBe(1);
+    const pending = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(pending?.status).toBe("pending");
+    expect(pending?.response.status).toBe(200);
+
+    const stillPending = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+    expect(stillPending.status).toBe(202);
+    expect(stillPending.body).toEqual({ error: "upto_authorization_pending" });
+    const stillPendingSettlement = decodePaymentResponseHeader(stillPending.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(stillPendingSettlement.success).toBe(false);
+    expect(stillPendingSettlement.errorReason).toBe("upto_authorization_pending");
+    expect(stillPendingSettlement.transaction).toBe(UPTO_TX_ID);
+    expect(stillPendingSettlement.amount).toBe("70");
+    expect(stillPendingSettlement.extra?.finality).toBe("mempool");
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(2);
+
+    setup.chain.sendFailure = undefined;
+    const recovered = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toBe("charged");
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(3);
+  });
+
+  it("keeps a recoverable upto broadcast when broadcast finality is insufficient", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    setup.chain.finality = "broadcast";
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executions = 0;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return {
+        body: "charged",
+        chargedAmount: "70",
+      };
+    });
+
+    expect(response.status).toBe(202);
+    expect(response.body).toEqual({ error: "upto_authorization_pending" });
+    const pendingSettlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(pendingSettlement.success).toBe(false);
+    expect(pendingSettlement.errorReason).toBe("upto_authorization_pending");
+    expect(pendingSettlement.transaction).toBe(UPTO_TX_ID);
+    expect(pendingSettlement.extra?.finality).toBe("mempool");
+    expect(setup.chain.sendCount).toBe(1);
+    const broadcast = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(broadcast?.status).toBe("broadcast");
+    expect(broadcast?.finality).toBe("broadcast");
+
+    setup.chain.finality = "accepted";
+    const recovered = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toBe("charged");
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(2);
+  });
+
+  it("uses pending upto payment identifiers to block fresh authorization retries", async () => {
+    const setup = makeServer({ requirePaymentIdentifier: true, authorizationTimeoutDaa: "1500" });
+    setup.chain.finality = "broadcast";
+    const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
+    const first = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 0,
+      nonce: "33".repeat(32),
+    });
+    const second = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 1,
+      nonce: "34".repeat(32),
+    });
+    let executions = 0;
+
+    const pending = await setup.server.handlePaidRequest(requestWithPayment(first, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "charged", chargedAmount: "70" };
+    });
+    const retry = await setup.server.handlePaidRequest(requestWithPayment(second, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(pending.status).toBe(202);
+    expect(retry.status).toBe(202);
+    expect(retry.body).toEqual({ error: "upto_authorization_pending" });
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(2);
+  });
+
+  it("does not release recovered upto content to a mismatched same-id retry", async () => {
+    const setup = makeServer({ requirePaymentIdentifier: true, authorizationTimeoutDaa: "1500" });
+    setup.chain.finality = "broadcast";
+    const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe2";
+    const first = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 0,
+      nonce: "33".repeat(32),
+    });
+    const second = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 1,
+      nonce: "34".repeat(32),
+    });
+    let executions = 0;
+
+    const pending = await setup.server.handlePaidRequest(requestWithPayment(first, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "charged", chargedAmount: "70" };
+    });
+    setup.chain.finality = "accepted";
+    const retry = await setup.server.handlePaidRequest(requestWithPayment(second, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(pending.status).toBe(202);
+    expect(retry.status).toBe(409);
+    expect(retry.body).toEqual({ error: "payment_identifier_conflict" });
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(2);
+    const settled = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(settled?.status).toBe("settled");
+  });
+
+  it("recovers pending upto identifiers with the original finality requirement", async () => {
+    const setup = makeServer({ requirePaymentIdentifier: true, acceptedFinality: "confirmed", authorizationTimeoutDaa: "1500" });
+    setup.chain.finality = "accepted";
+    const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe1";
+    const first = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 0,
+      nonce: "33".repeat(32),
+    });
+    setup.chain.setUtxo({
+      outpoint: { txid: UPTO_TX_ID, index: 0 },
+      amount: "100",
+      scriptPublicKey: UPTO_SCRIPT,
+      finality: "confirmed",
+    });
+    const retry = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      paymentIdentifier,
+      index: 1,
+      nonce: "34".repeat(32),
+    });
+    (retry.accepted as UptoPaymentRequirements).extra.finality = "accepted";
+    let executions = 0;
+
+    const pending = await setup.server.handlePaidRequest(requestWithPayment(first, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "charged", chargedAmount: "70" };
+    });
+    const loweredRetry = await setup.server.handlePaidRequest(requestWithPayment(retry, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(pending.status).toBe(202);
+    expect(loweredRetry.status).toBe(202);
+    expect(loweredRetry.body).toEqual({ error: "upto_authorization_pending" });
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(2);
+  });
+
+  it("leaves a recoverable upto broadcast when final settlement persistence fails after broadcast", async () => {
+    const store = new FailingUptoCommitStore();
+    const setup = makeServer({ store, authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "charged",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(500);
+    expect(setup.chain.sendCount).toBe(1);
+    const broadcast = await store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(broadcast?.status).toBe("broadcast");
+    expect(broadcast?.chargedAmount).toBe("70");
+    expect(broadcast?.response.status).toBe(200);
+  });
+
+  it("recovers a broadcast upto settlement on retry without re-executing the handler", async () => {
+    const store = new FailingUptoCommitStore(1);
+    const setup = makeServer({ store, authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return {
+        body: "charged",
+        chargedAmount: "70",
+      };
+    });
+    const second = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(200);
+    expect(second.body).toBe("charged");
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(1);
+    const settled = await store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
+    expect(settled?.status).toBe("settled");
+  });
+
+  it("rejects upto settlement transactions whose verified output does not pay the accepted recipient", async () => {
+    const setup = makeServer({
+      authorizationTimeoutDaa: "1500",
+      uptoSettlementVerifier: {
+        verifyUptoSettlementTransaction({ chargeAmount, payload }) {
+          return {
+            transactionId: UPTO_TX_ID,
+            inputAmount: payload.authorizationAmountSompi,
+            chargeAmount,
+            feeAmount: "0",
+            outputCount: 2,
+            authorizationOutpoint: payload.authorizationOutpoint,
+            paymentOutput: {
+              outputIndex: 0,
+              amount: chargeAmount,
+              scriptPublicKey: "0000" + "88".repeat(32),
+            },
+            refundOutput: {
+              outputIndex: 1,
+              amount: "30",
+              scriptPublicKey: "0000" + "99".repeat(32),
+            },
+          };
+        },
+      },
+    });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "wrong",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(setup.chain.sendCount).toBe(0);
+  });
+
+  it("rejects upto settlement transactions that reuse an output for payment and refund", async () => {
+    const setup = makeServer({
+      authorizationTimeoutDaa: "1500",
+      uptoSettlementVerifier: {
+        verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey }) {
+          return {
+            transactionId: UPTO_TX_ID,
+            inputAmount: payload.authorizationAmountSompi,
+            chargeAmount,
+            feeAmount: "0",
+            outputCount: 2,
+            authorizationOutpoint: payload.authorizationOutpoint,
+            paymentOutput: {
+              outputIndex: 0,
+              amount: chargeAmount,
+              scriptPublicKey: payToScriptPublicKey,
+            },
+            refundOutput: {
+              outputIndex: 0,
+              amount: "30",
+              scriptPublicKey: refundScriptPublicKey,
+            },
+            paymentOutputIndex: 0,
+            refundOutputIndex: 0,
+          };
+        },
+      },
+    });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "wrong",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(setup.chain.sendCount).toBe(0);
+  });
+
+  it("rejects upto settlement transactions with inconsistent flat output indexes", async () => {
+    const setup = makeServer({
+      authorizationTimeoutDaa: "1500",
+      uptoSettlementVerifier: {
+        verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey }) {
+          return {
+            transactionId: UPTO_TX_ID,
+            inputAmount: payload.authorizationAmountSompi,
+            chargeAmount,
+            feeAmount: "0",
+            outputCount: 2,
+            authorizationOutpoint: payload.authorizationOutpoint,
+            paymentOutput: {
+              outputIndex: 0,
+              amount: chargeAmount,
+              scriptPublicKey: payToScriptPublicKey,
+            },
+            refundOutput: {
+              outputIndex: 1,
+              amount: "30",
+              scriptPublicKey: refundScriptPublicKey,
+            },
+            paymentOutputIndex: 1,
+            refundOutputIndex: 0,
+          };
+        },
+      },
+    });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "wrong",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(setup.chain.sendCount).toBe(0);
+  });
+
+  it("returns a controlled 402 when request fingerprinting needs an explicit hash", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { paymentScheme: "exact", body: new URLSearchParams([["a", "b"]]) }),
+      async () => ({ body: "wrong" }),
+    );
+
+    expect(response.status).toBe(402);
+    expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeTruthy();
   });
 
   it("accepts an initial deposit-voucher and commits channel state after handler success", async () => {
@@ -1237,6 +1824,52 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         };
       },
     },
+    uptoScriptDeriver: {
+      deriveAuthorizationScript() {
+        return UPTO_SCRIPT;
+      },
+    },
+    uptoAuthorizationVerifier: {
+      verifyUptoAuthorization({ digest, payload }) {
+        return payload.authorization.signature === `${digest}${digest}`;
+      },
+    },
+    uptoSettlementBuilder: {
+      async buildUptoSettlementTransaction() {
+        return {
+          transaction: "cd".repeat(32),
+        };
+      },
+    },
+    uptoSettlementVerifier: {
+      verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey }) {
+        const refundAmount = (BigInt(payload.authorizationAmountSompi) - BigInt(chargeAmount)).toString();
+        return {
+          transactionId: UPTO_TX_ID,
+          inputAmount: payload.authorizationAmountSompi,
+          chargeAmount,
+          feeAmount: "0",
+          outputCount: refundAmount === "0" ? 1 : 2,
+          authorizationOutpoint: payload.authorizationOutpoint,
+          paymentOutput: {
+            outputIndex: 0,
+            amount: chargeAmount,
+            scriptPublicKey: payToScriptPublicKey,
+          },
+          ...(refundAmount !== "0"
+            ? {
+                refundOutput: {
+                  outputIndex: 1,
+                  amount: refundAmount,
+                  scriptPublicKey: refundScriptPublicKey,
+                },
+              }
+            : {}),
+          paymentOutputIndex: 0,
+          refundOutputIndex: 1,
+        };
+      },
+    },
     ...overrides,
   });
   return {
@@ -1267,6 +1900,72 @@ function makeExactPayment(
       transactionId: options.transactionId ?? EXACT_TX_ID,
       paymentOutputIndex: options.paymentOutputIndex ?? 1,
       ...(options.requestHash ? { requestHash: options.requestHash } : {}),
+    },
+    ...(options.paymentIdentifier ? paymentIdentifierExtension(options.paymentIdentifier) : {}),
+  };
+}
+
+function makeUptoPayment(
+  setup: ReturnType<typeof makeServer>,
+  options: {
+    amount: string;
+    requestHash: Hash32Hex;
+    paymentIdentifier?: string;
+    index?: number;
+    nonce?: Hash32Hex;
+    payTo?: string;
+    serverPublicKey?: string;
+    maxAmount?: string;
+    badSignature?: boolean;
+  },
+): PaymentPayload {
+  const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "upto", amount: options.amount });
+  const accepted = structuredClone(required.accepts[0]) as UptoPaymentRequirements;
+  const index = options.index ?? 0;
+  const nonce = options.nonce ?? SALT;
+  const outpoint = { txid: UPTO_TX_ID, index };
+  const authorization = {
+    maxAmountSompi: options.maxAmount ?? accepted.amount,
+    payTo: options.payTo ?? accepted.payTo,
+    validAfterDaa: "900",
+    validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+    nonce,
+    serverPublicKey: options.serverPublicKey ?? accepted.extra.serverPublicKey,
+    requestHash: options.requestHash,
+  };
+  const digest = uptoAuthorizationDigest({
+    network: accepted.network,
+    payTo: authorization.payTo,
+    refundAddress: "kaspatest:refund",
+    clientPublicKey: CLIENT_KEY,
+    serverPublicKey: authorization.serverPublicKey,
+    authorizationOutpoint: outpoint,
+    maxAmountSompi: authorization.maxAmountSompi,
+    validAfterDaa: authorization.validAfterDaa,
+    validBeforeDaa: authorization.validBeforeDaa,
+    nonce,
+    requestHash: options.requestHash,
+  });
+  setup.chain.setUtxo({
+    outpoint,
+    amount: accepted.amount,
+    scriptPublicKey: UPTO_SCRIPT,
+    finality: "accepted",
+  });
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "upto-authorization",
+      clientPublicKey: CLIENT_KEY,
+      authorizationOutpoint: outpoint,
+      authorizationScriptPublicKey: UPTO_SCRIPT,
+      authorizationAmountSompi: accepted.amount,
+      refundAddress: "kaspatest:refund",
+      authorization: {
+        ...authorization,
+        signature: options.badSignature ? "ff".repeat(64) : `${digest}${digest}`,
+      },
     },
     ...(options.paymentIdentifier ? paymentIdentifierExtension(options.paymentIdentifier) : {}),
   };
@@ -1364,11 +2063,12 @@ function makeVoucherPayment(
 
 function requestWithPayment(
   paymentPayload: PaymentPayload,
-  options: { requestHash?: Hash32Hex; paymentAmount?: string; paymentScheme?: "exact" | "batch-settlement" } = {},
+  options: { requestHash?: Hash32Hex; paymentAmount?: string; paymentScheme?: "exact" | "upto" | "batch-settlement"; body?: unknown } = {},
 ) {
   return {
     url: RESOURCE.url,
     resource: RESOURCE,
+    body: options.body,
     paymentAmount: options.paymentAmount,
     paymentScheme: options.paymentScheme,
     requestHash: options.requestHash,
@@ -1447,6 +2147,7 @@ class FakeAddressCodec implements AddressCodec {
 class FakeChainProvider implements ServerChainProvider {
   readonly utxos = new Map<string, ChainUtxo>();
   claimFee = "10";
+  daa = "1000";
   finality: SettlementFinality = "accepted";
   sendCount = 0;
   sendFailure?: Error;
@@ -1459,20 +2160,47 @@ class FakeChainProvider implements ServerChainProvider {
     return this.utxos.get(outpointKey(outpoint)) ?? null;
   }
 
+  async getVirtualDaaScore(): Promise<string> {
+    return this.daa;
+  }
+
   async estimateClaimFee(): Promise<string> {
     return this.claimFee;
   }
 
-  async sendTransaction(): Promise<{ transactionId: string; finality: SettlementFinality }> {
+  async sendTransaction(transaction: string): Promise<{ transactionId: string; finality: SettlementFinality }> {
     this.sendCount += 1;
     if (this.sendFailure) throw this.sendFailure;
-    return { transactionId: CLAIM_TX, finality: this.finality };
+    return { transactionId: transaction === "cd".repeat(32) ? UPTO_TX_ID : CLAIM_TX, finality: this.finality };
   }
 }
 
 class FailingCommitStore extends MemoryServerChannelStore {
   async commitSettlement(_record: SettlementCommit): Promise<void> {
     throw new Error("settlement store unavailable");
+  }
+}
+
+class FailingUptoReserveStore extends MemoryServerChannelStore {
+  async reserveUptoAuthorization(_record: UptoPendingAuthorizationRecord): Promise<void> {
+    throw new Error("upto reservation unavailable");
+  }
+}
+
+class FailingUptoCommitStore extends MemoryServerChannelStore {
+  #remainingFailures: number;
+
+  constructor(remainingFailures = Number.POSITIVE_INFINITY) {
+    super();
+    this.#remainingFailures = remainingFailures;
+  }
+
+  async commitUptoSettlement(_record: UptoSettlementCommit): Promise<void> {
+    if (this.#remainingFailures > 0) {
+      this.#remainingFailures -= 1;
+      throw new Error("upto commit unavailable");
+    }
+    await super.commitUptoSettlement(_record);
   }
 }
 
@@ -1484,4 +2212,14 @@ class FailingApplyClaimStore extends MemoryServerChannelStore {
 
 function outpointKey(outpoint: FundingOutpoint): string {
   return `${outpoint.txid}:${outpoint.index}`;
+}
+
+function authorizationScopeId(outpoint: FundingOutpoint): Hash32Hex {
+  return sha256Hex(
+    JSON.stringify({
+      index: outpoint.index,
+      scope: "kaspa:x402:upto-authorization-outpoint:v1",
+      txid: outpoint.txid.toLowerCase(),
+    }),
+  );
 }

@@ -1,0 +1,170 @@
+{
+  "kind": "upto-authorization",
+  "description": "Direct-mode capped one-shot authorization digest and settlement fixtures.",
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.test/variable",
+      "description": "Variable-cost agent call",
+      "mimeType": "application/json"
+    },
+    "accepts": [
+      {
+        "scheme": "upto",
+        "network": "kaspa:testnet-10",
+        "amount": "25000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:payout",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-upto-v1",
+          "authorizationTemplateId": "kaspa-x402-upto-v1",
+          "serverPublicKey": "1111111111111111111111111111111111111111111111111111111111111111",
+          "authorizationTimeoutDaa": "123456789",
+          "finality": "accepted",
+          "assetKind": "native",
+          "assetDecimals": 8
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "upto",
+      "network": "kaspa:testnet-10",
+      "amount": "25000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:payout",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-upto-v1",
+        "authorizationTemplateId": "kaspa-x402-upto-v1",
+        "serverPublicKey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "authorizationTimeoutDaa": "123456789",
+        "finality": "accepted",
+        "assetKind": "native",
+        "assetDecimals": 8
+      }
+    },
+    "payload": {
+      "type": "upto-authorization",
+      "clientPublicKey": "2222222222222222222222222222222222222222222222222222222222222222",
+      "authorizationOutpoint": {
+        "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+        "index": 0
+      },
+      "authorizationScriptPublicKey": "000012121212121212121212121212121212121212121212121212121212121212121212",
+      "authorizationAmountSompi": "26000000",
+      "refundAddress": "kaspatest:refund",
+      "authorization": {
+        "maxAmountSompi": "25000000",
+        "payTo": "kaspatest:payout",
+        "validAfterDaa": "123450000",
+        "validBeforeDaa": "123456789",
+        "nonce": "3333333333333333333333333333333333333333333333333333333333333333",
+        "serverPublicKey": "1111111111111111111111111111111111111111111111111111111111111111",
+        "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
+        "signature": "3b525e1c2707a5c5a09aa8717902373e95c4ba703aa276a6bcdc29562d12a09c3b525e1c2707a5c5a09aa8717902373e95c4ba703aa276a6bcdc29562d12a09c"
+      }
+    },
+    "extensions": {
+      "payment-identifier": {
+        "info": {
+          "required": true,
+          "id": "pay_7d5d747be160e280504c099d984bcfe0"
+        }
+      }
+    }
+  },
+  "authorizationDigest": {
+    "input": {
+      "network": "kaspa:testnet-10",
+      "payTo": "kaspatest:payout",
+      "refundAddress": "kaspatest:refund",
+      "clientPublicKey": "2222222222222222222222222222222222222222222222222222222222222222",
+      "serverPublicKey": "1111111111111111111111111111111111111111111111111111111111111111",
+      "authorizationOutpoint": {
+        "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+        "index": 0
+      },
+      "maxAmountSompi": "25000000",
+      "validAfterDaa": "123450000",
+      "validBeforeDaa": "123456789",
+      "nonce": "3333333333333333333333333333333333333333333333333333333333333333",
+      "requestHash": "9999999999999999999999999999999999999999999999999999999999999999"
+    },
+    "expected": {
+      "preimage": "4b2cb96ead64985b0d2d18c0ad5d5c2acf23f85272da495e0b5c069a0e37d6603b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649360e7ea7b4df80d6824805f69c1c95012b11fb85911992c319458c81d99c5b2bb7eeb389035be6c82412b1a2cf6f0d6bdc62fe6c153cf3372f9c090a16030772cdff3d9cdb925cd6f372c62d11309b101e49bc20ceb4fbd786656f167a398cb5d92222222222222222222222222222222222222222222222222222222222222222111111111111111111111111111111111111111111111111111111111111111188888888888888888888888888888888888888888888888888888888888888880000000040787d010000000090b25b070000000015cd5b07000000003333333333333333333333333333333333333333333333333333333333333333af834b2357bae6ad7eccd35c0a050538af38b19023275f58d1f3b39e4d1a0435",
+      "digest": "3b525e1c2707a5c5a09aa8717902373e95c4ba703aa276a6bcdc29562d12a09c"
+    }
+  },
+  "settlementResponses": {
+    "zeroCharge": {
+      "success": true,
+      "transaction": "",
+      "network": "kaspa:testnet-10",
+      "payer": "kaspatest:refund",
+      "extra": {
+        "chargedAmount": "0",
+        "maxAmountSompi": "25000000",
+        "authorizationOutpoint": {
+          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+          "index": 0
+        },
+        "refundAddress": "kaspatest:refund"
+      }
+    },
+    "nonzero": {
+      "success": true,
+      "transaction": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "network": "kaspa:testnet-10",
+      "payer": "kaspatest:refund",
+      "amount": "1858000",
+      "extra": {
+        "maxAmountSompi": "25000000",
+        "authorizationOutpoint": {
+          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+          "index": 0
+        },
+        "refundAddress": "kaspatest:refund",
+        "finality": "accepted"
+      }
+    }
+  },
+  "rejections": [
+    {
+      "name": "expired authorization",
+      "mutation": {
+        "authorization.validBeforeDaa": "123449999"
+      },
+      "currentDaa": "123450000",
+      "expectedError": "invalid_kaspa_upto_expired"
+    },
+    {
+      "name": "wrong recipient",
+      "mutation": {
+        "authorization.payTo": "kaspatest:wrong"
+      },
+      "expectedError": "invalid_kaspa_upto_recipient"
+    },
+    {
+      "name": "max amount mismatch",
+      "mutation": {
+        "authorization.maxAmountSompi": "25000001"
+      },
+      "expectedError": "invalid_kaspa_upto_max_amount"
+    },
+    {
+      "name": "reused authorization outpoint or nonce",
+      "consumed": "outpoint",
+      "expectedError": "invalid_kaspa_upto_replay"
+    }
+  ],
+  "headers": {
+    "paymentRequired": "eyJhY2NlcHRzIjpbeyJhbW91bnQiOiIyNTAwMDAwMCIsImFzc2V0IjoiS0FTIiwiZXh0cmEiOnsiYXNzZXREZWNpbWFscyI6OCwiYXNzZXRLaW5kIjoibmF0aXZlIiwiYXV0aG9yaXphdGlvblRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLXVwdG8tdjEiLCJhdXRob3JpemF0aW9uVGltZW91dERhYSI6IjEyMzQ1Njc4OSIsImJpbmRpbmciOiJrYXNwYS11cHRvLXYxIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifSwibWF4VGltZW91dFNlY29uZHMiOjYwLCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInNjaGVtZSI6InVwdG8ifV0sInJlc291cmNlIjp7ImRlc2NyaXB0aW9uIjoiVmFyaWFibGUtY29zdCBhZ2VudCBjYWxsIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIiwidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L3ZhcmlhYmxlIn0sIng0MDJWZXJzaW9uIjoyfQ==",
+    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIyNTAwMDAwMCIsImFzc2V0IjoiS0FTIiwiZXh0cmEiOnsiYXNzZXREZWNpbWFscyI6OCwiYXNzZXRLaW5kIjoibmF0aXZlIiwiYXV0aG9yaXphdGlvblRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLXVwdG8tdjEiLCJhdXRob3JpemF0aW9uVGltZW91dERhYSI6IjEyMzQ1Njc4OSIsImJpbmRpbmciOiJrYXNwYS11cHRvLXYxIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifSwibWF4VGltZW91dFNlY29uZHMiOjYwLCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInNjaGVtZSI6InVwdG8ifSwiZXh0ZW5zaW9ucyI6eyJwYXltZW50LWlkZW50aWZpZXIiOnsiaW5mbyI6eyJpZCI6InBheV83ZDVkNzQ3YmUxNjBlMjgwNTA0YzA5OWQ5ODRiY2ZlMCIsInJlcXVpcmVkIjp0cnVlfX19LCJwYXlsb2FkIjp7ImF1dGhvcml6YXRpb24iOnsibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsIm5vbmNlIjoiMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMyIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInJlcXVlc3RIYXNoIjoiOTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OSIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJzaWduYXR1cmUiOiIzYjUyNWUxYzI3MDdhNWM1YTA5YWE4NzE3OTAyMzczZTk1YzRiYTcwM2FhMjc2YTZiY2RjMjk1NjJkMTJhMDljM2I1MjVlMWMyNzA3YTVjNWEwOWFhODcxNzkwMjM3M2U5NWM0YmE3MDNhYTI3NmE2YmNkYzI5NTYyZDEyYTA5YyIsInZhbGlkQWZ0ZXJEYWEiOiIxMjM0NTAwMDAiLCJ2YWxpZEJlZm9yZURhYSI6IjEyMzQ1Njc4OSJ9LCJhdXRob3JpemF0aW9uQW1vdW50U29tcGkiOiIyNjAwMDAwMCIsImF1dGhvcml6YXRpb25PdXRwb2ludCI6eyJpbmRleCI6MCwidHhpZCI6Ijg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODgifSwiYXV0aG9yaXphdGlvblNjcmlwdFB1YmxpY0tleSI6IjAwMDAxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMiIsImNsaWVudFB1YmxpY0tleSI6IjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJyZWZ1bmRBZGRyZXNzIjoia2FzcGF0ZXN0OnJlZnVuZCIsInR5cGUiOiJ1cHRvLWF1dGhvcml6YXRpb24ifSwieDQwMlZlcnNpb24iOjJ9",
+    "zeroChargeResponse": "eyJleHRyYSI6eyJhdXRob3JpemF0aW9uT3V0cG9pbnQiOnsiaW5kZXgiOjAsInR4aWQiOiI4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4In0sImNoYXJnZWRBbW91bnQiOiIwIiwibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIn0sIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5ZXIiOiJrYXNwYXRlc3Q6cmVmdW5kIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiIifQ==",
+    "nonzeroResponse": "eyJhbW91bnQiOiIxODU4MDAwIiwiZXh0cmEiOnsiYXV0aG9yaXphdGlvbk91dHBvaW50Ijp7ImluZGV4IjowLCJ0eGlkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCJ9LCJmaW5hbGl0eSI6ImFjY2VwdGVkIiwibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIn0sIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5ZXIiOiJrYXNwYXRlc3Q6cmVmdW5kIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIn0="
+  }
+}

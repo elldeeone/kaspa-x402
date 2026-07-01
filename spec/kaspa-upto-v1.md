@@ -111,7 +111,7 @@ The payload type is `upto-authorization`.
     "validBeforeDaa": "123456789",
     "nonce": "<32-byte hex>",
     "serverPublicKey": "<32-byte x-only hex>",
-    "requestHash": "<optional sha256 request fingerprint hex>",
+    "requestHash": "<sha256 request fingerprint hex>",
     "signature": "<64-byte Schnorr signature hex>"
   }
 }
@@ -133,7 +133,7 @@ The payload type is `upto-authorization`.
 | `authorization.validBeforeDaa` | yes | Latest DAA score for settlement. |
 | `authorization.nonce` | yes | Single-use nonce. |
 | `authorization.serverPublicKey` | yes | Server key allowed to settle. Must match `extra.serverPublicKey`. |
-| `authorization.requestHash` | no | SHA-256 of the normalized request fingerprint. Required when the server requires request binding. |
+| `authorization.requestHash` | yes | SHA-256 of the normalized request fingerprint. Required for direct-mode request binding. |
 | `authorization.signature` | yes | Schnorr signature by `clientPublicKey` over the authorization digest. |
 
 ## Authorization Digest
@@ -155,7 +155,7 @@ sha256(
   validAfterDaa_le64 ||
   validBeforeDaa_le64 ||
   nonce32 ||
-  sha256(requestHash or empty bytes)
+  sha256(requestHash32)
 )
 ```
 
@@ -164,7 +164,7 @@ Digest rules:
 - strings are UTF-8 before hashing;
 - txids are hex decoded from their canonical display order;
 - integers are unsigned little-endian values of the stated byte width;
-- `requestHash` is a 32-byte hash when present, otherwise the empty byte string is hashed;
+- `requestHash` is a required 32-byte request-fingerprint hash;
 - implementations must reject values that cannot be represented in the required integer width.
 
 ## Verification
@@ -185,7 +185,7 @@ Verification must reject with the relevant error code if:
 - the authorization amount is below the maximum plus required fee or reserve policy;
 - the signature is invalid;
 - a required `payment-identifier` extension is absent;
-- a provided `requestHash` does not match the server's normalized request fingerprint.
+- `requestHash` does not match the server's normalized request fingerprint.
 
 ## Settlement
 
@@ -201,6 +201,7 @@ Settlement rules:
 - if the actual charge is `0`, no transaction is broadcast and no dust or zero-value payment output is created;
 - for nonzero charges, remaining value must return to `refundAddress` or follow the template-defined refund route after fees;
 - for nonzero charges, the settlement transaction must reach `extra.finality` before `SettlementResponse.success = true`;
+- after a nonzero settlement transaction is broadcast below the selected finality, the server must preserve the authorization state and return a non-402 pending response instead of issuing another payment challenge;
 - for zero-charge success, the server or facilitator must durably store the authorization consumption before `SettlementResponse.success = true`;
 - a failed handler must not settle a nonzero charge unless the service terms explicitly make the failed work billable and the signed request fingerprint covers that rule.
 
@@ -248,6 +249,30 @@ Successful zero-charge response:
   }
 }
 ```
+
+Pending nonzero response:
+
+```json
+{
+  "success": false,
+  "errorReason": "upto_authorization_pending",
+  "transaction": "<kaspa transaction id>",
+  "network": "kaspa:testnet-10",
+  "payer": "kaspatest:...",
+  "amount": "1858000",
+  "extra": {
+    "maxAmountSompi": "25000000",
+    "authorizationOutpoint": {
+      "txid": "<authorization txid>",
+      "index": 0
+    },
+    "refundAddress": "kaspatest:...",
+    "finality": "mempool"
+  }
+}
+```
+
+Servers should return this shape with a non-402 HTTP status, such as `202`, while withholding protected content. Clients must not treat it as a new payment challenge.
 
 Failure response:
 

@@ -18,6 +18,7 @@ Vectors should be consumable without importing the TypeScript SDK.
 ```text
 vectors/
   voucher/              Voucher preimages and digests.
+  upto/                 Upto authorization digest and settlement fixtures.
   channel-id/           Channel ID canonical input and digest fixtures.
   x402-http/            HTTP header base64 fixtures.
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
@@ -32,6 +33,7 @@ Every JSON vector has a `kind` field:
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
 - `x402-http`: validate decoded objects and recompute the three HTTP headers.
+- `upto-authorization`: recompute the capped one-shot authorization preimage/digest and validate zero/nonzero settlement fixtures.
 - `settlement-response`: validate settlement responses and corrective 402 payloads.
 - `negative`: assert a JSON object fails the referenced schema and carries an `expectedError`.
 - `semantic-negative`: assert cross-object protocol failures that JSON Schema cannot express.

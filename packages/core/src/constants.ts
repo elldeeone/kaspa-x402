@@ -8,6 +8,7 @@ export const UPTO_TEMPLATE_ID = "kaspa-x402-upto-v1";
 
 export const VOUCHER_DOMAIN_TAG = "kaspa:x402:escrow-voucher:v1";
 export const CHANNEL_DOMAIN_TAG = "kaspa:x402:channel:v1";
+export const UPTO_AUTHORIZATION_DOMAIN_TAG = "kaspa:x402:upto-authorization:v1";
 
 export const U32_MAX = 0xffff_ffff;
 export const U64_MAX = 0xffff_ffff_ffff_ffffn;

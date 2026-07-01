@@ -14,6 +14,8 @@ import type {
   SettlementResponse,
   SignatureHex,
   SompiString,
+  UptoAuthorizationPayload,
+  UptoPaymentRequirements,
   Voucher,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
@@ -74,9 +76,33 @@ export interface ExactPaymentResult {
   fundingSource?: FundingSourceKind;
 }
 
+export interface UptoAuthorizationFundingRequest {
+  network: NetworkId;
+  amount: SompiString;
+  payTo: string;
+  refundAddress: string;
+  clientPublicKey: PublicKeyHex;
+  serverPublicKey: PublicKeyHex;
+  validAfterDaa: SompiString;
+  validBeforeDaa: SompiString;
+  nonce: Hash32Hex;
+  requestHash: Hash32Hex;
+  fundingSource?: FundingSourceKind;
+}
+
+export interface UptoAuthorizationFundingResult {
+  outpoint: FundingOutpoint;
+  amount: SompiString;
+  scriptPublicKey: ByteHex;
+  fundingTransaction?: ByteHex;
+  payerAddress?: string;
+  finality?: "broadcast" | "accepted" | "confirmed";
+  fundingSource?: FundingSourceKind;
+}
+
 export interface FeeEstimateRequest {
   network: NetworkId;
-  action: "deposit" | "exact" | "refund";
+  action: "deposit" | "exact" | "upto-authorization" | "refund";
   amount?: SompiString;
 }
 
@@ -95,6 +121,7 @@ export interface FundingProvider {
   getPublicIdentity(): Promise<PublicIdentity>;
   fundEscrowDeposit(request: EscrowDepositRequest): Promise<EscrowDepositResult>;
   payExact?(request: ExactPaymentRequest): Promise<ExactPaymentResult>;
+  fundUptoAuthorization?(request: UptoAuthorizationFundingRequest): Promise<UptoAuthorizationFundingResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
@@ -122,10 +149,27 @@ export interface RefundSignRequest {
   refundAmount: SompiString;
 }
 
+export interface UptoAuthorizationSignRequest {
+  digest: Hash32Hex;
+  preimage: ByteHex;
+  accepted: UptoPaymentRequirements;
+  authorizationOutpoint: FundingOutpoint;
+  authorizationScriptPublicKey: ByteHex;
+  authorizationAmountSompi: SompiString;
+  clientPublicKey: PublicKeyHex;
+  refundAddress: string;
+  nonce: Hash32Hex;
+  requestHash: Hash32Hex;
+  validAfterDaa: SompiString;
+  validBeforeDaa: SompiString;
+}
+
 export interface ChannelSigner {
   generateChannelKey(): Promise<ChannelKey>;
   randomSalt(): Promise<Hash32Hex>;
+  randomNonce?(): Promise<Hash32Hex>;
   signVoucher(request: VoucherSignRequest): Promise<SignatureHex>;
+  signUptoAuthorization?(request: UptoAuthorizationSignRequest): Promise<SignatureHex>;
   signRefund?(request: RefundSignRequest): Promise<SignatureHex>;
 }
 
@@ -187,18 +231,20 @@ export interface CreatePaymentResult {
   paymentRequired: PaymentRequired;
   accepted: PaymentRequirements;
   paymentPayload: PaymentPayload;
-  scheme: "exact" | "batch-settlement";
+  scheme: "exact" | "upto" | "batch-settlement";
   channel?: DirectModeChannel;
   openedChannel: boolean;
   transactionId?: Hash32Hex;
   paymentOutputIndex?: number;
   payerAddress?: string;
+  authorization?: UptoAuthorizationPayload;
 }
 
 export interface ApplySettlementResult {
   channel?: DirectModeChannel;
   chargedAmount: SompiString;
   response: SettlementResponse;
+  pending?: boolean;
   transactionId?: Hash32Hex;
   finality?: "mempool" | "accepted" | "confirmed";
 }
@@ -265,5 +311,5 @@ export interface DirectModeClientOptions {
   refundBuilder?: RefundTransactionBuilder;
   verifyVoucherSignature?: (voucher: Voucher, channel: DirectModeChannel) => Promise<boolean> | boolean;
   maxPaymentRetries?: number;
-  supportedSchemes?: readonly Extract<PaymentScheme, "exact" | "batch-settlement">[];
+  supportedSchemes?: readonly PaymentScheme[];
 }

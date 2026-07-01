@@ -99,6 +99,30 @@
       "if": {
         "properties": {
           "success": {
+            "const": false
+          },
+          "errorReason": {
+            "const": "upto_authorization_pending"
+          }
+        },
+        "required": ["success", "errorReason"]
+      },
+      "then": {
+        "required": ["transaction", "payer", "amount", "extra"],
+        "properties": {
+          "transaction": {
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "extra": {
+            "required": ["maxAmountSompi", "authorizationOutpoint", "refundAddress", "finality"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
             "const": true
           },
           "transaction": {
@@ -119,7 +143,7 @@
                 "required": ["commitmentId", "chargedAmount", "channelState"]
               },
               {
-                "required": ["chargedAmount", "authorizationOutpoint"],
+                "required": ["chargedAmount", "maxAmountSompi", "authorizationOutpoint", "refundAddress"],
                 "properties": {
                   "chargedAmount": {
                     "const": "0"

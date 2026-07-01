@@ -61,6 +61,7 @@
         "validBeforeDaa",
         "nonce",
         "serverPublicKey",
+        "requestHash",
         "signature"
       ],
       "properties": {

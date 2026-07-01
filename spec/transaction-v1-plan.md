@@ -7,7 +7,12 @@ serialized transaction body/projection, transaction id, hash, sighash input,
 compute budget, and fee accounting.
 
 Batch claim/refund now have reference transaction-v1 vectors under
-`vectors/tx-v1/`. `upto` settlement vectors remain part of the next phase.
+`vectors/tx-v1/`. `upto` authorization and zero-charge settlement fixtures are
+covered by `vectors/upto/authorization.json`; the native nonzero `upto`
+transaction-v1 body remains future work. Until that vector exists, nonzero
+`upto` settlement support is adapter-gated and requires an implementation
+provided settlement transaction verifier; it must not be presented as a built-in
+mainnet-ready transaction builder.
 In those vectors, `serializedTransaction` is the deterministic transaction hash
 preimage/projection, not a submit-ready RPC transaction payload. The `mass`
 field is contextual storage mass and must not be replaced with serialized-size
@@ -46,11 +51,12 @@ estimates.
 - Amount rule: server output is the actual settled amount, bounded by the signed maximum amount.
 - Zero-charge rule: the zero-charge path must use the no-transaction settlement response shape already defined in `kaspa-upto-v1`; it must not pretend value moved.
 - Fee rule: non-zero settlement fees come from the authorization value after satisfying the bounded server payment.
+- Readiness rule: built-in nonzero settlement builders must remain disabled or external-adapter-only until the executable transaction vector covers the serialized body, txid/hash, sighash, compute budget, and script-unit estimate.
 
 ## Required Vectors
 
 - `upto-settlement-transaction-body`
-- `upto-zero-charge-no-transaction-response`
+- `upto-zero-charge-no-transaction-response` - covered by `vectors/upto/authorization.json`
 - `batch-claim-transaction-body` - covered by `vectors/tx-v1/batch-claim.json`
 - `batch-refund-transaction-body` - covered by `vectors/tx-v1/batch-refund.json`
 - transaction id for each transaction body

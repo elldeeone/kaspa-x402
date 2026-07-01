@@ -17,7 +17,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "tsup src/index.ts --format esm --dts --clean",
+    "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && tsup src/index.ts --format esm --dts --clean",
     "test": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && vitest run"
   },
   "dependencies": {

@@ -1,0 +1,23 @@
+{
+  "kind": "negative",
+  "name": "upto-pending-empty-transaction",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "value": {
+    "success": false,
+    "errorReason": "upto_authorization_pending",
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:refund",
+    "amount": "1858000",
+    "extra": {
+      "maxAmountSompi": "25000000",
+      "authorizationOutpoint": {
+        "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+        "index": 0
+      },
+      "refundAddress": "kaspatest:refund",
+      "finality": "mempool"
+    }
+  },
+  "expectedError": "invalid_kaspa_settlement_response"
+}

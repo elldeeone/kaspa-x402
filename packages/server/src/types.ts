@@ -16,6 +16,8 @@ import type {
   SettlementResponse,
   SignatureHex,
   SompiString,
+  UptoAuthorizationPayload,
+  UptoPaymentRequirements,
   Voucher,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
@@ -46,6 +48,7 @@ export interface TransactionBroadcast {
 
 export interface ServerChainProvider {
   getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null>;
+  getVirtualDaaScore(): Promise<SompiString>;
   estimateClaimFee(channel: ServerChannelRecord): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<TransactionBroadcast>;
 }
@@ -102,6 +105,80 @@ export interface TopUpVerifier {
   verifyTopUp(request: TopUpVerificationRequest): Promise<boolean> | boolean;
 }
 
+export interface UptoAuthorizationScriptDerivationRequest {
+  accepted: UptoPaymentRequirements;
+  payload: UptoAuthorizationPayload;
+  requestFingerprint: Hash32Hex;
+}
+
+export interface UptoAuthorizationScriptDeriver {
+  deriveAuthorizationScript(request: UptoAuthorizationScriptDerivationRequest): Promise<ByteHex> | ByteHex;
+}
+
+export interface UptoAuthorizationVerificationRequest {
+  accepted: UptoPaymentRequirements;
+  payload: UptoAuthorizationPayload;
+  digest: Hash32Hex;
+  preimage: ByteHex;
+  requestFingerprint: Hash32Hex;
+}
+
+export interface UptoAuthorizationVerifier {
+  verifyUptoAuthorization(request: UptoAuthorizationVerificationRequest): Promise<boolean> | boolean;
+}
+
+export interface UptoSettlementTransactionRequest {
+  accepted: UptoPaymentRequirements;
+  payload: UptoAuthorizationPayload;
+  utxo: ChainUtxo;
+  chargeAmount: SompiString;
+  requestFingerprint: Hash32Hex;
+}
+
+export interface UptoSettlementTransactionResult {
+  transaction: ByteHex;
+}
+
+export interface UptoSettlementTransactionVerificationRequest {
+  accepted: UptoPaymentRequirements;
+  payload: UptoAuthorizationPayload;
+  transaction: ByteHex;
+  chargeAmount: SompiString;
+  requestFingerprint: Hash32Hex;
+  authorizationOutpoint: FundingOutpoint;
+  payToScriptPublicKey: ByteHex;
+  refundScriptPublicKey: ByteHex;
+}
+
+export interface UptoSettlementTransactionVerification {
+  transactionId: Hash32Hex;
+  inputAmount: SompiString;
+  chargeAmount: SompiString;
+  feeAmount: SompiString;
+  outputCount: number;
+  authorizationOutpoint: FundingOutpoint;
+  paymentOutput: {
+    outputIndex: number;
+    amount: SompiString;
+    scriptPublicKey: ByteHex;
+  };
+  refundOutput?: {
+    outputIndex: number;
+    amount: SompiString;
+    scriptPublicKey: ByteHex;
+  };
+  paymentOutputIndex?: number;
+  refundOutputIndex?: number;
+}
+
+export interface UptoSettlementTransactionBuilder {
+  buildUptoSettlementTransaction(request: UptoSettlementTransactionRequest): Promise<UptoSettlementTransactionResult>;
+}
+
+export interface UptoSettlementTransactionVerifier {
+  verifyUptoSettlementTransaction(request: UptoSettlementTransactionVerificationRequest): Promise<UptoSettlementTransactionVerification> | UptoSettlementTransactionVerification;
+}
+
 export interface ServerChannelRecord {
   channelId: Hash32Hex;
   channelConfig: ChannelConfig;
@@ -134,6 +211,7 @@ export interface PaymentIdentifierRecord {
   channelId?: Hash32Hex;
   transactionId?: Hash32Hex;
   paymentOutputIndex?: number;
+  authorizationScopeId?: Hash32Hex;
 }
 
 export interface BatchCommitmentRecord {
@@ -203,6 +281,64 @@ export interface ExactPaymentStore {
   commitExactPayment(record: ExactSettlementCommit): Promise<void>;
 }
 
+export interface UptoAuthorizationRecordBase {
+  authorizationScopeId: Hash32Hex;
+  nonceScopeId: Hash32Hex;
+  authorizationOutpoint: FundingOutpoint;
+  nonce: Hash32Hex;
+  requestFingerprint: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
+  requiredFinality: Exclude<SettlementFinality, "broadcast">;
+  maxAmountSompi: SompiString;
+  authorizationAmountSompi: SompiString;
+  chargedAmount: SompiString;
+  refundAddress: string;
+  payerAddress?: string;
+  transactionId?: Hash32Hex;
+  finality?: SettlementFinality;
+  paymentIdentifier?: string;
+}
+
+export interface UptoPendingAuthorizationRecord extends UptoAuthorizationRecordBase {
+  status: "pending";
+  transaction: ByteHex;
+  transactionId: Hash32Hex;
+  settlement: SettlementResponse;
+  response: ServerResponse;
+}
+
+export interface UptoBroadcastAuthorizationRecord extends UptoAuthorizationRecordBase {
+  status: "broadcast";
+  transaction: ByteHex;
+  settlement: SettlementResponse;
+  response: ServerResponse;
+  transactionId: Hash32Hex;
+  finality: SettlementFinality;
+}
+
+export interface UptoSettledAuthorizationRecord extends UptoAuthorizationRecordBase {
+  status: "settled";
+  finality?: Exclude<SettlementFinality, "broadcast">;
+  settlement: SettlementResponse;
+  response: ServerResponse;
+}
+
+export type UptoAuthorizationRecord = UptoPendingAuthorizationRecord | UptoBroadcastAuthorizationRecord | UptoSettledAuthorizationRecord;
+
+export interface UptoSettlementCommit {
+  authorization: UptoSettledAuthorizationRecord;
+  paymentIdentifier?: PaymentIdentifierRecord;
+}
+
+export interface UptoAuthorizationStore {
+  loadUptoAuthorization(scopeId: Hash32Hex): Promise<UptoAuthorizationRecord | undefined>;
+  reserveUptoAuthorization(record: UptoPendingAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void>;
+  markUptoAuthorizationBroadcast(record: UptoBroadcastAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void>;
+  commitUptoSettlement(record: UptoSettlementCommit): Promise<void>;
+  abandonUptoAuthorization(scopeId: Hash32Hex, reason?: string): Promise<void>;
+}
+
 export type ClaimAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
 
 export interface ClaimAttemptRecord {
@@ -239,6 +375,7 @@ export interface ServerStateStore
     IdempotencyStore,
     SettlementCommitStore,
     ExactPaymentStore,
+    UptoAuthorizationStore,
     ClaimAttemptStore {}
 
 export interface ChannelLockManager {
@@ -289,15 +426,21 @@ export interface DirectModeServerConfig {
   serverPublicKey: PublicKeyHex;
   serverPrivateKey?: string;
   templateId?: "kaspa-x402-escrow-v1";
+  authorizationTemplateId?: "kaspa-x402-upto-v1";
   minDepositSompi: SompiString;
   amount: SompiString;
   refundTimeoutDaa: SompiString;
+  authorizationTimeoutDaa?: SompiString;
   maxTimeoutSeconds?: number;
   store: ServerStateStore;
   chainProvider: ServerChainProvider;
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  uptoScriptDeriver?: UptoAuthorizationScriptDeriver;
+  uptoAuthorizationVerifier?: UptoAuthorizationVerifier;
+  uptoSettlementBuilder?: UptoSettlementTransactionBuilder;
+  uptoSettlementVerifier?: UptoSettlementTransactionVerifier;
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
@@ -309,7 +452,7 @@ export interface DirectModeServerConfig {
 export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;
   amount?: SompiString;
-  scheme?: "exact" | "batch-settlement";
+  scheme?: "exact" | "upto" | "batch-settlement";
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
 }
@@ -321,7 +464,7 @@ export interface PaidRequest {
   body?: unknown;
   resource?: ResourceInfo;
   paymentAmount?: SompiString;
-  paymentScheme?: "exact" | "batch-settlement";
+  paymentScheme?: "exact" | "upto" | "batch-settlement";
   requestHash?: Hash32Hex;
 }
 
@@ -362,7 +505,18 @@ export interface VerifiedExactPayment {
   finality: "mempool" | "accepted" | "confirmed";
 }
 
-export type VerifiedPayment = VerifiedBatchPayment | VerifiedExactPayment;
+export interface VerifiedUptoPayment {
+  scheme: "upto";
+  paymentRequired: PaymentRequired;
+  paymentPayload: PaymentPayload & { accepted: UptoPaymentRequirements; payload: UptoAuthorizationPayload };
+  accepted: UptoPaymentRequirements;
+  authorizationScopeId: Hash32Hex;
+  nonceScopeId: Hash32Hex;
+  utxo?: ChainUtxo;
+  existingConsumption?: UptoAuthorizationRecord;
+}
+
+export type VerifiedPayment = VerifiedBatchPayment | VerifiedExactPayment | VerifiedUptoPayment;
 
 export interface HandlerContext {
   request: PaidRequest;

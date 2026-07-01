@@ -9,12 +9,17 @@ import type {
   ServerChannelRecord,
   ServerStateStore,
   SettlementCommit,
+  UptoAuthorizationRecord,
+  UptoBroadcastAuthorizationRecord,
+  UptoPendingAuthorizationRecord,
+  UptoSettlementCommit,
 } from "./types.js";
 
 export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
+  readonly #uptoAuthorizations = new Map<Hash32Hex, UptoAuthorizationRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
@@ -96,6 +101,87 @@ export class MemoryServerChannelStore implements ServerStateStore {
       this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
     }
     this.#exactPayments.set(key, payment);
+  }
+
+  async loadUptoAuthorization(scopeId: Hash32Hex): Promise<UptoAuthorizationRecord | undefined> {
+    const record = this.#uptoAuthorizations.get(scopeId);
+    return record ? clone(record) : undefined;
+  }
+
+  async reserveUptoAuthorization(record: UptoPendingAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void> {
+    const authorization = clone(record);
+    const existingByOutpoint = this.#uptoAuthorizations.get(authorization.authorizationScopeId);
+    const existingByNonce = this.#uptoAuthorizations.get(authorization.nonceScopeId);
+    if (paymentIdentifier) this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    for (const existing of [existingByOutpoint, existingByNonce]) {
+      if (!existing) continue;
+      if (!sameUptoAuthorization(existing, authorization)) {
+        throw new Error("upto authorization was already consumed");
+      }
+      if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, clone(paymentIdentifier));
+      return;
+    }
+    if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, clone(paymentIdentifier));
+    this.#uptoAuthorizations.set(authorization.authorizationScopeId, authorization);
+    this.#uptoAuthorizations.set(authorization.nonceScopeId, authorization);
+  }
+
+  async markUptoAuthorizationBroadcast(record: UptoBroadcastAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void> {
+    const authorization = clone(record);
+    const existingByOutpoint = this.#uptoAuthorizations.get(authorization.authorizationScopeId);
+    const existingByNonce = this.#uptoAuthorizations.get(authorization.nonceScopeId);
+    if (paymentIdentifier) this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    for (const existing of [existingByOutpoint, existingByNonce]) {
+      if (!existing) continue;
+      if (!sameUptoAuthorization(existing, authorization)) {
+        throw new Error("upto authorization was already consumed");
+      }
+      if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, clone(paymentIdentifier));
+      if (existing.status === "settled") return;
+    }
+    if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, clone(paymentIdentifier));
+    this.#uptoAuthorizations.set(authorization.authorizationScopeId, authorization);
+    this.#uptoAuthorizations.set(authorization.nonceScopeId, authorization);
+  }
+
+  async commitUptoSettlement(record: UptoSettlementCommit): Promise<void> {
+    const authorization = clone(record.authorization);
+    const existingByOutpoint = this.#uptoAuthorizations.get(authorization.authorizationScopeId);
+    const existingByNonce = this.#uptoAuthorizations.get(authorization.nonceScopeId);
+    for (const existing of [existingByOutpoint, existingByNonce]) {
+      if (!existing) continue;
+      if (!sameUptoAuthorization(existing, authorization)) {
+        throw new Error("upto authorization was already consumed");
+      }
+      if (existing.status === "settled") return;
+      break;
+    }
+    if (record.paymentIdentifier) {
+      this.#assertPaymentIdentifierAvailable(record.paymentIdentifier);
+      this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
+    }
+    this.#uptoAuthorizations.set(authorization.authorizationScopeId, authorization);
+    this.#uptoAuthorizations.set(authorization.nonceScopeId, authorization);
+  }
+
+  async abandonUptoAuthorization(scopeId: Hash32Hex): Promise<void> {
+    const existing = this.#uptoAuthorizations.get(scopeId);
+    if (!existing || existing.status !== "pending") return;
+    this.#uptoAuthorizations.delete(existing.authorizationScopeId);
+    this.#uptoAuthorizations.delete(existing.nonceScopeId);
+    if (existing.paymentIdentifier) this.#paymentIdentifiers.delete(existing.paymentIdentifier);
+  }
+
+  #assertPaymentIdentifierAvailable(paymentIdentifier: PaymentIdentifierRecord): void {
+    const existingIdentifier = this.#paymentIdentifiers.get(paymentIdentifier.id);
+    if (
+      existingIdentifier &&
+      (existingIdentifier.fingerprint !== paymentIdentifier.fingerprint ||
+        existingIdentifier.paymentPayloadHash !== paymentIdentifier.paymentPayloadHash ||
+        existingIdentifier.paymentScopeId !== paymentIdentifier.paymentScopeId)
+    ) {
+      throw new Error("payment identifier was already committed for a different payment");
+    }
   }
 
   async loadOpenClaimAttempt(channelId: Hash32Hex): Promise<ClaimAttemptRecord | undefined> {
@@ -189,5 +275,14 @@ function matchesExpectedChannel(current: ServerChannelRecord | undefined, expect
     current.activeOutpoint.txid.toLowerCase() === expected.activeOutpoint.txid.toLowerCase() &&
     current.activeOutpoint.index === expected.activeOutpoint.index &&
     current.activeScriptPublicKey.toLowerCase() === expected.activeScriptPublicKey.toLowerCase()
+  );
+}
+
+function sameUptoAuthorization(a: UptoAuthorizationRecord, b: UptoAuthorizationRecord): boolean {
+  return (
+    a.authorizationScopeId === b.authorizationScopeId &&
+    a.nonceScopeId === b.nonceScopeId &&
+    a.requestFingerprint === b.requestFingerprint &&
+    a.paymentPayloadHash === b.paymentPayloadHash
   );
 }

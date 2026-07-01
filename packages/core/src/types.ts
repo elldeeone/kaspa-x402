@@ -131,7 +131,7 @@ export interface UptoAuthorization extends JsonRecord {
   validBeforeDaa: SompiString;
   nonce: Hash32Hex;
   serverPublicKey: PublicKeyHex;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
   signature: SignatureHex;
 }
 
@@ -200,6 +200,8 @@ export interface SettlementResponseExtra extends JsonRecord {
   paymentOutputIndex?: number;
   finality?: "mempool" | "accepted" | "confirmed";
   requestHash?: Hash32Hex;
+  maxAmountSompi?: SompiString;
+  authorizationOutpoint?: FundingOutpoint;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;

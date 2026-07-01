@@ -1,0 +1,20 @@
+{
+  "kind": "negative",
+  "name": "upto-zero-missing-max-amount",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "value": {
+    "success": true,
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:refund",
+    "extra": {
+      "chargedAmount": "0",
+      "authorizationOutpoint": {
+        "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+        "index": 0
+      },
+      "refundAddress": "kaspatest:refund"
+    }
+  },
+  "expectedError": "invalid_kaspa_settlement_response"
+}

@@ -7,6 +7,9 @@ import {
   hexToBytes,
   parseSompiString,
   sha256Hex,
+  stableStringify,
+  uptoAuthorizationDigest,
+  uptoAuthorizationPreimageHex,
   validatePaymentRetry,
   voucherDigest,
   voucherPreimageHex,
@@ -19,6 +22,8 @@ import {
   type PaymentRequirements,
   type SettlementResponse,
   type SompiString,
+  type UptoAuthorizationPayload,
+  type UptoPaymentRequirements,
   type Voucher,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
@@ -57,6 +62,9 @@ export class DirectModeClient {
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
       return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, context);
+    }
+    if (parsed.accepted.scheme === "upto") {
+      return this.#createUptoPayment(parsed.accepted, parsed.paymentRequired, context);
     }
     if (parsed.accepted.scheme !== "batch-settlement") {
       throw new KaspaX402Error("invalid_kaspa_x402_scheme", "unsupported Kaspa x402 requirement was selected");
@@ -107,7 +115,7 @@ export class DirectModeClient {
       const payment = await this.createPayment(required, {
         url: input,
         paymentIdentifier: init.paymentIdentifier,
-        requestHash: init.requestHash,
+        requestHash: init.requestHash ?? fingerprintHttpRequest(input, init),
       });
       const retryInit: HttpRequestInitLike = {
         ...init,
@@ -138,6 +146,9 @@ export class DirectModeClient {
   async applySettlement(payment: CreatePaymentResult, response: SettlementResponse): Promise<ApplySettlementResult> {
     if (payment.accepted.scheme === "exact") {
       return applyExactSettlement(payment, response);
+    }
+    if (payment.accepted.scheme === "upto") {
+      return applyUptoSettlement(payment, response);
     }
 
     if (!payment.channel) {
@@ -415,6 +426,109 @@ export class DirectModeClient {
     };
   }
 
+  async #createUptoPayment(
+    accepted: UptoPaymentRequirements,
+    paymentRequired: CreatePaymentResult["paymentRequired"],
+    context: PaymentRequestContext,
+  ): Promise<CreatePaymentResult> {
+    if (!this.#options.fundingProvider.fundUptoAuthorization || !this.#options.signer.signUptoAuthorization) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "upto authorization funding and signing adapters are required");
+    }
+    if (!context.requestHash) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "upto authorization requires a request hash");
+    }
+    const identity = await this.#options.fundingProvider.getPublicIdentity();
+    if (!identity.publicKey) {
+      throw new KaspaX402Error("invalid_kaspa_public_key", "upto authorization requires a client public key");
+    }
+    const refundAddress = this.#options.refundAddress ?? identity.address;
+    const validAfterDaa = await this.#options.fundingProvider.getVirtualDaaScore();
+    if (parseSompiString(validAfterDaa) > parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
+      throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization window is already expired");
+    }
+    const nonce = this.#options.signer.randomNonce ? await this.#options.signer.randomNonce() : await this.#options.signer.randomSalt();
+    const funding = await this.#options.fundingProvider.fundUptoAuthorization({
+      network: accepted.network,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      refundAddress,
+      clientPublicKey: identity.publicKey,
+      serverPublicKey: accepted.extra.serverPublicKey,
+      validAfterDaa,
+      validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+      nonce,
+      requestHash: context.requestHash,
+      fundingSource: this.#options.fundingPolicy?.requiredSource,
+    });
+    if (this.#options.fundingPolicy?.requiredSource && funding.fundingSource && funding.fundingSource !== this.#options.fundingPolicy.requiredSource) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "upto authorization funding source does not satisfy policy");
+    }
+    if (parseSompiString(funding.amount) < parseSompiString(accepted.amount)) {
+      throw new KaspaX402Error("invalid_kaspa_x402_amount", "upto authorization amount is below the signed maximum");
+    }
+
+    const digestInput = {
+      network: accepted.network,
+      payTo: accepted.payTo,
+      refundAddress,
+      clientPublicKey: identity.publicKey,
+      serverPublicKey: accepted.extra.serverPublicKey,
+      authorizationOutpoint: funding.outpoint,
+      maxAmountSompi: accepted.amount,
+      validAfterDaa,
+      validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+      nonce,
+      requestHash: context.requestHash,
+    };
+    const digest = uptoAuthorizationDigest(digestInput);
+    const preimage = uptoAuthorizationPreimageHex(digestInput);
+    const signature = await this.#options.signer.signUptoAuthorization({
+      digest,
+      preimage,
+      accepted,
+      authorizationOutpoint: funding.outpoint,
+      authorizationScriptPublicKey: funding.scriptPublicKey,
+      authorizationAmountSompi: funding.amount,
+      clientPublicKey: identity.publicKey,
+      refundAddress,
+      nonce,
+      requestHash: context.requestHash,
+      validAfterDaa,
+      validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+    });
+    const authorization: UptoAuthorizationPayload = {
+      type: "upto-authorization",
+      clientPublicKey: identity.publicKey,
+      authorizationOutpoint: funding.outpoint,
+      authorizationScriptPublicKey: funding.scriptPublicKey,
+      authorizationAmountSompi: funding.amount,
+      refundAddress,
+      ...(funding.fundingTransaction ? { fundingTransaction: funding.fundingTransaction } : {}),
+      authorization: {
+        maxAmountSompi: accepted.amount,
+        payTo: accepted.payTo,
+        validAfterDaa,
+        validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+        nonce,
+        serverPublicKey: accepted.extra.serverPublicKey,
+        requestHash: context.requestHash,
+        signature,
+      },
+    };
+    const paymentPayload = buildPaymentPayload(paymentRequired, accepted, context, authorization);
+    const retryValidation = validatePaymentRetry({ paymentRequired, paymentPayload });
+    if (!retryValidation.ok) throw retryValidation.error;
+    return {
+      paymentRequired,
+      accepted,
+      paymentPayload,
+      scheme: "upto",
+      openedChannel: false,
+      payerAddress: funding.payerAddress ?? identity.address,
+      authorization,
+    };
+  }
+
   async #buildVoucherPayload(
     channel: DirectModeChannel,
     accepted: BatchPaymentRequirements,
@@ -544,9 +658,13 @@ function assertProviderNetwork(options: DirectModeClientOptions, network: string
   }
 }
 
-function supportedSchemesForClient(options: DirectModeClientOptions): readonly ("exact" | "batch-settlement")[] | undefined {
+function supportedSchemesForClient(options: DirectModeClientOptions): readonly ("exact" | "upto" | "batch-settlement")[] {
   if (options.supportedSchemes) return options.supportedSchemes;
-  return options.fundingProvider.payExact ? undefined : ["batch-settlement"];
+  const schemes: ("exact" | "upto" | "batch-settlement")[] = [];
+  if (options.fundingProvider.payExact) schemes.push("exact");
+  if (options.fundingProvider.fundUptoAuthorization && options.signer.signUptoAuthorization) schemes.push("upto");
+  schemes.push("batch-settlement");
+  return schemes;
 }
 
 function buildPaymentPayload(
@@ -614,7 +732,79 @@ function applyExactSettlement(payment: CreatePaymentResult, response: Settlement
   };
 }
 
+function applyUptoSettlement(payment: CreatePaymentResult, response: SettlementResponse): ApplySettlementResult {
+  const isPending = !response.success && response.errorReason === "upto_authorization_pending";
+  if (!response.success && !isPending) {
+    return {
+      chargedAmount: "0",
+      response,
+    };
+  }
+  const accepted = payment.accepted as UptoPaymentRequirements;
+  const payload = payment.paymentPayload.payload;
+  if (payload.type !== "upto-authorization") {
+    throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "upto settlement does not correspond to an upto authorization payload");
+  }
+  if (response.network !== accepted.network) {
+    throw new KaspaX402Error("invalid_kaspa_settlement_response", "settlement response network does not match accepted requirement");
+  }
+  if (!response.extra?.authorizationOutpoint || !sameOutpoint(response.extra.authorizationOutpoint, payload.authorizationOutpoint)) {
+    throw new KaspaX402Error("invalid_kaspa_upto_authorization_outpoint", "settlement authorization outpoint does not match payment payload");
+  }
+  if (response.extra.maxAmountSompi !== payload.authorization.maxAmountSompi) {
+    throw new KaspaX402Error("invalid_kaspa_upto_max_amount", "settlement maximum amount does not match authorization");
+  }
+  if (response.extra.refundAddress !== payload.refundAddress) {
+    throw new KaspaX402Error("invalid_kaspa_settlement_response", "settlement refund address does not match authorization");
+  }
+  if (response.transaction === "") {
+    if (isPending) {
+      throw new KaspaX402Error("invalid_kaspa_settlement_response", "pending upto settlement must include a transaction id");
+    }
+    if (response.amount !== undefined) {
+      throw new KaspaX402Error("invalid_kaspa_settlement_response", "zero-charge upto settlement must omit amount");
+    }
+    if (response.extra.chargedAmount !== "0") {
+      throw new KaspaX402Error("invalid_kaspa_upto_settlement_amount", "zero-charge upto settlement must report chargedAmount 0");
+    }
+    return {
+      chargedAmount: "0",
+      response,
+    };
+  }
+  if (!/^[0-9a-fA-F]{64}$/.test(response.transaction)) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "successful upto settlement must include a transaction id");
+  }
+  if (response.amount === undefined || parseSompiString(response.amount) === 0n) {
+    throw new KaspaX402Error("invalid_kaspa_upto_settlement_amount", "nonzero upto settlement must include a positive amount");
+  }
+  if (parseSompiString(response.amount) > parseSompiString(payload.authorization.maxAmountSompi)) {
+    throw new KaspaX402Error("invalid_kaspa_upto_settlement_amount", "upto settlement amount exceeds signed maximum");
+  }
+  const finality = readUptoFinality(response.extra.finality);
+  const requiredFinality = accepted.extra.finality ?? "accepted";
+  if (!finality) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement is missing finality");
+  }
+  const finalitySatisfied = uptoFinalityMeets(finality, requiredFinality);
+  if (!isPending && !finalitySatisfied) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement has not reached required finality");
+  }
+  return {
+    chargedAmount: response.amount,
+    response,
+    transactionId: response.transaction,
+    finality,
+    ...(isPending || !finalitySatisfied ? { pending: true } : {}),
+  };
+}
+
 function exactFinalityMeets(actual: "mempool" | "accepted" | "confirmed", required: "mempool" | "accepted" | "confirmed"): boolean {
+  const rank = { mempool: 0, accepted: 1, confirmed: 2 } as const;
+  return rank[actual] >= rank[required];
+}
+
+function uptoFinalityMeets(actual: "mempool" | "accepted" | "confirmed", required: "accepted" | "confirmed"): boolean {
   const rank = { mempool: 0, accepted: 1, confirmed: 2 } as const;
   return rank[actual] >= rank[required];
 }
@@ -623,6 +813,16 @@ function readExactFinality(value: unknown): "mempool" | "accepted" | "confirmed"
   if (value === undefined) return undefined;
   if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
   throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement finality is invalid");
+}
+
+function readUptoFinality(value: unknown): "mempool" | "accepted" | "confirmed" | undefined {
+  if (value === undefined) return undefined;
+  if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
+  throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement finality is invalid");
+}
+
+function sameOutpoint(a: { txid: string; index: number }, b: { txid: string; index: number }): boolean {
+  return a.txid.toLowerCase() === b.txid.toLowerCase() && a.index === b.index;
 }
 
 function paymentIdentifierExtensions(paymentRequired: CreatePaymentResult["paymentRequired"], context: PaymentRequestContext): PaymentPayload["extensions"] {
@@ -819,6 +1019,24 @@ function originForUrl(url: string): string {
     return new URL(url).origin;
   } catch {
     return url;
+  }
+}
+
+function fingerprintHttpRequest(input: string, init: HttpRequestInitLike): string {
+  try {
+    return sha256Hex(
+      stableStringify({
+        method: init.method ?? "GET",
+        url: input,
+        body: init.body ?? null,
+      }),
+    );
+  } catch (error) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "requestHash is required when the request body is outside the JSON canonicalization profile",
+      error,
+    );
   }
 }
 
