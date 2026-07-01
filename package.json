@@ -20,15 +20,24 @@
   ],
   "type": "module",
   "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "test": "npm run test --workspaces --if-present",
     "validate:schemas": "node scripts/validate-schemas.mjs"
   },
   "workspaces": [
     "packages/*"
   ],
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
   "engines": {
-    "node": ">=20"
+    "node": ">=20.19.0"
   },
   "devDependencies": {
-    "ajv": "^8.17.1"
+    "@types/node": "^24.0.0",
+    "ajv": "^8.17.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^3.2.4"
   }
 }
