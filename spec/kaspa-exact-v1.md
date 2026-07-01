@@ -2,19 +2,21 @@
 
 Status: draft
 
-This document defines a proposed Kaspa network binding for x402 v2 `exact`.
+This document defines the Kaspa network binding for x402 v2 `exact`.
 
 ## Summary
 
-`exact` is for fixed-price one-shot purchases. The server knows the required amount before the request is served, and the client pays that exact amount for that request.
+`exact` is for fixed-price one-shot purchases. The resource server knows the price before the request is served, and the client pays that exact amount for that request.
 
-Examples:
+Use `exact` for:
 
-- buy a file;
-- buy one API response;
-- call one fixed-price MCP tool.
+- fixed-price file downloads;
+- fixed-price API responses;
+- fixed-price MCP tool calls.
 
-## Identifier
+Do not use `exact` for repeated micropayment sessions or variable-cost requests. Use [batch-settlement](kaspa-batch-settlement-v1.md) or [upto](kaspa-upto-v1.md) for those.
+
+## Scheme and Network Pair
 
 ```json
 {
@@ -34,7 +36,7 @@ kaspa:mainnet
 kaspa:testnet-10
 ```
 
-## Payment Requirements
+## PaymentRequirements
 
 ```json
 {
@@ -45,47 +47,95 @@ kaspa:testnet-10
   "payTo": "kaspatest:...",
   "maxTimeoutSeconds": 60,
   "extra": {
-    "binding": "kaspa-exact-v1"
+    "binding": "kaspa-exact-v1",
+    "finality": "accepted"
   }
 }
 ```
 
-`amount` is the exact payment amount in sompi. `payTo` is the recipient Kaspa address.
+| Field | Required | Rule |
+| ----- | -------- | ---- |
+| `scheme` | yes | Must equal `"exact"`. |
+| `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
+| `amount` | yes | Decimal string in sompi. This is the exact payment amount. |
+| `asset` | yes | Must equal `"KAS"`. |
+| `payTo` | yes | Recipient Kaspa address for the selected network. |
+| `maxTimeoutSeconds` | yes | Maximum time the client may take to provide a payment payload. |
+| `extra.binding` | yes | Must equal `"kaspa-exact-v1"`. |
+| `extra.finality` | no | One of `"mempool"`, `"accepted"`, or `"confirmed"`. If absent, servers choose local policy. |
 
-## Payment Payload
+`extra.finality` is a server policy hint. It does not weaken validation. A server may require stronger finality than advertised, but should not require weaker finality than the value it advertises.
 
-The initial payload type is `exact-transfer`.
+## Lifecycle
+
+1. Client requests a protected resource without payment.
+2. Server returns x402 v2 `PaymentRequired` with an `exact` Kaspa entry in `accepts`.
+3. Client builds a native Kaspa transaction paying `amount` sompi to `payTo`.
+4. Client retries with `PaymentPayload.accepted` equal to the chosen requirements and `payload.type = "exact-transfer"`.
+5. Server or facilitator verifies the transaction.
+6. Server or facilitator broadcasts or observes the transaction according to finality policy.
+7. Protected resource is returned only after settlement policy succeeds.
+8. Server returns `SettlementResponse` in the x402 transport response.
+
+## PaymentPayload
+
+The payload type is `exact-transfer`.
 
 ```json
 {
   "type": "exact-transfer",
   "payerAddress": "kaspatest:...",
   "transaction": "<serialized transaction hex>",
-  "requestHash": "<optional request fingerprint hex>"
+  "transactionId": "<optional transaction id hex>",
+  "paymentOutputIndex": 0,
+  "requestHash": "<optional sha256 request fingerprint hex>"
 }
 ```
 
-The transaction may be submitted by the client before retry, by the resource server, or by a facilitator. In all cases the verifier must inspect the transaction rather than trusting declared payload fields.
+| Field | Required | Rule |
+| ----- | -------- | ---- |
+| `type` | yes | Must equal `"exact-transfer"`. |
+| `payerAddress` | no | Client payment address, if known. Used for receipts and policy only. |
+| `transaction` | yes | Serialized Kaspa transaction hex. |
+| `transactionId` | no | If present, must match the id derived from `transaction`. |
+| `paymentOutputIndex` | yes | Index of the output that satisfies this payment. |
+| `requestHash` | no | SHA-256 of the normalized request fingerprint. Required when the server requires request binding. |
+
+The verifier must derive transaction identity and output data from `transaction`. Payload fields are hints until verified.
+
+## Transaction Requirements
+
+The transaction must satisfy all of the following:
+
+- it is valid for the selected Kaspa network;
+- output `paymentOutputIndex` exists;
+- output `paymentOutputIndex` pays exactly `amount` sompi;
+- output `paymentOutputIndex` pays to the script public key for `payTo`;
+- no other output pays to `payTo` for the same `amount` unless the server explicitly supports multi-item batching outside this binding;
+- the transaction has not already been accepted for another x402 payment by the same server or facilitator;
+- the transaction can be broadcast or is already visible at the required finality level.
+
+Change outputs are allowed. Additional unrelated outputs are allowed, but they do not satisfy this x402 payment.
 
 ## Verification
 
-A verifier must reject if:
+Verification must reject with the relevant error code if:
 
-- `scheme` is not `exact`;
-- `network` is not supported;
-- `asset` is not `KAS`;
-- `amount` is not a decimal sompi string;
-- `payTo` is not a valid address for the selected network;
-- the transaction is malformed or for the wrong network;
-- the transaction does not contain exactly one payment output to `payTo` with value equal to `amount`;
-- the transaction attempts to satisfy a different resource or payment requirement when `requestHash` or a payment identifier is required;
-- the transaction has already been accepted for another x402 payment.
+- x402 version is unsupported;
+- `scheme`, `network`, `asset`, or `extra.binding` is unsupported;
+- `amount` is not a non-negative integer string;
+- `payTo` is not valid for the selected network;
+- the transaction cannot be decoded;
+- `transactionId` is present and does not match the transaction;
+- `paymentOutputIndex` is missing or out of range;
+- the selected output does not pay exactly `amount` sompi to `payTo`;
+- the transaction id was already consumed for a different request;
+- a required `payment-identifier` extension is absent;
+- a provided `requestHash` does not match the server's normalized request fingerprint.
 
-Change outputs are allowed. Additional outputs to `payTo` are not allowed unless the binding later defines an explicit batching extension.
+## SettlementResponse
 
-## Settlement
-
-Settlement broadcasts or observes the payment transaction and returns the transaction id:
+Successful response:
 
 ```json
 {
@@ -93,14 +143,60 @@ Settlement broadcasts or observes the payment transaction and returns the transa
   "transaction": "<kaspa transaction id>",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
-  "amount": "25000000"
+  "amount": "25000000",
+  "extra": {
+    "paymentOutputIndex": 0,
+    "finality": "accepted"
+  }
 }
 ```
 
-The resource server chooses its finality policy. For low-value resources, accepting mempool visibility may be acceptable. Higher-value resources should require stronger confirmation policy in local server configuration.
+Failure response:
+
+```json
+{
+  "success": false,
+  "errorReason": "invalid_kaspa_exact_payment_output",
+  "transaction": "",
+  "network": "kaspa:testnet-10",
+  "payer": "kaspatest:..."
+}
+```
+
+`amount` is the amount settled for this request. For `exact`, it must equal `PaymentRequirements.amount` on success.
+
+## Idempotency
+
+Servers should advertise the x402 `payment-identifier` extension for `exact`. If it is required:
+
+- the client must include the same id on retries;
+- the server must bind the id to the normalized request fingerprint;
+- same id plus same fingerprint returns the cached result;
+- same id plus different fingerprint fails.
+
+Even when `payment-identifier` is not required, the server must record consumed transaction ids to prevent the same transaction from buying multiple resources.
+
+## Security Notes
+
+- The payment transaction itself is the source of truth.
+- The server must not trust `payerAddress`, `transactionId`, or `paymentOutputIndex` until they are derived or checked from the transaction.
+- The resource should not be released before the server's finality policy succeeds.
+- A transaction id must be consumed at most once per server/facilitator trust domain.
 
 ## Toccata Notes
 
-The `exact` binding does not require a covenant. It may use an ordinary native Kaspa transaction.
+The base `exact` binding does not require a covenant. It may use an ordinary native Kaspa transaction.
 
-If future exact flows use covenant-assisted sponsorship, they must still satisfy the x402 `exact` property: the payment outcome for the request is exactly the required amount to the required recipient.
+If future exact flows use covenant-assisted sponsorship, they must still satisfy the x402 `exact` property: exactly one payment outcome for exactly the required amount to the required recipient.
+
+## Error Codes
+
+This binding uses common `invalid_kaspa_x402_*` errors plus:
+
+```text
+invalid_kaspa_exact_transaction
+invalid_kaspa_exact_transaction_id
+invalid_kaspa_exact_payment_output
+invalid_kaspa_exact_replay
+invalid_kaspa_exact_finality
+```

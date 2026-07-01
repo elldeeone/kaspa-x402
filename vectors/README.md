@@ -2,7 +2,7 @@
 
 This directory will hold implementation-independent vectors for:
 
-- x402 v2 `PaymentRequired`, `PaymentPayload`, and `SettleResponse` objects;
+- x402 v2 `PaymentRequired`, `PaymentPayload`, and `SettlementResponse` objects;
 - `exact` native KAS transaction validation cases;
 - `upto` single-use capped authorization cases;
 - Kaspa channel IDs;

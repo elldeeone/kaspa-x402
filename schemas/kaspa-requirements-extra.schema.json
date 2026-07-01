@@ -10,6 +10,9 @@
         "binding": {
           "const": "kaspa-exact-v1"
         },
+        "finality": {
+          "enum": ["mempool", "accepted", "confirmed"]
+        },
         "assetKind": {
           "const": "native"
         },
@@ -21,10 +24,13 @@
     },
     {
       "type": "object",
-      "required": ["binding"],
+      "required": ["binding", "authorizationTemplateId", "serverPublicKey", "authorizationTimeoutDaa"],
       "properties": {
         "binding": {
           "const": "kaspa-upto-v1"
+        },
+        "authorizationTemplateId": {
+          "const": "kaspa-x402-upto-v1"
         },
         "serverPublicKey": {
           "type": "string",
@@ -33,6 +39,9 @@
         "authorizationTimeoutDaa": {
           "type": "string",
           "pattern": "^[0-9]+$"
+        },
+        "finality": {
+          "enum": ["accepted", "confirmed"]
         },
         "assetKind": {
           "const": "native"
@@ -44,7 +53,123 @@
       "additionalProperties": true
     },
     {
-      "$ref": "kaspa-batch-extra.schema.json"
+      "$ref": "#/$defs/batchExtra"
     }
-  ]
+  ],
+  "$defs": {
+    "batchExtra": {
+      "type": "object",
+      "required": ["binding", "templateId", "serverPublicKey", "minDepositSompi", "refundTimeoutDaa"],
+      "properties": {
+        "binding": {
+          "const": "kaspa-escrow-v1"
+        },
+        "templateId": {
+          "const": "kaspa-x402-escrow-v1"
+        },
+        "serverPublicKey": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "minDepositSompi": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "refundTimeoutDaa": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "claimPolicy": {
+          "type": "object",
+          "properties": {
+            "claimWhenUnclaimedAmountExceeds": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "claimAfterSeconds": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": true
+        },
+        "channelState": {
+          "type": "object",
+          "required": [
+            "channelId",
+            "activeOutpoint",
+            "activeScriptPublicKey",
+            "fundingAmount",
+            "chargedCumulativeAmount",
+            "claimedCumulativeAmount",
+            "signedMaxClaimable"
+          ],
+          "properties": {
+            "channelId": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "activeOutpoint": {
+              "type": "object",
+              "required": ["txid", "index"],
+              "properties": {
+                "txid": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0
+                }
+              },
+              "additionalProperties": false
+            },
+            "activeScriptPublicKey": {
+              "type": "string",
+              "pattern": "^(?:[0-9a-fA-F]{2})+$"
+            },
+            "fundingAmount": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "chargedCumulativeAmount": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "claimedCumulativeAmount": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "signedMaxClaimable": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "voucherState": {
+          "type": "object",
+          "required": ["amount", "signature"],
+          "properties": {
+            "amount": {
+              "type": "string",
+              "pattern": "^[0-9]+$"
+            },
+            "signature": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{128}$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "additionalProperties": true
+    }
+  }
 }

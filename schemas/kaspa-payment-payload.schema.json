@@ -12,60 +12,271 @@
       "type": "string"
     },
     "transaction": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]+$"
+      "$ref": "#/$defs/hex"
+    },
+    "transactionId": {
+      "$ref": "#/$defs/hash32"
+    },
+    "paymentOutputIndex": {
+      "type": "integer",
+      "minimum": 0
     },
     "requestHash": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]{64}$"
+      "$ref": "#/$defs/hash32"
+    },
+    "clientPublicKey": {
+      "$ref": "#/$defs/pubkey32"
+    },
+    "authorizationOutpoint": {
+      "$ref": "#/$defs/outpoint"
+    },
+    "authorizationScriptPublicKey": {
+      "$ref": "#/$defs/hex"
+    },
+    "authorizationAmountSompi": {
+      "$ref": "#/$defs/amount"
+    },
+    "refundAddress": {
+      "type": "string"
+    },
+    "fundingTransaction": {
+      "$ref": "#/$defs/hex"
     },
     "authorization": {
       "type": "object",
+      "required": ["maxAmountSompi", "payTo", "validAfterDaa", "validBeforeDaa", "nonce", "serverPublicKey", "signature"],
       "properties": {
         "maxAmountSompi": {
-          "type": "string",
-          "pattern": "^[0-9]+$"
+          "$ref": "#/$defs/amount"
         },
         "payTo": {
           "type": "string"
         },
         "validAfterDaa": {
-          "type": "string",
-          "pattern": "^[0-9]+$"
+          "$ref": "#/$defs/amount"
         },
         "validBeforeDaa": {
-          "type": "string",
-          "pattern": "^[0-9]+$"
+          "$ref": "#/$defs/amount"
         },
         "nonce": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{64}$"
+          "$ref": "#/$defs/hash32"
+        },
+        "serverPublicKey": {
+          "$ref": "#/$defs/pubkey32"
+        },
+        "requestHash": {
+          "$ref": "#/$defs/hash32"
         },
         "signature": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{128}$"
+          "$ref": "#/$defs/signature64"
+        }
+      },
+      "additionalProperties": true
+    },
+    "channelConfig": {
+      "type": "object",
+      "required": [
+        "network",
+        "asset",
+        "templateId",
+        "clientPublicKey",
+        "serverPublicKey",
+        "payTo",
+        "refundAddress",
+        "refundTimeoutDaa",
+        "salt"
+      ],
+      "properties": {
+        "network": {
+          "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
+        },
+        "asset": {
+          "const": "KAS"
+        },
+        "templateId": {
+          "const": "kaspa-x402-escrow-v1"
+        },
+        "clientPublicKey": {
+          "$ref": "#/$defs/pubkey32"
+        },
+        "serverPublicKey": {
+          "$ref": "#/$defs/pubkey32"
+        },
+        "payTo": {
+          "type": "string"
+        },
+        "refundAddress": {
+          "type": "string"
+        },
+        "refundTimeoutDaa": {
+          "$ref": "#/$defs/amount"
+        },
+        "salt": {
+          "$ref": "#/$defs/hash32"
         }
       },
       "additionalProperties": true
     },
     "channelId": {
-      "type": "string",
-      "minLength": 32
-    },
-    "clientPublicKey": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]{64}$"
+      "$ref": "#/$defs/hash32"
     },
     "escrowAddress": {
       "type": "string"
     },
     "fundingOutpoint": {
+      "$ref": "#/$defs/outpoint"
+    },
+    "fundingAmountSompi": {
+      "$ref": "#/$defs/amount"
+    },
+    "activeScriptPublicKey": {
+      "$ref": "#/$defs/hex"
+    },
+    "claimAmount": {
+      "$ref": "#/$defs/amount"
+    },
+    "refundAmount": {
+      "$ref": "#/$defs/amount"
+    },
+    "voucher": {
+      "type": "object",
+      "required": ["amount", "signature"],
+      "properties": {
+        "amount": {
+          "$ref": "#/$defs/amount"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature64"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "exact-transfer"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["type", "transaction", "paymentOutputIndex"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "upto-authorization"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": [
+          "type",
+          "clientPublicKey",
+          "authorizationOutpoint",
+          "authorizationScriptPublicKey",
+          "authorizationAmountSompi",
+          "refundAddress",
+          "authorization"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "deposit-voucher"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": [
+          "type",
+          "channelConfig",
+          "channelId",
+          "escrowAddress",
+          "fundingOutpoint",
+          "fundingAmountSompi",
+          "activeScriptPublicKey",
+          "voucher"
+        ]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "voucher"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["type", "channelId", "clientPublicKey", "fundingOutpoint", "activeScriptPublicKey", "voucher"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "claim"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["type", "channelId", "fundingOutpoint", "activeScriptPublicKey", "claimAmount", "voucher"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "type": {
+            "const": "refund"
+          }
+        },
+        "required": ["type"]
+      },
+      "then": {
+        "required": ["type", "channelId", "fundingOutpoint", "activeScriptPublicKey", "refundAddress", "refundAmount", "voucher"]
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "amount": {
+      "type": "string",
+      "pattern": "^[0-9]+$"
+    },
+    "hex": {
+      "type": "string",
+      "pattern": "^(?:[0-9a-fA-F]{2})+$"
+    },
+    "hash32": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "pubkey32": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "signature64": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{128}$"
+    },
+    "outpoint": {
       "type": "object",
       "required": ["txid", "index"],
       "properties": {
         "txid": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{64}$"
+          "$ref": "#/$defs/hash32"
         },
         "index": {
           "type": "integer",
@@ -73,26 +284,6 @@
         }
       },
       "additionalProperties": false
-    },
-    "fundingAmountSompi": {
-      "type": "string",
-      "pattern": "^[0-9]+$"
-    },
-    "voucher": {
-      "type": "object",
-      "required": ["amountSompi", "signature"],
-      "properties": {
-        "amountSompi": {
-          "type": "string",
-          "pattern": "^[0-9]+$"
-        },
-        "signature": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{128}$"
-        }
-      },
-      "additionalProperties": false
     }
-  },
-  "additionalProperties": true
+  }
 }

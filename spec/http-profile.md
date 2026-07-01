@@ -20,15 +20,25 @@ Clients retry with:
 PAYMENT-SIGNATURE: base64(PaymentPayload)
 ```
 
+The retry must select exactly one `PaymentRequirements` entry from the server's `accepts` array. Servers must reject a retry when the selected `accepted` object changes network, asset, amount, recipient, binding, or other critical fields.
+
 ## Payment Response
 
-Servers return the x402 v2 `SettleResponse` in:
+Servers return the x402 v2 `SettlementResponse` in:
 
 ```text
-PAYMENT-RESPONSE: base64(SettleResponse)
+PAYMENT-RESPONSE: base64(SettlementResponse)
 ```
 
 The historical `X-PAYMENT` and `X-PAYMENT-RESPONSE` names are not part of this standard.
+
+Protected content must not be returned until the selected scheme has reached its success condition:
+
+- `exact`: the transaction is verified and reaches the server's finality policy;
+- `upto`: the authorization is verified and the settlement or zero-charge refund transaction reaches the selected finality policy;
+- `batch-settlement`: voucher-only requests require the commitment to be verified and stored; `deposit-voucher` requests require the deposit or top-up transaction to be accepted by the selected Kaspa network and the voucher commitment to be stored; claim/refund operations require the relevant transaction to be accepted by the selected Kaspa network.
+
+Servers should require the x402 `payment-identifier` extension for paid HTTP retries. This prevents duplicate side effects when clients or agents retry after timeouts.
 
 ## Scheme Choice
 
@@ -37,3 +47,5 @@ Servers may include multiple Kaspa entries in `PaymentRequired.accepts`. Clients
 - `exact` for fixed-price one-shot purchases;
 - `upto` for one-shot variable-cost requests;
 - `batch-settlement` when an existing escrow/channel can pay for repeated requests.
+
+If the server returns a corrective `402` for `batch-settlement`, it should include `accepts[].extra.channelState` and, when asking the client to adopt a newer cumulative value, `accepts[].extra.voucherState`.

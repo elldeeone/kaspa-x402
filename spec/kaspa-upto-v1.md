@@ -2,21 +2,21 @@
 
 Status: draft
 
-This document defines a proposed Kaspa network binding for x402 v2 `upto`.
+This document defines the Kaspa network binding for x402 v2 `upto`.
 
 ## Summary
 
-`upto` is for one-shot variable-price requests. The client authorizes a maximum amount before the resource is consumed. The server determines the actual charge after execution and settles once for an amount less than or equal to the authorized maximum.
+`upto` is for one-shot variable-price purchases. The client authorizes a maximum amount before the request is served. The server executes the request, calculates the actual charge, and settles once for an amount less than or equal to the signed cap.
 
-Examples:
+Use `upto` for:
 
-- generate text up to a spending cap;
-- stream bytes for one request up to a cap;
-- run variable compute with a maximum budget.
+- variable-cost LLM or agent calls;
+- byte, token, compute, or time-metered one-shot work;
+- requests where the server needs a cap before execution but cannot know the final price upfront.
 
-`upto` is not a channel and not a recurring allowance. Each authorization is single-use.
+Do not use `upto` as a recurring allowance or a repeated micropayment channel. Use [batch-settlement](kaspa-batch-settlement-v1.md) for repeated service calls.
 
-## Identifier
+## Scheme and Network Pair
 
 ```json
 {
@@ -36,7 +36,7 @@ kaspa:mainnet
 kaspa:testnet-10
 ```
 
-## Payment Requirements
+## PaymentRequirements
 
 ```json
 {
@@ -48,74 +48,166 @@ kaspa:testnet-10
   "maxTimeoutSeconds": 300,
   "extra": {
     "binding": "kaspa-upto-v1",
+    "authorizationTemplateId": "kaspa-x402-upto-v1",
     "serverPublicKey": "<32-byte x-only hex>",
-    "authorizationTimeoutDaa": "123456789"
+    "authorizationTimeoutDaa": "123456789",
+    "finality": "accepted"
   }
 }
 ```
 
-At verification time, `amount` is the maximum authorized charge in sompi.
+| Field | Required | Rule |
+| ----- | -------- | ---- |
+| `scheme` | yes | Must equal `"upto"`. |
+| `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
+| `amount` | yes | Decimal string in sompi. At verify time this is the maximum authorized charge. At settle time this is the actual charge. |
+| `asset` | yes | Must equal `"KAS"`. |
+| `payTo` | yes | Recipient Kaspa address for the selected network. |
+| `maxTimeoutSeconds` | yes | Maximum time the client may take to provide an authorization. |
+| `extra.binding` | yes | Must equal `"kaspa-upto-v1"`. |
+| `extra.authorizationTemplateId` | yes | Must equal `"kaspa-x402-upto-v1"` for the v0.1 covenant-backed profile. |
+| `extra.serverPublicKey` | yes | Server key allowed to settle the one-shot authorization. |
+| `extra.authorizationTimeoutDaa` | yes | DAA score after which the authorization must not be settled. |
+| `extra.finality` | no | One of `"accepted"` or `"confirmed"`. If absent, default is `"accepted"`. |
 
-At settlement time, x402 `upto` uses phase-dependent amount semantics: `amount` is the actual amount to settle, and it must be less than or equal to the maximum in the signed authorization.
+x402 `upto` has phase-dependent amount semantics:
 
-## Payment Payload
+- during `verify`, `PaymentRequirements.amount` is the maximum amount the client authorizes;
+- during `settle`, `PaymentRequirements.amount` is the actual amount to charge, and it must be less than or equal to the signed maximum.
 
-The initial payload type is `upto-authorization`.
+## Lifecycle
+
+1. Client requests a protected resource without payment.
+2. Server returns x402 v2 `PaymentRequired` with an `upto` Kaspa entry in `accepts`.
+3. Client constructs or references a one-shot Kaspa authorization UTXO.
+4. Client signs an authorization that binds the maximum amount, recipient, server key, timeout, refund address, request fingerprint, and exact authorization outpoint.
+5. Client retries with `PaymentPayload.accepted` equal to the chosen requirements and `payload.type = "upto-authorization"`.
+6. Server or facilitator verifies the authorization before executing the handler.
+7. Handler executes and calculates the actual charge.
+8. Server or facilitator settles once for the actual charge, which must be less than or equal to the signed maximum, and waits for the settlement or zero-charge refund transaction to reach the selected finality policy.
+9. Server returns the protected result and the x402 `SettlementResponse`.
+
+## PaymentPayload
+
+The payload type is `upto-authorization`.
 
 ```json
 {
   "type": "upto-authorization",
   "payerAddress": "kaspatest:...",
+  "clientPublicKey": "<32-byte x-only hex>",
+  "authorizationOutpoint": {
+    "txid": "<authorization txid>",
+    "index": 0
+  },
+  "authorizationScriptPublicKey": "<serialized script public key hex>",
+  "authorizationAmountSompi": "26000000",
+  "refundAddress": "kaspatest:...",
+  "fundingTransaction": "<optional serialized funding transaction hex>",
   "authorization": {
     "maxAmountSompi": "25000000",
     "payTo": "kaspatest:...",
     "validAfterDaa": "123450000",
     "validBeforeDaa": "123456789",
     "nonce": "<32-byte hex>",
+    "serverPublicKey": "<32-byte x-only hex>",
+    "requestHash": "<optional sha256 request fingerprint hex>",
     "signature": "<64-byte Schnorr signature hex>"
-  },
-  "fundingOutpoint": {
-    "txid": "<optional one-shot escrow txid>",
-    "index": 0
   }
 }
 ```
 
-The concrete transaction construction is intentionally draft until vectors are written. The binding must satisfy the x402 `upto` requirements:
+| Field | Required | Rule |
+| ----- | -------- | ---- |
+| `type` | yes | Must equal `"upto-authorization"`. |
+| `payerAddress` | no | Client payment address, if known. Used for receipts and policy only. |
+| `clientPublicKey` | yes | Public key that signs the authorization digest. |
+| `authorizationOutpoint` | yes | Exact UTXO backing this one-shot authorization. |
+| `authorizationScriptPublicKey` | yes | Script public key for the backing authorization UTXO. |
+| `authorizationAmountSompi` | yes | Value locked by the authorization UTXO. Must cover maximum amount plus fees or template-defined reserve. |
+| `refundAddress` | yes | Address that receives uncharged value according to the authorization rules. |
+| `fundingTransaction` | no | Serialized transaction that creates `authorizationOutpoint`, when the verifier has not observed it yet. |
+| `authorization.maxAmountSompi` | yes | Signed maximum charge. Must equal verify-time `PaymentRequirements.amount`. |
+| `authorization.payTo` | yes | Signed recipient. Must equal `PaymentRequirements.payTo`. |
+| `authorization.validAfterDaa` | yes | Earliest DAA score for settlement. |
+| `authorization.validBeforeDaa` | yes | Latest DAA score for settlement. |
+| `authorization.nonce` | yes | Single-use nonce. |
+| `authorization.serverPublicKey` | yes | Server key allowed to settle. Must match `extra.serverPublicKey`. |
+| `authorization.requestHash` | no | SHA-256 of the normalized request fingerprint. Required when the server requires request binding. |
+| `authorization.signature` | yes | Schnorr signature by `clientPublicKey` over the authorization digest. |
 
-- single-use authorization;
-- explicit time bounds;
-- cryptographic recipient binding;
-- maximum amount enforcement;
-- settlement at most once.
+## Authorization Digest
 
-On Kaspa, the expected production shape is a Toccata one-shot authorization or escrow spend that lets the server settle one actual amount up to the signed cap and returns unspent value according to the authorization rules.
+The client signs this digest:
+
+```text
+sha256(
+  sha256("kaspa:x402:upto-authorization:v1") ||
+  sha256(network) ||
+  sha256("KAS") ||
+  sha256(payTo utf8) ||
+  sha256(refundAddress utf8) ||
+  clientPublicKey32 ||
+  serverPublicKey32 ||
+  authorizationOutpointTxid32 ||
+  authorizationOutpointIndex_le32 ||
+  maxAmountSompi_le64 ||
+  validAfterDaa_le64 ||
+  validBeforeDaa_le64 ||
+  nonce32 ||
+  sha256(requestHash or empty bytes)
+)
+```
+
+Digest rules:
+
+- strings are UTF-8 before hashing;
+- txids are hex decoded from their canonical display order;
+- integers are unsigned little-endian values of the stated byte width;
+- `requestHash` is a 32-byte hash when present, otherwise the empty byte string is hashed;
+- implementations must reject values that cannot be represented in the required integer width.
 
 ## Verification
 
-A verifier must reject if:
+Verification must reject with the relevant error code if:
 
-- `scheme` is not `upto`;
-- `network` is not supported;
-- `asset` is not `KAS`;
-- the signed maximum does not equal verification-time `PaymentRequirements.amount`;
-- the authorization is not active or is expired;
-- `payTo` is not bound to the signed authorization;
-- the nonce or backing outpoint was already consumed;
-- the signer lacks funds or the required backing authorization.
+- x402 version is unsupported;
+- `scheme`, `network`, `asset`, or `extra.binding` is unsupported;
+- `extra.authorizationTemplateId` is unsupported;
+- signed maximum does not equal verify-time `PaymentRequirements.amount`;
+- signed `payTo` does not equal `PaymentRequirements.payTo`;
+- signed `serverPublicKey` does not equal `extra.serverPublicKey`;
+- the authorization is not active, is expired, or exceeds `extra.authorizationTimeoutDaa`;
+- the authorization outpoint or nonce was already consumed;
+- the authorization UTXO is missing and no valid funding transaction is provided;
+- the authorization UTXO does not pay to the expected script public key;
+- the script public key does not match `extra.authorizationTemplateId`;
+- the authorization amount is below the maximum plus required fee or reserve policy;
+- the signature is invalid;
+- a required `payment-identifier` extension is absent;
+- a provided `requestHash` does not match the server's normalized request fingerprint.
 
 ## Settlement
 
-The resource server determines the actual charge after executing the request.
+The resource server calculates the actual charge after executing the request.
 
-Settlement must reject if:
+Settlement rules:
 
-- the settlement amount exceeds the signed maximum;
-- the authorization has already been settled;
-- the authorization has expired;
-- the settlement recipient differs from `payTo`.
+- settlement-time `PaymentRequirements.amount` is the actual charge;
+- actual charge must be less than or equal to `authorization.maxAmountSompi`;
+- the authorization may be settled at most once;
+- the settlement transaction must consume `authorizationOutpoint`;
+- if the actual charge is greater than `0`, the settlement transaction must pay the actual charge to `payTo`;
+- if the actual charge is `0`, the settlement transaction must not create a dust or zero-value payment output to `payTo`;
+- remaining value must return to `refundAddress` or follow the template-defined refund route after fees;
+- the settlement or zero-charge refund transaction must reach `extra.finality` before `SettlementResponse.success = true`;
+- a failed handler must not settle a nonzero charge unless the service terms explicitly make the failed work billable and the signed request fingerprint covers that rule.
 
-Successful settlement returns the actual amount:
+If the actual charge is `0`, the server must still consume the authorization on-chain and return all spendable value to `refundAddress` according to the template rules. A server must not report successful `upto` settlement by only marking the nonce or outpoint consumed off-chain.
+
+## SettlementResponse
+
+Successful response:
 
 ```json
 {
@@ -123,17 +215,82 @@ Successful settlement returns the actual amount:
   "transaction": "<kaspa transaction id>",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
-  "amount": "1858000"
+  "amount": "1858000",
+  "extra": {
+    "maxAmountSompi": "25000000",
+    "authorizationOutpoint": {
+      "txid": "<authorization txid>",
+      "index": 0
+    },
+    "refundAddress": "kaspatest:...",
+    "finality": "accepted"
+  }
 }
 ```
 
-If the actual amount is `0`, the binding may return success without broadcasting a transaction, provided the authorization is consumed or made unusable.
+Successful zero-charge response:
+
+```json
+{
+  "success": true,
+  "transaction": "<kaspa refund transaction id>",
+  "network": "kaspa:testnet-10",
+  "payer": "kaspatest:...",
+  "amount": "0",
+  "extra": {
+    "maxAmountSompi": "25000000",
+    "authorizationOutpoint": {
+      "txid": "<authorization txid>",
+      "index": 0
+    },
+    "refundAddress": "kaspatest:...",
+    "finality": "accepted"
+  }
+}
+```
+
+Failure response:
+
+```json
+{
+  "success": false,
+  "errorReason": "invalid_kaspa_upto_settlement_amount",
+  "transaction": "",
+  "network": "kaspa:testnet-10",
+  "payer": "kaspatest:..."
+}
+```
+
+`amount` is the actual settled amount on success. It may be lower than the verify-time maximum.
+
+## Idempotency
+
+Servers should require the x402 `payment-identifier` extension for `upto`.
+
+The server must bind the payment identifier to the normalized request fingerprint and the authorization outpoint. Same id plus same fingerprint returns the cached result. Same id plus different fingerprint fails. The same authorization outpoint or nonce must not be used for multiple request fingerprints.
 
 ## Toccata Notes
 
-The mainnet `upto` profile is expected to require transaction v1 for any covenant-backed authorization:
+The mainnet `upto` profile is covenant-backed:
 
-- `compute_budget` must be estimated from the generated script path;
-- the spend must bind the exact authorization outpoint or nonce;
-- the successor or refund output must be validated by script;
+- transaction v1 must be used for covenant spends;
+- v1 inputs use `compute_budget`;
+- transaction builders must estimate script units from the generated script path;
+- the spend must bind the exact authorization outpoint and nonce;
+- the settlement output and refund output must be validated by script;
 - SilverScript source and generated byte fixtures must be included in vectors before mainnet use.
+
+## Error Codes
+
+This binding uses common `invalid_kaspa_x402_*` errors plus:
+
+```text
+invalid_kaspa_upto_authorization
+invalid_kaspa_upto_expired
+invalid_kaspa_upto_recipient
+invalid_kaspa_upto_max_amount
+invalid_kaspa_upto_replay
+invalid_kaspa_upto_settlement_amount
+invalid_kaspa_upto_authorization_outpoint
+invalid_kaspa_upto_template
+```

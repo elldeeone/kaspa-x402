@@ -25,17 +25,93 @@
     },
     "claimPolicy": {
       "type": "object",
+      "properties": {
+        "claimWhenUnclaimedAmountExceeds": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "claimAfterSeconds": {
+          "type": "integer",
+          "minimum": 0
+        }
+      },
       "additionalProperties": true
     },
     "channelState": {
       "type": "object",
+      "required": [
+        "channelId",
+        "activeOutpoint",
+        "activeScriptPublicKey",
+        "fundingAmount",
+        "chargedCumulativeAmount",
+        "claimedCumulativeAmount",
+        "signedMaxClaimable"
+      ],
+      "properties": {
+        "channelId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "activeOutpoint": {
+          "type": "object",
+          "required": ["txid", "index"],
+          "properties": {
+            "txid": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0
+            }
+          },
+          "additionalProperties": false
+        },
+        "activeScriptPublicKey": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{2})+$"
+        },
+        "fundingAmount": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "chargedCumulativeAmount": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "claimedCumulativeAmount": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "signedMaxClaimable": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        }
+      },
       "additionalProperties": true
     },
     "voucherState": {
       "type": "object",
+      "required": ["amount", "signature"],
+      "properties": {
+        "amount": {
+          "type": "string",
+          "pattern": "^[0-9]+$"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{128}$"
+        }
+      },
       "additionalProperties": true
+    },
+    "assetKind": {
+      "const": "native"
+    },
+    "assetDecimals": {
+      "const": 8
     }
   },
   "additionalProperties": true
 }
-
