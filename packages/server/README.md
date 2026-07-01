@@ -2,7 +2,7 @@
 
 Server SDK for direct-mode Kaspa x402 payments.
 
-The current implementation covers framework-neutral HTTP gating for `exact` one-shot transfers, `upto` capped one-shot authorizations, and `batch-settlement` escrow channels:
+The current implementation covers framework-neutral HTTP gating and MCP paid tool wrappers for `exact` one-shot transfers, `upto` capped one-shot authorizations, and `batch-settlement` escrow channels:
 
 - builds x402 v2 `PAYMENT-REQUIRED` offers;
 - extracts and validates `PAYMENT-SIGNATURE` retries;
@@ -15,6 +15,7 @@ The current implementation covers framework-neutral HTTP gating for `exact` one-
 - stores per-request settlement commitments before advancing channel charge state;
 - supports payment identifier idempotency for exact, upto, and batch payment-payload retries;
 - returns corrective `402` responses with channel state where possible;
+- returns MCP payment-required tool results, reads `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]` without exposing protected content on settlement failure;
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
 - exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.
 

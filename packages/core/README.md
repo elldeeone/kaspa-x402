@@ -1,6 +1,6 @@
 # @kaspa-x402/core
 
-Transport-neutral types, codecs, canonical encoders, scheme selection, channel IDs, authorization digests, and voucher digest helpers.
+Transport-neutral types, codecs, canonical encoders, scheme selection, channel IDs, authorization digests, voucher digest helpers, and MCP transport primitives.
 
 Status: alpha.
 
@@ -11,6 +11,7 @@ Implemented:
 - exported TypeScript types for the public wire objects;
 - canonical sompi, network, hex, LE32, LE64, and SHA-256 helpers;
 - x402 HTTP header encoding and decoding for `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`;
+- MCP `_meta` key constants, payment-required result helpers, payment metadata readers, and deterministic tool-call fingerprints;
 - voucher preimage and digest helpers;
 - channel ID preimage and digest helpers;
 - Ajv-backed schema validation wrappers;
@@ -31,4 +32,4 @@ The package tests consume `vectors/` directly. Any implementation change that ch
 
 ## Boundary
 
-`@kaspa-x402/core` should stay pure. Covenant builders, transaction signing, RPC submission, HTTP middleware, MCP integration, and facilitator APIs belong in later packages.
+`@kaspa-x402/core` should stay pure. Covenant builders, transaction signing, RPC submission, HTTP middleware, MCP SDK integration, and facilitator APIs belong in later packages.

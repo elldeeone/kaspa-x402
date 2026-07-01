@@ -1,11 +1,15 @@
 import { describe, expect, it } from "vitest";
 
 import {
+  MCP_PAYMENT_META_KEY,
+  MCP_PAYMENT_RESPONSE_META_KEY,
   X402_VERSION,
   channelId,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  mcpToolCallFingerprint,
+  readMcpPaymentRequired,
   sha256Hex,
   uptoAuthorizationDigest,
   voucherDigest,
@@ -25,6 +29,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  handlePaidMcpToolCall,
   type AddressCodec,
   type ChainUtxo,
   type ClaimAttemptRecord,
@@ -101,6 +106,115 @@ describe("direct-mode server", () => {
       serverPublicKey: SERVER_KEY,
       authorizationTimeoutDaa: "1500",
     });
+  });
+
+  it("returns MCP payment requirements for unpaid tool calls", async () => {
+    const setup = makeServer({ amount: "100" });
+    let executed = false;
+
+    const result = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "75", scheme: "exact" },
+      { name: "download", arguments: { id: "alpha" } },
+      async () => {
+        executed = true;
+        return { result: { content: [{ type: "text", text: "secret" }] } };
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toBe(JSON.stringify(result.structuredContent));
+    const required = readMcpPaymentRequired(result);
+    expect(result.structuredContent).toEqual(required);
+    expect(required?.accepts[0]?.scheme).toBe("exact");
+    expect(required?.accepts[0]?.amount).toBe("75");
+    expect(executed).toBe(false);
+  });
+
+  it("rejects invalid MCP payment metadata without executing the tool", async () => {
+    const setup = makeServer({ amount: "100" });
+    let executed = false;
+
+    const result = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "75", scheme: "exact" },
+      { name: "download", arguments: { id: "alpha" }, _meta: { [MCP_PAYMENT_META_KEY]: { x402Version: 2 } } },
+      async () => {
+        executed = true;
+        return { result: { content: [{ type: "text", text: "secret" }] } };
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    const required = readMcpPaymentRequired(result);
+    expect(result.structuredContent).toEqual(required);
+    expect(required?.accepts[0]?.scheme).toBe("exact");
+    expect(executed).toBe(false);
+  });
+
+  it("returns MCP pending settlement metadata without protected content", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    setup.chain.finality = "broadcast";
+    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/variable" }, amount: "100", scheme: "upto" });
+    const requestHash = mcpToolCallFingerprint({
+      toolName: "variable",
+      arguments: { id: "alpha" },
+      accepted: required.accepts[0] as UptoPaymentRequirements,
+    });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash });
+
+    const result = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "variable", resource: { url: "mcp://tool/variable" }, amount: "100", scheme: "upto" },
+      { name: "variable", arguments: { id: "alpha" }, _meta: { [MCP_PAYMENT_META_KEY]: payment } },
+      async () => ({
+        result: { content: [{ type: "text", text: "secret" }] },
+        chargedAmount: "70",
+      }),
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toBe("upto_authorization_pending");
+    const settlement = result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY] as { success?: boolean; errorReason?: string; transaction?: string } | undefined;
+    expect(settlement?.success).toBe(false);
+    expect(settlement?.errorReason).toBe("upto_authorization_pending");
+    expect(settlement?.transaction).toBe(UPTO_TX_ID);
+  });
+
+  it("returns cached MCP paid results for idempotent retries", async () => {
+    const setup = makeServer({ amount: "100" });
+    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
+    const requestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "same" },
+      accepted: required.accepts[0] as ExactPaymentRequirements,
+    });
+    const payment = makeExactPayment(setup, { requestHash });
+    let executions = 0;
+    const params = { name: "download", arguments: { id: "same" }, _meta: { [MCP_PAYMENT_META_KEY]: payment } };
+
+    const first = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "paid" }] } };
+      },
+    );
+    const second = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "wrong" }] } };
+      },
+    );
+
+    expect(first.content?.[0]?.text).toBe("paid");
+    expect(second.content?.[0]?.text).toBe("paid");
+    expect(executions).toBe(1);
   });
 
   it("accepts an exact transfer and commits replay state after handler success", async () => {

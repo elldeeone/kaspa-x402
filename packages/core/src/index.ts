@@ -4,6 +4,7 @@ export * from "./channel.js";
 export * from "./constants.js";
 export * from "./errors.js";
 export * from "./headers.js";
+export * from "./mcp.js";
 export * from "./network.js";
 export * from "./schema-validation.js";
 export * from "./stable-json.js";

@@ -1,6 +1,15 @@
 import { describe, expect, it } from "vitest";
 
-import { X402_VERSION, encodePaymentRequiredHeader, encodePaymentResponseHeader, sha256Hex, uptoAuthorizationDigest } from "@kaspa-x402/core";
+import {
+  MCP_PAYMENT_RESPONSE_META_KEY,
+  X402_VERSION,
+  encodePaymentRequiredHeader,
+  encodePaymentResponseHeader,
+  mcpPaymentRequiredResult,
+  mcpToolCallFingerprint,
+  sha256Hex,
+  uptoAuthorizationDigest,
+} from "@kaspa-x402/core";
 import type {
   BatchPaymentRequirements,
   ChannelState,
@@ -18,6 +27,7 @@ import {
   MemoryChannelStore,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  paidMcpToolCall,
   type AddressCodec,
   type ChannelKey,
   type DirectModeChannel,
@@ -762,6 +772,101 @@ describe("direct-mode client", () => {
     expect(provider.uptoAuthorizations).toHaveLength(1);
   });
 
+  it("drives paid MCP tool calls from structured payment requirements", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+    const expectedRequestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "alpha" },
+      accepted: required.accepts[0]!,
+    });
+    let attempts = 0;
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        attempts += 1;
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        return {
+          content: [{ type: "text", text: "paid data" }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+          },
+        };
+      },
+      { name: "download", arguments: { id: "alpha" } },
+    );
+
+    expect(attempts).toBe(2);
+    expect(result.result.content?.[0]?.text).toBe("paid data");
+    expect(result.settlement?.chargedAmount).toBe("100");
+    expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
+  });
+
+  it("parses MCP payment requirements from text fallback content", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+    const expectedRequestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "fallback" },
+      accepted: required.accepts[0]!,
+    });
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        if (!params._meta?.["x402/payment"]) {
+          return {
+            isError: true,
+            content: [{ type: "text", text: JSON.stringify(required) }],
+          };
+        }
+        return {
+          content: [{ type: "text", text: "fallback paid" }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+          },
+        };
+      },
+      { name: "download", arguments: { id: "fallback" } },
+    );
+
+    expect(result.result.content?.[0]?.text).toBe("fallback paid");
+    expect(result.payment?.paymentPayload.payload.type).toBe("exact-transfer");
+  });
+
+  it("returns MCP settlement failure results without treating them as paid content", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        return {
+          isError: true,
+          content: [{ type: "text", text: "settlement failed" }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: {
+              success: false,
+              errorReason: "invalid_kaspa_transaction",
+              transaction: "",
+              network: "kaspa:testnet-10",
+            } satisfies SettlementResponse,
+          },
+        };
+      },
+      { name: "download", arguments: { id: "fail" } },
+    );
+
+    expect(result.result.isError).toBe(true);
+    expect(result.settlement?.chargedAmount).toBe("0");
+    expect(result.settlement?.response.success).toBe(false);
+  });
+
   it("passes payment identifiers through paidFetch retries", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -1061,6 +1166,21 @@ function makeSettlement(channel: DirectModeChannel, chargedAmount: string, state
         ...channelState(channel, addAmounts(channel.chargedCumulativeAmount, chargedAmount), channel.signedCumulativeAmount),
         ...stateOverrides,
       },
+    },
+  };
+}
+
+function exactSettlement(amount: string, requestHash: Hash32Hex): SettlementResponse {
+  return {
+    success: true,
+    transaction: EXACT_TX_ID,
+    network: "kaspa:testnet-10",
+    payer: "kaspatest:refund",
+    amount,
+    extra: {
+      paymentOutputIndex: 1,
+      finality: "accepted",
+      requestHash,
     },
   };
 }

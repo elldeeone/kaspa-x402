@@ -46,7 +46,7 @@ The repository now contains the v0 reference scaffold:
 - JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
 - TypeScript core helpers for canonical headers, validation, IDs, voucher and upto authorization digests, and amounts;
 - covenant helpers, escrow fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement`;
-- client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments.
+- client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments over HTTP and MCP helper surfaces.
 
 The current implementation focus is native transaction-builder adapters and live proof harnesses. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
 

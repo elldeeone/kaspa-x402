@@ -13,7 +13,9 @@ import {
   formatSompiString,
   isDecimalSompi,
   isKaspaX402Network,
+  mcpPaymentRequiredResult,
   parseSompiString,
+  readMcpPaymentRequired,
   validatePaymentIdentifierReuse,
   validatePaymentRetry,
   validateSchemaById,
@@ -224,6 +226,19 @@ describe("x402 HTTP vectors", () => {
         },
       }),
     ).toThrow("JSON-serializable");
+  });
+});
+
+describe("MCP helpers", () => {
+  it("only parses payment requirements from error tool results", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const challenge = mcpPaymentRequiredResult(vector.paymentRequired);
+
+    expect(challenge.structuredContent).toEqual(vector.paymentRequired);
+    expect(challenge.content?.[0]?.text).toBe(JSON.stringify(vector.paymentRequired));
+    expect(readMcpPaymentRequired(challenge)?.accepts[0]).toEqual(vector.paymentRequired.accepts[0]);
+    expect(readMcpPaymentRequired({ ...challenge, isError: false })).toBeUndefined();
+    expect(readMcpPaymentRequired({ structuredContent: challenge.structuredContent, content: challenge.content })).toBeUndefined();
   });
 });
 

@@ -38,4 +38,20 @@ Servers should require the `payment-identifier` extension for idempotent agent r
 
 If settlement fails after tool execution, the server must not include the paid tool result in `content` or `structuredContent`. It should return an error result with the failed `SettlementResponse` in `_meta["x402/payment-response"]`.
 
+## Tool-Call Fingerprint
+
+MCP helpers should derive the payment request fingerprint from:
+
+- tool name;
+- canonical tool arguments;
+- selected `PaymentRequirements`.
+
+Scheme-specific payment identity is enforced by the normal payment payload hash and settlement scope:
+
+- `exact`: transaction id and payment output index;
+- `upto`: authorization outpoint, nonce, and maximum amount;
+- `batch-settlement`: channel id and voucher amount.
+
+This avoids circular dependencies where a transaction id or authorization outpoint is not known until after the client creates the payment.
+
 For `batch-settlement`, a successful voucher-only tool response may include an empty `transaction`, must omit top-level `amount`, and must include a non-empty `extra.commitmentId`.
