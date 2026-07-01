@@ -1,0 +1,64 @@
+pragma silverscript ^0.1.0;
+
+// Canonical escrow covenant for Kaspa x402 batch-settlement channels.
+//
+// The client funds this covenant once. While consuming protected resources it
+// signs off-chain vouchers authorizing the server to claim a cumulative amount.
+// The server may close the current outpoint with the latest voucher, taking at
+// most the authorized amount, paying the configured payout script, and returning
+// the remainder to the same script. After timeout, the client can refund the
+// remaining value to the configured refund script.
+//
+// Voucher message:
+//
+//   sha256(domain32 || network32 || sha256(serialized_input_script_pub_key)
+//       || outpoint_tx_id32 || outpoint_index_le32 || amount_le64)
+//
+// The full outpoint and serialized script-public-key binding makes each voucher
+// valid only for one active escrow UTXO. Once a claim creates a continuation
+// output, the previous voucher cannot authorize the new outpoint.
+contract KaspaX402Escrow(
+    pubkey client,
+    pubkey server,
+    byte[32] networkHash,
+    byte[32] payoutScriptPublicKeyHash,
+    byte[32] refundScriptPublicKeyHash,
+    int timeout
+) {
+    // sha256("kaspa:x402:escrow-voucher:v1")
+    byte[32] constant VOUCHER_DOMAIN_TAG = 0xcfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12;
+
+    // Server claims up to the voucher-authorized amount; change returns to escrow.
+    entrypoint function claim(sig serverSig, datasig clientVoucher, byte[8] amountAuthorized) {
+        require(checkSig(serverSig, server));
+
+        byte[] voucherMsg =
+            byte[](VOUCHER_DOMAIN_TAG) +
+            byte[](networkHash) +
+            byte[](sha256(tx.inputs[this.activeInputIndex].scriptPubKey)) +
+            byte[](tx.inputs[this.activeInputIndex].outpointTransactionHash) +
+            byte[](byte[4](tx.inputs[this.activeInputIndex].outpointIndex)) +
+            byte[](amountAuthorized);
+        require(checkSigFromStack(clientVoucher, sha256(voucherMsg), client));
+
+        int authorized = int(amountAuthorized);
+        int inputValue = tx.inputs[this.activeInputIndex].value;
+
+        require(tx.outputs.length == 2);
+        require(tx.outputs[0].value <= authorized);
+        require(sha256(tx.outputs[0].scriptPubKey) == payoutScriptPublicKeyHash);
+
+        byte[] escrowScriptPubKey = tx.inputs[this.activeInputIndex].scriptPubKey;
+        require(tx.outputs[1].scriptPubKey == escrowScriptPubKey);
+        require(tx.outputs[1].value >= inputValue - authorized);
+    }
+
+    // Client reclaims remaining value after the timeout.
+    entrypoint function refund(sig clientSig) {
+        require(checkSig(clientSig, client));
+        require(tx.time >= timeout);
+        require(byte[8](OpTxInputSeq(this.activeInputIndex)) == byte[8](0));
+        require(tx.outputs.length == 1);
+        require(sha256(tx.outputs[0].scriptPubKey) == refundScriptPublicKeyHash);
+    }
+}

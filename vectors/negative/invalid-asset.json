@@ -14,7 +14,7 @@
         "scheme": "exact",
         "network": "kaspa:testnet-10",
         "amount": "1000000",
-        "asset": "SOMPI",
+        "asset": "BTC",
         "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         "maxTimeoutSeconds": 60,
         "extra": {

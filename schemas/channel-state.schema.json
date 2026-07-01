@@ -19,7 +19,10 @@
     },
     "activeOutpoint": {
       "type": "object",
-      "required": ["txid", "index"],
+      "required": [
+        "txid",
+        "index"
+      ],
       "properties": {
         "txid": {
           "type": "string",
@@ -35,7 +38,8 @@
     },
     "activeScriptPublicKey": {
       "type": "string",
-      "pattern": "^(?:[0-9a-fA-F]{2})+$"
+      "description": "Serialized Kaspa ScriptPublicKey: uint16_le version followed by script bytes. Kaspa x402 v1 requires version 0.",
+      "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
     },
     "fundingAmount": {
       "type": "string",

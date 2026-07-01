@@ -7,8 +7,8 @@
       "description": "Serialized transaction v1 body that consumes an upto authorization outpoint and pays the actual amount."
     },
     {
-      "name": "upto-zero-charge-refund-transaction-body",
-      "description": "Serialized transaction v1 body for the explicit zero-charge/no-value-moved success path."
+      "name": "upto-zero-charge-no-transaction-response",
+      "description": "SettlementResponse shape for the explicit zero-charge/no-value-moved success path."
     },
     {
       "name": "batch-claim-transaction-body",

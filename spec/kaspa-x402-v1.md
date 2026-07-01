@@ -215,7 +215,22 @@ Receipts should bind:
 
 ## SettlementResponse Conventions
 
-For `exact` and `upto`, a successful `SettlementResponse.transaction` is the Kaspa transaction id that moved value for the request.
+For `exact` and nonzero `upto`, a successful `SettlementResponse.transaction` is the Kaspa transaction id that moved value for the request.
+
+For zero-charge `upto`, a successful response has no transaction because no value moved:
+
+```json
+{
+  "transaction": "",
+  "extra": {
+    "chargedAmount": "0",
+    "authorizationOutpoint": {
+      "txid": "<authorization txid>",
+      "index": 0
+    }
+  }
+}
+```
 
 For `batch-settlement`, a voucher-only success may have:
 
@@ -228,7 +243,7 @@ For `batch-settlement`, a voucher-only success may have:
 }
 ```
 
-This is valid only when no on-chain transfer occurred during the request and `extra.commitmentId` is non-empty. In this case, top-level `amount` is omitted because no value moved on-chain during the request. The actual off-chain charge is reported in `extra.chargedAmount`.
+An empty successful `transaction` is valid only for zero-charge `upto` or for batch voucher-only settlement. For batch voucher-only settlement, `extra.commitmentId` is non-empty. In both cases, top-level `amount` is omitted because no value moved on-chain during the request. The actual charge is reported in `extra.chargedAmount`.
 
 For `deposit-voucher`, top-level `amount` is also omitted because escrow funding is not the resource price. The funding amount is reported in `extra.fundingAmount`, and the request charge is reported in `extra.chargedAmount`.
 

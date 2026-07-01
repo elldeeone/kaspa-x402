@@ -131,6 +131,18 @@ describe("voucher digest vectors", () => {
       expect(voucherDigest(item.input)).toBe(item.expected.digest);
     });
   }
+
+  it("rejects bare script bytes for activeScriptPublicKey", () => {
+    const item = vector.cases[0];
+    if (!item) throw new Error("missing base voucher vector");
+
+    expect(() =>
+      voucherDigest({
+        ...item.input,
+        activeScriptPublicKey: item.input.activeScriptPublicKey.slice(4),
+      }),
+    ).toThrow("activeScriptPublicKey version must be 0");
+  });
 });
 
 describe("channel id vectors", () => {

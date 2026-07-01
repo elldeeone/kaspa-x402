@@ -12,7 +12,7 @@ The resource server verifies payment payloads and settles itself.
 
 For `exact`, this means verifying and broadcasting or observing the exact payment transaction.
 
-For `upto`, this means verifying the single-use capped authorization and settling the actual amount once, then waiting for the settlement or zero-charge refund transaction to reach the selected finality policy.
+For `upto`, this means verifying the single-use capped authorization and settling the actual amount once. Nonzero settlements wait for the settlement transaction to reach the selected finality policy; zero-charge settlements durably consume the authorization without broadcasting a transaction.
 
 For `batch-settlement`, this means verifying vouchers, tracking channel state, and building claim/refund transactions.
 
@@ -62,7 +62,7 @@ POST /settle
 `POST /settle` applies the scheme-specific success step:
 
 - `exact`: broadcast or observe the exact payment transaction and return the transaction id;
-- `upto`: consume the one-shot authorization, settle the actual amount, and wait for the settlement or zero-charge refund transaction to reach the selected finality policy;
+- `upto`: consume the one-shot authorization, settle the actual amount, and either wait for the nonzero settlement transaction to reach the selected finality policy or store a zero-charge no-transaction consumption before returning success;
 - `batch-settlement`: for voucher-only requests, store the voucher commitment; for `deposit-voucher`, broadcast if needed, wait until the deposit or top-up transaction is accepted by the selected Kaspa network, and store the voucher commitment before returning success; for claim/refund operations, broadcast if needed and wait until the relevant transaction is accepted by the selected Kaspa network before returning success or mutating active channel state.
 
 For `batch-settlement`, `/verify` and `/settle` responses should include `extra.channelState` whenever the facilitator reads or changes channel state.

@@ -35,7 +35,7 @@ The historical `X-PAYMENT` and `X-PAYMENT-RESPONSE` names are not part of this s
 Protected content must not be returned until the selected scheme has reached its success condition:
 
 - `exact`: the transaction is verified and reaches the server's finality policy;
-- `upto`: the authorization is verified and the settlement or zero-charge refund transaction reaches the selected finality policy;
+- `upto`: the authorization is verified; nonzero settlements require the settlement transaction to reach the selected finality policy, while zero-charge settlements require durable no-transaction authorization consumption;
 - `batch-settlement`: voucher-only requests require the commitment to be verified and stored; `deposit-voucher` requests require the deposit or top-up transaction to be accepted by the selected Kaspa network and the voucher commitment to be stored; claim/refund operations require the relevant transaction to be accepted by the selected Kaspa network.
 
 Servers should require the x402 `payment-identifier` extension for paid HTTP retries. This prevents duplicate side effects when clients or agents retry after timeouts.

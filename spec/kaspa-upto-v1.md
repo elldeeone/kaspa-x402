@@ -84,7 +84,7 @@ x402 `upto` has phase-dependent amount semantics:
 5. Client retries with `PaymentPayload.accepted` equal to the chosen requirements and `payload.type = "upto-authorization"`.
 6. Server or facilitator verifies the authorization before executing the handler.
 7. Handler executes and calculates the actual charge.
-8. Server or facilitator settles once for the actual charge, which must be less than or equal to the signed maximum, and waits for the settlement or zero-charge refund transaction to reach the selected finality policy.
+8. Server or facilitator settles once for the actual charge, which must be less than or equal to the signed maximum. Nonzero charges wait for transaction finality; zero-charge results store no-transaction authorization consumption.
 9. Server returns the protected result and the x402 `SettlementResponse`.
 
 ## PaymentPayload
@@ -195,15 +195,16 @@ Settlement rules:
 
 - settlement-time `PaymentRequirements.amount` is the actual charge;
 - actual charge must be less than or equal to `authorization.maxAmountSompi`;
-- the authorization may be settled at most once;
-- the settlement transaction must consume `authorizationOutpoint`;
+- the authorization may be settled or consumed at most once;
+- if the actual charge is greater than `0`, the settlement transaction must consume `authorizationOutpoint`;
 - if the actual charge is greater than `0`, the settlement transaction must pay the actual charge to `payTo`;
-- if the actual charge is `0`, the settlement transaction must not create a dust or zero-value payment output to `payTo`;
-- remaining value must return to `refundAddress` or follow the template-defined refund route after fees;
-- the settlement or zero-charge refund transaction must reach `extra.finality` before `SettlementResponse.success = true`;
+- if the actual charge is `0`, no transaction is broadcast and no dust or zero-value payment output is created;
+- for nonzero charges, remaining value must return to `refundAddress` or follow the template-defined refund route after fees;
+- for nonzero charges, the settlement transaction must reach `extra.finality` before `SettlementResponse.success = true`;
+- for zero-charge success, the server or facilitator must durably store the authorization consumption before `SettlementResponse.success = true`;
 - a failed handler must not settle a nonzero charge unless the service terms explicitly make the failed work billable and the signed request fingerprint covers that rule.
 
-If the actual charge is `0`, the server must still consume the authorization on-chain and return all spendable value to `refundAddress` according to the template rules. A server must not report successful `upto` settlement by only marking the nonce or outpoint consumed off-chain.
+If the actual charge is `0`, the server must return the no-transaction success shape below and must not claim that value moved on-chain.
 
 ## SettlementResponse
 
@@ -233,18 +234,17 @@ Successful zero-charge response:
 ```json
 {
   "success": true,
-  "transaction": "<kaspa refund transaction id>",
+  "transaction": "",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
-  "amount": "0",
   "extra": {
+    "chargedAmount": "0",
     "maxAmountSompi": "25000000",
     "authorizationOutpoint": {
       "txid": "<authorization txid>",
       "index": 0
     },
-    "refundAddress": "kaspatest:...",
-    "finality": "accepted"
+    "refundAddress": "kaspatest:..."
   }
 }
 ```

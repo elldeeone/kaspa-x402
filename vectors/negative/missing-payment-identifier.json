@@ -42,7 +42,9 @@
               "maxLength": 128
             }
           },
-          "required": ["required"]
+          "required": [
+            "required"
+          ]
         }
       }
     }

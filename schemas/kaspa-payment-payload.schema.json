@@ -3,10 +3,19 @@
   "$id": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
   "title": "Kaspa x402 Payment Payload",
   "type": "object",
-  "required": ["type"],
+  "required": [
+    "type"
+  ],
   "properties": {
     "type": {
-      "enum": ["exact-transfer", "upto-authorization", "deposit-voucher", "voucher", "refund", "claim"]
+      "enum": [
+        "exact-transfer",
+        "upto-authorization",
+        "deposit-voucher",
+        "voucher",
+        "refund",
+        "claim"
+      ]
     },
     "payerAddress": {
       "type": "string"
@@ -45,7 +54,15 @@
     },
     "authorization": {
       "type": "object",
-      "required": ["maxAmountSompi", "payTo", "validAfterDaa", "validBeforeDaa", "nonce", "serverPublicKey", "signature"],
+      "required": [
+        "maxAmountSompi",
+        "payTo",
+        "validAfterDaa",
+        "validBeforeDaa",
+        "nonce",
+        "serverPublicKey",
+        "signature"
+      ],
       "properties": {
         "maxAmountSompi": {
           "$ref": "#/$defs/amount"
@@ -89,7 +106,10 @@
       ],
       "properties": {
         "network": {
-          "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
+          "enum": [
+            "kaspa:mainnet",
+            "kaspa:testnet-10"
+          ]
         },
         "asset": {
           "const": "KAS"
@@ -131,7 +151,9 @@
       "$ref": "#/$defs/amount"
     },
     "activeScriptPublicKey": {
-      "$ref": "#/$defs/hex"
+      "type": "string",
+      "description": "Serialized Kaspa ScriptPublicKey: uint16_le version followed by script bytes. Kaspa x402 v1 requires version 0.",
+      "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
     },
     "claimAmount": {
       "$ref": "#/$defs/amount"
@@ -139,9 +161,16 @@
     "refundAmount": {
       "$ref": "#/$defs/amount"
     },
+    "clientSignature": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{130}$"
+    },
     "voucher": {
       "type": "object",
-      "required": ["amount", "signature"],
+      "required": [
+        "amount",
+        "signature"
+      ],
       "properties": {
         "amount": {
           "$ref": "#/$defs/amount"
@@ -161,10 +190,16 @@
             "const": "exact-transfer"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["type", "transaction", "paymentOutputIndex"]
+        "required": [
+          "type",
+          "transaction",
+          "paymentOutputIndex"
+        ]
       }
     },
     {
@@ -174,7 +209,9 @@
             "const": "upto-authorization"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
         "required": [
@@ -195,7 +232,9 @@
             "const": "deposit-voucher"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
         "required": [
@@ -217,10 +256,19 @@
             "const": "voucher"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["type", "channelId", "clientPublicKey", "fundingOutpoint", "activeScriptPublicKey", "voucher"]
+        "required": [
+          "type",
+          "channelId",
+          "clientPublicKey",
+          "fundingOutpoint",
+          "activeScriptPublicKey",
+          "voucher"
+        ]
       }
     },
     {
@@ -230,10 +278,19 @@
             "const": "claim"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["type", "channelId", "fundingOutpoint", "activeScriptPublicKey", "claimAmount", "voucher"]
+        "required": [
+          "type",
+          "channelId",
+          "fundingOutpoint",
+          "activeScriptPublicKey",
+          "claimAmount",
+          "voucher"
+        ]
       }
     },
     {
@@ -243,10 +300,20 @@
             "const": "refund"
           }
         },
-        "required": ["type"]
+        "required": [
+          "type"
+        ]
       },
       "then": {
-        "required": ["type", "channelId", "fundingOutpoint", "activeScriptPublicKey", "refundAddress", "refundAmount", "voucher"]
+        "required": [
+          "type",
+          "channelId",
+          "fundingOutpoint",
+          "activeScriptPublicKey",
+          "refundAddress",
+          "refundAmount",
+          "clientSignature"
+        ]
       }
     }
   ],
@@ -274,7 +341,10 @@
     },
     "outpoint": {
       "type": "object",
-      "required": ["txid", "index"],
+      "required": [
+        "txid",
+        "index"
+      ],
       "properties": {
         "txid": {
           "$ref": "#/$defs/hash32"

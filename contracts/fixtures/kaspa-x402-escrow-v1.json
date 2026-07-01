@@ -1,0 +1,94 @@
+{
+  "templateId": "kaspa-x402-escrow-v1",
+  "format": "kaspa-x402-escrow-fixture-v1",
+  "source": "contracts/kaspa-x402-escrow-v1.sil",
+  "sourceSha256": "e7a3e6c01967dd722771873bd8b457462f7919493c1572b277c68d83a81361f1",
+  "domainTag": "kaspa:x402:escrow-voucher:v1",
+  "domainTagHash": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12",
+  "compiler": {
+    "name": "silverc",
+    "checkedCommit": "bf04c35b7ec74b0dce12815d78075af1c42ae2dd",
+    "command": "SILVERSCRIPT_DIR=<silverscript-checkout> cargo run --quiet -p silverscript-lang --bin silverc -- contracts/kaspa-x402-escrow-v1.sil --constructor-args <args.json> -o <out.json>"
+  },
+  "reproducibility": {
+    "status": "checked-against-local-compiler",
+    "note": "The sample redeem script was checked against silverc at compiler.checkedCommit; release builds must pin an upstream compiler tag before publishing."
+  },
+  "slotMap": [
+    {
+      "name": "serverPublicKey",
+      "type": "pubkey",
+      "occurrences": 1
+    },
+    {
+      "name": "networkHash",
+      "type": "byte[32]",
+      "occurrences": 1
+    },
+    {
+      "name": "clientPublicKey",
+      "type": "pubkey",
+      "occurrences": 2
+    },
+    {
+      "name": "payoutScriptPublicKeyHash",
+      "type": "byte[32]",
+      "occurrences": 1
+    },
+    {
+      "name": "refundScriptPublicKeyHash",
+      "type": "byte[32]",
+      "occurrences": 1
+    },
+    {
+      "name": "timeoutDaa",
+      "type": "int",
+      "occurrences": 1
+    }
+  ],
+  "computeBudget": {
+    "claim": 3,
+    "refund": 1
+  },
+  "scriptUnitsEstimate": {
+    "claim": 200544,
+    "refund": 100000
+  },
+  "sample": {
+    "params": {
+      "clientPublicKey": "11111111111111111111111111111111111111111111111111111111111111aa",
+      "serverPublicKey": "22222222222222222222222222222222222222222222222222222222222222bb",
+      "network": "kaspa:testnet-10",
+      "payoutScriptPublicKeyHash": "b99ac42fd048ced7f710abe60dfcf6c7dfcd0772cfba99716574c9d47bf6962f",
+      "refundScriptPublicKeyHash": "8a77bf0e98c7ed79147a8f0302b0da331b6d3db5a6543e97da53ad6e6cc5f6c2",
+      "timeoutDaa": "123456"
+    },
+    "networkHash": "3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd64936",
+    "payoutScriptPublicKey": {
+      "serialized": "0000205555555555555555555555555555555555555555555555555555555555555555ac",
+      "hash": "b99ac42fd048ced7f710abe60dfcf6c7dfcd0772cfba99716574c9d47bf6962f"
+    },
+    "refundScriptPublicKey": {
+      "serialized": "0000206666666666666666666666666666666666666666666666666666666666666666ac",
+      "hash": "8a77bf0e98c7ed79147a8f0302b0da331b6d3db5a6543e97da53ad6e6cc5f6c2"
+    },
+    "redeemScript": "6b6c76009c637552792022222222222222222222222222222222222222222222222222222222222222bbac697820cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12203b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649367eb9bfa87eb9ba7eb9bb54cd7e52797ea82011111111111111111111111111111111111111111111111111111111111111aad76976b4529c6900c278a16900c3a820b99ac42fd048ced7f710abe60dfcf6c7dfcd0772cfba99716574c9d47bf6962f876951c3b9bf876951c2b9be527994a269007a75757575516776519c6375762011111111111111111111111111111111111111111111111111111111111111aaac690340e201b0b9bd0058cd8769b4519c6900c3a8208a77bf0e98c7ed79147a8f0302b0da331b6d3db5a6543e97da53ad6e6cc5f6c287697551677500696868",
+    "scriptPublicKey": {
+      "version": 0,
+      "script": "aa202f26140ec42a61dc73b33ad8880ae5d713764d5830d3cc5809fc2b2eebc9d8aa87",
+      "serialized": "0000aa202f26140ec42a61dc73b33ad8880ae5d713764d5830d3cc5809fc2b2eebc9d8aa87",
+      "hash": "71c5d232ac2771ce32a935e0da24c9c71a52c59fd697b294db245a4d6622074a"
+    },
+    "claimArgsWithDummies": "41ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab40cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd08eeeeeeeeeeeeeeee00",
+    "refundArgsWithDummySig": "41ababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab51",
+    "voucher": {
+      "outpoint": {
+        "txid": "3333333333333333333333333333333333333333333333333333333333333333",
+        "index": 7
+      },
+      "amount": "17216961135462248174",
+      "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493671c5d232ac2771ce32a935e0da24c9c71a52c59fd697b294db245a4d6622074a333333333333333333333333333333333333333333333333333333333333333307000000eeeeeeeeeeeeeeee",
+      "digest": "59a27d70669406515203427e8e0922f4ff8068d8c38cfd328f27666a109f255b"
+    }
+  }
+}

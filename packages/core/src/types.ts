@@ -182,7 +182,7 @@ export interface RefundPayload extends JsonRecord {
   activeScriptPublicKey: ByteHex;
   refundAddress: string;
   refundAmount: SompiString;
-  voucher: Voucher;
+  clientSignature: SignatureHex;
 }
 
 export type KaspaPaymentPayload =

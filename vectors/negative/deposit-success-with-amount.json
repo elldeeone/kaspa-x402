@@ -19,7 +19,7 @@
           "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
           "index": 0
         },
-        "activeScriptPublicKey": "2079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+        "activeScriptPublicKey": "00002079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
         "fundingAmount": "90000000",
         "chargedCumulativeAmount": "700000",
         "claimedCumulativeAmount": "0",
