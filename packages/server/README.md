@@ -1,5 +1,17 @@
 # @kaspa-x402/server
 
-Server middleware for x402 v2 on Kaspa, including `exact`, `upto`, and `batch-settlement` payment flows.
+Server SDK for direct-mode Kaspa x402 payments.
 
-This package is not implemented yet.
+The current implementation covers framework-neutral HTTP gating for `batch-settlement` escrow channels:
+
+- builds x402 v2 `PAYMENT-REQUIRED` offers;
+- extracts and validates `PAYMENT-SIGNATURE` retries;
+- verifies funding outpoints, escrow scripts, and cumulative vouchers through injected adapters;
+- serializes per-channel verification, handler execution, and state commit;
+- stores per-request settlement commitments before advancing channel charge state;
+- supports payment identifier idempotency for exact payment-payload retries;
+- returns corrective `402` responses with channel state where possible;
+- validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
+- exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.
+
+Node, indexer, address-codec, signature-verifier, transaction-builder, and state-store behavior is injected through typed adapters. Production deployments should back the state store with durable transactional storage. Amounts on the wire remain decimal sompi strings.
