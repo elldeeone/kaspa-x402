@@ -7,7 +7,7 @@ not be treated as a hosted production facilitator or settlement service.
 
 This package wraps a configured `DirectModeServer` and exposes the x402 v2 facilitator shape without requiring a hosted third-party service.
 
-`/supported` is capability-aware: exact is omitted when the wrapped server lacks its transaction verifier, upto is omitted when authorization verification adapters are absent, upto `settle` mode is omitted unless settlement adapters exist, and action modes such as `claim` and `refund` are only advertised when explicit action settlers are configured.
+`/supported` is capability-aware: exact is omitted when the wrapped server lacks its transaction verifier, and action modes such as `claim` and `refund` are only advertised when explicit action settlers are configured.
 
 Implemented:
 

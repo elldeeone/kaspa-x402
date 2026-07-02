@@ -20,8 +20,6 @@ import {
   validatePaymentIdentifierReuse,
   validatePaymentRetry,
   validateSchemaById,
-  uptoAuthorizationDigest,
-  uptoAuthorizationPreimageHex,
   voucherDigest,
   voucherPreimageHex,
   channelId,
@@ -54,22 +52,6 @@ type ChannelVector = {
   expected: {
     preimage: string;
     channelId: string;
-  };
-};
-
-type UptoAuthorizationVector = {
-  authorizationDigest: {
-    input: Parameters<typeof uptoAuthorizationDigest>[0];
-    expected: {
-      preimage: string;
-      digest: string;
-    };
-  };
-  paymentRequired: PaymentRequired;
-  paymentPayload: PaymentPayload;
-  settlementResponses: {
-    zeroCharge: SettlementResponse;
-    nonzero: SettlementResponse;
   };
 };
 
@@ -172,18 +154,6 @@ describe("channel id vectors", () => {
     expect(channelIdPreimageHex(vector.input)).toBe(vector.expected.preimage);
     expect(channelId(vector.input)).toBe(vector.expected.channelId);
     expect(validateChannelId(vector.input, vector.expected.channelId)).toBe(true);
-  });
-});
-
-describe("upto authorization vectors", () => {
-  it("matches the capped one-shot authorization digest", () => {
-    const vector = readJson<UptoAuthorizationVector>("vectors/upto/authorization.json");
-    expect(uptoAuthorizationPreimageHex(vector.authorizationDigest.input)).toBe(vector.authorizationDigest.expected.preimage);
-    expect(uptoAuthorizationDigest(vector.authorizationDigest.input)).toBe(vector.authorizationDigest.expected.digest);
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", vector.paymentRequired).ok).toBe(true);
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-payload.schema.json", vector.paymentPayload).ok).toBe(true);
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", vector.settlementResponses.zeroCharge).ok).toBe(true);
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", vector.settlementResponses.nonzero).ok).toBe(true);
   });
 });
 

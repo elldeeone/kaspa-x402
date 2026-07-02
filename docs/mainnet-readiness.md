@@ -1,164 +1,79 @@
 # Mainnet Readiness
 
-Status: not mainnet-ready.
+Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
+not a production readiness claim.
 
-This repository defines draft Kaspa x402 bindings and a reference implementation. It has deterministic vectors, offline proof, and a live testnet proof, but those artifacts do not authorize production mainnet use.
+The current shipped native profiles are:
 
-Mainnet support must remain opt-in, explicitly configured, and blocked by the gates below.
-The reference server and facilitator constructors fail closed for
-`kaspa:mainnet` unless `allowMainnet: true` is explicitly configured. The
-reference client fails closed for mainnet funding providers and configured
-mainnet offer selection; its default offer selector accepts testnet only.
+- `exact` with `kaspa-exact-v1`;
+- `batch-settlement` with `kaspa-escrow-v1`.
 
-## Required Audits
+`kaspa:testnet-10` is the active validation target. Mainnet must remain opt-in
+and disabled by default until every gate below is closed.
 
-Mainnet use requires independent review of:
+## Required Gates
 
-- the exact transaction verifier, including transaction id derivation, selected output validation, finality handling, and replay-store durability;
-- the upto authorization digest, signer, verifier, nonzero settlement transaction-v1 builder, settlement verifier, refund-output accounting, finality recovery, and authorization-store durability;
-- the batch escrow template source, compiled artifact, script arguments, voucher digest, claim/refund transaction-v1 builders, compute-budget assumptions, storage-mass assumptions, and live adapter;
-- the server state store, including atomic settlement commits, idempotency records, claim attempts, replay stores, channel state, and cross-process locking;
-- the client channel store, including backup, recovery, refund readiness, and stale-state handling;
-- the funding provider and signer adapters, including network selection, spend caps, key isolation, secret redaction, and policy-required funding source enforcement;
-- the facilitator wrapper, if used, including authentication, tenant isolation, supported-kind policy, rate limits, settlement authority, and incident controls.
+### Independent Audit
 
-Audit outputs must include explicit pass/fail status for exact, upto, and batch-settlement. A testnet-only pass is not sufficient for mainnet.
+Audit scope must include:
 
-## Key Management
+- exact transaction verification, replay protection, and finality policy;
+- batch escrow script, fixture reproducibility, claim path, refund path, and
+  transaction-v1 builders;
+- payment-identifier and channel state-store durability;
+- client funding-source policy enforcement;
+- facilitator capability intersection and action authorization;
+- live adapter recovery behavior and operator key handling.
 
-Do not use hot-wallet mode for unrestricted mainnet funds.
+Audit output must include explicit pass/fail status for exact and
+batch-settlement. A testnet-only pass is not sufficient for mainnet.
 
-Minimum production requirements:
+### Consensus Cross-Validation
 
-- separate client funding keys, client channel keys, client refund keys, server voucher/claim keys, and server payout keys where the deployment architecture permits;
-- vault, HSM, hardware-wallet, or policy-engine custody for treasury balances;
-- per-network and per-resource spend caps;
-- explicit funding source policy, with failed closed behavior when the required source is unavailable;
-- key rotation plan for client channel keys, server keys, payout addresses, refund addresses, and facilitator credentials;
-- encrypted backups for channel state and refund-capable signing material;
-- redacted logs, reports, CI output, and support bundles.
+The transaction-v1 vectors for batch claim and batch refund must be
+cross-validated against the configured Kaspa consensus checkout:
 
-Known limitation: the reference types expose hot-wallet and external adapter modes, but they do not implement a production custody system.
+```sh
+KASPA_X402_KASPA_CONSENSUS_ROOT=<rusty-kaspa-checkout> npm run validate:tx-v1-consensus
+```
 
-## Fee And Compute-Budget Policy
+The recorded validation level must be refreshed whenever consensus code,
+transaction serialization assumptions, fixture scripts, fee policy, or compute
+budget assumptions change.
 
-Batch claim, batch refund, and nonzero upto settlement transaction-v1 artifacts currently pin:
+### Durable State
 
-- native subnetwork;
-- zero gas;
-- contextual storage mass;
-- reviewed script-unit estimates;
-- explicit compute budgets;
-- claim fees paid from the server output;
-- refund fees paid from the refund output;
-- nonzero upto fees paid from the signed settlement reserve.
+Production deployments must use a durable transactional store that satisfies
+`docs/server-store-contract.md`. In-memory stores are not acceptable for
+mainnet because they cannot preserve replay, payment-identifier, and channel
+state across process loss.
 
-Before mainnet:
+### Operational Recovery
 
-- fee policy must be parameterized for live network conditions;
-- claim reserve policy must include a margin above estimated fees;
-- dust thresholds must be measured against current node policy;
-- transaction-v1 builders must be tested against current node software;
-- transaction-v1 vectors must be cross-validated against the exact node release used by operators;
-- the live proof harness must be rerun after any transaction-builder, node, or template change.
+Operators need documented recovery procedures for:
 
-## Template Hash
+- exact transaction reservation conflicts;
+- batch deposit broadcast and finality waits;
+- voucher commitment persistence;
+- claim/refund transaction broadcast and finality waits;
+- node/indexer outage handling;
+- adapter crash recovery without double execution.
 
-The current template ids are:
+### Live Evidence
 
-- batch escrow: `kaspa-x402-escrow-v1`;
-- one-shot `upto` authorization: `kaspa-x402-upto-v1`.
+Before any mainnet release candidate, a fresh funded `kaspa:testnet-10` run
+must pass:
 
-The current alpha target is `kaspa:testnet-10`. As of 2026-07-02, the upstream
-`kaspanet/silverscript` README at HEAD
-`d25bd3427a093c17327ca3d6b9e1aa5f7688c863` still describes SilverScript as
-experimental and says compiled scripts are valid only on Kaspa Testnet 12. This
-repository's testnet-10 result is empirical testnet evidence for the committed
-fixtures, not an upstream production or mainnet compatibility guarantee.
+```sh
+npm run proof:live:check -- --live --write-report
+```
 
-Current reproducibility checks cover both committed template fixtures where
-applicable:
+The sanitized report in `docs/live-testnet-report.md` must show exact replay
+rejection, batch deposit-voucher settlement, voucher-only settlement, claim,
+replay rejection, and refund evidence.
 
-- source hash from `contracts/fixtures/kaspa-x402-escrow-v1.json` and
-  `contracts/fixtures/kaspa-x402-upto-v1.json`;
-- fixture hash and compiler provenance metadata for each template fixture;
-- domain tag hash;
-- deterministic redeem script;
-- serialized script public key;
-- payout and refund script-public-key hashes;
-- claim and refund argument encodings;
-- `upto` settle and refund argument encodings;
-- claim, refund, and nonzero upto settlement transaction-v1 vectors.
+### Release Controls
 
-Before mainnet:
-
-- publish every reviewed template source hash and fixture hash in release notes;
-- pin compiler and node versions used for each reviewed artifact;
-- pin an upstream compiler release or otherwise document the exact compiler
-  provenance accepted by reviewers;
-- reject deployment when local template hash differs from the reviewed hash;
-- treat every non-byte-identical recompile of either template as a
-  template-version-changing event;
-- rerun fixture reproducibility and transaction-vector checks in CI.
-
-## Network And Asset Registry
-
-The draft uses `kaspa:testnet-10`, `kaspa:mainnet`, and `KAS` as implementation
-conventions. They are not yet formal registry claims.
-
-Before mainnet or stable release:
-
-- align the `kaspa:` namespace with the relevant x402 and CAIP registry process;
-- document the native KAS asset convention and whether it remains `"KAS"` or
-  moves to a more explicit native-asset identifier;
-- update schemas, vectors, package docs, and examples if the accepted registry
-  names differ from the draft names.
-
-## Package Versions
-
-Current packages are draft reference packages under `@kaspa-x402/*`.
-
-Before mainnet:
-
-- cut a tagged release with immutable package versions;
-- publish matching spec, schema, vector, and package artifacts;
-- include a migration policy for any field, schema, or binding changes;
-- freeze supported network strings and binding labels for that release;
-- include the live testnet report generated from the release candidate;
-- require consumers to pin exact package versions instead of floating ranges.
-
-## Incident Response
-
-Operators need a runbook before handling mainnet funds.
-
-Refund timing is DAA-based. A batch channel is refund-mature only when the current virtual DAA score is greater than or equal to the channel's advertised `refundTimeoutDaa`; before that point, clients should expect refund builders to fail closed and should not assume funds are recoverable without the server claim path. Longer timeouts reduce premature refunds but increase client capital lockup, and shorter timeouts increase the chance that a server claim races a client refund.
-
-At minimum:
-
-- pause protected routes or facilitator settlement;
-- stop opening new batch channels;
-- stop accepting new upto authorizations;
-- disable claim automation if claim builder or node behavior is suspected;
-- broadcast refunds for affected client-controlled channels only after the DAA timeout is mature and the active outpoint is still current;
-- rotate compromised server, facilitator, payout, funding, and refund keys;
-- preserve replay, idempotency, channel, claim-attempt, authorization, and transaction logs;
-- publish affected networks, package versions, template hash, transaction ids, and mitigations;
-- provide client recovery instructions for local channel state and refund paths.
-
-## Known Limitations
-
-- Mainnet profile is not audited.
-- Deterministic transaction-v1 vectors and live testnet proof are not substitutes for independent audit.
-- Live proof evidence is testnet-only.
-- The local live adapter is intentionally outside the public package boundary.
-- In-memory stores are examples only and are not production durable stores.
-- Production server stores must satisfy `docs/server-store-contract.md`.
-- Hot-wallet mode is a development convenience, not a custody recommendation.
-- Facilitator authentication and tenant isolation are not provided by the reference package.
-- Fee policy, dust policy, and finality policy need operator-specific configuration.
-- External node/RPC correctness and availability are deployment risks.
-- Key compromise response depends on external custody and monitoring systems.
-
-## Current Verdict
-
-The project is ready for further review and testnet iteration. It is not ready for production mainnet funds until every audit and operational gate above is completed and documented.
+Mainnet enablement must require explicit configuration. Packages, examples, and
+docs must continue to describe mainnet as reserved until audits, durable store
+requirements, live evidence, and operator runbooks are complete.

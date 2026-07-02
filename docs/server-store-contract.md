@@ -7,8 +7,8 @@ below.
 ## Required Guarantees
 
 - Writes are durable before the method resolves.
-- Failed writes leave no partial replay, idempotency, channel, authorization, or
-  claim-attempt state.
+- Failed writes leave no partial replay, idempotency, channel, or claim-attempt
+  state.
 - Compare-and-set checks and uniqueness checks happen in the same transaction as
   the write they protect.
 - Records survive process restart and can be reloaded before retry recovery.
@@ -35,11 +35,6 @@ payment scope must fail atomically.
 `commitSettlement` must atomically write the batch commitment, optional payment
 identifier, and next channel state only when the current channel still matches
 the expected snapshot.
-
-`reserveUptoAuthorization` must atomically reserve both the authorization
-outpoint scope and the nonce scope before any nonzero settlement transaction is
-broadcast. `markUptoAuthorizationBroadcast` and `commitUptoSettlement` must
-preserve both scopes through pending, broadcast, and settled recovery.
 
 `saveClaimAttempt` must allow only one open claim attempt per channel.
 `applyClaimAttempt` must update channel state only when the channel still

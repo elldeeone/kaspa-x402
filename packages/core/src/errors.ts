@@ -18,15 +18,7 @@ export type KaspaX402ErrorCode =
   | "invalid_kaspa_payment_identifier"
   | "missing_kaspa_payment_identifier"
   | "kaspa_payment_identifier_conflict"
-  | "invalid_kaspa_upto_authorization"
-  | "invalid_kaspa_upto_expired"
-  | "invalid_kaspa_upto_recipient"
-  | "invalid_kaspa_upto_max_amount"
-  | "invalid_kaspa_exact_replay"
-  | "invalid_kaspa_upto_replay"
-  | "invalid_kaspa_upto_settlement_amount"
-  | "invalid_kaspa_upto_authorization_outpoint"
-  | "invalid_kaspa_upto_template";
+  | "invalid_kaspa_exact_replay";
 
 export class KaspaX402Error extends Error {
   readonly code: KaspaX402ErrorCode;
@@ -92,16 +84,7 @@ export function toX402ErrorReason(reason: string | undefined): string {
     case "kaspa_payment_identifier_conflict":
     case "payment_identifier_conflict":
     case "exact_payment_replay":
-    case "upto_authorization_replay":
     case "invalid_kaspa_exact_replay":
-    case "invalid_kaspa_upto_replay":
-    case "invalid_kaspa_upto_authorization":
-    case "invalid_kaspa_upto_expired":
-    case "invalid_kaspa_upto_recipient":
-    case "invalid_kaspa_upto_max_amount":
-    case "invalid_kaspa_upto_settlement_amount":
-    case "invalid_kaspa_upto_authorization_outpoint":
-    case "invalid_kaspa_upto_template":
       return "invalid_transaction_state";
     case "unsupported_scheme":
       return "unsupported_scheme";

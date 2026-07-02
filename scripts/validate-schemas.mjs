@@ -75,7 +75,6 @@ function isUint64String(value) {
 function expectedBindingForScheme(scheme) {
   return {
     exact: "kaspa-exact-v1",
-    upto: "kaspa-upto-v1",
     "batch-settlement": "kaspa-escrow-v1",
   }[scheme];
 }
@@ -83,7 +82,6 @@ function expectedBindingForScheme(scheme) {
 function expectedPayloadTypesForScheme(scheme) {
   return {
     exact: ["exact-transfer"],
-    upto: ["upto-authorization"],
     "batch-settlement": ["deposit-voucher", "voucher", "claim", "refund"],
   }[scheme];
 }
@@ -92,7 +90,7 @@ function classifyInvalidValue(schemaId, value) {
   if (schemaId === "https://kaspa-x402.org/schemas/payment-required.schema.json") {
     const requirement = value?.accepts?.[0];
     if (value?.x402Version !== 2) return "invalid_kaspa_x402_version";
-    if (!requirement || !["exact", "upto", "batch-settlement"].includes(requirement.scheme)) return "invalid_kaspa_x402_scheme";
+    if (!requirement || !["exact", "batch-settlement"].includes(requirement.scheme)) return "invalid_kaspa_x402_scheme";
     if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(requirement.network)) return "invalid_kaspa_x402_network";
     if (requirement.asset !== "KAS") return "invalid_kaspa_x402_asset";
     if (!isUint64String(requirement.amount)) return "invalid_kaspa_x402_amount";
@@ -156,18 +154,6 @@ function channelIdPreimage(input) {
   ]);
 }
 
-function uptoAuthorizationPreimage(input) {
-  return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:upto-authorization:v2", "utf8")),
-    sha256(Buffer.from(input.network, "utf8")),
-    sha256(hexToBytes(input.activeScriptPublicKey)),
-    hexToBytes(input.authorizationOutpoint.txid),
-    le32(input.authorizationOutpoint.index),
-    hexToBytes(input.requestHash),
-    hexToBytes(input.nonce),
-  ]);
-}
-
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
     throw new Error(`${label} mismatch\nexpected: ${expected}\nactual:   ${actual}`);
@@ -199,25 +185,6 @@ function assertAcceptedOffered(paymentRequired, paymentPayload, label) {
   const offered = paymentRequired.accepts.some((requirement) => stableStringify(requirement) === accepted);
   if (!offered) {
     throw new Error(`${label}: accepted PaymentRequirements is not present in PaymentRequired.accepts`);
-  }
-}
-
-function assertUptoDigestInputMatchesPayload(vector, label) {
-  const accepted = vector.paymentPayload.accepted;
-  const payload = vector.paymentPayload.payload;
-  const authorization = payload.authorization;
-  const input = vector.authorizationDigest.input;
-  const expectedFields = {
-    network: accepted.network,
-    activeScriptPublicKey: payload.authorizationScriptPublicKey,
-    authorizationOutpoint: payload.authorizationOutpoint,
-    requestHash: authorization.requestHash,
-    nonce: authorization.nonce,
-  };
-  for (const [key, expected] of Object.entries(expectedFields)) {
-    if (stableStringify(input[key]) !== stableStringify(expected)) {
-      throw new Error(`${label}: authorizationDigest.input.${key} does not match paymentPayload`);
-    }
   }
 }
 
@@ -303,13 +270,6 @@ function assertTxV1Vector(file, vector, expectedKind) {
   } else if (expectedKind === "batch-refund") {
     if (artifact.fee?.source !== "refund-output") throw new Error(`${file}: refund fee source must be refund-output`);
     if ((artifact.transaction.outputs ?? []).length !== 1) throw new Error(`${file}: refund vector must have one output`);
-  } else if (expectedKind === "upto-settlement") {
-    if (artifact.fee?.source !== "settlement-reserve") throw new Error(`${file}: upto settlement fee source must be settlement-reserve`);
-    if ((artifact.transaction.outputs ?? []).length !== 2) throw new Error(`${file}: upto settlement vector must have two outputs`);
-    assertEqual(artifact.payment?.outputIndex, 0, `${file}:payment.outputIndex`);
-    assertEqual(artifact.refund?.outputIndex, 1, `${file}:refund.outputIndex`);
-    assertEqual(artifact.payment?.amount, artifact.transaction.outputs[0]?.amount, `${file}:payment.amount`);
-    assertEqual(artifact.refund?.amount, artifact.transaction.outputs[1]?.amount, `${file}:refund.amount`);
   }
 }
 
@@ -363,50 +323,6 @@ function assertTxV1Validation(file, validation) {
   }
 }
 
-function classifyUptoRejection(vector, rejection) {
-  const paymentPayload = structuredClone(vector.paymentPayload);
-  applyUptoMutation(paymentPayload, rejection.mutation);
-  const accepted = paymentPayload.accepted;
-  const payload = paymentPayload.payload;
-  const authorization = payload.authorization;
-  if (rejection.consumed === "outpoint" || rejection.consumed === "nonce") return "invalid_kaspa_upto_replay";
-  const currentDaa = BigInt(rejection.currentDaa ?? authorization.validAfterDaa);
-  if (
-    BigInt(authorization.validAfterDaa) >= BigInt(authorization.validBeforeDaa) ||
-    BigInt(authorization.validBeforeDaa) > BigInt(accepted.extra.authorizationTimeoutDaa) ||
-    currentDaa < BigInt(authorization.validAfterDaa) ||
-    currentDaa >= BigInt(authorization.validBeforeDaa)
-  ) {
-    return "invalid_kaspa_upto_expired";
-  }
-  if (authorization.payTo !== accepted.payTo) return "invalid_kaspa_upto_recipient";
-  if (authorization.maxAmountSompi !== accepted.amount) return "invalid_kaspa_upto_max_amount";
-  if (BigInt(payload.authorizationAmountSompi) < BigInt(authorization.maxAmountSompi) + BigInt(authorization.settlementFeeReserveSompi) + 1n) {
-    return "invalid_kaspa_x402_amount";
-  }
-  return "ok";
-}
-
-function applyUptoMutation(paymentPayload, mutation) {
-  if (!mutation) return;
-  const authorization = paymentPayload.payload.authorization;
-  for (const [path, value] of Object.entries(mutation)) {
-    switch (path) {
-      case "authorization.validBeforeDaa":
-        authorization.validBeforeDaa = value;
-        break;
-      case "authorization.payTo":
-        authorization.payTo = value;
-        break;
-      case "authorization.maxAmountSompi":
-        authorization.maxAmountSompi = value;
-        break;
-      default:
-        throw new Error(`unsupported upto rejection mutation: ${path}`);
-    }
-  }
-}
-
 function validateVector(ajv, file, vector, rootDir = root) {
   switch (vector.kind) {
     case "voucher-digest": {
@@ -431,57 +347,6 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertEqual(Buffer.from(stableStringify(vector.paymentRequired)).toString("base64"), vector.headers.paymentRequired, `${file}:PAYMENT-REQUIRED`);
       assertEqual(Buffer.from(stableStringify(vector.paymentPayload)).toString("base64"), vector.headers.paymentSignature, `${file}:PAYMENT-SIGNATURE`);
       assertEqual(Buffer.from(stableStringify(vector.settlementResponse)).toString("base64"), vector.headers.paymentResponse, `${file}:PAYMENT-RESPONSE`);
-      break;
-    }
-    case "upto-authorization": {
-      assertValid(ajv, "https://kaspa-x402.org/schemas/payment-required.schema.json", vector.paymentRequired, `${file}:paymentRequired`);
-      assertValid(ajv, "https://kaspa-x402.org/schemas/payment-payload.schema.json", vector.paymentPayload, `${file}:paymentPayload`);
-      assertAcceptedOffered(vector.paymentRequired, vector.paymentPayload, file);
-      assertUptoDigestInputMatchesPayload(vector, file);
-      const preimage = uptoAuthorizationPreimage(vector.authorizationDigest.input).toString("hex");
-      assertEqual(preimage, vector.authorizationDigest.expected.preimage, `${file}:authorizationDigest.preimage`);
-      assertEqual(sha256(Buffer.from(preimage, "hex")).toString("hex"), vector.authorizationDigest.expected.digest, `${file}:authorizationDigest.digest`);
-      assertEqual(
-        vector.paymentPayload.payload.authorization.signature,
-        `${vector.authorizationDigest.expected.digest}${vector.authorizationDigest.expected.digest}`,
-        `${file}:authorization.signature`,
-      );
-      assertValid(
-        ajv,
-        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
-        vector.settlementResponses.zeroCharge,
-        `${file}:settlementResponses.zeroCharge`,
-      );
-      assertValid(
-        ajv,
-        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
-        vector.settlementResponses.nonzero,
-        `${file}:settlementResponses.nonzero`,
-      );
-      if (vector.settlementResponses.zeroCharge.transaction !== "" || vector.settlementResponses.zeroCharge.amount !== "0") {
-        throw new Error(`${file}: zero-charge upto response must not move value`);
-      }
-      if (!isUint64String(vector.settlementResponses.nonzero.amount) || BigInt(vector.settlementResponses.nonzero.amount) <= 0n) {
-        throw new Error(`${file}: nonzero upto response must include a positive amount`);
-      }
-      assertEqual(Buffer.from(stableStringify(vector.paymentRequired)).toString("base64"), vector.headers.paymentRequired, `${file}:PAYMENT-REQUIRED`);
-      assertEqual(Buffer.from(stableStringify(vector.paymentPayload)).toString("base64"), vector.headers.paymentSignature, `${file}:PAYMENT-SIGNATURE`);
-      assertEqual(
-        Buffer.from(stableStringify(vector.settlementResponses.zeroCharge)).toString("base64"),
-        vector.headers.zeroChargeResponse,
-        `${file}:zeroChargeResponse`,
-      );
-      assertEqual(
-        Buffer.from(stableStringify(vector.settlementResponses.nonzero)).toString("base64"),
-        vector.headers.nonzeroResponse,
-        `${file}:nonzeroResponse`,
-      );
-      for (const rejection of vector.rejections ?? []) {
-        if (typeof rejection.name !== "string" || typeof rejection.expectedError !== "string") {
-          throw new Error(`${file}: upto rejection entries require name and expectedError`);
-        }
-        assertEqual(classifyUptoRejection(vector, rejection), rejection.expectedError, `${file}:${rejection.name}:expectedError`);
-      }
       break;
     }
     case "settlement-response": {
@@ -554,8 +419,6 @@ function validateVector(ajv, file, vector, rootDir = root) {
       const requiredValidationByPath = new Map([
         ["vectors/tx-v1/batch-claim.json", "consensus-cross-validated-offline-reference"],
         ["vectors/tx-v1/batch-refund.json", "consensus-cross-validated-offline-reference"],
-        ["vectors/tx-v1/upto-settlement.json", "consensus-cross-validated-offline-reference"],
-        ["vectors/upto/authorization.json", "no-transaction"],
       ]);
       for (const item of vector.coveredVectors) {
         if (typeof item.path !== "string" || typeof item.validation !== "string") {
@@ -583,10 +446,6 @@ function validateVector(ajv, file, vector, rootDir = root) {
     }
     case "tx-v1-batch-refund": {
       assertTxV1Vector(file, vector, "batch-refund");
-      break;
-    }
-    case "tx-v1-upto-settlement": {
-      assertTxV1Vector(file, vector, "upto-settlement");
       break;
     }
     default:

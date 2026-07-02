@@ -7,18 +7,14 @@ import {
   X402_VERSION,
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
-  kaspaSettlementExtensions,
-  minimumUptoAuthorizationAmount,
   parseSompiString,
   stableStringify,
   validatePaymentPayload,
   validatePaymentRequired,
   validatePaymentRetry,
-  validateSettlementResponse,
   type PaymentPayload,
   type PaymentRequired,
   type PaymentRequirements,
-  type SettlementResponse,
   type SompiString,
 } from "@kaspa-x402/core";
 
@@ -70,18 +66,6 @@ const COMMANDS: CommandDefinition[] = [
     summary: "Inspect an exact payment payload or PAYMENT-SIGNATURE header.",
     usage: "kaspa-x402 exact inspect --payment <payload.json> [--json]",
     handler: inspectExact,
-  },
-  {
-    path: ["upto", "inspect"],
-    summary: "Inspect an upto authorization payload or PAYMENT-SIGNATURE header.",
-    usage: "kaspa-x402 upto inspect --payment <payload.json> [--json]",
-    handler: inspectUpto,
-  },
-  {
-    path: ["upto", "settle"],
-    summary: "Prepare a zero-charge settlement or a verifier-required nonzero settlement preview.",
-    usage: "kaspa-x402 upto settle --payment <payload.json> --charge-amount <amount> [--json]",
-    handler: settleUpto,
   },
   {
     path: ["channel", "inspect"],
@@ -196,74 +180,6 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
   };
 }
 
-function inspectUpto(parsed: ParsedArgs): Record<string, unknown> {
-  const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "upto" || paymentPayload.payload.type !== "upto-authorization") {
-    throw new CliError("payment payload is not an upto authorization");
-  }
-  return {
-    scheme: "upto",
-    network: paymentPayload.accepted.network,
-    maxAmount: paymentPayload.accepted.amount,
-    authorizationAmount: paymentPayload.payload.authorizationAmountSompi,
-    payTo: paymentPayload.payload.authorization.payTo,
-    refundAddress: paymentPayload.payload.refundAddress,
-    authorizationOutpoint: paymentPayload.payload.authorizationOutpoint,
-    validAfterDaa: paymentPayload.payload.authorization.validAfterDaa,
-    validBeforeDaa: paymentPayload.payload.authorization.validBeforeDaa,
-    requestHash: paymentPayload.payload.authorization.requestHash,
-  };
-}
-
-function settleUpto(parsed: ParsedArgs): Record<string, unknown> {
-  const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "upto" || paymentPayload.payload.type !== "upto-authorization") {
-    throw new CliError("payment payload is not an upto authorization");
-  }
-  assertUptoPayloadConsistent(paymentPayload);
-
-  const chargeAmount = requiredAmountOption(parsed, "charge-amount");
-  const maxAmount = parseSompiString(paymentPayload.payload.authorization.maxAmountSompi);
-  const charge = parseSompiString(chargeAmount);
-  if (charge > maxAmount) throw new CliError("charge amount exceeds signed maximum");
-
-  if (charge === 0n) {
-    const settlement: SettlementResponse = {
-      success: true,
-      transaction: "",
-      network: paymentPayload.accepted.network,
-      payer: paymentPayload.payload.refundAddress,
-      amount: "0",
-      extensions: kaspaSettlementExtensions({
-        maxAmountSompi: paymentPayload.payload.authorization.maxAmountSompi,
-        authorizationOutpoint: paymentPayload.payload.authorizationOutpoint,
-        refundAddress: paymentPayload.payload.refundAddress,
-        chargedAmount: "0",
-      }),
-    };
-    const validation = validateSettlementResponse(settlement);
-    if (!validation.ok) throw validation.error;
-    return {
-      dryRun: true,
-      action: "upto-settle-zero-charge",
-      settlement,
-    };
-  }
-
-  return {
-    dryRun: true,
-    action: "upto-settle-preview",
-    settlementReady: false,
-    reason: "nonzero upto settlement requires a server transaction builder and independent settlement transaction verifier",
-    network: paymentPayload.accepted.network,
-    requestedChargeAmount: chargeAmount,
-    maxAmountSompi: paymentPayload.payload.authorization.maxAmountSompi,
-    authorizationOutpoint: paymentPayload.payload.authorizationOutpoint,
-    refundAddress: paymentPayload.payload.refundAddress,
-    requiredEvidence: ["verified settlement transaction id", "authorization input consumption", "payment output", "positive refund output"],
-  };
-}
-
 function inspectChannel(parsed: ParsedArgs): Record<string, unknown> {
   const channel = readChannel(parsed);
   return channelSummary(channel);
@@ -368,39 +284,6 @@ function readPaymentPayload(parsed: ParsedArgs): PaymentPayload {
   return validation.value;
 }
 
-function assertUptoPayloadConsistent(paymentPayload: PaymentPayload): void {
-  if (paymentPayload.accepted.scheme !== "upto" || paymentPayload.payload.type !== "upto-authorization") {
-    throw new CliError("payment payload is not an upto authorization");
-  }
-  const accepted = paymentPayload.accepted;
-  const payload = paymentPayload.payload;
-  const authorization = payload.authorization;
-  if (authorization.maxAmountSompi !== accepted.amount) {
-    throw new CliError("upto authorization maximum does not match accepted amount");
-  }
-  if (authorization.payTo !== accepted.payTo) {
-    throw new CliError("upto authorization recipient does not match accepted payTo");
-  }
-  if (authorization.serverPublicKey !== accepted.extra.serverPublicKey) {
-    throw new CliError("upto authorization server key does not match accepted requirements");
-  }
-  if (authorization.settlementFeeReserveSompi !== accepted.extra.settlementFeeReserveSompi) {
-    throw new CliError("upto authorization fee reserve does not match accepted requirements");
-  }
-  if (
-    parseSompiString(payload.authorizationAmountSompi) <
-    parseSompiString(minimumUptoAuthorizationAmount(authorization.maxAmountSompi, authorization.settlementFeeReserveSompi))
-  ) {
-    throw new CliError("upto authorization funding amount is below signed maximum plus fee reserve and refund output");
-  }
-  if (parseSompiString(authorization.validAfterDaa) >= parseSompiString(authorization.validBeforeDaa)) {
-    throw new CliError("upto authorization validity window is inverted");
-  }
-  if (parseSompiString(authorization.validBeforeDaa) > parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
-    throw new CliError("upto authorization validity exceeds accepted timeout");
-  }
-}
-
 function readPaymentRequiredForRetry(parsed: ParsedArgs, paymentPayload: PaymentPayload): PaymentRequired {
   if (typeof parsed.options["payment-required-header"] === "string") {
     return decodePaymentRequiredHeader(parsed.options["payment-required-header"]);
@@ -466,12 +349,6 @@ function readJsonInput(parsed: ParsedArgs, optionName: string): unknown {
   throw new CliError(`missing --${optionName}`);
 }
 
-function requiredAmountOption(parsed: ParsedArgs, name: string): SompiString {
-  const value = optionAmount(parsed, name);
-  if (value === undefined) throw new CliError(`missing --${name}`);
-  return value;
-}
-
 function optionAmount(parsed: ParsedArgs, name: string): SompiString | undefined {
   const value = optionString(parsed, name);
   if (value === undefined) return undefined;
@@ -494,14 +371,11 @@ function assertDryRun(parsed: ParsedArgs, command: string): void {
 
 async function verifyCovenantFixture(root: string): Promise<{ checks: number }> {
   const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v1.json");
-  const uptoFixture = readCovenantFixture(root, "kaspa-x402-upto-v1.json");
   const module = (await import("@kaspa-x402/covenant")) as {
     checkEscrowFixtureReproducibility: (fixture: unknown, source: Uint8Array) => { checks: readonly unknown[] };
-    checkUptoFixtureReproducibility: (fixture: unknown, source: Uint8Array) => { checks: readonly unknown[] };
   };
   const escrowReport = module.checkEscrowFixtureReproducibility(escrowFixture.fixture, escrowFixture.source);
-  const uptoReport = module.checkUptoFixtureReproducibility(uptoFixture.fixture, uptoFixture.source);
-  return { checks: escrowReport.checks.length + uptoReport.checks.length };
+  return { checks: escrowReport.checks.length };
 }
 
 function readCovenantFixture(root: string, name: string): { fixture: unknown; source: Uint8Array } {

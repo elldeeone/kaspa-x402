@@ -1,9 +1,7 @@
 {
   "kind": "tx-v1-plan",
   "description": "Implemented transaction v1 reference vectors for covenant-backed Kaspa x402 paths.",
-  "mainnetReadiness": {
-    "nonzeroUptoSettlement": "covered-by-upto-settlement-transaction-body-vector"
-  },
+  "mainnetReadiness": {},
   "coveredVectors": [
     {
       "name": "batch-claim-transaction-body",
@@ -16,18 +14,6 @@
       "path": "vectors/tx-v1/batch-refund.json",
       "validation": "consensus-cross-validated-offline-reference",
       "description": "Reference transaction-v1 artifact that refunds remaining escrow value after timeout."
-    },
-    {
-      "name": "upto-settlement-transaction-body",
-      "path": "vectors/tx-v1/upto-settlement.json",
-      "validation": "consensus-cross-validated-offline-reference",
-      "description": "Reference transaction-v1 artifact that consumes an upto authorization outpoint and pays the actual amount."
-    },
-    {
-      "name": "upto-zero-charge-no-transaction-response",
-      "path": "vectors/upto/authorization.json",
-      "validation": "no-transaction",
-      "description": "SettlementResponse shape for the explicit zero-charge/no-value-moved upto success path."
     }
   ]
 }

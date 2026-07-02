@@ -17,20 +17,6 @@ export interface EscrowTemplateParams {
   timeoutDaa: bigint | number | string;
 }
 
-export interface UptoTemplateParams {
-  clientPublicKey: string;
-  serverPublicKey: string;
-  network: NetworkId;
-  payoutScriptPublicKeyHash: string;
-  refundScriptPublicKeyHash: string;
-  requestHash: string;
-  nonce: string;
-  maxAmountSompi: bigint | number | string;
-  validAfterDaa: bigint | number | string;
-  validBeforeDaa: bigint | number | string;
-  settlementFeeReserveSompi: bigint | number | string;
-}
-
 export interface ScriptPublicKey {
   version: number;
   script: string;
@@ -54,28 +40,11 @@ export interface RefundArgsInput {
   clientSignature: string | Uint8Array;
 }
 
-export interface UptoSettleArgsInput {
-  serverSignature: string | Uint8Array;
-  clientAuthorization: string | Uint8Array;
-}
-
-export interface UptoRefundArgsInput {
-  clientSignature: string | Uint8Array;
-}
-
 export interface VoucherPreimageInput {
   network: NetworkId;
   activeScriptPublicKey: string;
   outpoint: FundingOutpoint;
   amount: bigint | number | string;
-}
-
-export interface UptoAuthorizationPreimageInput {
-  network: NetworkId;
-  activeScriptPublicKey: string;
-  outpoint: FundingOutpoint;
-  requestHash: string;
-  nonce: string;
 }
 
 export interface ClaimOutputPlan {
@@ -95,42 +64,16 @@ export interface RefundOutputPlan {
   expectedRefundScriptPublicKeyHash: string;
 }
 
-export interface UptoSettlementOutputPlan {
-  inputAmount: bigint | number | string;
-  maxAmountSompi: bigint | number | string;
-  chargeAmount: bigint | number | string;
-  settlementFeeReserveSompi: bigint | number | string;
-  paymentOutputAmount: bigint | number | string;
-  paymentOutputScriptPublicKey: string;
-  expectedPayoutScriptPublicKeyHash: string;
-  refundOutputAmount: bigint | number | string;
-  refundOutputScriptPublicKey: string;
-  expectedRefundScriptPublicKeyHash: string;
-}
-
-export interface UptoRefundOutputPlan {
-  inputSequence: bigint | number | string;
-  refundOutputScriptPublicKey: string;
-  expectedRefundScriptPublicKeyHash: string;
-}
-
 export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v1";
 export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v1";
 export const ESCROW_VOUCHER_DOMAIN_TAG = "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12";
-export const UPTO_TEMPLATE_ID = "kaspa-x402-upto-v1";
-export const UPTO_AUTHORIZATION_DOMAIN = "kaspa:x402:upto-authorization:v2";
-export const UPTO_AUTHORIZATION_DOMAIN_TAG = "e8e4f7b53bca685ebbcda16eaf7da67146dfe993da13eed8bb9dab4f29feafca";
 
 export const CLAIM_SCRIPT_UNITS_ESTIMATE = 200_544;
 export const REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
-export const UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE = 260_000;
-export const UPTO_REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
 export const SCRIPT_UNITS_PER_COMPUTE_BUDGET = 10_000;
 export const FREE_SCRIPT_UNITS_PER_INPUT = 9_999;
 export const CLAIM_COMPUTE_BUDGET = computeBudgetForScriptUnits(CLAIM_SCRIPT_UNITS_ESTIMATE);
 export const REFUND_COMPUTE_BUDGET = computeBudgetForScriptUnits(REFUND_SCRIPT_UNITS_ESTIMATE);
-export const UPTO_SETTLE_COMPUTE_BUDGET = computeBudgetForScriptUnits(UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE);
-export const UPTO_REFUND_COMPUTE_BUDGET = computeBudgetForScriptUnits(UPTO_REFUND_SCRIPT_UNITS_ESTIMATE);
 
 const U32_MAX = 0xffff_ffff;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
@@ -146,24 +89,6 @@ const SEG_4 = "876951c3b9bf876951c2b9be527994a269007a75757575516776519c637576";
 const SEG_5 = "ac69";
 const SEG_6 = "b0b9bd0058cd8769b4519c6900c3a8";
 const SEG_7 = "87697551677500696868";
-
-const UPTO_SEG_0 = "6b6c76009c637578";
-const UPTO_SEG_1 = "ac69";
-const UPTO_SEG_2 = "b0";
-const UPTO_SEG_3 = "";
-const UPTO_SEG_4 = "a06976";
-const UPTO_SEG_5 = "";
-const UPTO_SEG_6 = "7eb9bfa87eb9ba7eb9bb54cd7e";
-const UPTO_SEG_7 = "7e";
-const UPTO_SEG_8 = "7ea8";
-const UPTO_SEG_9 = "d769b9be00c2b4529c697600a06976";
-const UPTO_SEG_10 = "a169765279a16900c3a8";
-const UPTO_SEG_11 = "876951c3a8";
-const UPTO_SEG_12 = "876951c25279527994";
-const UPTO_SEG_13 = "94a269007a75007a757575516776519c637576";
-const UPTO_SEG_14 = "ac69";
-const UPTO_SEG_15 = "b0b9bd0058cd8769b4519c6900c3a8";
-const UPTO_SEG_16 = "87697551677500696868";
 
 export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   const client = hexToBytes(params.clientPublicKey, 32, "clientPublicKey");
@@ -194,71 +119,8 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   );
 }
 
-export function buildUptoRedeemScript(params: UptoTemplateParams): string {
-  const client = hexToBytes(params.clientPublicKey, 32, "clientPublicKey");
-  const server = hexToBytes(params.serverPublicKey, 32, "serverPublicKey");
-  const payoutScriptPublicKeyHash = hexToBytes(params.payoutScriptPublicKeyHash, 32, "payoutScriptPublicKeyHash");
-  const refundScriptPublicKeyHash = hexToBytes(params.refundScriptPublicKeyHash, 32, "refundScriptPublicKeyHash");
-  const requestHash = hexToBytes(params.requestHash, 32, "requestHash");
-  const nonce = hexToBytes(params.nonce, 32, "nonce");
-  const maxAmount = normalizeUint64(params.maxAmountSompi, "maxAmountSompi");
-  const validAfter = normalizeUint64(params.validAfterDaa, "validAfterDaa");
-  const validBefore = normalizeUint64(params.validBeforeDaa, "validBeforeDaa");
-  const settlementFeeReserve = normalizeUint64(params.settlementFeeReserveSompi, "settlementFeeReserveSompi");
-  const network = networkHash(params.network);
-
-  if (maxAmount === 0n) {
-    throw new Error("maxAmountSompi must be greater than zero");
-  }
-  if (validBefore <= validAfter) {
-    throw new Error("validBeforeDaa must be greater than validAfterDaa");
-  }
-
-  return bytesToHex(
-    concatBytes([
-      hexToBytes(UPTO_SEG_0, undefined, "UPTO_SEG_0"),
-      pushData(server),
-      hexToBytes(UPTO_SEG_1, undefined, "UPTO_SEG_1"),
-      pushScriptNumber(validAfter),
-      hexToBytes(UPTO_SEG_2, undefined, "UPTO_SEG_2"),
-      pushScriptNumber(validBefore),
-      hexToBytes(UPTO_SEG_3, undefined, "UPTO_SEG_3"),
-      pushScriptNumber(validAfter),
-      hexToBytes(UPTO_SEG_4, undefined, "UPTO_SEG_4"),
-      pushData(hexToBytes(UPTO_AUTHORIZATION_DOMAIN_TAG, 32, "UPTO_AUTHORIZATION_DOMAIN_TAG")),
-      hexToBytes(UPTO_SEG_5, undefined, "UPTO_SEG_5"),
-      pushData(network),
-      hexToBytes(UPTO_SEG_6, undefined, "UPTO_SEG_6"),
-      pushData(requestHash),
-      hexToBytes(UPTO_SEG_7, undefined, "UPTO_SEG_7"),
-      pushData(nonce),
-      hexToBytes(UPTO_SEG_8, undefined, "UPTO_SEG_8"),
-      pushData(client),
-      hexToBytes(UPTO_SEG_9, undefined, "UPTO_SEG_9"),
-      pushScriptNumber(maxAmount),
-      hexToBytes(UPTO_SEG_10, undefined, "UPTO_SEG_10"),
-      pushData(payoutScriptPublicKeyHash),
-      hexToBytes(UPTO_SEG_11, undefined, "UPTO_SEG_11"),
-      pushData(refundScriptPublicKeyHash),
-      hexToBytes(UPTO_SEG_12, undefined, "UPTO_SEG_12"),
-      pushScriptNumber(settlementFeeReserve),
-      hexToBytes(UPTO_SEG_13, undefined, "UPTO_SEG_13"),
-      pushData(client),
-      hexToBytes(UPTO_SEG_14, undefined, "UPTO_SEG_14"),
-      pushScriptNumber(validBefore),
-      hexToBytes(UPTO_SEG_15, undefined, "UPTO_SEG_15"),
-      pushData(refundScriptPublicKeyHash),
-      hexToBytes(UPTO_SEG_16, undefined, "UPTO_SEG_16"),
-    ]),
-  );
-}
-
 export function escrowScriptPublicKey(params: EscrowTemplateParams): ScriptPublicKey {
   return payToScriptHashScript(buildEscrowRedeemScript(params));
-}
-
-export function uptoScriptPublicKey(params: UptoTemplateParams): ScriptPublicKey {
-  return payToScriptHashScript(buildUptoRedeemScript(params));
 }
 
 export function serializedScriptPublicKey(scriptPublicKey: ScriptPublicKey): string {
@@ -275,26 +137,8 @@ export function escrowScriptPubKeyHash(paramsOrScriptPublicKey: EscrowTemplatePa
   return bytesToHex(sha256(hexToBytes(serializedScriptPublicKey(spk), undefined, "serializedScriptPublicKey")));
 }
 
-export function uptoScriptPubKeyHash(paramsOrScriptPublicKey: UptoTemplateParams | ScriptPublicKey): string {
-  const spk = "script" in paramsOrScriptPublicKey ? paramsOrScriptPublicKey : uptoScriptPublicKey(paramsOrScriptPublicKey);
-  return bytesToHex(sha256(hexToBytes(serializedScriptPublicKey(spk), undefined, "serializedScriptPublicKey")));
-}
-
 export function deriveEscrowAddress(params: EscrowTemplateParams, encodeAddress: KaspaAddressEncoder): string {
   const scriptPublicKey = escrowScriptPublicKey(params);
-  const address = encodeAddress({
-    network: params.network,
-    scriptPublicKey,
-    serializedScriptPublicKey: serializedScriptPublicKey(scriptPublicKey),
-  });
-  if (typeof address !== "string" || address.length === 0) {
-    throw new Error("address encoder must return a non-empty address string");
-  }
-  return address;
-}
-
-export function deriveUptoAddress(params: UptoTemplateParams, encodeAddress: KaspaAddressEncoder): string {
-  const scriptPublicKey = uptoScriptPublicKey(params);
   const address = encodeAddress({
     network: params.network,
     scriptPublicKey,
@@ -318,17 +162,6 @@ export function buildRefundArgs(input: RefundArgsInput): string {
   return bytesToHex(concatBytes([pushData(clientSignature), Uint8Array.of(0x51)]));
 }
 
-export function buildUptoSettleArgs(input: UptoSettleArgsInput): string {
-  const serverSignature = bytesFromHexOrBytes(input.serverSignature, 65, "serverSignature");
-  const clientAuthorization = bytesFromHexOrBytes(input.clientAuthorization, 64, "clientAuthorization");
-  return bytesToHex(concatBytes([pushData(serverSignature), pushData(clientAuthorization), Uint8Array.of(0x00)]));
-}
-
-export function buildUptoRefundArgs(input: UptoRefundArgsInput): string {
-  const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
-  return bytesToHex(concatBytes([pushData(clientSignature), Uint8Array.of(0x51)]));
-}
-
 export function voucherPreimage(input: VoucherPreimageInput): string {
   return bytesToHex(
     concatBytes([
@@ -344,24 +177,6 @@ export function voucherPreimage(input: VoucherPreimageInput): string {
 
 export function voucherDigest(input: VoucherPreimageInput): string {
   return bytesToHex(sha256(hexToBytes(voucherPreimage(input), undefined, "voucherPreimage")));
-}
-
-export function uptoAuthorizationPreimage(input: UptoAuthorizationPreimageInput): string {
-  return bytesToHex(
-    concatBytes([
-      hexToBytes(UPTO_AUTHORIZATION_DOMAIN_TAG, 32, "domainTag"),
-      networkHash(input.network),
-      sha256(serializedScriptPublicKeyBytes(input.activeScriptPublicKey, "activeScriptPublicKey")),
-      hexToBytes(input.outpoint.txid, 32, "outpoint.txid"),
-      u32Le(input.outpoint.index),
-      hexToBytes(input.requestHash, 32, "requestHash"),
-      hexToBytes(input.nonce, 32, "nonce"),
-    ]),
-  );
-}
-
-export function uptoAuthorizationDigest(input: UptoAuthorizationPreimageInput): string {
-  return bytesToHex(sha256(hexToBytes(uptoAuthorizationPreimage(input), undefined, "uptoAuthorizationPreimage")));
 }
 
 export function validateClaimOutputPlan(plan: ClaimOutputPlan): true {
@@ -400,63 +215,6 @@ export function validateRefundOutputPlan(plan: RefundOutputPlan): true {
   const expectedRefundHash = normalizeHex(plan.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash");
   if (refundOutputHash !== expectedRefundHash) {
     throw new Error("refund output script public key must match the configured refund hash");
-  }
-  return true;
-}
-
-export function validateUptoSettlementOutputPlan(plan: UptoSettlementOutputPlan): true {
-  const inputAmount = normalizeUint64(plan.inputAmount, "inputAmount");
-  const maxAmount = normalizeUint64(plan.maxAmountSompi, "maxAmountSompi");
-  const chargeAmount = normalizeUint64(plan.chargeAmount, "chargeAmount");
-  const reserveAmount = normalizeUint64(plan.settlementFeeReserveSompi, "settlementFeeReserveSompi");
-  const paymentAmount = normalizeUint64(plan.paymentOutputAmount, "paymentOutputAmount");
-  const refundAmount = normalizeUint64(plan.refundOutputAmount, "refundOutputAmount");
-  const payoutHash = bytesToHex(sha256(serializedScriptPublicKeyBytes(plan.paymentOutputScriptPublicKey, "paymentOutputScriptPublicKey")));
-  const expectedPayoutHash = normalizeHex(plan.expectedPayoutScriptPublicKeyHash, "expectedPayoutScriptPublicKeyHash");
-  const refundHash = bytesToHex(sha256(serializedScriptPublicKeyBytes(plan.refundOutputScriptPublicKey, "refundOutputScriptPublicKey")));
-  const expectedRefundHash = normalizeHex(plan.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash");
-
-  if (chargeAmount === 0n) {
-    throw new Error("upto settlement charge must be positive");
-  }
-  if (chargeAmount > maxAmount) {
-    throw new Error("upto settlement charge cannot exceed max amount");
-  }
-  if (chargeAmount > inputAmount) {
-    throw new Error("upto settlement charge cannot exceed input amount");
-  }
-  if (paymentAmount !== chargeAmount) {
-    throw new Error("upto settlement payment output must match charge amount");
-  }
-  if (refundAmount === 0n) {
-    throw new Error("upto settlement refund output must be positive");
-  }
-  if (payoutHash !== expectedPayoutHash) {
-    throw new Error("upto settlement payment output script must match the configured payout hash");
-  }
-  if (refundHash !== expectedRefundHash) {
-    throw new Error("upto settlement refund output script must match the configured refund hash");
-  }
-  if (paymentAmount + refundAmount > inputAmount) {
-    throw new Error("upto settlement outputs cannot exceed input amount");
-  }
-  if (inputAmount - paymentAmount - refundAmount > reserveAmount) {
-    throw new Error("upto settlement fee cannot exceed the signed reserve");
-  }
-  if (refundAmount < inputAmount - chargeAmount - reserveAmount) {
-    throw new Error("upto settlement refund output must preserve the uncharged remainder");
-  }
-  return true;
-}
-
-export function validateUptoRefundOutputPlan(plan: UptoRefundOutputPlan): true {
-  if (normalizeUint64(plan.inputSequence, "inputSequence") !== 0n) {
-    throw new Error("upto refund input sequence must be 0");
-  }
-  const refundOutputHash = bytesToHex(sha256(serializedScriptPublicKeyBytes(plan.refundOutputScriptPublicKey, "refundOutputScriptPublicKey")));
-  const expectedRefundHash = normalizeHex(plan.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash");
-  if (refundOutputHash !== expectedRefundHash) {
-    throw new Error("upto refund output script public key must match the configured refund hash");
   }
   return true;
 }

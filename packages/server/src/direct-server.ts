@@ -14,16 +14,12 @@ import {
   le32,
   le64,
   kaspaSettlementExtensions,
-  minimumUptoAuthorizationAmount,
   parseSompiString,
   paymentIdentifierExtension,
-  readKaspaSettlementExtension,
   sha256,
   sha256Hex,
   stableStringify,
   toX402ErrorReason,
-  uptoAuthorizationDigest,
-  uptoAuthorizationPreimageHex,
   validatePaymentPayload,
   validatePaymentRequired,
   validatePaymentRetry,
@@ -43,13 +39,11 @@ import {
   type SettlementResponse,
   type SompiString,
   type SupportedKind,
-  type UptoAuthorizationPayload,
-  type UptoPaymentRequirements,
   type Voucher,
   type VoucherPayload,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey, uptoScriptPublicKey } from "@kaspa-x402/covenant";
+import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import { activeChargedAmount, MemoryChannelLockManager } from "./stores.js";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -77,29 +71,20 @@ import {
   type ServerResponse,
   type SettlementFinality,
   type TransactionBroadcast,
-  type UptoAuthorizationRecord,
-  type UptoBroadcastAuthorizationRecord,
-  type UptoPendingAuthorizationRecord,
-  type UptoSettledAuthorizationRecord,
-  type UptoSettlementTransactionVerification,
   type VerifiedBatchPayment,
   type VerifiedExactPayment,
-  type VerifiedUptoPayment,
   type VerifiedPayment,
 } from "./types.js";
 
 type ResolvedServerConfig = DirectModeServerConfig &
   Required<
     Pick<
-      DirectModeServerConfig,
-      | "asset"
-      | "templateId"
-      | "authorizationTemplateId"
-      | "authorizationTimeoutDaa"
-      | "settlementFeeReserveSompi"
-      | "maxTimeoutSeconds"
-      | "acceptedFinality"
-      | "lockManager"
+	      DirectModeServerConfig,
+	      | "asset"
+	      | "templateId"
+	      | "maxTimeoutSeconds"
+	      | "acceptedFinality"
+	      | "lockManager"
     >
   >;
 
@@ -114,30 +99,20 @@ type PendingExactSettlement = {
   payment: Omit<ExactPaymentRecord, "response">;
 };
 
-type PendingUptoSettlement = {
-  settlement: SettlementResponse;
-  authorization: Omit<UptoSettledAuthorizationRecord, "response">;
-  transaction?: PreparedTransaction;
-};
-
 export class DirectModeServer {
   readonly #config: ResolvedServerConfig;
 
   constructor(config: DirectModeServerConfig) {
-    this.#config = {
-      asset: "KAS",
-      templateId: "kaspa-x402-escrow-v1",
-      authorizationTemplateId: "kaspa-x402-upto-v1",
-      authorizationTimeoutDaa: config.authorizationTimeoutDaa ?? config.refundTimeoutDaa,
-      settlementFeeReserveSompi: "2000",
-      maxTimeoutSeconds: 60,
-      acceptedFinality: "accepted",
-      lockManager: new MemoryChannelLockManager(),
+	    this.#config = {
+	      asset: "KAS",
+	      templateId: "kaspa-x402-escrow-v1",
+	      maxTimeoutSeconds: 60,
+	      acceptedFinality: "accepted",
+	      lockManager: new MemoryChannelLockManager(),
       ...config,
-    };
-    assertMainnetAllowed(this.#config.network, this.#config.allowMainnet, "DirectModeServer");
-    validateAuthorizationPolicy(this.#config);
-  }
+	    };
+	    assertMainnetAllowed(this.#config.network, this.#config.allowMainnet, "DirectModeServer");
+	  }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
     return makePaymentRequired(this.#config, options);
@@ -162,13 +137,6 @@ export class DirectModeServer {
   }
 
   async #buildRuntimePaymentRequired(options: BuildPaymentRequiredOptions): Promise<PaymentRequired> {
-    if (options.scheme === "upto" && options.authorizationTimeoutDaa === undefined && this.#config.authorizationWindowDaa !== undefined) {
-      const nowDaa = await this.#config.chainProvider.getVirtualDaaScore();
-      return makePaymentRequired(this.#config, {
-        ...options,
-        authorizationTimeoutDaa: materializedAuthorizationTimeoutDaa(this.#config, nowDaa),
-      });
-    }
     return makePaymentRequired(this.#config, options);
   }
 
@@ -187,19 +155,6 @@ export class DirectModeServer {
           asset: this.#config.asset,
           binding: "kaspa-exact-v1",
           modes: ["verify", "settle"],
-        },
-      });
-    }
-    if (this.#config.uptoAuthorizationVerifier) {
-      kinds.push({
-        x402Version: X402_VERSION,
-        scheme: "upto",
-        network: this.#config.network,
-        extra: {
-          asset: this.#config.asset,
-          binding: "kaspa-upto-v1",
-          authorizationTemplateId: this.#config.authorizationTemplateId,
-          modes: this.#config.uptoSettlementBuilder && this.#config.uptoSettlementVerifier ? ["verify", "settle"] : ["verify"],
         },
       });
     }
@@ -317,11 +272,6 @@ export class DirectModeServer {
           const replay = await this.#checkExactReplay(verified, fingerprint);
           if (replay) return replay;
         }
-        if (verified.scheme === "upto") {
-          const replay = await this.#checkUptoReplay(verified, fingerprint, paymentPayload);
-          if (replay) return replay;
-        }
-
         let handlerResult: ProtectedHandlerResult;
         try {
           handlerResult = await handler({
@@ -354,9 +304,6 @@ export class DirectModeServer {
 
         if (verified.scheme === "exact") {
           return this.#commitExactResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
-        }
-        if (verified.scheme === "upto") {
-          return this.#commitUptoResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
         }
         return this.#commitBatchResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
       };
@@ -568,7 +515,7 @@ export class DirectModeServer {
     resource: ResourceInfo,
     requestFingerprint: Hash32Hex,
     paymentAmount?: SompiString,
-    requestedScheme?: "exact" | "upto" | "batch-settlement",
+    requestedScheme?: "exact" | "batch-settlement",
   ): Promise<VerifiedPayment> {
     const paymentRequired = await this.#expectedPaymentRequired(resource, paymentPayload, paymentAmount, requestedScheme);
     return this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
@@ -594,20 +541,8 @@ export class DirectModeServer {
       );
     }
 
-    if (paymentPayload.accepted.scheme === "upto") {
-      const payload = paymentPayload.payload;
-      if (payload.type !== "upto-authorization") {
-        throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "unsupported upto payment payload type");
-      }
-      return this.#verifyUptoPayment(
-        paymentRequired,
-        paymentPayload as PaymentPayload & { accepted: UptoPaymentRequirements; payload: UptoAuthorizationPayload },
-        requestFingerprint,
-      );
-    }
-
     if (paymentPayload.accepted.scheme !== "batch-settlement") {
-      throw new KaspaX402Error("invalid_kaspa_x402_scheme", "server only supports exact, upto, and batch-settlement in direct mode");
+      throw new KaspaX402Error("invalid_kaspa_x402_scheme", "server only supports exact and batch-settlement in direct mode");
     }
 
     const accepted = paymentPayload.accepted as BatchPaymentRequirements;
@@ -677,128 +612,6 @@ export class DirectModeServer {
       paymentOutputIndex: payload.paymentOutputIndex,
       payerAddress: verification.payerAddress ?? payload.payerAddress,
       finality: verification.finality,
-    };
-  }
-
-  async #verifyUptoPayment(
-    paymentRequired: ReturnType<typeof makePaymentRequired>,
-    paymentPayload: PaymentPayload & { accepted: UptoPaymentRequirements; payload: UptoAuthorizationPayload },
-    requestFingerprint: Hash32Hex,
-  ): Promise<VerifiedUptoPayment> {
-    const accepted = paymentPayload.accepted;
-    const payload = paymentPayload.payload;
-    validateUptoTerms(this.#config, accepted);
-
-    const authorizationScopeId = uptoAuthorizationScopeId(payload.authorizationOutpoint);
-    const nonceScopeId = uptoNonceScopeId(accepted.network, payload.clientPublicKey, payload.authorization.nonce);
-    const existingByOutpoint = await this.#config.store.loadUptoAuthorization(authorizationScopeId);
-    const existingByNonce = await this.#config.store.loadUptoAuthorization(nonceScopeId);
-    const existingConsumption = existingByOutpoint ?? existingByNonce;
-    if (existingConsumption) {
-      return {
-        scheme: "upto",
-        paymentRequired,
-        paymentPayload,
-        accepted,
-        authorizationScopeId,
-        nonceScopeId,
-        existingConsumption,
-      };
-    }
-
-    if (payload.authorization.maxAmountSompi !== accepted.amount) {
-      throw new KaspaX402Error("invalid_kaspa_upto_max_amount", "upto authorization maximum does not match accepted amount");
-    }
-    if (payload.authorization.payTo !== accepted.payTo) {
-      throw new KaspaX402Error("invalid_kaspa_upto_recipient", "upto authorization recipient does not match accepted payTo");
-    }
-    if (payload.authorization.serverPublicKey !== accepted.extra.serverPublicKey) {
-      throw new KaspaX402Error("invalid_kaspa_public_key", "upto authorization server public key does not match accepted requirement");
-    }
-    if (!payload.authorization.requestHash || payload.authorization.requestHash.toLowerCase() !== requestFingerprint.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "upto authorization request hash does not match request fingerprint");
-    }
-    if (parseSompiString(payload.authorization.validAfterDaa) >= parseSompiString(payload.authorization.validBeforeDaa)) {
-      throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization validity window is invalid");
-    }
-    if (parseSompiString(payload.authorization.validBeforeDaa) > parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
-      throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization exceeds advertised timeout");
-    }
-    const nowDaa = await this.#config.chainProvider.getVirtualDaaScore();
-    assertAuthorizationTimeoutAllowed(this.#config, accepted.extra.authorizationTimeoutDaa, nowDaa);
-    if (
-      parseSompiString(nowDaa) < parseSompiString(payload.authorization.validAfterDaa) ||
-      parseSompiString(nowDaa) >= parseSompiString(payload.authorization.validBeforeDaa)
-    ) {
-      throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization is outside its DAA validity window");
-    }
-
-    if (payload.authorization.settlementFeeReserveSompi !== accepted.extra.settlementFeeReserveSompi) {
-      throw new KaspaX402Error("invalid_kaspa_upto_template", "upto authorization fee reserve does not match accepted requirement");
-    }
-    const payoutScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
-    const refundScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(payload.refundAddress, accepted.network);
-    const payoutScriptPublicKeyHash = scriptPublicKeyHash(payoutScriptPublicKey);
-    const refundScriptPublicKeyHash = scriptPublicKeyHash(refundScriptPublicKey);
-    if (payload.authorization.payoutScriptPublicKeyHash.toLowerCase() !== payoutScriptPublicKeyHash.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_upto_recipient", "upto authorization payout script hash does not match accepted payTo");
-    }
-    if (payload.authorization.refundScriptPublicKeyHash.toLowerCase() !== refundScriptPublicKeyHash.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_upto_template", "upto authorization refund script hash does not match refund address");
-    }
-    const expectedScript = serializedScriptPublicKey(
-      uptoScriptPublicKey({
-        clientPublicKey: payload.clientPublicKey,
-        serverPublicKey: payload.authorization.serverPublicKey,
-        network: accepted.network,
-        payoutScriptPublicKeyHash,
-        refundScriptPublicKeyHash,
-        requestHash: payload.authorization.requestHash,
-        nonce: payload.authorization.nonce,
-        maxAmountSompi: payload.authorization.maxAmountSompi,
-        validAfterDaa: payload.authorization.validAfterDaa,
-        validBeforeDaa: payload.authorization.validBeforeDaa,
-        settlementFeeReserveSompi: payload.authorization.settlementFeeReserveSompi,
-      }),
-    );
-    if (expectedScript.toLowerCase() !== payload.authorizationScriptPublicKey.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_upto_template", "upto authorization script does not match derived template");
-    }
-
-    const utxo = await this.#verifiedFundingUtxo(payload.authorizationOutpoint, payload.authorizationScriptPublicKey, payload.authorizationAmountSompi);
-    if (parseSompiString(utxo.amount) < parseSompiString(minimumUptoAuthorizationAmount(payload.authorization.maxAmountSompi, payload.authorization.settlementFeeReserveSompi))) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "upto authorization amount is below the signed maximum plus fee reserve and refund output");
-    }
-
-    if (!this.#config.uptoAuthorizationVerifier) {
-      throw new KaspaX402Error("invalid_kaspa_signature", "upto authorization signature verifier is required");
-    }
-    const digestInput = {
-      network: accepted.network,
-      activeScriptPublicKey: payload.authorizationScriptPublicKey,
-      authorizationOutpoint: payload.authorizationOutpoint,
-      requestHash: payload.authorization.requestHash,
-      nonce: payload.authorization.nonce,
-    };
-    const digest = uptoAuthorizationDigest(digestInput);
-    const preimage = uptoAuthorizationPreimageHex(digestInput);
-    const verified = await this.#config.uptoAuthorizationVerifier.verifyUptoAuthorization({
-      accepted,
-      payload,
-      digest,
-      preimage,
-      requestFingerprint,
-    });
-    if (!verified) throw new KaspaX402Error("invalid_kaspa_signature", "upto authorization signature was rejected");
-
-    return {
-      scheme: "upto",
-      paymentRequired,
-      paymentPayload,
-      accepted,
-      authorizationScopeId,
-      nonceScopeId,
-      utxo,
     };
   }
 
@@ -1052,157 +865,6 @@ export class DirectModeServer {
     return response;
   }
 
-  async #commitUptoResponse(
-    verified: VerifiedUptoPayment,
-    handlerResult: ProtectedHandlerResult,
-    chargedAmount: SompiString,
-    fingerprint: Hash32Hex,
-    paymentIdentifier?: string,
-  ): Promise<ServerResponse> {
-    let pending: PendingUptoSettlement;
-    try {
-      pending = await this.#buildSuccessfulUptoSettlement(verified, chargedAmount, fingerprint);
-    } catch (error) {
-      if (!(error instanceof KaspaX402Error)) {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-      return this.#correctiveResponse(verified.paymentRequired.resource, verified.paymentPayload, error, verified.accepted.amount, "upto");
-    }
-    let response: ServerResponse = {
-      status: handlerResult.status ?? 200,
-      headers: {
-        ...(handlerResult.headers ?? {}),
-        [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(pending.settlement),
-      },
-      body: handlerResult.body,
-    };
-    if (pending.transaction) {
-      const transactionId = pending.authorization.transactionId;
-      if (!transactionId) {
-        return this.#correctiveResponse(
-          verified.paymentRequired.resource,
-          verified.paymentPayload,
-          new KaspaX402Error("invalid_kaspa_settlement_response", "upto settlement transaction id is missing"),
-          verified.accepted.amount,
-          "upto",
-        );
-      }
-      const reservation = this.#uptoAuthorizationReservation(verified, chargedAmount, pending.transaction, transactionId, fingerprint, response, pending.settlement, paymentIdentifier);
-      const reservedSettlement = withUptoSettlementFinality(pending.settlement, transactionId, "broadcast");
-      const reservedResponse = uptoPendingResponse(reservedSettlement);
-      const reservedPaymentIdentifier = paymentIdentifier
-        ? uptoPaymentIdentifierRecord(paymentIdentifier, reservation, reservedResponse, uptoPendingSettlement(reservedSettlement))
-        : undefined;
-      try {
-        await this.#config.store.reserveUptoAuthorization(reservation, reservedPaymentIdentifier);
-      } catch {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-
-      let broadcast: TransactionBroadcast;
-      try {
-        const broadcastDaa = await this.#config.chainProvider.getVirtualDaaScore();
-        if (
-          parseSompiString(broadcastDaa) < parseSompiString(pending.authorization.validAfterDaa) ||
-          parseSompiString(broadcastDaa) >= parseSompiString(pending.authorization.validBeforeDaa)
-        ) {
-          await this.#config.store.abandonUptoAuthorization(reservation.authorizationScopeId, "expired before broadcast");
-          return this.#correctiveResponse(
-            verified.paymentRequired.resource,
-            verified.paymentPayload,
-            new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization expired before settlement broadcast"),
-            verified.accepted.amount,
-            "upto",
-          );
-        }
-        broadcast = await this.#config.chainProvider.sendTransaction(pending.transaction);
-      } catch {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-      if (broadcast.transactionId.toLowerCase() !== transactionId.toLowerCase()) {
-        return this.#correctiveResponse(
-          verified.paymentRequired.resource,
-          verified.paymentPayload,
-          new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction id does not match verified transaction"),
-          verified.accepted.amount,
-          "upto",
-        );
-      }
-
-      const finality = normalizeBroadcastFinality(broadcast.finality);
-      const finalizedSettlement = withUptoSettlementFinality(pending.settlement, broadcast.transactionId, finality);
-      response = responseWithSettlement(response, finalizedSettlement);
-      const broadcastRecord: UptoBroadcastAuthorizationRecord = {
-        ...pending.authorization,
-        status: "broadcast",
-        transaction: pending.transaction,
-        transactionId: broadcast.transactionId,
-        finality,
-        settlement: finalizedSettlement,
-        response,
-        ...(paymentIdentifier ? { paymentIdentifier } : {}),
-      };
-      const requiredFinality = pending.authorization.requiredFinality;
-      const broadcastIdentifierResponse = isAcceptedFinality(finality, requiredFinality) ? response : uptoPendingResponse(finalizedSettlement);
-      const broadcastPaymentIdentifier = paymentIdentifier
-        ? uptoPaymentIdentifierRecord(
-            paymentIdentifier,
-            broadcastRecord,
-            broadcastIdentifierResponse,
-            isAcceptedFinality(finality, requiredFinality) ? finalizedSettlement : uptoPendingSettlement(finalizedSettlement),
-          )
-        : undefined;
-      try {
-        await this.#config.store.markUptoAuthorizationBroadcast(broadcastRecord, broadcastPaymentIdentifier);
-      } catch {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-      if (!isAcceptedFinality(broadcast.finality, requiredFinality)) {
-        return uptoPendingResponse(finalizedSettlement);
-      }
-      const settledAuthorization = settledUptoAuthorizationFromBroadcast(broadcastRecord);
-      const paymentIdentifierRecord = paymentIdentifier ? uptoPaymentIdentifierRecord(paymentIdentifier, settledAuthorization, response, finalizedSettlement) : undefined;
-      try {
-        await this.#config.store.commitUptoSettlement({
-          authorization: settledAuthorization,
-          ...(paymentIdentifierRecord ? { paymentIdentifier: paymentIdentifierRecord } : {}),
-        });
-      } catch {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-      return response;
-    }
-
-    const paymentIdentifierRecord = paymentIdentifier ? uptoPaymentIdentifierRecord(paymentIdentifier, pending.authorization, response, pending.settlement) : undefined;
-    try {
-      await this.#config.store.commitUptoSettlement({
-        authorization: { ...pending.authorization, response },
-        ...(paymentIdentifierRecord ? { paymentIdentifier: paymentIdentifierRecord } : {}),
-      });
-    } catch {
-      return {
-        status: 500,
-        headers: {},
-      };
-    }
-    return response;
-  }
-
   async #preserveLiveDepositTransition(verified: VerifiedPayment): Promise<void> {
     if (verified.scheme !== "batch-settlement" || verified.paymentPayload.payload.type !== "deposit-voucher") return;
     const channel: ServerChannelRecord = {
@@ -1302,159 +964,6 @@ export class DirectModeServer {
     };
   }
 
-  async #buildSuccessfulUptoSettlement(
-    verified: VerifiedUptoPayment,
-    chargedAmount: SompiString,
-    fingerprint: Hash32Hex,
-  ): Promise<PendingUptoSettlement> {
-    const payload = verified.paymentPayload.payload;
-    const maxAmount = parseSompiString(payload.authorization.maxAmountSompi);
-    const charge = parseSompiString(chargedAmount);
-    if (charge > maxAmount) {
-      throw new KaspaX402Error("invalid_kaspa_upto_settlement_amount", "handler charge exceeds signed upto maximum");
-    }
-    if (charge === 0n) {
-      const settlement: SettlementResponse = {
-        success: true,
-        transaction: "",
-        network: this.#config.network,
-        payer: payload.refundAddress,
-        amount: "0",
-        extensions: kaspaSettlementExtensions({
-          chargedAmount: "0",
-          maxAmountSompi: payload.authorization.maxAmountSompi,
-          authorizationOutpoint: payload.authorizationOutpoint,
-          refundAddress: payload.refundAddress,
-        }),
-      };
-      return {
-        settlement,
-        authorization: this.#uptoAuthorizationRecord(verified, chargedAmount, settlement, fingerprint),
-      };
-    }
-    if (!verified.utxo) {
-      throw new KaspaX402Error("invalid_kaspa_upto_replay", "upto authorization was already consumed");
-    }
-    if (!this.#config.uptoSettlementBuilder) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction builder is required");
-    }
-    if (!this.#config.uptoSettlementVerifier) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction verifier is required");
-    }
-    const settlementDaa = await this.#config.chainProvider.getVirtualDaaScore();
-    if (
-      parseSompiString(settlementDaa) < parseSompiString(payload.authorization.validAfterDaa) ||
-      parseSompiString(settlementDaa) >= parseSompiString(payload.authorization.validBeforeDaa)
-    ) {
-      throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization expired before settlement");
-    }
-    const built = await this.#config.uptoSettlementBuilder.buildUptoSettlementTransaction({
-      accepted: verified.accepted,
-      payload,
-      utxo: verified.utxo,
-      chargeAmount: chargedAmount,
-      requestFingerprint: fingerprint,
-    });
-    const paymentScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(verified.accepted.payTo, verified.accepted.network);
-    const refundScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(payload.refundAddress, verified.accepted.network);
-    const transactionVerification = await this.#config.uptoSettlementVerifier.verifyUptoSettlementTransaction({
-      accepted: verified.accepted,
-      payload,
-      transaction: built.transaction,
-      chargeAmount: chargedAmount,
-      requestFingerprint: fingerprint,
-      authorizationOutpoint: payload.authorizationOutpoint,
-      payToScriptPublicKey: paymentScriptPublicKey,
-      refundScriptPublicKey,
-    });
-    validateUptoSettlementTransactionEvidence(verified, transactionVerification, chargedAmount, paymentScriptPublicKey, refundScriptPublicKey);
-    const settlement: SettlementResponse = {
-      success: true,
-      transaction: transactionVerification.transactionId,
-      network: this.#config.network,
-      payer: payload.refundAddress,
-      amount: chargedAmount,
-      extensions: kaspaSettlementExtensions({
-        maxAmountSompi: payload.authorization.maxAmountSompi,
-        authorizationOutpoint: payload.authorizationOutpoint,
-        refundAddress: payload.refundAddress,
-        ...(transactionVerification.paymentOutputIndex !== undefined ? { paymentOutputIndex: transactionVerification.paymentOutputIndex } : {}),
-      }),
-    };
-    return {
-      settlement,
-      authorization: {
-        ...this.#uptoAuthorizationRecord(verified, chargedAmount, settlement, fingerprint),
-        transactionId: transactionVerification.transactionId,
-      },
-      transaction: built.transaction,
-    };
-  }
-
-  #uptoAuthorizationRecord(
-    verified: VerifiedUptoPayment,
-    chargedAmount: SompiString,
-    settlement: SettlementResponse,
-    fingerprint: Hash32Hex,
-  ): Omit<UptoSettledAuthorizationRecord, "response"> {
-    const payload = verified.paymentPayload.payload;
-    return {
-      status: "settled",
-      authorizationScopeId: verified.authorizationScopeId,
-      nonceScopeId: verified.nonceScopeId,
-      authorizationOutpoint: payload.authorizationOutpoint,
-      nonce: payload.authorization.nonce,
-      requestFingerprint: fingerprint,
-      paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
-      paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
-      requiredFinality: requiredUptoFinality(verified.accepted, this.#config.acceptedFinality),
-      maxAmountSompi: payload.authorization.maxAmountSompi,
-      authorizationAmountSompi: payload.authorizationAmountSompi,
-      validAfterDaa: payload.authorization.validAfterDaa,
-      validBeforeDaa: payload.authorization.validBeforeDaa,
-      chargedAmount,
-      refundAddress: payload.refundAddress,
-      payerAddress: payload.refundAddress,
-      settlement,
-    };
-  }
-
-  #uptoAuthorizationReservation(
-    verified: VerifiedUptoPayment,
-    chargedAmount: SompiString,
-    transaction: PreparedTransaction,
-    transactionId: Hash32Hex,
-    fingerprint: Hash32Hex,
-    response: ServerResponse,
-    settlement: SettlementResponse,
-    paymentIdentifier?: string,
-  ): UptoPendingAuthorizationRecord {
-    const payload = verified.paymentPayload.payload;
-    return {
-      status: "pending",
-      authorizationScopeId: verified.authorizationScopeId,
-      nonceScopeId: verified.nonceScopeId,
-      authorizationOutpoint: payload.authorizationOutpoint,
-      nonce: payload.authorization.nonce,
-      requestFingerprint: fingerprint,
-      paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
-      paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
-      requiredFinality: requiredUptoFinality(verified.accepted, this.#config.acceptedFinality),
-      maxAmountSompi: payload.authorization.maxAmountSompi,
-      authorizationAmountSompi: payload.authorizationAmountSompi,
-      validAfterDaa: payload.authorization.validAfterDaa,
-      validBeforeDaa: payload.authorization.validBeforeDaa,
-      chargedAmount,
-      refundAddress: payload.refundAddress,
-      payerAddress: payload.refundAddress,
-      transaction,
-      transactionId,
-      settlement,
-      response,
-      ...(paymentIdentifier ? { paymentIdentifier } : {}),
-    };
-  }
-
   async #checkIdempotency(
     paymentIdentifier: string | undefined,
     fingerprint: Hash32Hex,
@@ -1468,12 +977,6 @@ export class DirectModeServer {
     const fingerprintMatches = record.fingerprint === fingerprint;
     const scopeMatches = paymentIdentifierScopeMatches(record, paymentScopeId);
     const payloadMatches = record.paymentPayloadHash === currentPayloadHash;
-    if (record.authorizationScopeId && record.fingerprint === fingerprint && paymentPayload.accepted.scheme === "upto") {
-      const authorization = await this.#config.store.loadUptoAuthorization(record.authorizationScopeId);
-      if (authorization?.status === "pending" || authorization?.status === "broadcast") {
-        return this.#recoverUptoSettlement(authorization, { releaseStoredResponse: scopeMatches && payloadMatches });
-      }
-    }
     if (!fingerprintMatches || !scopeMatches) {
       return paymentIdentifierConflictResponse();
     }
@@ -1498,22 +1001,6 @@ export class DirectModeServer {
     };
   }
 
-  async #checkUptoReplay(verified: VerifiedUptoPayment, fingerprint: Hash32Hex, paymentPayload: PaymentPayload): Promise<ServerResponse | undefined> {
-    const record = verified.existingConsumption;
-    if (!record) return undefined;
-    if (record.requestFingerprint === fingerprint && record.paymentPayloadHash === paymentPayloadHash(paymentPayload)) {
-      if (record.status === "pending" || record.status === "broadcast") return this.#recoverUptoSettlement(record);
-      return record.response;
-    }
-    return {
-      status: 409,
-      headers: {},
-      body: {
-        error: toX402ErrorReason("upto_authorization_replay"),
-      },
-    };
-  }
-
   async #assertVerifyNotReplayed(verified: VerifiedPayment, fingerprint: Hash32Hex, paymentPayload: PaymentPayload): Promise<void> {
     if (verified.scheme === "exact") {
       const record = await this.#config.store.loadExactPayment(verified.transactionId);
@@ -1522,12 +1009,6 @@ export class DirectModeServer {
         return;
       }
       throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
-    }
-    if (verified.scheme === "upto") {
-      const record = verified.existingConsumption;
-      if (!record) return;
-      if (record.requestFingerprint === fingerprint && record.paymentPayloadHash === paymentPayloadHash(paymentPayload)) return;
-      throw new KaspaX402Error("invalid_kaspa_upto_replay", "upto authorization was already consumed by another request");
     }
   }
 
@@ -1539,89 +1020,18 @@ export class DirectModeServer {
     throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
   }
 
-  async #recoverUptoSettlement(
-    record: UptoPendingAuthorizationRecord | UptoBroadcastAuthorizationRecord,
-    options: { releaseStoredResponse?: boolean } = {},
-  ): Promise<ServerResponse> {
-    const releaseStoredResponse = options.releaseStoredResponse ?? true;
-    let recoverable: UptoBroadcastAuthorizationRecord;
-    if (record.status === "broadcast" && isAcceptedFinality(record.finality, record.requiredFinality)) {
-      recoverable = record;
-    } else {
-      let broadcast: TransactionBroadcast;
-      try {
-        const recoveryDaa = await this.#config.chainProvider.getVirtualDaaScore();
-        if (parseSompiString(recoveryDaa) < parseSompiString(record.validAfterDaa) || parseSompiString(recoveryDaa) >= parseSompiString(record.validBeforeDaa)) {
-          if (record.status === "pending") {
-            await this.#config.store.abandonUptoAuthorization(record.authorizationScopeId, "expired before recovery broadcast");
-          }
-          return uptoPendingResponse(pendingSettlementForUptoRecord(record));
-        }
-        broadcast = await this.#config.chainProvider.sendTransaction(record.transaction);
-      } catch {
-        return uptoPendingResponse(pendingSettlementForUptoRecord(record));
-      }
-      if (broadcast.transactionId.toLowerCase() !== record.transactionId.toLowerCase()) {
-        return uptoPendingResponse(pendingSettlementForUptoRecord(record));
-      }
-      const finality = normalizeBroadcastFinality(broadcast.finality);
-      const settlement = withUptoSettlementFinality(record.settlement, broadcast.transactionId, finality);
-      const response = responseWithSettlement(record.response, settlement);
-      recoverable = {
-        ...record,
-        status: "broadcast",
-        transactionId: broadcast.transactionId,
-        finality,
-        settlement,
-        response,
-      };
-      const paymentIdentifierRecord = recoverable.paymentIdentifier
-        ? uptoPaymentIdentifierRecord(recoverable.paymentIdentifier, recoverable, response, settlement)
-        : undefined;
-      try {
-        await this.#config.store.markUptoAuthorizationBroadcast(recoverable, paymentIdentifierRecord);
-      } catch {
-        return {
-          status: 500,
-          headers: {},
-        };
-      }
-      if (!isAcceptedFinality(finality, record.requiredFinality)) {
-        return uptoPendingResponse(settlement);
-      }
-    }
-
-    const settled = settledUptoAuthorizationFromBroadcast(recoverable);
-    const paymentIdentifierRecord = recoverable.paymentIdentifier
-      ? uptoPaymentIdentifierRecord(recoverable.paymentIdentifier, settled, recoverable.response, recoverable.settlement)
-      : undefined;
-    try {
-      await this.#config.store.commitUptoSettlement({
-        authorization: settled,
-        ...(paymentIdentifierRecord ? { paymentIdentifier: paymentIdentifierRecord } : {}),
-      });
-    } catch {
-      return {
-        status: 500,
-        headers: {},
-      };
-    }
-    return releaseStoredResponse ? recoverable.response : paymentIdentifierConflictResponse();
-  }
-
   async #correctiveResponse(
     resource: ResourceInfo,
     paymentPayload: PaymentPayload,
     error: unknown,
     paymentAmount?: SompiString,
-    requestedScheme?: "exact" | "upto" | "batch-settlement",
+    requestedScheme?: "exact" | "batch-settlement",
   ): Promise<ServerResponse> {
     const errorReason = error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "invalid_payload";
     const channelId = safePaymentChannelId(paymentPayload);
     const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
-    const scheme =
-      paymentPayload.accepted.scheme === "exact" || paymentPayload.accepted.scheme === "upto" ? paymentPayload.accepted.scheme : requestedScheme;
+    const scheme = paymentPayload.accepted.scheme === "exact" ? paymentPayload.accepted.scheme : requestedScheme;
     return {
       ...this.paymentRequiredResponse({
         resource,
@@ -1646,21 +1056,12 @@ export class DirectModeServer {
     resource: ResourceInfo,
     paymentPayload: PaymentPayload,
     paymentAmount?: SompiString,
-    requestedScheme?: "exact" | "upto" | "batch-settlement",
+    requestedScheme?: "exact" | "batch-settlement",
   ): Promise<PaymentRequired> {
     const payloadChannelId = safePaymentChannelId(paymentPayload);
     const accepted = paymentPayload.accepted;
     if (accepted.scheme === "exact") {
       return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "exact" });
-    }
-    if (accepted.scheme === "upto") {
-      return this.buildPaymentRequired({
-        resource,
-        amount: paymentAmount,
-        scheme: "upto",
-        authorizationTimeoutDaa:
-          this.#config.authorizationWindowDaa !== undefined ? accepted.extra.authorizationTimeoutDaa : this.#config.authorizationTimeoutDaa,
-      });
     }
     if (accepted.scheme !== "batch-settlement" || !payloadChannelId) {
       return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: requestedScheme });
@@ -1700,32 +1101,6 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
       maxTimeoutSeconds: config.maxTimeoutSeconds,
       extra: {
         binding: "kaspa-exact-v1",
-        finality: config.acceptedFinality,
-      },
-    };
-    return {
-      x402Version: X402_VERSION,
-      resource: options.resource,
-      accepts: [accepted],
-      ...(options.error ? { error: options.error } : {}),
-      ...requiredPaymentIdentifierExtensions(config),
-    };
-  }
-
-  if (options.scheme === "upto") {
-    const accepted: UptoPaymentRequirements = {
-      scheme: "upto",
-      network: config.network,
-      amount: options.amount ?? config.amount,
-      asset: "KAS",
-      payTo: config.payTo,
-      maxTimeoutSeconds: config.maxTimeoutSeconds,
-      extra: {
-        binding: "kaspa-upto-v1",
-        authorizationTemplateId: config.authorizationTemplateId,
-        serverPublicKey: config.serverPublicKey,
-        authorizationTimeoutDaa: options.authorizationTimeoutDaa ?? config.authorizationTimeoutDaa,
-        settlementFeeReserveSompi: config.settlementFeeReserveSompi,
         finality: config.acceptedFinality,
       },
     };
@@ -1784,7 +1159,6 @@ function facilitatorResource(): ResourceInfo {
 function facilitatorRequestFingerprint(options: DirectPaymentVerificationOptions): Hash32Hex {
   if (options.requestHash !== undefined) return normalizedFacilitatorRequestHash(options.requestHash);
   const payload = options.paymentPayload.payload;
-  if (payload.type === "upto-authorization") return payload.authorization.requestHash.toLowerCase();
   if (payload.type === "exact-transfer" && payload.requestHash) return payload.requestHash.toLowerCase();
   return sha256Hex(
     stableStringify({
@@ -1820,16 +1194,6 @@ function verifiedPaymentSummary(payment: VerifiedPayment): Pick<DirectPaymentVer
       extra: {
         paymentOutputIndex: payment.paymentOutputIndex,
         finality: payment.finality,
-      },
-    };
-  }
-  if (payment.scheme === "upto") {
-    const payload = payment.paymentPayload.payload;
-    return {
-      payer: payload.refundAddress,
-      extra: {
-        maxAmountSompi: payload.authorization.maxAmountSompi,
-        authorizationOutpoint: payload.authorizationOutpoint,
       },
     };
   }
@@ -1901,139 +1265,6 @@ function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPayment
     throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact binding does not match server config");
   }
   parseSompiString(accepted.amount);
-}
-
-function validateUptoTerms(config: ResolvedServerConfig, accepted: UptoPaymentRequirements): void {
-  if (accepted.network !== config.network) {
-    throw new KaspaX402Error("invalid_kaspa_x402_network", "payment network does not match server config");
-  }
-  if (accepted.asset !== "KAS") {
-    throw new KaspaX402Error("invalid_kaspa_x402_asset", "payment asset does not match server config");
-  }
-  if (accepted.payTo !== config.payTo) {
-    throw new KaspaX402Error("invalid_kaspa_upto_recipient", "payTo does not match server config");
-  }
-  if (accepted.extra.binding !== "kaspa-upto-v1") {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "upto binding does not match server config");
-  }
-  if (accepted.extra.authorizationTemplateId !== config.authorizationTemplateId) {
-    throw new KaspaX402Error("invalid_kaspa_upto_template", "upto authorization template does not match server config");
-  }
-  if (accepted.extra.serverPublicKey !== config.serverPublicKey) {
-    throw new KaspaX402Error("invalid_kaspa_public_key", "server public key does not match server config");
-  }
-  if (config.authorizationWindowDaa === undefined && accepted.extra.authorizationTimeoutDaa !== config.authorizationTimeoutDaa) {
-    throw new KaspaX402Error("invalid_kaspa_upto_expired", "authorization timeout does not match server config");
-  }
-  if (accepted.extra.settlementFeeReserveSompi !== config.settlementFeeReserveSompi) {
-    throw new KaspaX402Error("invalid_kaspa_upto_template", "settlement fee reserve does not match server config");
-  }
-  parseSompiString(accepted.amount);
-  parseSompiString(accepted.extra.authorizationTimeoutDaa);
-  parseSompiString(accepted.extra.settlementFeeReserveSompi);
-}
-
-function validateAuthorizationPolicy(config: ResolvedServerConfig): void {
-  parseSompiString(config.authorizationTimeoutDaa);
-  if (config.authorizationWindowDaa !== undefined) {
-    const window = parseSompiString(config.authorizationWindowDaa);
-    if (window <= 0n) throw new KaspaX402Error("invalid_kaspa_upto_expired", "authorization window must be positive");
-    const maxWindow = parseSompiString(config.maxAuthorizationWindowDaa ?? config.authorizationWindowDaa);
-    if (maxWindow <= 0n) throw new KaspaX402Error("invalid_kaspa_upto_expired", "maximum authorization window must be positive");
-    if (window > maxWindow) throw new KaspaX402Error("invalid_kaspa_upto_expired", "authorization window exceeds maximum authorization window");
-  } else if (config.maxAuthorizationWindowDaa !== undefined) {
-    const maxWindow = parseSompiString(config.maxAuthorizationWindowDaa);
-    if (maxWindow <= 0n) throw new KaspaX402Error("invalid_kaspa_upto_expired", "maximum authorization window must be positive");
-  }
-}
-
-function materializedAuthorizationTimeoutDaa(config: ResolvedServerConfig, nowDaa: SompiString): SompiString {
-  const window = parseSompiString(config.authorizationWindowDaa ?? config.authorizationTimeoutDaa);
-  return formatSompiString(parseSompiString(nowDaa) + window);
-}
-
-function assertAuthorizationTimeoutAllowed(config: ResolvedServerConfig, timeoutDaa: SompiString, nowDaa: SompiString): void {
-  if (config.authorizationWindowDaa === undefined && config.maxAuthorizationWindowDaa === undefined) return;
-  const maxWindow = parseSompiString(config.maxAuthorizationWindowDaa ?? config.authorizationWindowDaa ?? "0");
-  const timeout = parseSompiString(timeoutDaa);
-  const now = parseSompiString(nowDaa);
-  if (timeout > now + maxWindow) {
-    throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization timeout exceeds the configured maximum window");
-  }
-}
-
-function validateUptoSettlementTransactionEvidence(
-  verified: VerifiedUptoPayment,
-  transaction: UptoSettlementTransactionVerification,
-  chargedAmount: SompiString,
-  paymentScriptPublicKey: string,
-  refundScriptPublicKey: string,
-): void {
-  const payload = verified.paymentPayload.payload;
-  if (transaction.chargeAmount !== chargedAmount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction amount does not match handler charge");
-  }
-  if (!/^[0-9a-fA-F]{64}$/.test(transaction.transactionId)) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction id is invalid");
-  }
-  if (transaction.inputAmount !== payload.authorizationAmountSompi) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement input amount must match authorization amount");
-  }
-  if (transaction.chargeAmount !== transaction.paymentOutput.amount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement payment output amount must match built charge");
-  }
-  if (transaction.outputCount !== 2) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction must have exactly two outputs");
-  }
-  if (parseSompiString(transaction.chargeAmount) > parseSompiString(payload.authorization.maxAmountSompi)) {
-    throw new KaspaX402Error("invalid_kaspa_upto_settlement_amount", "upto settlement transaction amount exceeds signed maximum");
-  }
-  if (parseSompiString(transaction.chargeAmount) <= 0n) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement transaction must move a positive amount");
-  }
-  if (!sameOutpoint(transaction.authorizationOutpoint, payload.authorizationOutpoint)) {
-    throw new KaspaX402Error("invalid_kaspa_upto_authorization_outpoint", "upto settlement transaction does not consume the authorization outpoint");
-  }
-  if (transaction.paymentOutput.amount !== transaction.chargeAmount || transaction.paymentOutput.scriptPublicKey.toLowerCase() !== paymentScriptPublicKey.toLowerCase()) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement payment output does not match accepted payTo and charge");
-  }
-  if (!Number.isInteger(transaction.paymentOutput.outputIndex) || transaction.paymentOutput.outputIndex < 0 || transaction.paymentOutput.outputIndex >= transaction.outputCount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement payment output index is invalid");
-  }
-  if (transaction.paymentOutputIndex !== undefined && transaction.paymentOutputIndex !== transaction.paymentOutput.outputIndex) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement payment output index evidence is inconsistent");
-  }
-  const inputAmount = parseSompiString(transaction.inputAmount);
-  const chargeAmount = parseSompiString(transaction.chargeAmount);
-  const feeAmount = parseSompiString(transaction.feeAmount);
-  if (feeAmount < 0n || chargeAmount + feeAmount > inputAmount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement fee accounting is invalid");
-  }
-  if (feeAmount > parseSompiString(payload.authorization.settlementFeeReserveSompi)) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement fee exceeds signed reserve");
-  }
-  const refundAmount = inputAmount - chargeAmount - feeAmount;
-  if (refundAmount <= 0n) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement refund output must be positive");
-  }
-  if (!transaction.refundOutput) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement must include the refund output");
-  }
-  if (!Number.isInteger(transaction.refundOutput.outputIndex) || transaction.refundOutput.outputIndex < 0 || transaction.refundOutput.outputIndex >= transaction.outputCount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement refund output index is invalid");
-  }
-  if (transaction.refundOutput.outputIndex === transaction.paymentOutput.outputIndex) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement payment and refund outputs must be distinct");
-  }
-  if (transaction.refundOutputIndex !== undefined && transaction.refundOutputIndex !== transaction.refundOutput.outputIndex) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement refund output index evidence is inconsistent");
-  }
-  if (transaction.refundOutput.scriptPublicKey.toLowerCase() !== refundScriptPublicKey.toLowerCase()) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement refund output does not match refund address");
-  }
-  if (parseSompiString(transaction.refundOutput.amount) !== refundAmount) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "upto settlement refund output amount does not conserve authorization value");
-  }
 }
 
 function validateChannelTerms(config: ResolvedServerConfig, accepted: BatchPaymentRequirements, channelConfig: ChannelConfig): void {
@@ -2130,9 +1361,6 @@ function safePaymentScopeIdHint(paymentPayload: PaymentPayload): Hash32Hex | und
   if (payload.type === "exact-transfer" && typeof payload.transactionId === "string" && typeof payload.paymentOutputIndex === "number") {
     return exactPaymentScopeId(payload.transactionId);
   }
-  if (payload.type === "upto-authorization") {
-    return uptoAuthorizationScopeId(payload.authorizationOutpoint);
-  }
   return undefined;
 }
 
@@ -2140,9 +1368,6 @@ function safePaymentLockKey(paymentPayload: PaymentPayload): Hash32Hex | undefin
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type === "upto-authorization") {
-    return uptoClientLockKey(paymentPayload.accepted.network, payload.clientPublicKey);
-  }
   if (payload.type !== "exact-transfer" || typeof payload.transaction !== "string" || typeof payload.paymentOutputIndex !== "number") {
     return undefined;
   }
@@ -2160,41 +1385,6 @@ function exactPaymentScopeId(transactionId: Hash32Hex): Hash32Hex {
     stableStringify({
       scope: "kaspa:x402:exact-payment-transaction:v1",
       transactionId: transactionId.toLowerCase(),
-    }),
-  );
-}
-
-function sameOutpoint(a: FundingOutpoint, b: FundingOutpoint): boolean {
-  return a.txid.toLowerCase() === b.txid.toLowerCase() && a.index === b.index;
-}
-
-function uptoAuthorizationScopeId(outpoint: FundingOutpoint): Hash32Hex {
-  return sha256Hex(
-    stableStringify({
-      scope: "kaspa:x402:upto-authorization-outpoint:v1",
-      txid: outpoint.txid.toLowerCase(),
-      index: outpoint.index,
-    }),
-  );
-}
-
-function uptoNonceScopeId(network: string, clientPublicKey: string, nonce: string): Hash32Hex {
-  return sha256Hex(
-    stableStringify({
-      scope: "kaspa:x402:upto-authorization-nonce:v1",
-      network,
-      clientPublicKey: clientPublicKey.toLowerCase(),
-      nonce: nonce.toLowerCase(),
-    }),
-  );
-}
-
-function uptoClientLockKey(network: string, clientPublicKey: string): Hash32Hex {
-  return sha256Hex(
-    stableStringify({
-      scope: "kaspa:x402:upto-client-lock:v1",
-      network,
-      clientPublicKey: clientPublicKey.toLowerCase(),
     }),
   );
 }
@@ -2234,8 +1424,7 @@ function paymentIdentifierScopeMatches(record: PaymentIdentifierRecord, paymentS
     paymentScopeId === undefined ||
     record.paymentScopeId === paymentScopeId ||
     record.channelId === paymentScopeId ||
-    record.transactionId === paymentScopeId ||
-    record.authorizationScopeId === paymentScopeId
+    record.transactionId === paymentScopeId
   );
 }
 
@@ -2253,27 +1442,6 @@ function normalizeBroadcastFinality(finality: SettlementFinality): SettlementFin
   return finality === "confirmed" ? "confirmed" : finality === "accepted" ? "accepted" : "broadcast";
 }
 
-function requiredUptoFinality(accepted: UptoPaymentRequirements, fallback: Exclude<SettlementFinality, "broadcast">): Exclude<SettlementFinality, "broadcast"> {
-  return accepted.extra.finality ?? fallback;
-}
-
-function withUptoSettlementFinality(settlement: SettlementResponse, transactionId: Hash32Hex, finality: SettlementFinality): SettlementResponse {
-  const responseFinality = finality === "broadcast" ? "mempool" : finality;
-  const extra = readKaspaSettlementExtension(settlement) ?? {};
-  const { extra: _legacyExtra, extensions, ...rest } = settlement;
-  return {
-    ...rest,
-    transaction: transactionId,
-    extensions: {
-      ...(extensions ?? {}),
-      ...kaspaSettlementExtensions({
-        ...extra,
-        finality: responseFinality,
-      }),
-    },
-  };
-}
-
 function responseWithSettlement(response: ServerResponse, settlement: SettlementResponse): ServerResponse {
   return {
     ...response,
@@ -2281,57 +1449,6 @@ function responseWithSettlement(response: ServerResponse, settlement: Settlement
       ...(response.headers ?? {}),
       [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement),
     },
-  };
-}
-
-function uptoPendingSettlement(settlement: SettlementResponse): SettlementResponse {
-  return {
-    ...settlement,
-    success: false,
-    errorReason: "upto_authorization_pending",
-  };
-}
-
-function uptoPendingResponse(settlement: SettlementResponse): ServerResponse {
-  const pendingSettlement = uptoPendingSettlement(settlement);
-  return {
-    status: 202,
-    headers: {
-      [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(pendingSettlement),
-    },
-    body: {
-      error: "upto_authorization_pending",
-    },
-  };
-}
-
-function pendingSettlementForUptoRecord(record: UptoPendingAuthorizationRecord | UptoBroadcastAuthorizationRecord): SettlementResponse {
-  return withUptoSettlementFinality(record.settlement, record.transactionId, record.status === "broadcast" ? record.finality : "broadcast");
-}
-
-function settledUptoAuthorizationFromBroadcast(record: UptoBroadcastAuthorizationRecord): UptoSettledAuthorizationRecord {
-  if (record.finality === "broadcast") {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "broadcast-only upto settlement cannot be marked settled");
-  }
-  const { transaction: _transaction, status: _status, ...settled } = record;
-  return { ...settled, finality: record.finality, status: "settled" };
-}
-
-function uptoPaymentIdentifierRecord(
-  id: string,
-  authorization: Pick<UptoAuthorizationRecord, "authorizationScopeId" | "requestFingerprint" | "paymentPayloadHash" | "transactionId">,
-  response: ServerResponse,
-  settlement: SettlementResponse,
-): PaymentIdentifierRecord {
-  return {
-    id,
-    fingerprint: authorization.requestFingerprint,
-    paymentPayloadHash: authorization.paymentPayloadHash,
-    response,
-    settlement,
-    paymentScopeId: authorization.authorizationScopeId,
-    authorizationScopeId: authorization.authorizationScopeId,
-    ...(authorization.transactionId ? { transactionId: authorization.transactionId } : {}),
   };
 }
 

@@ -30,9 +30,7 @@ The current native alpha surface targets two first-class x402 schemes:
 ```
 
 Use `exact` for fixed-price one-shot purchases and `batch-settlement` for
-repeated micropayments backed by escrow/channel state. The experimental capped
-authorization work that maps to x402 `upto` is archived until the expiry upper
-bound can be enforced natively in the script path.
+repeated or variable-cost micropayments backed by escrow/channel state.
 
 This repository is an alpha standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
 
@@ -50,13 +48,8 @@ native target surface is:
 - a `kaspa-x402` CLI for conformance vector verification and offline payment/channel inspection workflows;
 - runnable mock examples for paid HTTP, paid MCP tools, self-hosted facilitator settlement, and recovery scenarios.
 
-Archived capped authorization artifacts still exist in the repository until the
-implementation cleanup removes them from shipped schemas, package APIs,
-examples, CLI commands, and release artifacts.
-
 The current remaining implementation focus is production-grade native adapters,
-release hardening, and independent review. Capped authorization remains
-archived research; see [docs/native-profile-boundary.md](docs/native-profile-boundary.md).
+release hardening, and independent review.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 
@@ -146,6 +139,5 @@ Reference package workspace:
 - x402 HTTP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md
 - x402 MCP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md
 - x402 exact: https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact.md
-- x402 upto, deferred for the current native surface: https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md
 - x402 batch-settlement: https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md
 - Kaspa Toccata docs: https://github.com/kaspanet/docs/tree/main/content/docs/toccata

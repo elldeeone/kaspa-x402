@@ -7,10 +7,8 @@ Kaspa x402 proposes native Kaspa bindings for x402 v2 payment flows. The
 current native alpha surface defines two scheme/network profiles:
 
 - `exact` for fixed-price one-shot transfers;
-- `batch-settlement` for repeated micropayments backed by escrow/channel state.
-
-Capped one-shot authorization mapped to x402 `upto` is archived research until
-the expiry upper bound can be enforced natively in the script path.
+- `batch-settlement` for repeated or variable-cost micropayments backed by
+  escrow/channel state.
 
 The network strings are `kaspa:testnet-10` for alpha validation and
 `kaspa:mainnet` as a reserved profile name. They are draft binding identifiers,
@@ -25,13 +23,13 @@ Kaspa payments do not all have the same settlement shape.
 `exact` is the simplest fit when the resource has a fixed price and the client
 can pay directly with a native transaction.
 
-`batch-settlement` fits repeated small requests. A client funds an escrow
-channel, signs cumulative vouchers per paid request, and the server can claim
-later while preserving refund paths for remaining value.
+`batch-settlement` fits repeated small requests and bounded variable-cost
+requests. A client funds an escrow channel, signs cumulative vouchers per paid
+request, and the server can claim later while preserving refund paths for
+remaining value.
 
 Keeping these profiles separate avoids overloading one x402 scheme with
-different settlement semantics. Capped one-shot authorization can return only
-after the expiry upper bound is enforceable on-chain.
+different settlement semantics.
 
 ## Kaspa Binding
 
@@ -47,9 +45,7 @@ The Kaspa binding is UTXO-native:
 
 The public wire format uses x402 v2 transport primitives. HTTP uses
 `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`; MCP uses the
-standard `_meta` payment fields. Archived capped authorization work included
-additional pending-settlement states; any future use of those states needs
-upstream discussion before being described as strict transport compatibility.
+standard `_meta` payment fields.
 
 ## Facilitator Lock-In
 

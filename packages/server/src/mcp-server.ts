@@ -27,7 +27,7 @@ export interface PaidMcpToolOptions {
   name: string;
   resource?: ResourceInfo;
   amount?: SompiString;
-  scheme?: "exact" | "upto" | "batch-settlement";
+  scheme?: "exact" | "batch-settlement";
 }
 
 export interface PaidMcpToolHandlerContext extends HandlerContext {

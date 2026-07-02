@@ -128,7 +128,6 @@ fn main() -> Result<()> {
     let vector_paths = [
         "vectors/tx-v1/batch-claim.json",
         "vectors/tx-v1/batch-refund.json",
-        "vectors/tx-v1/upto-settlement.json",
     ];
     let mut checked = Vec::new();
 

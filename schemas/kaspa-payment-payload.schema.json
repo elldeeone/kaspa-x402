@@ -10,7 +10,6 @@
     "type": {
       "enum": [
         "exact-transfer",
-        "upto-authorization",
         "deposit-voucher",
         "voucher",
         "refund",
@@ -37,74 +36,11 @@
     "clientPublicKey": {
       "$ref": "#/$defs/pubkey32"
     },
-    "authorizationOutpoint": {
-      "$ref": "#/$defs/outpoint"
-    },
-    "authorizationScriptPublicKey": {
-      "type": "string",
-      "description": "Serialized Kaspa ScriptPublicKey: uint16_le version followed by script bytes. Kaspa x402 v1 requires version 0.",
-      "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
-    },
-    "authorizationAmountSompi": {
-      "$ref": "#/$defs/amount"
-    },
     "refundAddress": {
       "type": "string"
     },
     "fundingTransaction": {
       "$ref": "#/$defs/hex"
-    },
-    "authorization": {
-      "type": "object",
-      "required": [
-        "maxAmountSompi",
-        "payTo",
-        "payoutScriptPublicKeyHash",
-        "refundScriptPublicKeyHash",
-        "validAfterDaa",
-        "validBeforeDaa",
-        "settlementFeeReserveSompi",
-        "nonce",
-        "serverPublicKey",
-        "requestHash",
-        "signature"
-      ],
-      "properties": {
-        "maxAmountSompi": {
-          "$ref": "#/$defs/amount"
-        },
-        "payTo": {
-          "type": "string"
-        },
-        "payoutScriptPublicKeyHash": {
-          "$ref": "#/$defs/hash32"
-        },
-        "refundScriptPublicKeyHash": {
-          "$ref": "#/$defs/hash32"
-        },
-        "validAfterDaa": {
-          "$ref": "#/$defs/amount"
-        },
-        "validBeforeDaa": {
-          "$ref": "#/$defs/amount"
-        },
-        "settlementFeeReserveSompi": {
-          "$ref": "#/$defs/amount"
-        },
-        "nonce": {
-          "$ref": "#/$defs/hash32"
-        },
-        "serverPublicKey": {
-          "$ref": "#/$defs/pubkey32"
-        },
-        "requestHash": {
-          "$ref": "#/$defs/hash32"
-        },
-        "signature": {
-          "$ref": "#/$defs/signature64"
-        }
-      },
-      "additionalProperties": true
     },
     "channelConfig": {
       "type": "object",
@@ -214,29 +150,6 @@
           "type",
           "transaction",
           "paymentOutputIndex"
-        ]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "type": {
-            "const": "upto-authorization"
-          }
-        },
-        "required": [
-          "type"
-        ]
-      },
-      "then": {
-        "required": [
-          "type",
-          "clientPublicKey",
-          "authorizationOutpoint",
-          "authorizationScriptPublicKey",
-          "authorizationAmountSompi",
-          "refundAddress",
-          "authorization"
         ]
       }
     },

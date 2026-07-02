@@ -52,33 +52,6 @@
           "accepted": {
             "properties": {
               "scheme": {
-                "const": "upto"
-              }
-            },
-            "required": ["scheme"]
-          }
-        },
-        "required": ["accepted"]
-      },
-      "then": {
-        "properties": {
-          "payload": {
-            "properties": {
-              "type": {
-                "const": "upto-authorization"
-              }
-            },
-            "required": ["type"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "accepted": {
-            "properties": {
-              "scheme": {
                 "const": "batch-settlement"
               }
             },

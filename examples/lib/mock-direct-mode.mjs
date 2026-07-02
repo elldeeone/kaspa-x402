@@ -43,41 +43,6 @@ export function createMockDirectModeEnvironment() {
         };
       },
     },
-    uptoAuthorizationVerifier: {
-      verifyUptoAuthorization({ digest, payload }) {
-        return payload.authorization.signature === mockSignature(digest);
-      },
-    },
-    uptoSettlementBuilder: {
-      async buildUptoSettlementTransaction({ chargeAmount, payload }) {
-        return { transaction: mockHash(`upto-settle:${payload.authorizationOutpoint.txid}:${chargeAmount}`) };
-      },
-    },
-    uptoSettlementVerifier: {
-      verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey, transaction }) {
-        const refundAmount = (BigInt(payload.authorizationAmountSompi) - BigInt(chargeAmount)).toString();
-        return {
-          transactionId: transaction,
-          inputAmount: payload.authorizationAmountSompi,
-          chargeAmount,
-          feeAmount: "0",
-          outputCount: 2,
-          authorizationOutpoint: payload.authorizationOutpoint,
-          paymentOutput: {
-            outputIndex: 0,
-            amount: chargeAmount,
-            scriptPublicKey: payToScriptPublicKey,
-          },
-          refundOutput: {
-            outputIndex: 1,
-            amount: refundAmount,
-            scriptPublicKey: refundScriptPublicKey,
-          },
-          paymentOutputIndex: 0,
-          refundOutputIndex: 1,
-        };
-      },
-    },
   });
   const client = new DirectModeClient({
     fundingProvider,
@@ -234,25 +199,6 @@ class MockFundingProvider {
     };
   }
 
-  async fundUptoAuthorization(request) {
-    const outpoint = this.nextOutpoint("upto");
-    this.chainProvider.setUtxo({
-      outpoint,
-      amount: request.amount,
-      scriptPublicKey: request.authorizationScriptPublicKey,
-      finality: "accepted",
-    });
-    return {
-      outpoint,
-      amount: request.amount,
-      scriptPublicKey: request.authorizationScriptPublicKey,
-      fundingTransaction: mockTransaction(`upto-funding:${outpoint.txid}`),
-      payerAddress: REFUND_ADDRESS,
-      finality: "accepted",
-      fundingSource: this.sourceKind,
-    };
-  }
-
   async getUtxos(addresses) {
     return addresses.flatMap((address) => this.utxosByAddress.get(address) ?? []);
   }
@@ -335,10 +281,6 @@ class MockSigner {
     return mockSignature(digest);
   }
 
-  async signUptoAuthorization({ digest }) {
-    return mockSignature(digest);
-  }
-
   async signRefund() {
     return mockSignature(mockHash("refund"));
   }
@@ -362,15 +304,6 @@ function routeForUrl(url) {
       amount: "100000",
       resource: { url, description: "Fixed-price file", mimeType: "application/octet-stream" },
       body: { ok: true, route: "download", bytes: 4096 },
-    };
-  }
-  if (path === "/quote") {
-    return {
-      scheme: "upto",
-      amount: "250000",
-      chargedAmount: "175000",
-      resource: { url, description: "Variable-price quote", mimeType: "application/json" },
-      body: { ok: true, route: "quote", price: "175000" },
     };
   }
   if (path === "/metered") {

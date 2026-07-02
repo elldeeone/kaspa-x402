@@ -8,9 +8,6 @@ const batch = await client.paidFetch("https://api.example.test/metered", {
 const exact = await client.paidFetch("https://api.example.test/download", {
   paymentIdentifier: "recovery_exact_1",
 });
-const upto = await client.paidFetch("https://api.example.test/quote", {
-  paymentIdentifier: "recovery_upto_pay_1",
-});
 
 const [serverChannel] = await serverStore.listChannels();
 const corrective = server.buildPaymentRequired({
@@ -32,13 +29,6 @@ const exactReplay = await facilitator.verify({
   resource: { url: "https://api.example.test/download" },
   requestHash: mockHash("exact-replay-other-request"),
 });
-const uptoReplay = await facilitator.verify({
-  x402Version: X402_VERSION,
-  paymentPayload: upto.payment.paymentPayload,
-  paymentRequirements: upto.payment.accepted,
-  resource: { url: "https://api.example.test/quote" },
-  requestHash: mockHash("upto-replay-other-request"),
-});
 const refundable = await client.listRefundableChannels("1000");
 
 console.log(
@@ -53,7 +43,6 @@ console.log(
         recoveryMaterial: ["deposit-voucher payload", "latest voucher payload", "funding UTXO"],
       },
       exactReplay,
-      uptoReplay,
       corrective402: {
         hasChannelState: Boolean(corrective.accepts[0].extra.channelState),
         hasVoucherState: Boolean(corrective.accepts[0].extra.voucherState),

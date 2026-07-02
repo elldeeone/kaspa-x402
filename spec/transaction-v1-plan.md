@@ -1,14 +1,13 @@
 # Transaction V1 Plan
 
-This plan defines the transaction-builder requirements for Kaspa x402 `upto`
-and `batch-settlement` support. It is intentionally executable as a checklist:
+This plan defines the transaction-builder requirements for Kaspa x402
+`batch-settlement` support. It is intentionally executable as a checklist:
 no mainnet builder should ship until each production path has a vector with a
 serialized transaction body/projection, transaction id, hash, sighash input,
 compute budget, and fee accounting.
 
-Batch claim, batch refund, and nonzero `upto` settlement now have reference
-transaction-v1 vectors under `vectors/tx-v1/`. `upto` authorization and
-zero-charge settlement fixtures are covered by `vectors/upto/authorization.json`.
+Batch claim and batch refund have reference transaction-v1 vectors under
+`vectors/tx-v1/`.
 The transaction-v1 vectors are cross-validated against `kaspa-consensus-core`
 2.0.1 at commit `ef1a093bcf8560fe05221b56f0c896f97e7d8d77` by
 `npm run validate:tx-v1-consensus`.
@@ -51,22 +50,8 @@ Canonical transaction-v1 semantics used by the vectors:
 - Script-unit estimate: `100000`.
 - Compute budget: `10`, derived from Toccata's `compute_budget * 10000 + 9999` allowance.
 
-## Upto Settlement
-
-- Input: the authorization outpoint defined by the `kaspa-upto-v1` binding.
-- Nonzero outputs: exactly two outputs, with output 0 paying the server and output 1 returning a positive refund amount to the client refund script.
-- Amount rule: server output is the actual settled amount, bounded by the signed maximum amount, and the authorization input must include enough value for the signed fee reserve plus the required positive refund output.
-- Zero-charge rule: the zero-charge path must use the no-transaction settlement response shape already defined in `kaspa-upto-v1`; it must not pretend value moved.
-- Fee rule: non-zero settlement fees come from the authorization value after satisfying the bounded server payment.
-- Lock rule: transaction lock time must be greater than or equal to the authorization `validAfterDaa`.
-- Script-unit estimate: `260000`.
-- Compute budget: `26`, derived from Toccata's `compute_budget * 10000 + 9999` allowance.
-- Reference vector: `vectors/tx-v1/upto-settlement.json` covers the serialized body, txid/hash, sighash, compute budget, script-unit estimate, storage mass, and no-output-covenant decision.
-
 ## Implemented Vectors
 
-- `upto-settlement-transaction-body` - covered by `vectors/tx-v1/upto-settlement.json`
-- `upto-zero-charge-no-transaction-response` - covered by `vectors/upto/authorization.json`
 - `batch-claim-transaction-body` - covered by `vectors/tx-v1/batch-claim.json`
 - `batch-refund-transaction-body` - covered by `vectors/tx-v1/batch-refund.json`
 - transaction id for each transaction body

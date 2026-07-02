@@ -16,13 +16,11 @@ committed report.
 The runner requires live evidence for:
 
 1. exact payment and replay rejection;
-2. zero-charge `upto` authorization;
-3. nonzero `upto` settlement;
-4. batch deposit-voucher settlement;
-5. batch voucher-only settlement;
-6. batch claim construction and broadcast;
-7. replay rejection across all schemes;
-8. batch refund construction and broadcast after timeout.
+2. batch deposit-voucher settlement;
+3. batch voucher-only settlement;
+4. batch claim construction and broadcast;
+5. replay rejection across exact and batch-settlement;
+6. batch refund construction and broadcast after timeout.
 
 The live result must state transaction ids, transaction versions, version
 evidence source, finality for every broadcast transaction, final rejection for

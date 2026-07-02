@@ -7,8 +7,8 @@ export type PublicKeyHex = string;
 export type SignatureHex = string;
 export type ByteHex = string;
 
-export type PaymentScheme = "exact" | "upto" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v1" | "kaspa-upto-v1" | "kaspa-escrow-v1";
+export type PaymentScheme = "exact" | "batch-settlement";
+export type KaspaBinding = "kaspa-exact-v1" | "kaspa-escrow-v1";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -35,17 +35,6 @@ export interface ExactRequirementsExtra extends JsonRecord {
   assetDecimals?: 8;
 }
 
-export interface UptoRequirementsExtra extends JsonRecord {
-  binding: "kaspa-upto-v1";
-  authorizationTemplateId: "kaspa-x402-upto-v1";
-  serverPublicKey: PublicKeyHex;
-  authorizationTimeoutDaa: SompiString;
-  settlementFeeReserveSompi: SompiString;
-  finality?: "accepted" | "confirmed";
-  assetKind?: "native";
-  assetDecimals?: 8;
-}
-
 export interface ClaimPolicy extends JsonRecord {
   claimWhenUnclaimedAmountExceeds?: SompiString;
   claimAfterSeconds?: number;
@@ -65,10 +54,9 @@ export interface BatchRequirementsExtra extends JsonRecord {
 }
 
 export type ExactPaymentRequirements = BasePaymentRequirements<"exact", ExactRequirementsExtra>;
-export type UptoPaymentRequirements = BasePaymentRequirements<"upto", UptoRequirementsExtra>;
 export type BatchPaymentRequirements = BasePaymentRequirements<"batch-settlement", BatchRequirementsExtra>;
-export type KaspaRequirementsExtra = ExactRequirementsExtra | UptoRequirementsExtra | BatchRequirementsExtra;
-export type PaymentRequirements = ExactPaymentRequirements | UptoPaymentRequirements | BatchPaymentRequirements;
+export type KaspaRequirementsExtra = ExactRequirementsExtra | BatchRequirementsExtra;
+export type PaymentRequirements = ExactPaymentRequirements | BatchPaymentRequirements;
 
 export interface PaymentRequired extends JsonRecord {
   x402Version: typeof X402_VERSION;
@@ -126,31 +114,6 @@ export interface ExactTransferPayload extends JsonRecord {
   requestHash?: Hash32Hex;
 }
 
-export interface UptoAuthorization extends JsonRecord {
-  maxAmountSompi: SompiString;
-  payTo: string;
-  payoutScriptPublicKeyHash: Hash32Hex;
-  refundScriptPublicKeyHash: Hash32Hex;
-  validAfterDaa: SompiString;
-  validBeforeDaa: SompiString;
-  settlementFeeReserveSompi: SompiString;
-  nonce: Hash32Hex;
-  serverPublicKey: PublicKeyHex;
-  requestHash: Hash32Hex;
-  signature: SignatureHex;
-}
-
-export interface UptoAuthorizationPayload extends JsonRecord {
-  type: "upto-authorization";
-  clientPublicKey: PublicKeyHex;
-  authorizationOutpoint: FundingOutpoint;
-  authorizationScriptPublicKey: ByteHex;
-  authorizationAmountSompi: SompiString;
-  refundAddress: string;
-  fundingTransaction?: ByteHex;
-  authorization: UptoAuthorization;
-}
-
 export interface DepositVoucherPayload extends JsonRecord {
   type: "deposit-voucher";
   channelConfig: ChannelConfig;
@@ -193,7 +156,6 @@ export interface RefundPayload extends JsonRecord {
 
 export type KaspaPaymentPayload =
   | ExactTransferPayload
-  | UptoAuthorizationPayload
   | DepositVoucherPayload
   | VoucherPayload
   | ClaimPayload
@@ -206,8 +168,6 @@ export interface SettlementResponseExtra extends JsonRecord {
   paymentOutputIndex?: number;
   finality?: "mempool" | "accepted" | "confirmed";
   requestHash?: Hash32Hex;
-  maxAmountSompi?: SompiString;
-  authorizationOutpoint?: FundingOutpoint;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;

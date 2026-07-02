@@ -19,8 +19,6 @@ The direct-mode server uses the lock manager for:
 
 - payment identifiers, keyed by the payment identifier extension id;
 - batch channels, keyed by channel id;
-- upto authorizations, keyed by network and client public key before settlement
-  scopes are known;
 - exact payments before verification, keyed by the payload's transaction hint or
   transaction bytes;
 - exact payments after verification, keyed by the verifier-derived transaction

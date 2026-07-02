@@ -15,7 +15,7 @@ async function callTool(params) {
         mimeType: "application/json",
       },
       amount: "250000",
-      scheme: "upto",
+      scheme: "batch-settlement",
     },
     params,
     async ({ params: paidParams }) => {

@@ -8,10 +8,8 @@ import {
   kaspaSettlementExtensions,
   mcpPaymentRequiredResult,
   mcpToolCallFingerprint,
-  minimumUptoAuthorizationAmount,
   paymentIdentifierExtension,
   sha256Hex,
-  uptoAuthorizationDigest,
 } from "@kaspa-x402/core";
 import type {
   BatchPaymentRequirements,
@@ -24,7 +22,6 @@ import type {
   PaymentRequired,
   PaymentScheme,
   SettlementResponse,
-  UptoPaymentRequirements,
 } from "@kaspa-x402/core";
 import {
   DirectModeClient,
@@ -45,8 +42,6 @@ import {
   type HttpResponseLike,
   type RefundTransactionBuilder,
   type SendTransactionResult,
-  type UptoAuthorizationFundingRequest,
-  type UptoAuthorizationSignRequest,
   type VoucherSignRequest,
 } from "../src/index.js";
 
@@ -58,8 +53,6 @@ const FUNDING_TX = "55".repeat(32);
 const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
-const UPTO_TX_ID = "88".repeat(32);
-const UPTO_RESERVE = "25";
 
 describe("direct-mode client", () => {
   it("opens a deposit-voucher channel for the first paid request", async () => {
@@ -183,84 +176,6 @@ describe("direct-mode client", () => {
     });
   });
 
-  it("creates an upto authorization payload through the funding adapter", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const required = makeUptoRequired({ amount: "250" });
-    const requestHash = "99".repeat(32);
-
-    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
-      url: "https://api.example.test/variable",
-      requestHash,
-    });
-
-    expect(payment.scheme).toBe("upto");
-    expect(payment.openedChannel).toBe(false);
-    expect(payment.channel).toBeUndefined();
-    expect(provider.uptoAuthorizations).toEqual([
-      expect.objectContaining({
-        amount: minimumUptoAuthorizationAmount("250", UPTO_RESERVE),
-        payTo: "kaspatest:payout",
-        requestHash,
-      }),
-    ]);
-    const payload = payment.paymentPayload.payload;
-    if (payload.type !== "upto-authorization") throw new Error("expected upto payload");
-    expect(provider.uptoAuthorizations[0]?.authorizationScriptPublicKey).toBe(payload.authorizationScriptPublicKey);
-    const digest = uptoAuthorizationDigest({
-      network: payment.accepted.network,
-      activeScriptPublicKey: payload.authorizationScriptPublicKey,
-      authorizationOutpoint: payload.authorizationOutpoint,
-      requestHash: payload.authorization.requestHash,
-      nonce: payload.authorization.nonce,
-    });
-    expect(payload).toMatchObject({
-      type: "upto-authorization",
-      clientPublicKey: CLIENT_KEY,
-      authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-      authorizationAmountSompi: minimumUptoAuthorizationAmount("250", UPTO_RESERVE),
-      refundAddress: "kaspatest:refund",
-      authorization: {
-        maxAmountSompi: "250",
-        payTo: "kaspatest:payout",
-        settlementFeeReserveSompi: UPTO_RESERVE,
-        validAfterDaa: "1000",
-        validBeforeDaa: "1500",
-        nonce: SALT,
-        serverPublicKey: SERVER_KEY,
-        requestHash,
-        signature: `${digest}${digest}`,
-      },
-    });
-  });
-
-  it("rejects upto authorization windows that start at the timeout", async () => {
-    const provider = new FakeFundingProvider();
-    provider.daa = "1500";
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-
-    await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-        url: "https://api.example.test/variable",
-        requestHash: "12".repeat(32),
-      }),
-    ).rejects.toThrow("upto authorization window is already expired");
-    expect(provider.uptoAuthorizations).toHaveLength(0);
-  });
-
-  it("derives a request hash for upto authorizations when one is not supplied", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-      url: "https://api.example.test/variable",
-    });
-
-    expect(payment.paymentPayload.payload.type).toBe("upto-authorization");
-    expect(provider.uptoAuthorizations).toHaveLength(1);
-    expect(provider.uptoAuthorizations[0]?.requestHash).toMatch(/^[0-9a-f]{64}$/);
-  });
-
   it("falls back to batch settlement on mixed offers when exact funding is unavailable", async () => {
     const provider = new FakeFundingProvider();
     Object.defineProperty(provider, "payExact", { value: undefined });
@@ -298,109 +213,6 @@ describe("direct-mode client", () => {
     expect(settlement.channel).toBeUndefined();
     expect(settlement.chargedAmount).toBe("250");
     expect(settlement.transactionId).toBe(EXACT_TX_ID);
-  });
-
-  it("applies successful upto settlement without channel state", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-      url: "https://api.example.test/variable",
-      requestHash: "99".repeat(32),
-    });
-
-    const settlement = await client.applySettlement(payment, {
-      success: true,
-      transaction: UPTO_TX_ID,
-      network: "kaspa:testnet-10",
-      amount: "125",
-      extensions: kaspaSettlementExtensions({
-        maxAmountSompi: "250",
-        authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-        refundAddress: "kaspatest:refund",
-        finality: "accepted",
-      }),
-    });
-
-    expect(settlement.channel).toBeUndefined();
-    expect(settlement.chargedAmount).toBe("125");
-    expect(settlement.transactionId).toBe(UPTO_TX_ID);
-  });
-
-  it("applies pending upto settlement without treating it as final", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-      url: "https://api.example.test/variable",
-      requestHash: "99".repeat(32),
-    });
-
-    const settlement = await client.applySettlement(payment, {
-      success: false,
-      errorReason: "upto_authorization_pending",
-      transaction: UPTO_TX_ID,
-      network: "kaspa:testnet-10",
-      amount: "125",
-      extensions: kaspaSettlementExtensions({
-        maxAmountSompi: "250",
-        authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-        refundAddress: "kaspatest:refund",
-        finality: "mempool",
-      }),
-    });
-
-    expect(settlement.pending).toBe(true);
-    expect(settlement.finality).toBe("mempool");
-    expect(settlement.transactionId).toBe(UPTO_TX_ID);
-    expect(settlement.chargedAmount).toBe("125");
-  });
-
-  it("applies zero-charge upto settlement without a transaction", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-      url: "https://api.example.test/variable",
-      requestHash: "99".repeat(32),
-    });
-
-    const settlement = await client.applySettlement(payment, {
-      success: true,
-      transaction: "",
-      network: "kaspa:testnet-10",
-      amount: "0",
-      extensions: kaspaSettlementExtensions({
-        chargedAmount: "0",
-        maxAmountSompi: "250",
-        authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-        refundAddress: "kaspatest:refund",
-      }),
-    });
-
-    expect(settlement.chargedAmount).toBe("0");
-    expect(settlement.transactionId).toBeUndefined();
-  });
-
-  it("rejects upto settlements that exceed the signed maximum", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-      url: "https://api.example.test/variable",
-      requestHash: "99".repeat(32),
-    });
-
-    await expect(
-      client.applySettlement(payment, {
-        success: true,
-        transaction: UPTO_TX_ID,
-        network: "kaspa:testnet-10",
-        amount: "251",
-        extensions: kaspaSettlementExtensions({
-          maxAmountSompi: "250",
-          authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-          refundAddress: "kaspatest:refund",
-          finality: "accepted",
-        }),
-      }),
-    ).rejects.toThrow("exceeds signed maximum");
   });
 
   it("rejects exact settlement below the advertised finality", async () => {
@@ -750,7 +562,7 @@ describe("direct-mode client", () => {
       store: new MemoryChannelStore(),
       fetch: async () =>
         response(402, {
-          "PAYMENT-REQUIRED": encodePaymentRequiredHeader(makeUptoRequired({ amount: "100" })),
+          "PAYMENT-REQUIRED": encodePaymentRequiredHeader(makeExactRequired({ amount: "100" })),
         }),
     });
 
@@ -759,50 +571,6 @@ describe("direct-mode client", () => {
         body: new URLSearchParams([["a", "b"]]),
       }),
     ).rejects.toThrow("requestHash is required");
-  });
-
-  it("does not create a second upto authorization for pending paidFetch settlement", async () => {
-    const provider = new FakeFundingProvider();
-    const requiredHeader = encodePaymentRequiredHeader(makeUptoRequired({ amount: "100" }));
-    let capturedPayment: PaymentPayload | undefined;
-    const client = makeClient({
-      provider,
-      store: new MemoryChannelStore(),
-      fetch: async (_input, init) => {
-        const paymentHeader =
-          init?.headers && !Array.isArray(init.headers) ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER] : undefined;
-        if (!paymentHeader) {
-          return response(402, {
-            "PAYMENT-REQUIRED": requiredHeader,
-          });
-        }
-        capturedPayment = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf8")) as PaymentPayload;
-        return response(202, {
-          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader({
-            success: false,
-            errorReason: "upto_authorization_pending",
-            transaction: UPTO_TX_ID,
-            network: "kaspa:testnet-10",
-            payer: "kaspatest:refund",
-            amount: "60",
-            extensions: kaspaSettlementExtensions({
-              maxAmountSompi: "100",
-              authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-              refundAddress: "kaspatest:refund",
-              finality: "mempool",
-            }),
-          }),
-        });
-      },
-    });
-
-    const result = await client.paidFetch("https://api.example.test/variable");
-
-    expect(result.response.status).toBe(202);
-    expect(result.settlement?.pending).toBe(true);
-    expect(result.settlement?.finality).toBe("mempool");
-    expect(capturedPayment?.payload.type).toBe("upto-authorization");
-    expect(provider.uptoAuthorizations).toHaveLength(1);
   });
 
   it("drives paid MCP tool calls from structured payment requirements", async () => {
@@ -959,54 +727,6 @@ describe("direct-mode client", () => {
     expect(result.result.isError).toBe(true);
     expect(result.settlement?.chargedAmount).toBe("0");
     expect(result.settlement?.response.success).toBe(false);
-  });
-
-  it("handles MCP pending settlements before corrective challenges", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const required = makeUptoRequired({ amount: "100" });
-    const expectedRequestHash = mcpToolCallFingerprint({
-      toolName: "variable",
-      arguments: { id: "pending" },
-      accepted: required.accepts[0]!,
-    });
-    let attempts = 0;
-
-    const result = await paidMcpToolCall(
-      client,
-      async (params) => {
-        attempts += 1;
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
-        return {
-          isError: true,
-          structuredContent: required,
-          content: [{ type: "text", text: JSON.stringify(required) }],
-          _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: {
-              success: false,
-              errorReason: "upto_authorization_pending",
-              transaction: UPTO_TX_ID,
-              network: "kaspa:testnet-10",
-              payer: "kaspatest:refund",
-              amount: "60",
-              extensions: kaspaSettlementExtensions({
-                maxAmountSompi: "100",
-                authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-                refundAddress: "kaspatest:refund",
-                finality: "mempool",
-              }),
-            } satisfies SettlementResponse,
-          },
-        };
-      },
-      { name: "variable", arguments: { id: "pending" } },
-    );
-
-    expect(attempts).toBe(2);
-    expect(provider.uptoAuthorizations[0]?.requestHash).toBe(expectedRequestHash);
-    expect(result.result.isError).toBe(true);
-    expect(result.settlement?.pending).toBe(true);
-    expect(result.settlement?.response.errorReason).toBe("upto_authorization_pending");
   });
 
   it("passes payment identifiers through paidFetch retries", async () => {
@@ -1265,33 +985,6 @@ function makeExactRequired(input: { amount: string; finality?: "mempool" | "acce
   };
 }
 
-function makeUptoRequired(input: { amount: string; finality?: "accepted" | "confirmed" }): PaymentRequired {
-  return {
-    x402Version: X402_VERSION,
-    resource: {
-      url: "https://api.example.test/variable",
-    },
-    accepts: [
-      {
-        scheme: "upto",
-        network: "kaspa:testnet-10",
-        amount: input.amount,
-        asset: "KAS",
-        payTo: "kaspatest:payout",
-        maxTimeoutSeconds: 60,
-        extra: {
-          binding: "kaspa-upto-v1",
-          authorizationTemplateId: "kaspa-x402-upto-v1",
-          serverPublicKey: SERVER_KEY,
-          authorizationTimeoutDaa: "1500",
-          settlementFeeReserveSompi: UPTO_RESERVE,
-          ...(input.finality ? { finality: input.finality } : {}),
-        },
-      } satisfies UptoPaymentRequirements,
-    ],
-  };
-}
-
 function makeMixedRequired(input: { amount: string }): PaymentRequired {
   return {
     x402Version: X402_VERSION,
@@ -1383,7 +1076,6 @@ class FakeFundingProvider implements FundingProvider {
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
   readonly exactPayments: Array<{ amount: string; payTo: string; requestHash?: string }> = [];
-  readonly uptoAuthorizations: Array<{ amount: string; payTo: string; requestHash: string; authorizationScriptPublicKey: string }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" = "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
@@ -1443,23 +1135,6 @@ class FakeFundingProvider implements FundingProvider {
     };
   }
 
-  async fundUptoAuthorization(request: UptoAuthorizationFundingRequest) {
-    this.uptoAuthorizations.push({
-      amount: request.amount,
-      payTo: request.payTo,
-      requestHash: request.requestHash,
-      authorizationScriptPublicKey: request.authorizationScriptPublicKey,
-    });
-    return {
-      outpoint: { txid: UPTO_TX_ID, index: this.uptoAuthorizations.length - 1 },
-      amount: request.amount,
-      scriptPublicKey: request.authorizationScriptPublicKey,
-      payerAddress: "kaspatest:refund",
-      finality: "accepted" as const,
-      fundingSource: this.sourceKind,
-    };
-  }
-
   async getUtxos(addresses: readonly string[]) {
     return this.utxos.filter((utxo) => utxo.address && addresses.includes(utxo.address));
   }
@@ -1491,10 +1166,6 @@ class FakeSigner {
   }
 
   async signVoucher({ digest }: VoucherSignRequest) {
-    return `${digest}${digest}`;
-  }
-
-  async signUptoAuthorization({ digest }: UptoAuthorizationSignRequest) {
     return `${digest}${digest}`;
   }
 

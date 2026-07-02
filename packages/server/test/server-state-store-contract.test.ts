@@ -12,9 +12,6 @@ import {
   type ServerStateStore,
   type SettlementCommit,
   type ServerResponse,
-  type UptoBroadcastAuthorizationRecord,
-  type UptoPendingAuthorizationRecord,
-  type UptoSettlementCommit,
 } from "../src/index.js";
 
 const CHANNEL_ID = "11".repeat(32);
@@ -24,7 +21,6 @@ const PAYLOAD = "44".repeat(32);
 const TX = "55".repeat(32);
 const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
-const NONCE = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
 
 type StoreFactory = {
@@ -114,21 +110,6 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(store.loadChannel(CHANNEL_ID)).resolves.toMatchObject({ chargedCumulativeAmount: "0" });
   });
 
-  it("reserves upto authorizations by both outpoint and nonce scopes", async () => {
-    const store = await factory.create();
-    const pending = uptoAuthorization({ authorizationScopeId: "aa".repeat(32), nonceScopeId: "bb".repeat(32), outpointIndex: 0 });
-    await store.reserveUptoAuthorization(pending);
-    await store.reserveUptoAuthorization(pending);
-
-    await expect(store.loadUptoAuthorization(pending.authorizationScopeId)).resolves.toMatchObject({ status: "pending" });
-    await expect(store.loadUptoAuthorization(pending.nonceScopeId)).resolves.toMatchObject({ status: "pending" });
-    await expect(
-      store.reserveUptoAuthorization(
-        uptoAuthorization({ authorizationScopeId: "cc".repeat(32), nonceScopeId: pending.nonceScopeId, outpointIndex: 1 }),
-      ),
-    ).rejects.toThrow("already consumed");
-  });
-
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
     const store = await factory.create([channel()]);
     const first = claimAttempt({ attemptId: ATTEMPT });
@@ -145,10 +126,6 @@ type DurableMockOperation =
   | { type: "retireChannel"; channelId: string; reason?: string }
   | { type: "commitSettlement"; record: SettlementCommit }
   | { type: "commitExactPayment"; record: ExactSettlementCommit }
-  | { type: "reserveUptoAuthorization"; record: UptoPendingAuthorizationRecord; paymentIdentifier?: PaymentIdentifierRecord }
-  | { type: "markUptoAuthorizationBroadcast"; record: UptoBroadcastAuthorizationRecord; paymentIdentifier?: PaymentIdentifierRecord }
-  | { type: "commitUptoSettlement"; record: UptoSettlementCommit }
-  | { type: "abandonUptoAuthorization"; scopeId: string; reason?: string }
   | { type: "saveClaimAttempt"; record: ClaimAttemptRecord }
   | { type: "applyClaimAttempt"; channel: ServerChannelRecord; attempt: ClaimAttemptRecord }
   | { type: "abandonClaimAttempt"; attemptId: string; reason?: string };
@@ -202,24 +179,6 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     await this.#write({ type: "commitExactPayment", record }, () => super.commitExactPayment(record));
   }
 
-  async reserveUptoAuthorization(record: UptoPendingAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void> {
-    await this.#write({ type: "reserveUptoAuthorization", record, paymentIdentifier }, () => super.reserveUptoAuthorization(record, paymentIdentifier));
-  }
-
-  async markUptoAuthorizationBroadcast(record: UptoBroadcastAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void> {
-    await this.#write({ type: "markUptoAuthorizationBroadcast", record, paymentIdentifier }, () =>
-      super.markUptoAuthorizationBroadcast(record, paymentIdentifier),
-    );
-  }
-
-  async commitUptoSettlement(record: UptoSettlementCommit): Promise<void> {
-    await this.#write({ type: "commitUptoSettlement", record }, () => super.commitUptoSettlement(record));
-  }
-
-  async abandonUptoAuthorization(scopeId: string, reason?: string): Promise<void> {
-    await this.#write({ type: "abandonUptoAuthorization", scopeId, reason }, () => super.abandonUptoAuthorization(scopeId, reason));
-  }
-
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#write({ type: "saveClaimAttempt", record }, () => super.saveClaimAttempt(record));
   }
@@ -250,18 +209,6 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
         return;
       case "commitExactPayment":
         await super.commitExactPayment(operation.record);
-        return;
-      case "reserveUptoAuthorization":
-        await super.reserveUptoAuthorization(operation.record, operation.paymentIdentifier);
-        return;
-      case "markUptoAuthorizationBroadcast":
-        await super.markUptoAuthorizationBroadcast(operation.record, operation.paymentIdentifier);
-        return;
-      case "commitUptoSettlement":
-        await super.commitUptoSettlement(operation.record);
-        return;
-      case "abandonUptoAuthorization":
-        await super.abandonUptoAuthorization(operation.scopeId, operation.reason);
         return;
       case "saveClaimAttempt":
         await super.saveClaimAttempt(operation.record);
@@ -346,34 +293,6 @@ function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPayment
     settlement: settlement(),
     response: response(),
     ...overrides,
-  };
-}
-
-function uptoAuthorization(input: {
-  authorizationScopeId: string;
-  nonceScopeId: string;
-  outpointIndex: number;
-}): UptoPendingAuthorizationRecord {
-  return {
-    authorizationScopeId: input.authorizationScopeId,
-    nonceScopeId: input.nonceScopeId,
-    authorizationOutpoint: { txid: TX, index: input.outpointIndex },
-    nonce: NONCE,
-    requestFingerprint: REQUEST,
-    paymentRequirementsHash: REQUIREMENTS,
-    paymentPayloadHash: PAYLOAD,
-    requiredFinality: "accepted",
-    maxAmountSompi: "100",
-    authorizationAmountSompi: "125",
-    validAfterDaa: "1000",
-    validBeforeDaa: "1100",
-    chargedAmount: "70",
-    refundAddress: "kaspatest:refund",
-    status: "pending",
-    transaction: "cd".repeat(32),
-    transactionId: OTHER_TX,
-    settlement: settlement(),
-    response: response(),
   };
 }
 

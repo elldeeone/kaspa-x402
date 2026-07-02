@@ -11,5 +11,4 @@ export * from "./network.js";
 export * from "./schema-validation.js";
 export * from "./stable-json.js";
 export * from "./types.js";
-export * from "./upto.js";
 export * from "./voucher.js";

@@ -21,12 +21,10 @@ const config = {
 
 const requiredFlows = [
   "exact payment and replay rejection",
-  "upto zero-charge authorization",
-  "upto nonzero settlement",
   "batch deposit-voucher settlement",
   "batch voucher-only settlement",
   "batch claim transaction construction and broadcast",
-  "replay rejection across exact, upto, and batch-settlement",
+  "replay rejection across exact and batch-settlement",
   "batch refund transaction construction and broadcast after timeout",
 ];
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
@@ -165,35 +163,6 @@ function validateLiveProofResult(result, flows) {
   require(isFinal(result.exact?.finality), "exact.finality", "must be accepted or confirmed");
   require(result.exact?.replay?.status === 409, "exact.replay.status", "must be 409");
   require(result.exact?.replay?.error === "invalid_transaction_state", "exact.replay.error", "must be invalid_transaction_state");
-
-  require(validOutpoint(result.upto?.zero?.authorizationOutpoint), "upto.zero.authorizationOutpoint", "must be an outpoint");
-  require(isTxVersion(result.upto?.zero?.authorizationTxVersion), "upto.zero.authorizationTxVersion", "must state the authorization transaction version");
-  require(isTxVersionSource(result.upto?.zero?.authorizationTxVersionSource), "upto.zero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
-  require(result.upto?.zero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.zero.authorizationTxVersionSource", "must be sdk-generated-transaction");
-  require(isFinal(result.upto?.zero?.authorizationFinality), "upto.zero.authorizationFinality", "must be accepted or confirmed");
-  require(isPositiveSompi(result.upto?.zero?.maxAmountSompi), "upto.zero.maxAmountSompi", "must be a positive sompi string");
-  require(result.upto?.zero?.chargedAmount === "0", "upto.zero.chargedAmount", "must be zero");
-  require(result.upto?.zero?.transaction === "", "upto.zero.transaction", "must be empty for zero-charge");
-  require(result.upto?.zero?.txVersion === null, "upto.zero.txVersion", "must be null for zero-charge");
-  require(result.upto?.zero?.txVersionSource === "no-transaction", "upto.zero.txVersionSource", "must state no-transaction");
-  require(validOutpoint(result.upto?.nonzero?.authorizationOutpoint), "upto.nonzero.authorizationOutpoint", "must be an outpoint");
-  require(isTxVersion(result.upto?.nonzero?.authorizationTxVersion), "upto.nonzero.authorizationTxVersion", "must state the authorization transaction version");
-  require(isTxVersionSource(result.upto?.nonzero?.authorizationTxVersionSource), "upto.nonzero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
-  require(result.upto?.nonzero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.nonzero.authorizationTxVersionSource", "must be sdk-generated-transaction");
-  require(isFinal(result.upto?.nonzero?.authorizationFinality), "upto.nonzero.authorizationFinality", "must be accepted or confirmed");
-  require(isPositiveSompi(result.upto?.nonzero?.maxAmountSompi), "upto.nonzero.maxAmountSompi", "must be a positive sompi string");
-  require(isPositiveSompi(result.upto?.nonzero?.chargedAmount), "upto.nonzero.chargedAmount", "must be a positive sompi string");
-  if (isSompi(result.upto?.nonzero?.chargedAmount) && isSompi(result.upto?.nonzero?.maxAmountSompi)) {
-    require(BigInt(result.upto.nonzero.chargedAmount) <= BigInt(result.upto.nonzero.maxAmountSompi), "upto.nonzero.chargedAmount", "must not exceed maxAmountSompi");
-  }
-  require(isHash32(result.upto?.nonzero?.txid), "upto.nonzero.txid", "must be a transaction id");
-  require(result.upto?.nonzero?.txVersion === 1, "upto.nonzero.txVersion", "must be transaction v1");
-  require(isTxVersionSource(result.upto?.nonzero?.txVersionSource), "upto.nonzero.txVersionSource", "must state an allowed version evidence source");
-  require(result.upto?.nonzero?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "upto.nonzero.txVersionSource", "must be adapter-submitted-transaction-shape");
-  require(isIndex(result.upto?.nonzero?.paymentOutputIndex), "upto.nonzero.paymentOutputIndex", "must be a non-negative integer");
-  require(isFinal(result.upto?.nonzero?.finality), "upto.nonzero.finality", "must be accepted or confirmed");
-  require(result.upto?.replay?.status === 409, "upto.replay.status", "must be 409");
-  require(result.upto?.replay?.error === "invalid_transaction_state", "upto.replay.error", "must be invalid_transaction_state");
 
   require(isHash32(result.batch?.deposit?.txid), "batch.deposit.txid", "must be a transaction id");
   require(isTxVersion(result.batch?.deposit?.txVersion), "batch.deposit.txVersion", "must state the transaction version");

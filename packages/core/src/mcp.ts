@@ -151,13 +151,6 @@ function mcpPaymentIdentity(paymentPayload: PaymentPayload): JsonRecord {
         ...(payload.transactionId ? { transactionId: payload.transactionId } : { transactionHash: sha256Hex(payload.transaction) }),
         paymentOutputIndex: payload.paymentOutputIndex,
       };
-    case "upto-authorization":
-      return {
-        scheme: paymentPayload.accepted.scheme,
-        authorizationOutpoint: payload.authorizationOutpoint,
-        nonce: payload.authorization.nonce,
-        maxAmountSompi: payload.authorization.maxAmountSompi,
-      };
     case "deposit-voucher":
       return {
         scheme: paymentPayload.accepted.scheme,

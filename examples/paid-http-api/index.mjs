@@ -5,9 +5,6 @@ const { client } = createMockDirectModeEnvironment();
 const exact = await client.paidFetch("https://api.example.test/download", {
   paymentIdentifier: "http_exact_download_1",
 });
-const upto = await client.paidFetch("https://api.example.test/quote", {
-  paymentIdentifier: "http_upto_quote_1",
-});
 const firstBatch = await client.paidFetch("https://api.example.test/metered", {
   paymentIdentifier: "http_batch_metered_1",
 });
@@ -22,11 +19,6 @@ console.log(
         status: exact.response.status,
         scheme: exact.payment?.scheme,
         settlement: exact.settlement?.response.success,
-      },
-      upto: {
-        status: upto.response.status,
-        scheme: upto.payment?.scheme,
-        chargedAmount: upto.settlement?.chargedAmount,
       },
       batch: {
         firstOpenedChannel: firstBatch.payment?.openedChannel,

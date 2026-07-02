@@ -50,7 +50,6 @@ Current examples include:
 ```text
 kaspa:x402:escrow-voucher:v1
 kaspa:x402:channel:v1
-kaspa:x402:upto-authorization:v2
 ```
 
 ## Vector Sets

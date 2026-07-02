@@ -249,7 +249,7 @@ function classifyPaymentRequired(value: unknown): KaspaX402ErrorCode {
   const firstRequirement = Array.isArray(requirement) ? asRecord(requirement[0]) : undefined;
 
   if (asRecord(value)?.x402Version !== 2) return "invalid_kaspa_x402_version";
-  if (!firstRequirement || !["exact", "upto", "batch-settlement"].includes(String(firstRequirement.scheme))) {
+  if (!firstRequirement || !["exact", "batch-settlement"].includes(String(firstRequirement.scheme))) {
     return "invalid_kaspa_x402_scheme";
   }
   if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(String(firstRequirement.network))) return "invalid_kaspa_x402_network";
@@ -326,7 +326,6 @@ function classifySettlementResponse(value: unknown): KaspaX402ErrorCode {
 function expectedBindingForScheme(scheme: string): string | undefined {
   return {
     exact: "kaspa-exact-v1",
-    upto: "kaspa-upto-v1",
     "batch-settlement": "kaspa-escrow-v1",
   }[scheme];
 }
@@ -334,7 +333,6 @@ function expectedBindingForScheme(scheme: string): string | undefined {
 function expectedPayloadTypesForScheme(scheme: string): string[] | undefined {
   return {
     exact: ["exact-transfer"],
-    upto: ["upto-authorization"],
     "batch-settlement": ["deposit-voucher", "voucher", "claim", "refund"],
   }[scheme];
 }

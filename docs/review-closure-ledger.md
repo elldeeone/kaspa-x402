@@ -1,49 +1,24 @@
 # Review Closure Ledger
 
-Status: current remediation ledger for the protocol, transaction, documentation,
-and release-readiness review findings that were accepted during alpha hardening.
+Status: current alpha closure notes after narrowing the shipped native surface.
 
-This ledger records how each real finding is closed, deferred, or accepted as a
-known risk. It is not a replacement for an independent audit.
+This ledger records the current disposition of previously identified review
+themes. It intentionally tracks the package surface that remains shipped:
+`exact` and `batch-settlement`.
 
-## Closure Summary
+| Finding theme | Status | Closure evidence |
+| ------------- | ------ | ---------------- |
+| Public surface must only advertise implemented native profiles | Fixed for current alpha | Schemas, package types, examples, specs, vectors, and runtime offer selection accept only `exact` and `batch-settlement`. |
+| Batch covenant authority must be reproducible | Fixed for testnet alpha; mainnet audit still required | Escrow fixture checks, batch claim/refund transaction-v1 vectors, and covenant package tests cover the current template. |
+| Transaction-v1 vectors must not be self-referential | Fixed for current vectors | `npm run validate:tx-v1-consensus` cross-checks batch claim/refund artifacts against the configured Kaspa consensus checkout. |
+| Exact replay and batch idempotency must prevent duplicate protected execution | Fixed for current direct-mode tests | Server and client tests cover exact replay, batch corrective state, same-id conflicts, and concurrent retries. |
+| HTTP and MCP transports must not release protected results before settlement succeeds | Fixed for current direct-mode tests | Server tests cover handler failure, failed persistence, and protected-content withholding on settlement failure. |
+| Facilitator support must not widen server capability | Fixed for current facilitator tests | Facilitator tests assert supported-kind intersection and explicit claim/refund settler requirements. |
+| Mainnet readiness must not be implied by testnet success | Open gate | Mainnet remains blocked by `docs/mainnet-readiness.md`; `kaspa:mainnet` is a reserved profile name only. |
 
-| Finding | Severity after triage | Status | Resolution and evidence | Verification |
-| --- | --- | --- | --- | --- |
-| `upto` covenant and nonzero settlement authority were not defined | Critical | Fixed for testnet alpha; mainnet audit still required | Added `contracts/kaspa-x402-upto-v1.sil`, `contracts/fixtures/kaspa-x402-upto-v1.json`, deterministic template helpers, nonzero settlement transaction-v1 vectors, server-side template checks, settlement transaction verification, and live testnet evidence. The spec now states which timeout bound is enforced on-chain and which remains verifier-enforced. | `npm run check:covenant-fixtures`; `npm run validate:schemas`; `npm run proof:offline`; live report in `docs/live-testnet-report.md` |
-| Live report did not distinguish transaction v0 from transaction v1 evidence | High | Fixed | `docs/live-testnet-report.md` now states transaction version and version-evidence source for exact, `upto`, deposit, claim, replay, and refund paths. The live proof runner rejects missing version evidence when a funded live adapter returns a result. | Funded `npm run proof:live:check -- --live --write-report` run recorded in `docs/live-testnet-report.md`; `npm run proof:offline` |
-| Transaction-v1 vectors were self-referential | High | Fixed for offline consensus equivalence; mainnet audit still required | Added the consensus cross-validation harness and transaction-v1 vectors for batch claim, batch refund, and nonzero `upto` settlement. Vector metadata labels the current validation level. | `KASPA_X402_KASPA_CONSENSUS_ROOT=<rusty-kaspa-checkout> npm run validate:tx-v1-consensus`; `npm run validate:schemas`; `npm run check:covenant-fixtures` |
-| Batch `SettlementResponse` did not use upstream-compatible `transaction` and `amount` fields | High | Fixed | Voucher-only and deposit-voucher successes now use the commitment id as `transaction`, report actual request charge in top-level `amount`, and carry Kaspa metadata in `extensions.kaspa`. The schema and vectors enforce the shape. | `npm run validate:schemas`; `npm test` |
-| SilverScript provenance and maturity could be read as production/audit evidence | High | Accepted mainnet gate; docs corrected | The docs frame SilverScript artifacts as testnet alpha validation artifacts. Current upstream remains experimental and states Testnet 12-only; this repo records empirical testnet-10 evidence but does not turn that into a mainnet or audited-toolchain claim. Compiler release, audit, provenance, and recompile policy remain mainnet gates. | `npm run check:covenant-fixtures`; current upstream README checked at `kaspanet/silverscript` HEAD `d25bd3427a093c17327ca3d6b9e1aa5f7688c863` |
-| Network and native asset identifiers could be read as registry acceptance | Medium | Accepted standardization task; docs corrected | Specs and proposal text now frame `kaspa:testnet-10`, `kaspa:mainnet`, and `KAS` as draft binding conventions. CAIP namespace registration and a native KAS asset convention remain agenda items before a stable release. | Docs review; `npm run validate:schemas` |
-| Exact replay scope disagreed between spec and implementation | Medium | Fixed | Exact replay identity is transaction-id-once per server/facilitator trust domain. Same txid sibling-output reuse is rejected, while cached retries require the same verified txid, output index, and request fingerprint. | `npm --workspace @kaspa-x402/server test`; `npm test` |
-| Exact lock key could differ between hinted and non-hinted payloads | Medium | Fixed | Exact requests take a verifier-derived transaction-id lock before replay checks, handler execution, and settlement commit. Tests cover mixed hinted/non-hinted retries. | `npm --workspace @kaspa-x402/server test`; `npm test` |
-| Public error reasons used local diagnostics on x402 wire surfaces | Medium | Fixed | Public wire surfaces now map local Kaspa diagnostics through `toX402ErrorReason`, and `spec/errors.md` lists the repo-defined public compatibility reasons used by this binding. Local diagnostic codes remain implementation details. | `npm test`; `npm run validate:schemas` |
-| Live proof was not fully reproducible from committed code | Medium | Partially fixed; adapter remains external by design for now | The committed proof runner, config template, required-flow validation, and sanitized report are in the repo. The run-specific adapter and secrets remain outside the public package boundary; this is documented as a limitation, not production evidence. | `npm run proof:live:check -- --config-file live-proof.env.example --write-report --allow-blocked`; `docs/live-testnet-proof.md` |
-| Batch vouchers authorize a ceiling, not the actual business charge | High | Accepted trust model; docs, tests, and strict live evidence corrected | The batch spec now says the covenant enforces a signed cumulative ceiling, while the reference server claims only the actual active charge and records receipts/channel state. Overclaim within the ceiling is documented as detectable trust violation, not covenant rejection. Claim preview/execution use active charged amount. Live proof validation requires actual-charge fields plus claim/refund reconciliation fields, and the current live report records two strict testnet runs that satisfy those checks. | `npm --workspace @kaspa-x402/server test`; `npm run proof:offline`; strict live reports in `.kaspa-x402-live/` |
-| `payment-identifier` extension missed the upstream-style schema object | High | Fixed | `paymentIdentifierExtension()` emits both `info` and `schema`, schema validation requires both fields, retry validation checks custom advertised schemas, and payloads must preserve advertised info fields while echoing the advertised schema. | `npm --workspace @kaspa-x402/core test`; `npm test` |
-| MCP and HTTP pending/failure behavior diverges from strict upstream defaults | Medium | Accepted Kaspa transport extension | HTTP `202` pending is limited to nonzero `upto` finality waits and is documented as a Kaspa-specific finality state. MCP settlement failure with `_meta["x402/payment-response"]` is documented as local profile behavior, not strict upstream transport compatibility, and protected content is withheld. | `npm --workspace @kaspa-x402/server test`; `npm --workspace @kaspa-x402/client test` |
-| Built-in native transaction-v1 coverage was incomplete | Medium | Fixed for current reference vectors; production adapters still gated | Added consensus-cross-validated transaction-v1 vectors for batch claim, batch refund, and nonzero `upto` settlement. Output covenant bindings remain an explicit not-used decision for the current vectors. | `npm run validate:tx-v1-consensus`; `npm run vectors:tx-v1`; `npm run validate:schemas` |
-| Spec/schema/code drift around optional funding transaction and error codes | Medium | Fixed or closed by mapping | Upto and deposit payload types retain optional funding transaction where accepted by schema. Public error reasons are mapped while local diagnostic codes remain internal. | `npm test`; `npm run validate:schemas` |
-| Durability and handler atomicity were production risks | Medium | Fixed at reference-contract level; production implementation still required | Added server store and runtime lock contracts, contract tests, commit-conflict atomicity checks, and handler side-effect guidance. In-memory stores remain test/demo only. | `npm --workspace @kaspa-x402/server test`; `docs/server-store-contract.md`; `docs/server-runtime-lock-contract.md` |
-| MCP exact fingerprint helper could throw on missing optional transaction id | Low | Fixed | MCP paid tool calls now use the same supported network and scheme policy as normal payment creation and avoid fingerprinting unsupported offers as selected payments. | `npm --workspace @kaspa-x402/client test` |
-| Default HTTP fingerprint omitted selected payment fields | Low | Fixed | Request fingerprinting now includes selected payment requirement context where idempotency records are bound to paid retries. | `npm --workspace @kaspa-x402/server test` |
-| Corrective responses did not populate the x402 error surface | Low | Fixed | Corrective and pending response paths use mapped public error reasons. | `npm --workspace @kaspa-x402/server test` |
-| `upto` timeout was a single absolute server constant | Low | Fixed | Server configs can use `authorizationWindowDaa` and `maxAuthorizationWindowDaa`; live 402 offers materialize a fresh absolute timeout. | `npm --workspace @kaspa-x402/server test` |
-| Facilitator failure responses could coerce unknown networks to testnet | Low | Fixed | Facilitator invalid settlement responses preserve only recognized safe network values and otherwise omit the network field. | `npm --workspace @kaspa-x402/facilitator test`; `npm run validate:schemas` |
+## Remaining Gates
 
-## Remaining Mainnet Gates
-
-The open items below are not hidden defects in the alpha framing; they are
-explicit blockers before production funds:
-
-- independent audit of exact, `upto`, batch covenant, state-store, and adapter
-  behavior;
-- durable production store implementation satisfying `docs/server-store-contract.md`;
-- pinned compiler release/provenance for every reviewed covenant artifact;
-- current-node transaction-v1 validation for the release candidate operators
-  intend to deploy;
-- formal network namespace and native KAS asset convention work before a stable
-  public registry claim;
-- hosted facilitator authentication, tenant isolation, rate limits, custody,
-  incident response, and monitoring.
+- independent audit of exact, batch covenant, state-store, and adapter behavior;
+- production durable store implementation and operational recovery playbooks;
+- fresh live `kaspa:testnet-10` evidence after each release-candidate change;
+- upstream/community discussion before any stable registry or mainnet claims.

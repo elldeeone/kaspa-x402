@@ -17,7 +17,6 @@ import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEA
 import {
   buildBatchClaimTxV1Artifact,
   buildBatchRefundTxV1Artifact,
-  buildUptoSettlementTxV1Artifact,
   checkEscrowFixtureReproducibility,
 } from "../packages/covenant/dist/index.js";
 import { NETWORK, createMockDirectModeEnvironment, mockRequestHash, paymentRequiredFor } from "../examples/lib/mock-direct-mode.mjs";
@@ -34,13 +33,12 @@ const report = {
 
 try {
   report.flows.exact = await runExactProof();
-  report.flows.upto = await runUptoProof();
   report.flows.batch = await runBatchProof();
   report.flows.txV1 = runTxV1Proof();
   report.summary = {
     ok: true,
     checkCount: report.checks.length,
-    schemes: ["exact", "upto", "batch-settlement"],
+    schemes: ["exact", "batch-settlement"],
   };
   writeReport(report, options.out);
   if (!options.quiet) console.log(JSON.stringify(report, null, 2));
@@ -176,176 +174,6 @@ async function runExactProof() {
   return {
     transaction: settlement.transaction,
     amount: settlement.amount,
-    idempotentStatus: cached.status,
-    replayStatus: replay.status,
-  };
-}
-
-async function runUptoProof() {
-  const zero = await runUptoZeroProof();
-  const nonzero = await runUptoNonzeroProof();
-  return { zero, nonzero };
-}
-
-async function runUptoZeroProof() {
-  const { client, facilitator, server } = createMockDirectModeEnvironment();
-  const url = "https://api.example.test/quote-zero";
-  const resource = {
-    url,
-    description: "Zero-charge variable quote",
-    mimeType: "application/json",
-  };
-  const requestHash = mockRequestHash({ proof: "offline", scheme: "upto", step: "zero-charge" });
-  const payment = await client.createPayment(paymentRequiredFor(server, { resource, amount: "250000", scheme: "upto" }), {
-    url,
-    paymentIdentifier: "offline_upto_zero_0001",
-    requestHash,
-  });
-
-  assert.equal(payment.scheme, "upto");
-  assert.equal(payment.paymentPayload.payload.type, "upto-authorization");
-  check("upto zero-charge payload creation", {
-    authorizationOutpoint: payment.authorization?.authorizationOutpoint,
-    maxAmount: payment.authorization?.authorization.maxAmountSompi,
-  });
-
-  const verification = await facilitator.verify({
-    x402Version: X402_VERSION,
-    paymentPayload: payment.paymentPayload,
-    paymentRequirements: payment.accepted,
-    resource,
-    requestHash,
-  });
-  assert.equal(verification.isValid, true);
-  check("upto zero-charge server verification", {
-    payer: verification.payer,
-    maxAmount: verification.extra?.maxAmountSompi,
-  });
-
-  const response = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "upto", amount: "250000", requestHash }), async () => ({
-    status: 204,
-    body: { ok: true, chargedAmount: "0" },
-    chargedAmount: "0",
-  }));
-  assert.equal(response.status, 204);
-  const settlement = decodeResponse(response);
-  const settlementMetadata = requireSettlementMetadata(settlement);
-  assert.equal(settlement.success, true);
-  assert.equal(settlement.transaction, "");
-  assert.equal(settlement.amount, "0");
-  assert.equal(settlementMetadata.chargedAmount, "0");
-  check("upto zero-charge settlement", {
-    transaction: settlement.transaction,
-    chargedAmount: settlementMetadata.chargedAmount,
-  });
-
-  return {
-    transaction: settlement.transaction,
-    chargedAmount: settlementMetadata.chargedAmount,
-  };
-}
-
-async function runUptoNonzeroProof() {
-  const { client, facilitator, server } = createMockDirectModeEnvironment();
-  const url = "https://api.example.test/quote";
-  const resource = {
-    url,
-    description: "Variable-price quote",
-    mimeType: "application/json",
-  };
-  const requestHash = mockRequestHash({ proof: "offline", scheme: "upto", step: "nonzero" });
-  const payment = await client.createPayment(paymentRequiredFor(server, { resource, amount: "250000", scheme: "upto" }), {
-    url,
-    paymentIdentifier: "offline-upto-nonzero",
-    requestHash,
-  });
-
-  assert.equal(payment.scheme, "upto");
-  assert.equal(payment.paymentPayload.payload.type, "upto-authorization");
-  check("upto nonzero payload creation", {
-    authorizationOutpoint: payment.authorization?.authorizationOutpoint,
-    maxAmount: payment.authorization?.authorization.maxAmountSompi,
-  });
-
-  const verification = await facilitator.verify({
-    x402Version: X402_VERSION,
-    paymentPayload: payment.paymentPayload,
-    paymentRequirements: payment.accepted,
-    resource,
-    requestHash,
-  });
-  assert.equal(verification.isValid, true);
-  check("upto nonzero server verification", {
-    payer: verification.payer,
-    maxAmount: verification.extra?.maxAmountSompi,
-  });
-
-  let executions = 0;
-  const response = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "upto", amount: "250000", requestHash }), async () => {
-    executions += 1;
-    return {
-      status: 200,
-      body: { ok: true, price: "175000" },
-      chargedAmount: "175000",
-    };
-  });
-  assert.equal(response.status, 200);
-  assert.equal(executions, 1);
-  const settlement = decodeResponse(response);
-  assert.equal(settlement.success, true);
-  assert.equal(settlement.amount, "175000");
-  assert.match(settlement.transaction, /^[0-9a-f]{64}$/);
-  check("upto nonzero settlement", {
-    transaction: settlement.transaction,
-    chargedAmount: settlement.amount,
-  });
-
-  let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "upto", amount: "250000", requestHash }), async () => {
-    cachedExecutions += 1;
-    return {
-      status: 200,
-      body: { ok: false },
-      chargedAmount: "1",
-    };
-  });
-  assert.equal(cached.status, 200);
-  assert.equal(cachedExecutions, 0);
-  check("upto payment identifier idempotency", {
-    status: cached.status,
-    handlerExecutions: cachedExecutions,
-  });
-
-  let replayExecutions = 0;
-  const replayPayload = withoutPaymentIdentifier(payment.paymentPayload);
-  const replay = await server.handlePaidRequest(
-    requestWithPayment(replayPayload, {
-      url,
-      resource,
-      scheme: "upto",
-      amount: "250000",
-      requestHash: "14".repeat(32),
-    }),
-    async () => {
-      replayExecutions += 1;
-      return {
-        status: 200,
-        body: { ok: false },
-        chargedAmount: "1",
-      };
-    },
-  );
-  assert.equal(replay.status, 409);
-  assert.equal(replay.body.error, "invalid_transaction_state");
-  assert.equal(replayExecutions, 0);
-  check("upto replay rejection", {
-    status: replay.status,
-    error: replay.body.error,
-  });
-
-  return {
-    transaction: settlement.transaction,
-    chargedAmount: settlement.amount,
     idempotentStatus: cached.status,
     replayStatus: replay.status,
   };
@@ -578,15 +406,6 @@ function runTxV1Proof() {
     computeBudget: refund.compute.computeBudget,
   });
 
-  const uptoSettlementVector = readJson("vectors/tx-v1/upto-settlement.json");
-  const uptoSettlement = buildUptoSettlementTxV1Artifact(uptoSettlementVector.input);
-  assert.deepEqual(uptoSettlement, uptoSettlementVector.expected);
-  check("upto settlement tx-v1 construction", {
-    transactionId: uptoSettlement.transactionId,
-    paymentOutputAmount: uptoSettlement.payment.amount,
-    refundOutputAmount: uptoSettlement.refund.amount,
-    computeBudget: uptoSettlement.compute.computeBudget,
-  });
 
   return {
     fixtureChecks: fixtureReport.checks.length,
@@ -599,12 +418,6 @@ function runTxV1Proof() {
       transactionId: refund.transactionId,
       refundOutputAmount: refund.fee.refundOutputAmount,
       computeBudget: refund.compute.computeBudget,
-    },
-    uptoSettlement: {
-      transactionId: uptoSettlement.transactionId,
-      paymentOutputAmount: uptoSettlement.payment.amount,
-      refundOutputAmount: uptoSettlement.refund.amount,
-      computeBudget: uptoSettlement.compute.computeBudget,
     },
   };
 }

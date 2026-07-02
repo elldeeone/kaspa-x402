@@ -3,7 +3,6 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { validateSettlementResponse } from "@kaspa-x402/core";
 import { describe, expect, it } from "vitest";
 
 const packageDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -27,7 +26,7 @@ describe("kaspa-x402 CLI", () => {
     expect(report.ok).toBe(true);
     expect(report.schemas).toBeGreaterThan(0);
     expect(report.vectors).toBeGreaterThan(0);
-    expect(report.covenantFixtureChecks).toBeGreaterThanOrEqual(44);
+    expect(report.covenantFixtureChecks).toBeGreaterThanOrEqual(22);
   });
 
   it("inspects and verifies exact payloads", () => {
@@ -49,46 +48,6 @@ describe("kaspa-x402 CLI", () => {
 
     expect(inspect.scheme).toBe("exact");
     expect(verify).toMatchObject({ ok: true, scheme: "exact" });
-  });
-
-  it("plans upto settlement responses", () => {
-    const fixture = readJson("vectors/upto/authorization.json") as {
-      paymentPayload: unknown;
-    };
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-cli-"));
-    const payment = path.join(dir, "upto.json");
-    fs.writeFileSync(payment, JSON.stringify(fixture.paymentPayload));
-
-    const zero = JSON.parse(run("upto", "settle", "--payment", payment, "--charge-amount", "0", "--json")) as {
-      action: string;
-      settlement: {
-        success: boolean;
-        transaction: string;
-        amount?: string;
-        extensions?: {
-          kaspa?: {
-            chargedAmount?: string;
-          };
-        };
-      };
-    };
-    const nonzero = JSON.parse(run("upto", "settle", "--payment", payment, "--charge-amount", "100", "--json")) as {
-      action: string;
-      settlementReady: boolean;
-      requestedChargeAmount: string;
-    };
-
-    expect(zero.action).toBe("upto-settle-zero-charge");
-    expect(zero.settlement).toMatchObject({ success: true, transaction: "" });
-    expect(zero.settlement.amount).toBe("0");
-    expect(zero.settlement.extensions?.kaspa?.chargedAmount).toBe("0");
-    expect(validateSettlementResponse(zero.settlement).ok).toBe(true);
-    expect(nonzero).toMatchObject({
-      action: "upto-settle-preview",
-      settlementReady: false,
-      requestedChargeAmount: "100",
-    });
-    expect("success" in nonzero).toBe(false);
   });
 
   it("keeps claim and refund previews local and evidence-aware", () => {
@@ -149,29 +108,6 @@ describe("kaspa-x402 CLI", () => {
     expect(refundReady.refundable).toBe("unknown");
     expect(refundReady.reasons).toEqual([]);
   });
-
-  it("rejects inconsistent upto payloads before settlement preview", () => {
-    const fixture = readJson("vectors/upto/authorization.json") as {
-      paymentPayload: {
-        accepted: { amount: string };
-        payload: {
-          authorization: {
-            maxAmountSompi: string;
-          };
-        };
-      };
-    };
-    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-cli-"));
-    const payment = path.join(dir, "bad-upto.json");
-    const malformed = structuredClone(fixture.paymentPayload);
-    malformed.payload.authorization.maxAmountSompi = (BigInt(malformed.accepted.amount) + 1n).toString();
-    fs.writeFileSync(payment, JSON.stringify(malformed));
-
-    const result = runFailure("upto", "settle", "--payment", payment, "--charge-amount", "0", "--json");
-
-    expect(result.status).not.toBe(0);
-    expect(result.stderr).toContain("upto authorization maximum does not match accepted amount");
-  });
 });
 
 function run(...args: string[]): string {
@@ -179,23 +115,6 @@ function run(...args: string[]): string {
     cwd: root,
     encoding: "utf8",
   });
-}
-
-function runFailure(...args: string[]): { status: number | null; stderr: string } {
-  try {
-    execFileSync(process.execPath, [cli, ...args], {
-      cwd: root,
-      encoding: "utf8",
-      stdio: ["ignore", "pipe", "pipe"],
-    });
-    return { status: 0, stderr: "" };
-  } catch (error) {
-    const failed = error as { status?: number | null; stderr?: string | Buffer };
-    return {
-      status: failed.status ?? null,
-      stderr: Buffer.isBuffer(failed.stderr) ? failed.stderr.toString("utf8") : (failed.stderr ?? ""),
-    };
-  }
 }
 
 function readJson(relativePath: string): unknown {

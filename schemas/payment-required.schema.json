@@ -74,7 +74,7 @@
       "required": ["scheme", "network", "amount", "asset", "payTo", "maxTimeoutSeconds", "extra"],
       "properties": {
         "scheme": {
-          "enum": ["exact", "upto", "batch-settlement"]
+          "enum": ["exact", "batch-settlement"]
         },
         "network": {
           "$ref": "#/$defs/network"
@@ -117,29 +117,6 @@
                   "properties": {
                     "binding": {
                       "const": "kaspa-exact-v1"
-                    }
-                  }
-                }
-              }
-            }
-          ]
-        },
-        {
-          "allOf": [
-            {
-              "$ref": "#/$defs/basePaymentRequirements"
-            },
-            {
-              "properties": {
-                "scheme": {
-                  "const": "upto"
-                },
-                "extra": {
-                  "type": "object",
-                  "required": ["binding"],
-                  "properties": {
-                    "binding": {
-                      "const": "kaspa-upto-v1"
                     }
                   }
                 }

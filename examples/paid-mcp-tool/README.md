@@ -25,7 +25,7 @@ const result = await handlePaidMcpToolCall(
     name: "quote",
     resource: { url: "mcp://tool/quote", description: "Paid quote tool", mimeType: "application/json" },
     amount: "100000",
-    scheme: "upto",
+    scheme: "batch-settlement",
   },
   params,
   async ({ params }) => {
@@ -58,4 +58,4 @@ console.log(paid.result._meta?.["x402/payment-response"]);
 
 The server returns `structuredContent` plus text fallback for unpaid calls. The client retries with `_meta["x402/payment"]`. Successful paid results carry `_meta["x402/payment-response"]`.
 
-The runnable script uses the same helper flow in mock mode with an `upto` quote tool. It prints the charged amount and confirms that payment response metadata is present.
+The runnable script uses the same helper flow in mock mode with a batch-settlement quote tool. It prints the charged amount and confirms that payment response metadata is present.

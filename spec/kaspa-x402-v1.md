@@ -8,10 +8,6 @@ scheme-specific behavior is defined in sibling documents:
 - [Kaspa x402 Exact Binding v1](kaspa-exact-v1.md)
 - [Kaspa x402 Batch Settlement Binding v1](kaspa-batch-settlement-v1.md)
 
-The capped one-shot authorization work previously mapped to x402 `upto` is
-archived in [Kaspa x402 Upto Binding v1](kaspa-upto-v1.md). It is not part of
-the current native public surface.
-
 ## x402 Relationship
 
 x402 separates the logical payment scheme from the network-specific
@@ -36,12 +32,10 @@ that requires explicit runtime opt-in plus the mainnet gates in
 | Scheme | Use when | Settlement |
 | ------ | -------- | ---------- |
 | `exact` | The price is known before the request. Example: buy a file or one fixed-price API result. | One immediate native KAS transfer for the exact amount. |
-| `batch-settlement` | The client expects repeated small requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later. |
+| `batch-settlement` | The client expects repeated or variable-cost requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later. |
 
 The active schemes are intentionally separate. `batch-settlement` can represent
-one request, but it does not have the same x402 contract as `exact`. Capped
-one-shot authorization remains future work until its expiry upper bound is
-enforceable in the native script path.
+one request, but it does not have the same x402 contract as `exact`.
 
 ## x402 Version
 
@@ -285,7 +279,6 @@ The binding is not yet registered with x402 or CAIP registries. This is not a v0
 
 - x402 v2: https://github.com/x402-foundation/x402/blob/main/specs/x402-specification-v2.md
 - x402 exact: https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact.md
-- x402 upto, deferred for the current native surface: https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md
 - x402 batch-settlement: https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md
 - x402 payment identifier: https://github.com/x402-foundation/x402/blob/main/specs/extensions/payment_identifier.md
 - x402 offer and receipt: https://github.com/x402-foundation/x402/blob/main/specs/extensions/extension-offer-and-receipt.md

@@ -3,10 +3,8 @@ import { describe, expect, it, vi } from "vitest";
 import {
   X402_VERSION,
   channelId,
-  minimumUptoAuthorizationAmount,
   readKaspaSettlementExtension,
   sha256Hex,
-  uptoAuthorizationDigest,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
@@ -16,9 +14,8 @@ import {
   type Hash32Hex,
   type NetworkId,
   type PaymentPayload,
-  type UptoPaymentRequirements,
 } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey, uptoScriptPublicKey } from "@kaspa-x402/covenant";
+import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
   MemoryServerChannelStore,
@@ -37,7 +34,6 @@ const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
-const UPTO_TX_ID = "88".repeat(32);
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
@@ -52,7 +48,6 @@ describe("direct-mode facilitator", () => {
     expect(response.body).toMatchObject({
       kinds: [
         { x402Version: X402_VERSION, scheme: "exact", network: "kaspa:testnet-10" },
-        { x402Version: X402_VERSION, scheme: "upto", network: "kaspa:testnet-10" },
         { x402Version: X402_VERSION, scheme: "batch-settlement", network: "kaspa:testnet-10" },
       ],
       extensions: [],
@@ -78,12 +73,9 @@ describe("direct-mode facilitator", () => {
     expect(batch?.extra?.modes).toEqual(["verify", "settle"]);
   });
 
-  it("does not advertise exact or upto when required server adapters are absent", () => {
+  it("does not advertise exact when the required server adapter is absent", () => {
     const { facilitator } = makeFacilitator({
       exactTransactionVerifier: undefined,
-      uptoAuthorizationVerifier: undefined,
-      uptoSettlementBuilder: undefined,
-      uptoSettlementVerifier: undefined,
     });
 
     expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual(["batch-settlement"]);
@@ -142,27 +134,6 @@ describe("direct-mode facilitator", () => {
       amount: "100",
       payer: "kaspatest:refund",
     });
-  });
-
-  it("uses settlement-time amount semantics for upto payments", async () => {
-    const { facilitator, server } = makeFacilitator();
-    const paymentPayload = makeUptoPayment(server, { amount: "100", requestHash: REQUEST_HASH });
-    const paymentRequirements = { ...paymentPayload.accepted, amount: "70" } as UptoPaymentRequirements;
-
-    const settlement = await facilitator.settle({
-      x402Version: X402_VERSION,
-      paymentPayload,
-      paymentRequirements,
-      resource: RESOURCE,
-    });
-
-    expect(settlement).toMatchObject({
-      success: true,
-      transaction: UPTO_TX_ID,
-      amount: "70",
-      payer: "kaspatest:refund",
-    });
-    expect(readKaspaSettlementExtension(settlement)?.maxAmountSompi).toBe("100");
   });
 
   it("settles batch deposit vouchers with actual charge below the signed ceiling", async () => {
@@ -309,15 +280,6 @@ describe("direct-mode facilitator", () => {
             modes: ["verify", "withdraw"],
           },
         },
-        {
-          x402Version: X402_VERSION,
-          scheme: "upto",
-          network: "kaspa:testnet-10",
-          extra: {
-            binding: "kaspa-upto-v1",
-            modes: ["verify", 123],
-          },
-        },
       ],
     });
 
@@ -327,9 +289,6 @@ describe("direct-mode facilitator", () => {
   it("does not let custom supported kinds expand direct server capabilities", () => {
     const { server } = makeFacilitator({
       exactTransactionVerifier: undefined,
-      uptoAuthorizationVerifier: undefined,
-      uptoSettlementBuilder: undefined,
-      uptoSettlementVerifier: undefined,
     });
     const facilitator = new DirectModeFacilitator({
       server,
@@ -654,48 +613,6 @@ describe("direct-mode facilitator", () => {
     expect(verifier).not.toHaveBeenCalled();
   });
 
-  it("reports upto replay during verify after settlement", async () => {
-    const { facilitator, server } = makeFacilitator();
-    const paymentPayload = makeUptoPayment(server, { amount: "100", requestHash: REQUEST_HASH });
-
-    const settlement = await facilitator.settle({
-      x402Version: X402_VERSION,
-      paymentPayload,
-      paymentRequirements: paymentPayload.accepted,
-      resource: RESOURCE,
-      requestHash: REQUEST_HASH,
-    });
-    const replay = await facilitator.verify({
-      x402Version: X402_VERSION,
-      paymentPayload,
-      paymentRequirements: paymentPayload.accepted,
-      resource: RESOURCE,
-      requestHash: OTHER_REQUEST_HASH,
-    });
-
-    expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
-  });
-
-  it("reports protocol errors for malformed public helper payloads before fallback fingerprinting", async () => {
-    const { server } = makeFacilitator();
-    const valid = makeUptoPayment(server, { amount: "100", requestHash: REQUEST_HASH });
-    const malformed = {
-      ...valid,
-      payload: {
-        type: "upto-authorization",
-      },
-    };
-
-    await expect(
-      server.verifyPayment({
-        paymentPayload: malformed as PaymentPayload,
-        paymentRequirements: valid.accepted,
-        resource: RESOURCE,
-      }),
-    ).rejects.toMatchObject({ code: "invalid_kaspa_x402_payload" });
-  });
-
   it("rejects malformed top-level request hashes at the HTTP adapter boundary", async () => {
     const { facilitator, server } = makeFacilitator();
     const paymentPayload = makeExactPayment(server);
@@ -795,7 +712,6 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
     minDepositSompi: "1000",
     amount: "100",
     refundTimeoutDaa: "1000",
-    authorizationTimeoutDaa: "1500",
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
@@ -814,41 +730,6 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
           },
           finality: "accepted",
           payerAddress: "kaspatest:refund",
-        };
-      },
-    },
-    uptoAuthorizationVerifier: {
-      verifyUptoAuthorization({ digest, payload }) {
-        return payload.authorization.signature === `${digest}${digest}`;
-      },
-    },
-    uptoSettlementBuilder: {
-      async buildUptoSettlementTransaction() {
-        return { transaction: "cd".repeat(32) };
-      },
-    },
-    uptoSettlementVerifier: {
-      verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey }) {
-        const refundAmount = (BigInt(payload.authorizationAmountSompi) - BigInt(chargeAmount)).toString();
-        return {
-          transactionId: UPTO_TX_ID,
-          inputAmount: payload.authorizationAmountSompi,
-          chargeAmount,
-          feeAmount: "0",
-          outputCount: 2,
-          authorizationOutpoint: payload.authorizationOutpoint,
-          paymentOutput: {
-            outputIndex: 0,
-            amount: chargeAmount,
-            scriptPublicKey: payToScriptPublicKey,
-          },
-          refundOutput: {
-            outputIndex: 1,
-            amount: refundAmount,
-            scriptPublicKey: refundScriptPublicKey,
-          },
-          paymentOutputIndex: 0,
-          refundOutputIndex: 1,
         };
       },
     },
@@ -876,73 +757,6 @@ function makeExactPayment(server: DirectModeServer): PaymentPayload {
       transactionId: EXACT_TX_ID,
       paymentOutputIndex: 1,
       requestHash: REQUEST_HASH,
-    },
-  };
-}
-
-function makeUptoPayment(server: DirectModeServer, options: { amount: string; requestHash: Hash32Hex }): PaymentPayload {
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "upto", amount: options.amount });
-  const accepted = structuredClone(required.accepts[0]) as UptoPaymentRequirements;
-  const outpoint = { txid: UPTO_TX_ID, index: 0 };
-  const authorization = {
-    maxAmountSompi: accepted.amount,
-    payTo: accepted.payTo,
-    validAfterDaa: "900",
-    validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
-    settlementFeeReserveSompi: accepted.extra.settlementFeeReserveSompi,
-    nonce: SALT,
-    serverPublicKey: accepted.extra.serverPublicKey,
-    requestHash: options.requestHash,
-  };
-  const addressCodec = new FakeAddressCodec();
-  const payoutScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress(authorization.payTo, accepted.network)));
-  const refundScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress("kaspatest:refund", accepted.network)));
-  const authorizationScriptPublicKey = serializedScriptPublicKey(
-    uptoScriptPublicKey({
-      clientPublicKey: CLIENT_KEY,
-      serverPublicKey: authorization.serverPublicKey,
-      network: accepted.network,
-      payoutScriptPublicKeyHash,
-      refundScriptPublicKeyHash,
-      requestHash: authorization.requestHash,
-      nonce: authorization.nonce,
-      maxAmountSompi: authorization.maxAmountSompi,
-      validAfterDaa: authorization.validAfterDaa,
-      validBeforeDaa: authorization.validBeforeDaa,
-      settlementFeeReserveSompi: authorization.settlementFeeReserveSompi,
-    }),
-  );
-  const authorizationAmount = minimumUptoAuthorizationAmount(authorization.maxAmountSompi, authorization.settlementFeeReserveSompi);
-  const digest = uptoAuthorizationDigest({
-    network: accepted.network,
-    activeScriptPublicKey: authorizationScriptPublicKey,
-    authorizationOutpoint: outpoint,
-    requestHash: options.requestHash,
-    nonce: authorization.nonce,
-  });
-  const serverChain = (server as unknown as { __testChain?: FakeChainProvider }).__testChain;
-  serverChain?.setUtxo({
-    outpoint,
-    amount: authorizationAmount,
-    scriptPublicKey: authorizationScriptPublicKey,
-    finality: "accepted",
-  });
-  return {
-    x402Version: X402_VERSION,
-    accepted,
-    payload: {
-      type: "upto-authorization",
-      clientPublicKey: CLIENT_KEY,
-      authorizationOutpoint: outpoint,
-      authorizationScriptPublicKey,
-      authorizationAmountSompi: authorizationAmount,
-      refundAddress: "kaspatest:refund",
-      authorization: {
-        ...authorization,
-        payoutScriptPublicKeyHash,
-        refundScriptPublicKeyHash,
-        signature: `${digest}${digest}`,
-      },
     },
   };
 }
@@ -1048,7 +862,7 @@ class FakeChainProvider implements ServerChainProvider {
   }
 
   async sendTransaction(_transaction: string): Promise<{ transactionId: Hash32Hex; finality: SettlementFinality }> {
-    return { transactionId: UPTO_TX_ID, finality: "accepted" };
+    return { transactionId: EXACT_TX_ID, finality: "accepted" };
   }
 }
 

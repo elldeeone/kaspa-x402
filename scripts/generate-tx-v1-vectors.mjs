@@ -8,18 +8,13 @@ import {
   CLAIM_SCRIPT_UNITS_ESTIMATE,
   REFUND_COMPUTE_BUDGET,
   REFUND_SCRIPT_UNITS_ESTIMATE,
-  UPTO_SETTLE_COMPUTE_BUDGET,
-  UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE,
   buildBatchClaimTxV1Artifact,
   buildBatchRefundTxV1Artifact,
-  buildUptoSettlementTxV1Artifact,
 } from "../packages/covenant/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const fixture = readJson("contracts/fixtures/kaspa-x402-escrow-v1.json");
-const uptoFixture = readJson("contracts/fixtures/kaspa-x402-upto-v1.json");
 const sample = fixture.sample;
-const uptoSample = uptoFixture.sample;
 
 const consensusValidation = {
   status: "consensus-cross-validated",
@@ -88,35 +83,6 @@ const refundInputWithoutMass = {
 const refundInput = { ...refundInputWithoutMass, mass: buildBatchRefundTxV1Artifact(refundInputWithoutMass).transaction.mass };
 const refund = buildBatchRefundTxV1Artifact(refundInput);
 
-const uptoSettlementInputWithoutMass = {
-  authorizationOutpoint: {
-    txid: "66".repeat(32),
-    index: 4,
-  },
-  authorizationAmount: "300000",
-  authorizationScriptPublicKey: uptoSample.scriptPublicKey.serialized,
-  redeemScript: uptoSample.redeemScript,
-  paymentOutputScriptPublicKey: uptoSample.payoutScriptPublicKey.serialized,
-  expectedPayoutScriptPublicKeyHash: uptoSample.payoutScriptPublicKey.hash,
-  refundOutputScriptPublicKey: uptoSample.refundScriptPublicKey.serialized,
-  expectedRefundScriptPublicKeyHash: uptoSample.refundScriptPublicKey.hash,
-  chargeAmount: "100000",
-  maxAmountSompi: uptoSample.params.maxAmountSompi,
-  validAfterDaa: uptoSample.params.validAfterDaa,
-  settlementFeeReserveSompi: uptoSample.params.settlementFeeReserveSompi,
-  fee: "1000",
-  serverSignature: "dd".repeat(65),
-  clientAuthorization: "ee".repeat(64),
-  computeBudget: UPTO_SETTLE_COMPUTE_BUDGET,
-  scriptUnitsEstimate: UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE,
-  lockTimeDaa: uptoSample.params.validAfterDaa,
-};
-const uptoSettlementInput = {
-  ...uptoSettlementInputWithoutMass,
-  mass: buildUptoSettlementTxV1Artifact(uptoSettlementInputWithoutMass).transaction.mass,
-};
-const uptoSettlement = buildUptoSettlementTxV1Artifact(uptoSettlementInput);
-
 try {
   writeVectorsWithConsensusRollback([
     {
@@ -137,16 +103,6 @@ try {
         validation: consensusValidation,
         input: refundInput,
         expected: refund,
-      },
-    },
-    {
-      path: "vectors/tx-v1/upto-settlement.json",
-      value: {
-        kind: "tx-v1-upto-settlement",
-        description: "Reference transaction-v1 artifact for settling a nonzero upto authorization.",
-        validation: consensusValidation,
-        input: uptoSettlementInput,
-        expected: uptoSettlement,
       },
     },
   ]);

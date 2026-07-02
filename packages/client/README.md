@@ -5,15 +5,14 @@ Client SDK for direct-mode Kaspa x402 payments.
 Status: alpha. This package targets testnet iteration and mock/local examples;
 it is not a production wallet, custody, or mainnet funding system.
 
-The current implementation covers HTTP paid fetch and MCP paid tool calls for `exact` one-shot transfers, `upto` capped one-shot authorizations, and `batch-settlement` escrow channels:
+The current implementation covers HTTP paid fetch and MCP paid tool calls for `exact` one-shot transfers and `batch-settlement` escrow channels:
 
 - parses x402 v2 `PAYMENT-REQUIRED` headers;
-- selects supported `exact`, `upto`, and `batch-settlement` Kaspa offers;
+- selects supported `exact` and `batch-settlement` Kaspa offers;
 - creates `exact-transfer` retries through an injected funding adapter;
-- creates `upto-authorization` retries through injected funding and signing adapters;
 - opens deposit-voucher channels through an injected funding provider;
 - reuses channels with outpoint-bound cumulative vouchers;
-- verifies `PAYMENT-RESPONSE` transaction, amount, output index, finality, no-transaction zero-charge `upto` responses, and channel state before advancing local charged amounts;
+- verifies `PAYMENT-RESPONSE` transaction, amount, output index, finality, and channel state before advancing local charged amounts;
 - detects MCP payment-required tool results, retries with `_meta["x402/payment"]`, and applies `_meta["x402/payment-response"]`;
 - exposes refund eligibility and adapter-driven refund broadcast hooks.
 

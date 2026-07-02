@@ -14,7 +14,6 @@
     "payments",
     "micropayments",
     "exact",
-    "upto",
     "batch-settlement",
     "covenants"
   ],
@@ -26,6 +25,8 @@
     "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
     "proof:offline": "node scripts/proof-offline.mjs",
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
+    "validate:release": "npm run build && npm test && npm run validate:schemas && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus && npm run proof:offline && npm run proof:live:check -- --write-report && npm pack --workspaces --dry-run --json >/tmp/kaspa-x402-pack.json && git diff --check",
+    "validate:release:live": "npm run validate:release && npm run proof:live:check -- --live --write-report",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
     "check:covenant-fixtures": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs"
   },
