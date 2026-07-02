@@ -1,20 +1,40 @@
 # Kaspa x402 Upto Binding v1
 
-Status: draft
+Status: archived experimental profile
 
-This document defines the Kaspa network binding for x402 v2 `upto`.
+This document preserves the archived Kaspa network binding experiment for x402
+v2 `upto`. It is not part of the current native public surface.
+
+Do not advertise this profile from `/supported`, include it in new examples, or
+use it as a mainnet-readiness signal. The current native surface is `exact` and
+`batch-settlement`.
+
+The reason is covenant correctness: the experimental script path can enforce
+the maximum charge and output shape, but it cannot enforce the settlement
+expiry upper bound against current chain DAA/time on-chain. Server and
+facilitator verification can reject late settlement as policy, but that is not
+a native covenant guarantee.
 
 ## Summary
 
-`upto` is for one-shot variable-price purchases. The client authorizes a maximum amount before the request is served. The server executes the request, calculates the actual charge, and settles once for an amount less than or equal to the signed cap.
+The archived `upto` design targeted one-shot variable-price purchases. The
+client authorized a maximum amount before the request was served. The server
+executed the request, calculated the actual charge, and settled once for an
+amount less than or equal to the signed cap.
 
-Use `upto` for:
+This archived profile is retained for future upstream work. It should not be
+implemented as a current Kaspa x402 native profile without a native
+script-visible upper-bound expiry check.
+
+The archived profile was intended for:
 
 - variable-cost LLM or agent calls;
 - byte, token, compute, or time-metered one-shot work;
 - requests where the server needs a cap before execution but cannot know the final price upfront.
 
-Do not use `upto` as a recurring allowance or a repeated micropayment channel. Use [batch-settlement](kaspa-batch-settlement-v1.md) for repeated service calls.
+The archived design did not use `upto` as a recurring allowance or repeated
+micropayment channel. Use [batch-settlement](kaspa-batch-settlement-v1.md) for
+repeated service calls.
 
 ## Scheme and Network Pair
 
@@ -29,7 +49,7 @@ Do not use `upto` as a recurring allowance or a repeated micropayment channel. U
 }
 ```
 
-Recognized draft network identifiers:
+Archived draft network identifiers:
 
 ```text
 kaspa:mainnet
@@ -69,13 +89,13 @@ reserved profile name, not a readiness claim.
 | `payTo` | yes | Recipient Kaspa address for the selected network. |
 | `maxTimeoutSeconds` | yes | Maximum time the client may take to provide an authorization. |
 | `extra.binding` | yes | Must equal `"kaspa-upto-v1"`. |
-| `extra.authorizationTemplateId` | yes | Must equal `"kaspa-x402-upto-v1"` for the v0.1 covenant-backed profile. |
+| `extra.authorizationTemplateId` | yes | Must equal `"kaspa-x402-upto-v1"` for the archived experimental template. |
 | `extra.serverPublicKey` | yes | Server key allowed to settle the one-shot authorization. |
 | `extra.authorizationTimeoutDaa` | yes | Absolute DAA score after which this specific authorization offer must not be settled. |
 | `extra.settlementFeeReserveSompi` | yes | Signed maximum fee reserve for nonzero settlement. |
 | `extra.finality` | no | One of `"accepted"` or `"confirmed"`. If absent, default is `"accepted"`. |
 
-x402 `upto` has phase-dependent amount semantics:
+In the archived design, x402 `upto` had phase-dependent amount semantics:
 
 - during `verify`, `PaymentRequirements.amount` is the maximum amount the client authorizes;
 - during `settle`, `PaymentRequirements.amount` is the actual amount to charge, and it must be less than or equal to the signed maximum.
@@ -180,7 +200,8 @@ Digest rules:
 
 ## Covenant Template
 
-`authorizationTemplateId = "kaspa-x402-upto-v1"` identifies a single-use SilverScript authorization template. The template constructor binds:
+`authorizationTemplateId = "kaspa-x402-upto-v1"` identifies an archived
+single-use SilverScript authorization template. The template constructor binds:
 
 - client and server public keys;
 - network hash;
@@ -192,7 +213,12 @@ The settlement branch requires the server signature and the client authorization
 
 The refund branch requires the client signature, a sequence-0 input, one refund output, and `tx.time >= validBeforeDaa`.
 
-The current SilverScript compiler profile used for the fixture supports `tx.time` as a lower-bound lock only. Because of that parser limitation, the settlement upper bound `validBeforeDaa` is enforced by verifiers before handler execution, immediately before nonzero settlement construction, immediately before broadcast, and before recovery rebroadcasts. The template enforces settlement `validAfterDaa` and refund `validBeforeDaa` on-chain.
+The current SilverScript compiler profile used for the fixture supports
+`tx.time` as a lower-bound lock only. The settlement upper bound
+`validBeforeDaa` is therefore enforced by verifiers before handler execution,
+immediately before nonzero settlement construction, immediately before
+broadcast, and before recovery rebroadcasts. The template enforces settlement
+`validAfterDaa` and refund `validBeforeDaa` on-chain, but not settlement expiry.
 
 ## Verification
 
@@ -333,7 +359,8 @@ network-bound and must include `network`.
 
 ## Idempotency
 
-Servers should require the x402 `payment-identifier` extension for `upto`.
+The archived design required the x402 `payment-identifier` extension for
+`upto`.
 
 The server must bind the payment identifier to the normalized request fingerprint and the authorization outpoint. Same id plus same fingerprint returns the cached result. Same id plus different fingerprint fails. The same authorization outpoint or nonce must not be used for multiple request fingerprints.
 
@@ -344,13 +371,15 @@ binding or policy decisions.
 
 ## Toccata Notes
 
-The reserved mainnet `upto` profile is covenant-backed:
+Any future mainnet capped authorization profile must be covenant-backed:
 
 - transaction v1 must be used for covenant spends;
 - v1 inputs use `compute_budget`;
 - transaction builders must estimate script units from the generated script path;
 - the spend must bind the exact authorization outpoint and nonce;
 - the settlement output and refund output must be validated by script;
+- the settlement expiry upper bound must be enforced on-chain, not only by
+  server or facilitator policy;
 - SilverScript source and generated byte fixtures must be included in vectors before mainnet use.
 
 ## Local Diagnostics

@@ -6,7 +6,7 @@ Status: alpha reference implementation. The current public surface targets
 `kaspa:testnet-10` testnet iteration and review. It is not mainnet-ready and
 must not be used for production funds.
 
-The initial standard targets three first-class x402 schemes:
+The current native alpha surface targets two first-class x402 schemes:
 
 ```json
 {
@@ -14,15 +14,6 @@ The initial standard targets three first-class x402 schemes:
   "network": "kaspa:<network>",
   "asset": "KAS",
   "amount": "<sompi>"
-}
-```
-
-```json
-{
-  "scheme": "upto",
-  "network": "kaspa:<network>",
-  "asset": "KAS",
-  "amount": "<max sompi>"
 }
 ```
 
@@ -38,28 +29,34 @@ The initial standard targets three first-class x402 schemes:
 }
 ```
 
-Use `exact` for fixed-price one-shot purchases, `upto` for one-shot variable usage with a client-authorized cap, and `batch-settlement` for repeated micropayments backed by escrow/channel state.
+Use `exact` for fixed-price one-shot purchases and `batch-settlement` for
+repeated micropayments backed by escrow/channel state. The experimental capped
+authorization work that maps to x402 `upto` is archived until the expiry upper
+bound can be enforced natively in the script path.
 
 This repository is an alpha standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
 
 ## Current Status
 
-The repository now contains the alpha reference implementation:
+The repository now contains the alpha reference implementation. The current
+native target surface is:
 
-- protocol profiles for `exact`, `upto`, and `batch-settlement`;
+- protocol profiles for `exact` and `batch-settlement`;
 - JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
-- TypeScript core helpers for canonical headers, validation, IDs, voucher and upto authorization digests, and amounts;
-- covenant helpers, escrow and `upto` fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement` and nonzero `upto`;
-- client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments over HTTP and MCP helper surfaces;
+- TypeScript core helpers for canonical headers, validation, IDs, voucher digests, and amounts;
+- covenant helpers, escrow fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement`;
+- client and server direct-mode packages for `exact` and channel-backed batch payments over HTTP and MCP helper surfaces;
 - an optional self-hosted facilitator package exposing framework-neutral `/supported`, `/verify`, and `/settle` handlers over the direct-mode verifier;
 - a `kaspa-x402` CLI for conformance vector verification and offline payment/channel inspection workflows;
 - runnable mock examples for paid HTTP, paid MCP tools, self-hosted facilitator settlement, and recovery scenarios.
 
+Archived capped authorization artifacts still exist in the repository until the
+implementation cleanup removes them from shipped schemas, package APIs,
+examples, CLI commands, and release artifacts.
+
 The current remaining implementation focus is production-grade native adapters,
-release hardening, and independent review. Nonzero `upto` settlement is
-adapter-gated: the server requires an independent settlement transaction
-verifier, and any built-in mainnet builder remains blocked on audit, release
-provenance, durable stores, custody, and current-node validation.
+release hardening, and independent review. Capped authorization remains
+archived research; see [docs/native-profile-boundary.md](docs/native-profile-boundary.md).
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 
@@ -100,7 +97,9 @@ node examples/self-hosted-facilitator/index.mjs
 node examples/recovery/index.mjs
 ```
 
-The offline proof harness exercises exact and upto replay rejection, batch settlement, idempotency, corrective stale-voucher handling, and tx-v1 claim/refund artifact construction against mock adapters:
+The offline proof harness exercises exact replay rejection, batch settlement,
+idempotency, corrective stale-voucher handling, and tx-v1 claim/refund artifact
+construction against mock adapters:
 
 ```sh
 npm run build
@@ -147,6 +146,6 @@ Reference package workspace:
 - x402 HTTP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/http.md
 - x402 MCP v2: https://github.com/x402-foundation/x402/blob/main/specs/transports-v2/mcp.md
 - x402 exact: https://github.com/x402-foundation/x402/blob/main/specs/schemes/exact/scheme_exact.md
-- x402 upto: https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md
+- x402 upto, deferred for the current native surface: https://github.com/x402-foundation/x402/blob/main/specs/schemes/upto/scheme_upto.md
 - x402 batch-settlement: https://github.com/x402-foundation/x402/blob/main/specs/schemes/batch-settlement/scheme_batch_settlement.md
 - Kaspa Toccata docs: https://github.com/kaspanet/docs/tree/main/content/docs/toccata
