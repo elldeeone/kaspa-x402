@@ -102,6 +102,8 @@ npm run proof:live:check -- --config-file live-proof.env.example --write-report
 
 See [docs/live-testnet-proof.md](docs/live-testnet-proof.md) for the required live configuration and artifact paths.
 
+Security posture and mainnet caveats are documented in [docs/security-threat-model.md](docs/security-threat-model.md) and [docs/mainnet-readiness.md](docs/mainnet-readiness.md). Mainnet is not implied ready by the draft specs, package names, vectors, or live testnet proof.
+
 ## Package Scope
 
 The intended npm scope is:
