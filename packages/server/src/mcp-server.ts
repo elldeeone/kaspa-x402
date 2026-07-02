@@ -10,6 +10,7 @@ import {
   type McpToolCallParams,
   type McpToolResult,
   type PaymentPayload,
+  type PaymentRequired,
   type ResourceInfo,
   type SompiString,
 } from "@kaspa-x402/core";
@@ -51,11 +52,12 @@ export async function handlePaidMcpToolCall(
     return mcpErrorResult(`MCP tool name mismatch: expected ${options.name}`);
   }
 
+  const fallbackPaymentRequired = server.buildPaymentRequired({ resource, amount: options.amount, scheme: options.scheme });
   let paymentPayload: PaymentPayload | undefined;
   try {
     paymentPayload = readMcpPaymentPayload(params);
   } catch {
-    return mcpPaymentRequiredResult(server.buildPaymentRequired({ resource, amount: options.amount, scheme: options.scheme }));
+    return mcpPaymentRequiredResult(fallbackPaymentRequired);
   }
 
   const requestHash = paymentPayload
@@ -92,10 +94,10 @@ export async function handlePaidMcpToolCall(
     },
   );
 
-  return serverResponseToMcpResult(response);
+  return serverResponseToMcpResult(response, fallbackPaymentRequired);
 }
 
-function serverResponseToMcpResult(response: ServerResponse): McpToolResult {
+function serverResponseToMcpResult(response: ServerResponse, fallbackPaymentRequired?: PaymentRequired): McpToolResult {
   const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
   if (paymentRequiredHeader) {
     return mcpPaymentRequiredResult(decodePaymentRequiredHeader(paymentRequiredHeader));
@@ -108,9 +110,7 @@ function serverResponseToMcpResult(response: ServerResponse): McpToolResult {
   }
 
   if (response.status >= 400) {
-    return settlement
-      ? withMcpPaymentResponse(mcpErrorResult(errorMessageFromBody(response.body)), settlement)
-      : mcpErrorResult(errorMessageFromBody(response.body));
+    return settlement ? withMcpPaymentResponse(mcpErrorResult(errorMessageFromBody(response.body)), settlement) : mcpErrorResult(errorMessageFromBody(response.body));
   }
 
   const result = isMcpToolResult(response.body) ? response.body : mcpTextResult(response.body);

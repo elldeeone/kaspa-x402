@@ -456,6 +456,7 @@ export interface BuildPaymentRequiredOptions {
   scheme?: "exact" | "upto" | "batch-settlement";
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
+  error?: string;
 }
 
 export interface DirectPaymentVerificationOptions {

@@ -217,6 +217,8 @@ export interface ChannelLookupScope {
 
 export interface PaymentRequestContext {
   url: string;
+  method?: string;
+  body?: unknown;
   origin?: string;
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;

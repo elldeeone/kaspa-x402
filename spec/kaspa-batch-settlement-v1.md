@@ -78,7 +78,7 @@ kaspa:testnet-10
 | `extra.channelState` | no | Corrective-only server channel snapshot for client resynchronization. |
 | `extra.voucherState` | no | Corrective-only latest signed voucher proof for client resynchronization. |
 
-`amount` is a ceiling. The server may charge less after executing the request. The actual charge is returned in `SettlementResponse.extra.chargedAmount`.
+`amount` is a ceiling. The server may charge less after executing the request. The actual charge is returned as top-level `SettlementResponse.amount` and echoed in `SettlementResponse.extensions.kaspa.chargedAmount`.
 
 `extra.refundTimeoutDaa` is always an absolute DAA score. Relative refund policy is out of scope for this binding; servers that want relative timeouts must calculate and advertise the resulting absolute DAA score before the client constructs `ChannelConfig`.
 
@@ -310,7 +310,7 @@ Processing steps for `deposit-voucher` and `voucher`:
 8. Calculate `actualCharge`, where `actualCharge <= PaymentRequirements.amount`.
 9. Derive and durably store the commitment, then update `chargedCumulativeAmount += actualCharge`.
 10. Store `signedMaxClaimable = voucher.amount` and `voucherSignature = voucher.signature`.
-11. Return `SettlementResponse.extra.chargedAmount = actualCharge`.
+11. Return `SettlementResponse.amount = actualCharge` and `SettlementResponse.extensions.kaspa.chargedAmount = actualCharge`.
 
 On handler failure:
 
@@ -456,8 +456,8 @@ The server must claim no more than `activeChargedAmount` from the current active
 
 Clients must stop signing additional vouchers and should refund or withdraw if:
 
-- `SettlementResponse.extra.chargedAmount` exceeds `PaymentRequirements.amount`;
-- `SettlementResponse.extra.channelState.chargedCumulativeAmount` does not equal the previous value plus `chargedAmount`;
+- `SettlementResponse.amount` or `SettlementResponse.extensions.kaspa.chargedAmount` exceeds `PaymentRequirements.amount`;
+- `SettlementResponse.extensions.kaspa.channelState.chargedCumulativeAmount` does not equal the previous value plus `chargedAmount`;
 - the returned channel state uses an unexpected active outpoint;
 - the server cannot produce the latest signed voucher in a corrective response.
 
@@ -468,23 +468,26 @@ Successful voucher-only response:
 ```json
 {
   "success": true,
-  "transaction": "",
+  "transaction": "<commitment id hex>",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
-  "extra": {
-    "commitmentId": "<commitment id hex>",
-    "chargedAmount": "700000",
-    "channelState": {
-      "channelId": "<32-byte channel id hex>",
-      "activeOutpoint": {
-        "txid": "<active escrow txid>",
-        "index": 0
-      },
-      "activeScriptPublicKey": "<serialized active input script public key hex>",
-      "fundingAmount": "90000000",
-      "chargedCumulativeAmount": "1700000",
-      "claimedCumulativeAmount": "0",
-      "signedMaxClaimable": "2000000"
+  "amount": "700000",
+  "extensions": {
+    "kaspa": {
+      "commitmentId": "<commitment id hex>",
+      "chargedAmount": "700000",
+      "channelState": {
+        "channelId": "<32-byte channel id hex>",
+        "activeOutpoint": {
+          "txid": "<active escrow txid>",
+          "index": 0
+        },
+        "activeScriptPublicKey": "<serialized active input script public key hex>",
+        "fundingAmount": "90000000",
+        "chargedCumulativeAmount": "1700000",
+        "claimedCumulativeAmount": "0",
+        "signedMaxClaimable": "2000000"
+      }
     }
   }
 }
@@ -495,30 +498,33 @@ Successful deposit response:
 ```json
 {
   "success": true,
-  "transaction": "<deposit transaction id>",
+  "transaction": "<commitment id hex>",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
-  "extra": {
-    "commitmentId": "<commitment id hex>",
-    "fundingAmount": "90000000",
-    "chargedAmount": "700000",
-    "channelState": {
-      "channelId": "<32-byte channel id hex>",
-      "activeOutpoint": {
-        "txid": "<active escrow txid>",
-        "index": 0
-      },
-      "activeScriptPublicKey": "<serialized active input script public key hex>",
+  "amount": "700000",
+  "extensions": {
+    "kaspa": {
+      "commitmentId": "<commitment id hex>",
       "fundingAmount": "90000000",
-      "chargedCumulativeAmount": "700000",
-      "claimedCumulativeAmount": "0",
-      "signedMaxClaimable": "1000000"
+      "chargedAmount": "700000",
+      "channelState": {
+        "channelId": "<32-byte channel id hex>",
+        "activeOutpoint": {
+          "txid": "<active escrow txid>",
+          "index": 0
+        },
+        "activeScriptPublicKey": "<serialized active input script public key hex>",
+        "fundingAmount": "90000000",
+        "chargedCumulativeAmount": "700000",
+        "claimedCumulativeAmount": "0",
+        "signedMaxClaimable": "1000000"
+      }
     }
   }
 }
 ```
 
-For `deposit-voucher`, top-level `amount` is omitted because escrow funding is not the resource price. `extra.fundingAmount` reports the amount deposited or topped up, and `extra.chargedAmount` reports the actual request charge.
+For `deposit-voucher`, top-level `amount` is the actual request charge. Escrow funding is not the resource price and is reported separately in `extensions.kaspa.fundingAmount`.
 
 Successful claim response:
 
@@ -529,26 +535,28 @@ Successful claim response:
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
   "amount": "1700000",
-  "extra": {
-    "claimOutpoint": {
-      "txid": "<claim transaction id>",
-      "index": 0
-    },
-    "continuationOutpoint": {
-      "txid": "<claim transaction id>",
-      "index": 1
-    },
-    "channelState": {
-      "channelId": "<32-byte channel id hex>",
-      "activeOutpoint": {
+  "extensions": {
+    "kaspa": {
+      "claimOutpoint": {
+        "txid": "<claim transaction id>",
+        "index": 0
+      },
+      "continuationOutpoint": {
         "txid": "<claim transaction id>",
         "index": 1
       },
-      "activeScriptPublicKey": "<serialized continuation script public key hex>",
-      "fundingAmount": "88300000",
-      "chargedCumulativeAmount": "1700000",
-      "claimedCumulativeAmount": "1700000",
-      "signedMaxClaimable": "0"
+      "channelState": {
+        "channelId": "<32-byte channel id hex>",
+        "activeOutpoint": {
+          "txid": "<claim transaction id>",
+          "index": 1
+        },
+        "activeScriptPublicKey": "<serialized continuation script public key hex>",
+        "fundingAmount": "88300000",
+        "chargedCumulativeAmount": "1700000",
+        "claimedCumulativeAmount": "1700000",
+        "signedMaxClaimable": "0"
+      }
     }
   }
 }
@@ -563,9 +571,11 @@ Successful refund response:
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
   "amount": "87500000",
-  "extra": {
-    "channelId": "<32-byte channel id hex>",
-    "refundAddress": "kaspatest:..."
+  "extensions": {
+    "kaspa": {
+      "channelId": "<32-byte channel id hex>",
+      "refundAddress": "kaspatest:..."
+    }
   }
 }
 ```
@@ -575,14 +585,14 @@ Failure response:
 ```json
 {
   "success": false,
-  "errorReason": "invalid_kaspa_batch_cumulative_amount_mismatch",
+  "errorReason": "invalid_transaction_state",
   "transaction": "",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:..."
 }
 ```
 
-For `batch-settlement`, a successful voucher-only response must include a non-empty `extra.commitmentId`. `transaction` may be empty because value has not moved on-chain yet.
+For `batch-settlement`, a successful voucher-only response must include a non-empty `extensions.kaspa.commitmentId`. `transaction` is that commitment id because value has not moved on-chain yet.
 
 ## Corrective 402
 
@@ -659,9 +669,9 @@ Implementations must reject:
 - refund before `refundTimeoutDaa` for unilateral refund paths;
 - idempotency key reuse with a different request fingerprint.
 
-## Error Codes
+## Local Diagnostics
 
-This binding uses common `invalid_kaspa_x402_*` errors plus:
+Public wire responses use the mapped reasons in [errors.md](errors.md). Implementations may use common `invalid_kaspa_x402_*` diagnostics plus:
 
 ```text
 invalid_kaspa_batch_template

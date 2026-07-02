@@ -7,14 +7,17 @@
     "transaction": "",
     "network": "kaspa:testnet-10",
     "payer": "kaspatest:refund",
-    "extra": {
-      "chargedAmount": "0",
-      "authorizationOutpoint": {
-        "txid": "8888888888888888888888888888888888888888888888888888888888888888",
-        "index": 0
-      },
-      "refundAddress": "kaspatest:refund"
-    }
+    "extensions": {
+      "kaspa": {
+        "chargedAmount": "0",
+        "authorizationOutpoint": {
+          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+          "index": 0
+        },
+        "refundAddress": "kaspatest:refund"
+      }
+    },
+    "amount": "0"
   },
   "expectedError": "invalid_kaspa_settlement_response"
 }

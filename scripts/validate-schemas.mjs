@@ -120,7 +120,7 @@ function classifyInvalidValue(schemaId, value) {
   }
 
   if (schemaId === "https://kaspa-x402.org/schemas/settlement-response.schema.json") {
-    if (value?.success === true && value?.transaction === "" && !value?.extra?.commitmentId) return "invalid_kaspa_settlement_response";
+    if (value?.success === true && value?.transaction === "" && value?.extensions?.kaspa?.commitmentId) return "invalid_kaspa_settlement_response";
     if (typeof value?.transaction === "string" && !/^(?:|[0-9a-fA-F]{64})$/.test(value.transaction)) return "invalid_kaspa_transaction";
     return "invalid_kaspa_settlement_response";
   }
@@ -408,7 +408,7 @@ function validateVector(ajv, file, vector) {
         vector.settlementResponses.nonzero,
         `${file}:settlementResponses.nonzero`,
       );
-      if (vector.settlementResponses.zeroCharge.transaction !== "" || vector.settlementResponses.zeroCharge.amount !== undefined) {
+      if (vector.settlementResponses.zeroCharge.transaction !== "" || vector.settlementResponses.zeroCharge.amount !== "0") {
         throw new Error(`${file}: zero-charge upto response must not move value`);
       }
       if (!isUint64String(vector.settlementResponses.nonzero.amount) || BigInt(vector.settlementResponses.nonzero.amount) <= 0n) {

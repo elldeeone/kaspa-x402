@@ -65,8 +65,10 @@ describe("kaspa-x402 CLI", () => {
         success: boolean;
         transaction: string;
         amount?: string;
-        extra?: {
-          chargedAmount?: string;
+        extensions?: {
+          kaspa?: {
+            chargedAmount?: string;
+          };
         };
       };
     };
@@ -78,8 +80,8 @@ describe("kaspa-x402 CLI", () => {
 
     expect(zero.action).toBe("upto-settle-zero-charge");
     expect(zero.settlement).toMatchObject({ success: true, transaction: "" });
-    expect(zero.settlement.amount).toBeUndefined();
-    expect(zero.settlement.extra?.chargedAmount).toBe("0");
+    expect(zero.settlement.amount).toBe("0");
+    expect(zero.settlement.extensions?.kaspa?.chargedAmount).toBe("0");
     expect(validateSettlementResponse(zero.settlement).ok).toBe(true);
     expect(nonzero).toMatchObject({
       action: "upto-settle-preview",

@@ -1,5 +1,6 @@
 import {
   isFacilitatorRequest,
+  toX402ErrorReason,
   validatePaymentRetry,
   type FacilitatorRequest,
   type SettleResponse,
@@ -229,14 +230,14 @@ function validateActionRequest(request: FacilitatorRequest): string | undefined 
 function invalidVerify(invalidReason: string): VerifyResponse {
   return {
     isValid: false,
-    invalidReason,
+    invalidReason: toX402ErrorReason(invalidReason),
   };
 }
 
 function invalidSettlement(errorReason: string, network = "kaspa:testnet-10"): SettlementResponse {
   return {
     success: false,
-    errorReason,
+    errorReason: toX402ErrorReason(errorReason),
     transaction: "",
     network: network === "kaspa:mainnet" ? "kaspa:mainnet" : "kaspa:testnet-10",
   };

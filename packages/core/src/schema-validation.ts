@@ -17,6 +17,7 @@ import type {
   ChannelState,
   KaspaPaymentPayload,
   KaspaRequirementsExtra,
+  PaymentIdentifierExtension,
   PaymentIdentifierInfo,
   PaymentIdentifierObservation,
   PaymentPayload,
@@ -125,22 +126,22 @@ export function validatePaymentRetry(input: {
     return fail("invalid_kaspa_x402_accepted", "accepted PaymentRequirements is not present in PaymentRequired.accepts");
   }
 
-  const paymentIdentifierInfo = readPaymentIdentifierInfo(required.value);
-  if (!paymentIdentifierInfo.ok) return paymentIdentifierInfo;
-  if (paymentIdentifierInfo.present) {
-    const info = validatePaymentIdentifierInfo(paymentIdentifierInfo.value);
+  const paymentIdentifier = readPaymentIdentifierExtension(required.value);
+  if (!paymentIdentifier.ok) return paymentIdentifier;
+  if (paymentIdentifier.present) {
+    const info = validatePaymentIdentifierInfo(paymentIdentifier.value.info);
     if (!info.ok) return info;
   }
 
-  const payloadPaymentIdentifierInfo = readPaymentIdentifierInfo(payload.value);
-  if (!payloadPaymentIdentifierInfo.ok) return payloadPaymentIdentifierInfo;
-  if (payloadPaymentIdentifierInfo.present) {
-    const info = validatePaymentIdentifierInfo(payloadPaymentIdentifierInfo.value);
+  const payloadPaymentIdentifier = readPaymentIdentifierExtension(payload.value);
+  if (!payloadPaymentIdentifier.ok) return payloadPaymentIdentifier;
+  if (payloadPaymentIdentifier.present) {
+    const info = validatePaymentIdentifierInfo(payloadPaymentIdentifier.value.info);
     if (!info.ok) return info;
   }
 
-  const requiredInfo = paymentIdentifierInfo.present ? (paymentIdentifierInfo.value as PaymentIdentifierInfo) : undefined;
-  const payloadInfo = payloadPaymentIdentifierInfo.present ? (payloadPaymentIdentifierInfo.value as PaymentIdentifierInfo) : undefined;
+  const requiredInfo = paymentIdentifier.present ? paymentIdentifier.value.info : undefined;
+  const payloadInfo = payloadPaymentIdentifier.present ? payloadPaymentIdentifier.value.info : undefined;
 
   if (requiredInfo?.required === true && !payloadInfo?.id) {
     return fail("missing_kaspa_payment_identifier", "payment-identifier extension is required for this retry");
@@ -195,6 +196,7 @@ function getSchema(schemaId: SchemaId): ValidateFunction {
 }
 
 function classifyPaymentRequired(value: unknown): KaspaX402ErrorCode {
+  if (hasInvalidPaymentIdentifierExtension(value)) return "invalid_kaspa_payment_identifier";
   const requirement = asRecord(value)?.accepts;
   const firstRequirement = Array.isArray(requirement) ? asRecord(requirement[0]) : undefined;
 
@@ -216,6 +218,7 @@ function classifyPaymentRequired(value: unknown): KaspaX402ErrorCode {
 
 function classifyPaymentPayload(value: unknown): KaspaX402ErrorCode {
   const record = asRecord(value);
+  if (hasInvalidPaymentIdentifierExtension(value)) return "invalid_kaspa_payment_identifier";
   const accepted = asRecord(record?.accepted);
   const payload = asRecord(record?.payload);
   const expectedTypes = expectedPayloadTypesForScheme(String(accepted?.scheme));
@@ -225,6 +228,19 @@ function classifyPaymentPayload(value: unknown): KaspaX402ErrorCode {
   }
 
   return "invalid_kaspa_x402_payload";
+}
+
+function hasInvalidPaymentIdentifierExtension(value: unknown): boolean {
+  const extensions = asRecord(asRecord(value)?.extensions);
+  if (!extensions || !Object.hasOwn(extensions, "payment-identifier")) return false;
+  const extension = asRecord(extensions["payment-identifier"]);
+  if (!extension) return true;
+  if (!asRecord(extension.schema)) return true;
+  const info = asRecord(extension.info);
+  if (!info) return true;
+  if (typeof info.required !== "boolean") return true;
+  if (info.id !== undefined && typeof info.id !== "string") return true;
+  return false;
 }
 
 function classifyKaspaPaymentPayload(value: unknown): KaspaX402ErrorCode {
@@ -284,7 +300,7 @@ function isAcceptedOffered(paymentRequired: PaymentRequired, paymentPayload: Pay
   }
 }
 
-type PaymentIdentifierInfoRead =
+type PaymentIdentifierExtensionRead =
   | {
       ok: true;
       present: false;
@@ -292,28 +308,36 @@ type PaymentIdentifierInfoRead =
   | {
       ok: true;
       present: true;
-      value: unknown;
+      value: PaymentIdentifierExtension;
     }
   | {
       ok: false;
       error: KaspaX402Error;
     };
 
-function readPaymentIdentifierInfo(value: PaymentPayload | PaymentRequired): PaymentIdentifierInfoRead {
+function readPaymentIdentifierExtension(value: PaymentPayload | PaymentRequired): PaymentIdentifierExtensionRead {
   const extensions = asRecord(value.extensions);
   if (!extensions || !Object.hasOwn(extensions, "payment-identifier")) {
     return { ok: true, present: false };
   }
 
   const paymentIdentifier = asRecord(extensions?.["payment-identifier"]);
-  if (!paymentIdentifier || !Object.hasOwn(paymentIdentifier, "info")) {
+  if (!paymentIdentifier || !Object.hasOwn(paymentIdentifier, "info") || !Object.hasOwn(paymentIdentifier, "schema")) {
     return {
       ok: false,
-      error: new KaspaX402Error("invalid_kaspa_payment_identifier", "payment-identifier extension must contain info"),
+      error: new KaspaX402Error("invalid_kaspa_payment_identifier", "payment-identifier extension must contain info and schema"),
     };
   }
 
-  return { ok: true, present: true, value: paymentIdentifier.info };
+  const schema = asRecord(paymentIdentifier.schema);
+  if (!schema) {
+    return {
+      ok: false,
+      error: new KaspaX402Error("invalid_kaspa_payment_identifier", "payment-identifier extension schema must be an object"),
+    };
+  }
+
+  return { ok: true, present: true, value: paymentIdentifier as PaymentIdentifierExtension };
 }
 
 function isUint32(value: unknown): boolean {

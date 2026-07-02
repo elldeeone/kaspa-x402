@@ -5,14 +5,17 @@
     "transaction": "",
     "network": "kaspa:testnet-10",
     "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
-    "extra": {
-      "chargedAmount": "0",
-      "maxAmountSompi": "25000000",
-      "authorizationOutpoint": {
-        "txid": "9999999999999999999999999999999999999999999999999999999999999999",
-        "index": 0
-      },
-      "refundAddress": "kaspatest:qrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
-    }
+    "extensions": {
+      "kaspa": {
+        "chargedAmount": "0",
+        "maxAmountSompi": "25000000",
+        "authorizationOutpoint": {
+          "txid": "9999999999999999999999999999999999999999999999999999999999999999",
+          "index": 0
+        },
+        "refundAddress": "kaspatest:qrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr"
+      }
+    },
+    "amount": "0"
   }
 }

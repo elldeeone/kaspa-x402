@@ -222,11 +222,14 @@ For zero-charge `upto`, a successful response has no transaction because no valu
 ```json
 {
   "transaction": "",
-  "extra": {
-    "chargedAmount": "0",
-    "authorizationOutpoint": {
-      "txid": "<authorization txid>",
-      "index": 0
+  "amount": "0",
+  "extensions": {
+    "kaspa": {
+      "chargedAmount": "0",
+      "authorizationOutpoint": {
+        "txid": "<authorization txid>",
+        "index": 0
+      }
     }
   }
 }
@@ -236,16 +239,20 @@ For `batch-settlement`, a voucher-only success may have:
 
 ```json
 {
-  "transaction": "",
-  "extra": {
-    "commitmentId": "<commitment id hex>"
+  "transaction": "<commitment id hex>",
+  "amount": "<actual charge>",
+  "extensions": {
+    "kaspa": {
+      "commitmentId": "<commitment id hex>",
+      "chargedAmount": "<actual charge>"
+    }
   }
 }
 ```
 
-An empty successful `transaction` is valid only for zero-charge `upto` or for batch voucher-only settlement. For batch voucher-only settlement, `extra.commitmentId` is non-empty. In both cases, top-level `amount` is omitted because no value moved on-chain during the request. The actual charge is reported in `extra.chargedAmount`.
+An empty successful `transaction` is valid only for zero-charge `upto`. For batch voucher-only settlement, `transaction` is the non-empty commitment id, top-level `amount` is the actual request charge, and extension metadata is carried in `extensions.kaspa`.
 
-For `deposit-voucher`, top-level `amount` is also omitted because escrow funding is not the resource price. The funding amount is reported in `extra.fundingAmount`, and the request charge is reported in `extra.chargedAmount`.
+For `deposit-voucher`, top-level `amount` is the actual resource charge. Escrow funding is not reported as top-level `amount`; it is reported in `extensions.kaspa.fundingAmount`.
 
 ## Toccata Alignment
 

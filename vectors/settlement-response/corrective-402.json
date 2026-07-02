@@ -3,7 +3,7 @@
   "description": "Corrective 402 carrying channel and voucher state.",
   "response": {
     "success": false,
-    "errorReason": "invalid_kaspa_batch_cumulative_amount_mismatch",
+    "errorReason": "invalid_transaction_state",
     "transaction": "",
     "network": "kaspa:testnet-10",
     "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"

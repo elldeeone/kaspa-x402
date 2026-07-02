@@ -95,7 +95,7 @@ Invalid verification returns:
 ```json
 {
   "isValid": false,
-  "invalidReason": "invalid_kaspa_x402_payload"
+  "invalidReason": "invalid_payload"
 }
 ```
 
@@ -105,7 +105,7 @@ Invalid verification returns:
 - `upto`: consume the one-shot authorization, settle the actual amount in settlement-time `paymentRequirements.amount`, and either wait for the nonzero settlement transaction to reach the selected finality policy or store a zero-charge no-transaction consumption before returning success;
 - `batch-settlement`: for voucher-only requests, store the voucher commitment using settlement-time `paymentRequirements.amount` as the actual charge while the signed voucher ceiling remains bound to `paymentPayload.accepted.amount`; for `deposit-voucher`, broadcast if needed, wait until the deposit or top-up transaction is accepted by the selected Kaspa network, and store the voucher commitment before returning success; for claim operations, broadcast if needed and wait until the relevant transaction is accepted by the selected Kaspa network before returning success or mutating active channel state.
 
-For `batch-settlement`, `/verify` and `/settle` responses should include `extra.channelState` whenever the facilitator reads or changes channel state.
+For `batch-settlement`, `/verify` responses should include `extra.channelState` and `/settle` responses should include `extensions.kaspa.channelState` whenever the facilitator reads or changes channel state.
 
 Refund transaction construction is implementation-specific in v0.1. A facilitator must not advertise refund support in `/supported` unless it has an explicit refund settler and verifies client refund authorization before broadcasting or reporting success.
 

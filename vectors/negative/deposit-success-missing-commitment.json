@@ -8,8 +8,11 @@
     "success": true,
     "transaction": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     "network": "kaspa:testnet-10",
-    "extra": {
-      "fundingAmount": "90000000"
+    "amount": "700000",
+    "extensions": {
+      "kaspa": {
+        "fundingAmount": "90000000"
+      }
     }
   }
 }

@@ -56,22 +56,23 @@ export async function paidMcpToolCall(
       requestHash,
     });
     const retryResult = await callTool(withMcpPaymentPayload(params, payment.paymentPayload));
+    const settlementResponse = readMcpPaymentResponse(retryResult);
+    if (settlementResponse) {
+      const settlement = await client.applySettlement(payment, settlementResponse);
+      return {
+        result: retryResult,
+        payment,
+        settlement,
+      };
+    }
+
     const corrective = readMcpPaymentRequired(retryResult);
     if (retryResult.isError && corrective) {
       paymentRequired = corrective;
       continue;
     }
 
-    const settlementResponse = readMcpPaymentResponse(retryResult);
-    if (!settlementResponse) {
-      throw new KaspaX402Error("invalid_kaspa_settlement_response", "paid MCP tool result is missing x402 payment response metadata");
-    }
-    const settlement = await client.applySettlement(payment, settlementResponse);
-    return {
-      result: retryResult,
-      payment,
-      settlement,
-    };
+    throw new KaspaX402Error("invalid_kaspa_settlement_response", "paid MCP tool result is missing x402 payment response metadata");
   }
 
   throw new KaspaX402Error("invalid_kaspa_x402_payload", "too many corrective MCP payment retries");

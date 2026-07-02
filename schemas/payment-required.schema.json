@@ -31,9 +31,11 @@
         "$ref": "#/$defs/paymentRequirements"
       }
     },
+    "error": {
+      "type": "string"
+    },
     "extensions": {
-      "type": "object",
-      "additionalProperties": true
+      "$ref": "#/$defs/paymentExtensions"
     }
   },
   "additionalProperties": true,
@@ -44,6 +46,28 @@
     },
     "network": {
       "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
+    },
+    "paymentExtensions": {
+      "type": "object",
+      "properties": {
+        "payment-identifier": {
+          "$ref": "#/$defs/paymentIdentifierExtension"
+        }
+      },
+      "additionalProperties": true
+    },
+    "paymentIdentifierExtension": {
+      "type": "object",
+      "required": ["info", "schema"],
+      "properties": {
+        "info": {
+          "$ref": "https://kaspa-x402.org/schemas/payment-identifier.schema.json"
+        },
+        "schema": {
+          "type": "object"
+        }
+      },
+      "additionalProperties": true
     },
     "basePaymentRequirements": {
       "type": "object",

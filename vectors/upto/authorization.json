@@ -73,6 +73,27 @@
         "info": {
           "required": true,
           "id": "pay_7d5d747be160e280504c099d984bcfe0"
+        },
+        "schema": {
+          "$schema": "https://json-schema.org/draft/2020-12/schema",
+          "$id": "https://kaspa-x402.org/schemas/payment-identifier.schema.json",
+          "title": "Kaspa x402 Payment Identifier Extension Info",
+          "type": "object",
+          "required": [
+            "required"
+          ],
+          "properties": {
+            "required": {
+              "type": "boolean"
+            },
+            "id": {
+              "type": "string",
+              "minLength": 16,
+              "maxLength": 128,
+              "pattern": "^[A-Za-z0-9_-]+$"
+            }
+          },
+          "additionalProperties": true
         }
       }
     }
@@ -105,15 +126,18 @@
       "transaction": "",
       "network": "kaspa:testnet-10",
       "payer": "kaspatest:refund",
-      "extra": {
-        "chargedAmount": "0",
-        "maxAmountSompi": "25000000",
-        "authorizationOutpoint": {
-          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
-          "index": 0
-        },
-        "refundAddress": "kaspatest:refund"
-      }
+      "extensions": {
+        "kaspa": {
+          "chargedAmount": "0",
+          "maxAmountSompi": "25000000",
+          "authorizationOutpoint": {
+            "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+            "index": 0
+          },
+          "refundAddress": "kaspatest:refund"
+        }
+      },
+      "amount": "0"
     },
     "nonzero": {
       "success": true,
@@ -121,14 +145,16 @@
       "network": "kaspa:testnet-10",
       "payer": "kaspatest:refund",
       "amount": "1858000",
-      "extra": {
-        "maxAmountSompi": "25000000",
-        "authorizationOutpoint": {
-          "txid": "8888888888888888888888888888888888888888888888888888888888888888",
-          "index": 0
-        },
-        "refundAddress": "kaspatest:refund",
-        "finality": "accepted"
+      "extensions": {
+        "kaspa": {
+          "maxAmountSompi": "25000000",
+          "authorizationOutpoint": {
+            "txid": "8888888888888888888888888888888888888888888888888888888888888888",
+            "index": 0
+          },
+          "refundAddress": "kaspatest:refund",
+          "finality": "accepted"
+        }
       }
     }
   },
@@ -163,8 +189,8 @@
   ],
   "headers": {
     "paymentRequired": "eyJhY2NlcHRzIjpbeyJhbW91bnQiOiIyNTAwMDAwMCIsImFzc2V0IjoiS0FTIiwiZXh0cmEiOnsiYXNzZXREZWNpbWFscyI6OCwiYXNzZXRLaW5kIjoibmF0aXZlIiwiYXV0aG9yaXphdGlvblRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLXVwdG8tdjEiLCJhdXRob3JpemF0aW9uVGltZW91dERhYSI6IjEyMzQ1Njc4OSIsImJpbmRpbmciOiJrYXNwYS11cHRvLXYxIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifSwibWF4VGltZW91dFNlY29uZHMiOjYwLCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInNjaGVtZSI6InVwdG8ifV0sInJlc291cmNlIjp7ImRlc2NyaXB0aW9uIjoiVmFyaWFibGUtY29zdCBhZ2VudCBjYWxsIiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9qc29uIiwidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L3ZhcmlhYmxlIn0sIng0MDJWZXJzaW9uIjoyfQ==",
-    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIyNTAwMDAwMCIsImFzc2V0IjoiS0FTIiwiZXh0cmEiOnsiYXNzZXREZWNpbWFscyI6OCwiYXNzZXRLaW5kIjoibmF0aXZlIiwiYXV0aG9yaXphdGlvblRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLXVwdG8tdjEiLCJhdXRob3JpemF0aW9uVGltZW91dERhYSI6IjEyMzQ1Njc4OSIsImJpbmRpbmciOiJrYXNwYS11cHRvLXYxIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifSwibWF4VGltZW91dFNlY29uZHMiOjYwLCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInNjaGVtZSI6InVwdG8ifSwiZXh0ZW5zaW9ucyI6eyJwYXltZW50LWlkZW50aWZpZXIiOnsiaW5mbyI6eyJpZCI6InBheV83ZDVkNzQ3YmUxNjBlMjgwNTA0YzA5OWQ5ODRiY2ZlMCIsInJlcXVpcmVkIjp0cnVlfX19LCJwYXlsb2FkIjp7ImF1dGhvcml6YXRpb24iOnsibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsIm5vbmNlIjoiMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMyIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInJlcXVlc3RIYXNoIjoiOTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OSIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEiLCJzaWduYXR1cmUiOiIzYjUyNWUxYzI3MDdhNWM1YTA5YWE4NzE3OTAyMzczZTk1YzRiYTcwM2FhMjc2YTZiY2RjMjk1NjJkMTJhMDljM2I1MjVlMWMyNzA3YTVjNWEwOWFhODcxNzkwMjM3M2U5NWM0YmE3MDNhYTI3NmE2YmNkYzI5NTYyZDEyYTA5YyIsInZhbGlkQWZ0ZXJEYWEiOiIxMjM0NTAwMDAiLCJ2YWxpZEJlZm9yZURhYSI6IjEyMzQ1Njc4OSJ9LCJhdXRob3JpemF0aW9uQW1vdW50U29tcGkiOiIyNjAwMDAwMCIsImF1dGhvcml6YXRpb25PdXRwb2ludCI6eyJpbmRleCI6MCwidHhpZCI6Ijg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODgifSwiYXV0aG9yaXphdGlvblNjcmlwdFB1YmxpY0tleSI6IjAwMDAxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMiIsImNsaWVudFB1YmxpY0tleSI6IjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIiLCJyZWZ1bmRBZGRyZXNzIjoia2FzcGF0ZXN0OnJlZnVuZCIsInR5cGUiOiJ1cHRvLWF1dGhvcml6YXRpb24ifSwieDQwMlZlcnNpb24iOjJ9",
-    "zeroChargeResponse": "eyJleHRyYSI6eyJhdXRob3JpemF0aW9uT3V0cG9pbnQiOnsiaW5kZXgiOjAsInR4aWQiOiI4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4In0sImNoYXJnZWRBbW91bnQiOiIwIiwibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIn0sIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5ZXIiOiJrYXNwYXRlc3Q6cmVmdW5kIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiIifQ==",
-    "nonzeroResponse": "eyJhbW91bnQiOiIxODU4MDAwIiwiZXh0cmEiOnsiYXV0aG9yaXphdGlvbk91dHBvaW50Ijp7ImluZGV4IjowLCJ0eGlkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCJ9LCJmaW5hbGl0eSI6ImFjY2VwdGVkIiwibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIn0sIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5ZXIiOiJrYXNwYXRlc3Q6cmVmdW5kIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIn0="
+    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIyNTAwMDAwMCIsImFzc2V0IjoiS0FTIiwiZXh0cmEiOnsiYXNzZXREZWNpbWFscyI6OCwiYXNzZXRLaW5kIjoibmF0aXZlIiwiYXV0aG9yaXphdGlvblRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLXVwdG8tdjEiLCJhdXRob3JpemF0aW9uVGltZW91dERhYSI6IjEyMzQ1Njc4OSIsImJpbmRpbmciOiJrYXNwYS11cHRvLXYxIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInNlcnZlclB1YmxpY0tleSI6IjExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTEifSwibWF4VGltZW91dFNlY29uZHMiOjYwLCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheVRvIjoia2FzcGF0ZXN0OnBheW91dCIsInNjaGVtZSI6InVwdG8ifSwiZXh0ZW5zaW9ucyI6eyJwYXltZW50LWlkZW50aWZpZXIiOnsiaW5mbyI6eyJpZCI6InBheV83ZDVkNzQ3YmUxNjBlMjgwNTA0YzA5OWQ5ODRiY2ZlMCIsInJlcXVpcmVkIjp0cnVlfSwic2NoZW1hIjp7IiRpZCI6Imh0dHBzOi8va2FzcGEteDQwMi5vcmcvc2NoZW1hcy9wYXltZW50LWlkZW50aWZpZXIuc2NoZW1hLmpzb24iLCIkc2NoZW1hIjoiaHR0cHM6Ly9qc29uLXNjaGVtYS5vcmcvZHJhZnQvMjAyMC0xMi9zY2hlbWEiLCJhZGRpdGlvbmFsUHJvcGVydGllcyI6dHJ1ZSwicHJvcGVydGllcyI6eyJpZCI6eyJtYXhMZW5ndGgiOjEyOCwibWluTGVuZ3RoIjoxNiwicGF0dGVybiI6Il5bQS1aYS16MC05Xy1dKyQiLCJ0eXBlIjoic3RyaW5nIn0sInJlcXVpcmVkIjp7InR5cGUiOiJib29sZWFuIn19LCJyZXF1aXJlZCI6WyJyZXF1aXJlZCJdLCJ0aXRsZSI6Ikthc3BhIHg0MDIgUGF5bWVudCBJZGVudGlmaWVyIEV4dGVuc2lvbiBJbmZvIiwidHlwZSI6Im9iamVjdCJ9fX0sInBheWxvYWQiOnsiYXV0aG9yaXphdGlvbiI6eyJtYXhBbW91bnRTb21waSI6IjI1MDAwMDAwIiwibm9uY2UiOiIzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzMzIiwicGF5VG8iOiJrYXNwYXRlc3Q6cGF5b3V0IiwicmVxdWVzdEhhc2giOiI5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5Iiwic2VydmVyUHVibGljS2V5IjoiMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMTExMSIsInNpZ25hdHVyZSI6IjNiNTI1ZTFjMjcwN2E1YzVhMDlhYTg3MTc5MDIzNzNlOTVjNGJhNzAzYWEyNzZhNmJjZGMyOTU2MmQxMmEwOWMzYjUyNWUxYzI3MDdhNWM1YTA5YWE4NzE3OTAyMzczZTk1YzRiYTcwM2FhMjc2YTZiY2RjMjk1NjJkMTJhMDljIiwidmFsaWRBZnRlckRhYSI6IjEyMzQ1MDAwMCIsInZhbGlkQmVmb3JlRGFhIjoiMTIzNDU2Nzg5In0sImF1dGhvcml6YXRpb25BbW91bnRTb21waSI6IjI2MDAwMDAwIiwiYXV0aG9yaXphdGlvbk91dHBvaW50Ijp7ImluZGV4IjowLCJ0eGlkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCJ9LCJhdXRob3JpemF0aW9uU2NyaXB0UHVibGljS2V5IjoiMDAwMDEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyMTIxMjEyIiwiY2xpZW50UHVibGljS2V5IjoiMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMjIyMiIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIiwidHlwZSI6InVwdG8tYXV0aG9yaXphdGlvbiJ9LCJ4NDAyVmVyc2lvbiI6Mn0=",
+    "zeroChargeResponse": "eyJhbW91bnQiOiIwIiwiZXh0ZW5zaW9ucyI6eyJrYXNwYSI6eyJhdXRob3JpemF0aW9uT3V0cG9pbnQiOnsiaW5kZXgiOjAsInR4aWQiOiI4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4In0sImNoYXJnZWRBbW91bnQiOiIwIiwibWF4QW1vdW50U29tcGkiOiIyNTAwMDAwMCIsInJlZnVuZEFkZHJlc3MiOiJrYXNwYXRlc3Q6cmVmdW5kIn19LCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheWVyIjoia2FzcGF0ZXN0OnJlZnVuZCIsInN1Y2Nlc3MiOnRydWUsInRyYW5zYWN0aW9uIjoiIn0=",
+    "nonzeroResponse": "eyJhbW91bnQiOiIxODU4MDAwIiwiZXh0ZW5zaW9ucyI6eyJrYXNwYSI6eyJhdXRob3JpemF0aW9uT3V0cG9pbnQiOnsiaW5kZXgiOjAsInR4aWQiOiI4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4In0sImZpbmFsaXR5IjoiYWNjZXB0ZWQiLCJtYXhBbW91bnRTb21waSI6IjI1MDAwMDAwIiwicmVmdW5kQWRkcmVzcyI6Imthc3BhdGVzdDpyZWZ1bmQifX0sIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5ZXIiOiJrYXNwYXRlc3Q6cmVmdW5kIiwic3VjY2VzcyI6dHJ1ZSwidHJhbnNhY3Rpb24iOiJhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhYWFhIn0="
   }
 }

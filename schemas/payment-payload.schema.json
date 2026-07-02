@@ -15,8 +15,7 @@
       "$ref": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
     },
     "extensions": {
-      "type": "object",
-      "additionalProperties": true
+      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentExtensions"
     }
   },
   "allOf": [

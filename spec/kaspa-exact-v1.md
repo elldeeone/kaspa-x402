@@ -144,9 +144,11 @@ Successful response:
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:...",
   "amount": "25000000",
-  "extra": {
-    "paymentOutputIndex": 0,
-    "finality": "accepted"
+  "extensions": {
+    "kaspa": {
+      "paymentOutputIndex": 0,
+      "finality": "accepted"
+    }
   }
 }
 ```
@@ -156,7 +158,7 @@ Failure response:
 ```json
 {
   "success": false,
-  "errorReason": "invalid_kaspa_exact_payment_output",
+  "errorReason": "invalid_transaction_state",
   "transaction": "",
   "network": "kaspa:testnet-10",
   "payer": "kaspatest:..."
@@ -189,9 +191,9 @@ The base `exact` binding does not require a covenant. It may use an ordinary nat
 
 If future exact flows use covenant-assisted sponsorship, they must still satisfy the x402 `exact` property: exactly one payment outcome for exactly the required amount to the required recipient.
 
-## Error Codes
+## Local Diagnostics
 
-This binding uses common `invalid_kaspa_x402_*` errors plus:
+Public wire responses use the mapped reasons in [errors.md](errors.md). Implementations may use common `invalid_kaspa_x402_*` diagnostics plus:
 
 ```text
 invalid_kaspa_exact_transaction

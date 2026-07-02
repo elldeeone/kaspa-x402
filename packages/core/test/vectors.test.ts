@@ -14,6 +14,7 @@ import {
   isDecimalSompi,
   isKaspaX402Network,
   mcpPaymentRequiredResult,
+  paymentIdentifierExtension,
   parseSompiString,
   readMcpPaymentRequired,
   validatePaymentIdentifierReuse,
@@ -302,12 +303,14 @@ describe("payment-identifier semantic validation", () => {
 
   it("rejects malformed echoed payment-identifier info before accepting a retry", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = paymentIdentifierExtension({ required: true }).schema;
     const result = validatePaymentRetry({
       paymentRequired: {
         ...vector.paymentRequired,
         extensions: {
           "payment-identifier": {
             info: { required: true },
+            schema,
           },
         },
       },
@@ -316,6 +319,7 @@ describe("payment-identifier semantic validation", () => {
         extensions: {
           "payment-identifier": {
             info: { id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            schema,
           },
         },
       },
@@ -326,12 +330,14 @@ describe("payment-identifier semantic validation", () => {
 
   it("rejects malformed advertised payment-identifier info before accepting a retry", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = paymentIdentifierExtension({ required: true }).schema;
     const result = validatePaymentRetry({
       paymentRequired: {
         ...vector.paymentRequired,
         extensions: {
           "payment-identifier": {
             info: { required: "true" },
+            schema,
           },
         },
       },
@@ -343,12 +349,14 @@ describe("payment-identifier semantic validation", () => {
 
   it("rejects non-object payment-identifier info before accepting a retry", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = paymentIdentifierExtension({ required: true }).schema;
     const result = validatePaymentRetry({
       paymentRequired: {
         ...vector.paymentRequired,
         extensions: {
           "payment-identifier": {
             info: "bad",
+            schema,
           },
         },
       },
@@ -360,12 +368,14 @@ describe("payment-identifier semantic validation", () => {
 
   it("rejects non-string payment-identifier ids before accepting a retry", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = paymentIdentifierExtension({ required: true }).schema;
     const result = validatePaymentRetry({
       paymentRequired: {
         ...vector.paymentRequired,
         extensions: {
           "payment-identifier": {
             info: { required: true },
+            schema,
           },
         },
       },
@@ -374,6 +384,7 @@ describe("payment-identifier semantic validation", () => {
         extensions: {
           "payment-identifier": {
             info: { required: true, id: 123 },
+            schema,
           },
         },
       },

@@ -12,10 +12,14 @@ import {
   hexToBytes,
   le32,
   le64,
+  kaspaSettlementExtensions,
   parseSompiString,
+  paymentIdentifierExtension,
+  readKaspaSettlementExtension,
   sha256,
   sha256Hex,
   stableStringify,
+  toX402ErrorReason,
   uptoAuthorizationDigest,
   uptoAuthorizationPreimageHex,
   validatePaymentPayload,
@@ -262,7 +266,7 @@ export class DirectModeServer {
       lockManager.runExclusive(paymentLockKey, async () => {
       let fingerprint: Hash32Hex;
       try {
-        fingerprint = request.requestHash ?? fingerprintRequest(request);
+        fingerprint = request.requestHash ?? fingerprintRequest(request, paymentPayload.accepted);
       } catch {
         return this.paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
       }
@@ -1171,15 +1175,16 @@ export class DirectModeServer {
     validateChannelAccounting(channel);
     const settlement: SettlementResponse = {
       success: true,
-      transaction: verified.paymentPayload.payload.type === "deposit-voucher" ? verified.channel.activeOutpoint.txid : "",
+      transaction: commitmentId,
       network: this.#config.network,
       payer: verified.channel.channelConfig.refundAddress,
-      extra: {
+      amount: chargedAmount,
+      extensions: kaspaSettlementExtensions({
         commitmentId,
         ...(verified.paymentPayload.payload.type === "deposit-voucher" ? { fundingAmount: channel.fundingAmount } : {}),
         chargedAmount,
         channelState: channelState(channel),
-      },
+      }),
     };
     return {
       channel,
@@ -1209,11 +1214,11 @@ export class DirectModeServer {
       network: this.#config.network,
       ...(verified.payerAddress ? { payer: verified.payerAddress } : {}),
       amount: chargedAmount,
-      extra: {
+      extensions: kaspaSettlementExtensions({
         paymentOutputIndex: verified.paymentOutputIndex,
         finality: verified.finality,
         requestHash: fingerprint,
-      },
+      }),
     };
     return {
       settlement,
@@ -1248,12 +1253,13 @@ export class DirectModeServer {
         transaction: "",
         network: this.#config.network,
         payer: payload.refundAddress,
-        extra: {
+        amount: "0",
+        extensions: kaspaSettlementExtensions({
           chargedAmount: "0",
           maxAmountSompi: payload.authorization.maxAmountSompi,
           authorizationOutpoint: payload.authorizationOutpoint,
           refundAddress: payload.refundAddress,
-        },
+        }),
       };
       return {
         settlement,
@@ -1295,12 +1301,12 @@ export class DirectModeServer {
       network: this.#config.network,
       payer: payload.refundAddress,
       amount: chargedAmount,
-      extra: {
+      extensions: kaspaSettlementExtensions({
         maxAmountSompi: payload.authorization.maxAmountSompi,
         authorizationOutpoint: payload.authorizationOutpoint,
         refundAddress: payload.refundAddress,
         ...(transactionVerification.paymentOutputIndex !== undefined ? { paymentOutputIndex: transactionVerification.paymentOutputIndex } : {}),
-      },
+      }),
     };
     return {
       settlement,
@@ -1414,7 +1420,7 @@ export class DirectModeServer {
       status: 409,
       headers: {},
       body: {
-        error: "exact_payment_replay",
+        error: toX402ErrorReason("exact_payment_replay"),
       },
     };
   }
@@ -1430,7 +1436,7 @@ export class DirectModeServer {
       status: 409,
       headers: {},
       body: {
-        error: "upto_authorization_replay",
+        error: toX402ErrorReason("upto_authorization_replay"),
       },
     };
   }
@@ -1534,6 +1540,7 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "upto" | "batch-settlement",
   ): Promise<ServerResponse> {
+    const errorReason = error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "invalid_payload";
     const channelId = safePaymentChannelId(paymentPayload);
     const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
@@ -1544,10 +1551,11 @@ export class DirectModeServer {
         resource,
         amount: paymentAmount,
         scheme,
+        error: errorReason,
         ...(activeChannel ? { channel: activeChannel, voucherState: latestVoucher(activeChannel) } : {}),
       }),
       body: {
-        error: error instanceof KaspaX402Error ? error.code : "invalid_kaspa_x402_payload",
+        error: errorReason,
       },
     };
   }
@@ -1594,17 +1602,7 @@ export class DirectModeServer {
       x402Version: X402_VERSION,
       resource,
       accepts: [paymentRequirements],
-      ...(this.#config.requirePaymentIdentifier
-        ? {
-            extensions: {
-              "payment-identifier": {
-                info: {
-                  required: true,
-                },
-              },
-            },
-          }
-        : {}),
+      ...requiredPaymentIdentifierExtensions(this.#config),
     };
   }
 }
@@ -1627,17 +1625,8 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
       x402Version: X402_VERSION,
       resource: options.resource,
       accepts: [accepted],
-      ...(config.requirePaymentIdentifier
-        ? {
-            extensions: {
-              "payment-identifier": {
-                info: {
-                  required: true,
-                },
-              },
-            },
-          }
-        : {}),
+      ...(options.error ? { error: options.error } : {}),
+      ...requiredPaymentIdentifierExtensions(config),
     };
   }
 
@@ -1661,17 +1650,8 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
       x402Version: X402_VERSION,
       resource: options.resource,
       accepts: [accepted],
-      ...(config.requirePaymentIdentifier
-        ? {
-            extensions: {
-              "payment-identifier": {
-                info: {
-                  required: true,
-                },
-              },
-            },
-          }
-        : {}),
+      ...(options.error ? { error: options.error } : {}),
+      ...requiredPaymentIdentifierExtensions(config),
     };
   }
 
@@ -1697,18 +1677,21 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
     x402Version: X402_VERSION,
     resource: options.resource,
     accepts: [accepted],
-    ...(config.requirePaymentIdentifier
-      ? {
-          extensions: {
-            "payment-identifier": {
-              info: {
-                required: true,
-              },
-            },
-          },
-        }
-      : {}),
+    ...(options.error ? { error: options.error } : {}),
+    ...requiredPaymentIdentifierExtensions(config),
   };
+}
+
+function requiredPaymentIdentifierExtensions(config: Pick<ResolvedServerConfig, "requirePaymentIdentifier">): Pick<PaymentRequired, "extensions"> | Record<string, never> {
+  return config.requirePaymentIdentifier
+    ? {
+        extensions: {
+          "payment-identifier": paymentIdentifierExtension({
+            required: true,
+          }),
+        },
+      }
+    : {};
 }
 
 function facilitatorResource(): ResourceInfo {
@@ -1818,7 +1801,7 @@ function readResponseHeader(headers: Record<string, string>, name: string): stri
 function errorMessageFromBody(body: unknown): string {
   if (typeof body === "string") return body;
   if (isRecord(body) && typeof body.error === "string") return body.error;
-  return "invalid_kaspa_x402_payload";
+  return "invalid_payload";
 }
 
 function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPaymentRequirements): void {
@@ -2117,12 +2100,13 @@ function readPaymentIdentifier(paymentPayload: PaymentPayload): string | undefin
   return typeof info.id === "string" ? info.id : undefined;
 }
 
-function fingerprintRequest(request: PaidRequest): Hash32Hex {
+function fingerprintRequest(request: PaidRequest, accepted: PaymentRequirements): Hash32Hex {
   return sha256Hex(
     stableStringify({
       method: request.method ?? "GET",
       url: request.url,
       body: request.body ?? null,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
     }),
   );
 }
@@ -2146,7 +2130,7 @@ function paymentIdentifierConflictResponse(): ServerResponse {
     status: 409,
     headers: {},
     body: {
-      error: "payment_identifier_conflict",
+      error: toX402ErrorReason("payment_identifier_conflict"),
     },
   };
 }
@@ -2161,12 +2145,17 @@ function requiredUptoFinality(accepted: UptoPaymentRequirements, fallback: Exclu
 
 function withUptoSettlementFinality(settlement: SettlementResponse, transactionId: Hash32Hex, finality: SettlementFinality): SettlementResponse {
   const responseFinality = finality === "broadcast" ? "mempool" : finality;
+  const extra = readKaspaSettlementExtension(settlement) ?? {};
+  const { extra: _legacyExtra, extensions, ...rest } = settlement;
   return {
-    ...settlement,
+    ...rest,
     transaction: transactionId,
-    extra: {
-      ...(settlement.extra ?? {}),
-      finality: responseFinality,
+    extensions: {
+      ...(extensions ?? {}),
+      ...kaspaSettlementExtensions({
+        ...extra,
+        finality: responseFinality,
+      }),
     },
   };
 }

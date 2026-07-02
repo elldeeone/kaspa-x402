@@ -54,4 +54,4 @@ Scheme-specific payment identity is enforced by the normal payment payload hash 
 
 This avoids circular dependencies where a transaction id or authorization outpoint is not known until after the client creates the payment.
 
-For `batch-settlement`, a successful voucher-only tool response may include an empty `transaction`, must omit top-level `amount`, and must include a non-empty `extra.commitmentId`.
+For `batch-settlement`, a successful voucher-only tool response uses the non-empty commitment id as `transaction`, includes the actual charge as top-level `amount`, and carries commitment and channel metadata in `extensions.kaspa`.

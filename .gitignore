@@ -8,4 +8,5 @@ coverage/
 .kaspa-x402-live/
 docs/standard-plan.md
 docs/goal.md
+docs/*-review.md
 finding.md

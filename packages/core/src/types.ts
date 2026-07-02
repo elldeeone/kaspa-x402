@@ -73,14 +73,15 @@ export interface PaymentRequired extends JsonRecord {
   x402Version: typeof X402_VERSION;
   resource: ResourceInfo;
   accepts: PaymentRequirements[];
-  extensions?: JsonRecord;
+  error?: string;
+  extensions?: PaymentExtensions;
 }
 
 export interface PaymentPayload extends JsonRecord {
   x402Version: typeof X402_VERSION;
   accepted: PaymentRequirements;
   payload: KaspaPaymentPayload;
-  extensions?: JsonRecord;
+  extensions?: PaymentExtensions;
 }
 
 export interface FundingOutpoint {
@@ -153,6 +154,7 @@ export interface DepositVoucherPayload extends JsonRecord {
   escrowAddress: string;
   fundingOutpoint: FundingOutpoint;
   fundingAmountSompi: SompiString;
+  fundingTransaction?: ByteHex;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
 }
@@ -217,13 +219,28 @@ export interface SettlementResponse extends JsonRecord {
   payer?: string;
   amount?: SompiString;
   extra?: SettlementResponseExtra;
-  extensions?: JsonRecord;
+  extensions?: SettlementResponseExtensions;
 }
 
 export interface PaymentIdentifierInfo extends JsonRecord {
   required: boolean;
   id?: string;
 }
+
+export interface PaymentExtension<TInfo extends JsonRecord> extends JsonRecord {
+  info: TInfo;
+  schema: JsonRecord;
+}
+
+export type PaymentIdentifierExtension = PaymentExtension<PaymentIdentifierInfo>;
+
+export type PaymentExtensions = JsonRecord & {
+  "payment-identifier"?: PaymentIdentifierExtension;
+};
+
+export type SettlementResponseExtensions = JsonRecord & {
+  kaspa?: SettlementResponseExtra;
+};
 
 export interface PaymentIdentifierObservation {
   extensionInfo: PaymentIdentifierInfo;

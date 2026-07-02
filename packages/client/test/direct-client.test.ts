@@ -5,8 +5,10 @@ import {
   X402_VERSION,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  kaspaSettlementExtensions,
   mcpPaymentRequiredResult,
   mcpToolCallFingerprint,
+  paymentIdentifierExtension,
   sha256Hex,
   uptoAuthorizationDigest,
 } from "@kaspa-x402/core";
@@ -220,16 +222,17 @@ describe("direct-mode client", () => {
     });
   });
 
-  it("requires a request hash for upto authorizations", async () => {
+  it("derives a request hash for upto authorizations when one is not supplied", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
-    await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
-        url: "https://api.example.test/variable",
-      }),
-    ).rejects.toThrow("request hash");
-    expect(provider.uptoAuthorizations).toHaveLength(0);
+    const payment = await client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
+      url: "https://api.example.test/variable",
+    });
+
+    expect(payment.paymentPayload.payload.type).toBe("upto-authorization");
+    expect(provider.uptoAuthorizations).toHaveLength(1);
+    expect(provider.uptoAuthorizations[0]?.requestHash).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("falls back to batch settlement on mixed offers when exact funding is unavailable", async () => {
@@ -259,10 +262,11 @@ describe("direct-mode client", () => {
       transaction: EXACT_TX_ID,
       network: "kaspa:testnet-10",
       amount: "250",
-      extra: {
+      extensions: kaspaSettlementExtensions({
         paymentOutputIndex: 1,
         finality: "accepted",
-      },
+        requestHash: payment.paymentPayload.payload.type === "exact-transfer" ? payment.paymentPayload.payload.requestHash! : "99".repeat(32),
+      }),
     });
 
     expect(settlement.channel).toBeUndefined();
@@ -283,12 +287,12 @@ describe("direct-mode client", () => {
       transaction: UPTO_TX_ID,
       network: "kaspa:testnet-10",
       amount: "125",
-      extra: {
+      extensions: kaspaSettlementExtensions({
         maxAmountSompi: "250",
         authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
         refundAddress: "kaspatest:refund",
         finality: "accepted",
-      },
+      }),
     });
 
     expect(settlement.channel).toBeUndefined();
@@ -310,12 +314,12 @@ describe("direct-mode client", () => {
       transaction: UPTO_TX_ID,
       network: "kaspa:testnet-10",
       amount: "125",
-      extra: {
+      extensions: kaspaSettlementExtensions({
         maxAmountSompi: "250",
         authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
         refundAddress: "kaspatest:refund",
         finality: "mempool",
-      },
+      }),
     });
 
     expect(settlement.pending).toBe(true);
@@ -336,12 +340,13 @@ describe("direct-mode client", () => {
       success: true,
       transaction: "",
       network: "kaspa:testnet-10",
-      extra: {
+      amount: "0",
+      extensions: kaspaSettlementExtensions({
         chargedAmount: "0",
         maxAmountSompi: "250",
         authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
         refundAddress: "kaspatest:refund",
-      },
+      }),
     });
 
     expect(settlement.chargedAmount).toBe("0");
@@ -362,12 +367,12 @@ describe("direct-mode client", () => {
         transaction: UPTO_TX_ID,
         network: "kaspa:testnet-10",
         amount: "251",
-        extra: {
+        extensions: kaspaSettlementExtensions({
           maxAmountSompi: "250",
           authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
           refundAddress: "kaspatest:refund",
           finality: "accepted",
-        },
+        }),
       }),
     ).rejects.toThrow("exceeds signed maximum");
   });
@@ -385,10 +390,10 @@ describe("direct-mode client", () => {
         transaction: EXACT_TX_ID,
         network: "kaspa:testnet-10",
         amount: "250",
-        extra: {
+        extensions: kaspaSettlementExtensions({
           paymentOutputIndex: 1,
           finality: "accepted",
-        },
+        }),
       }),
     ).rejects.toThrow("required finality");
   });
@@ -407,11 +412,11 @@ describe("direct-mode client", () => {
         transaction: EXACT_TX_ID,
         network: "kaspa:testnet-10",
         amount: "250",
-        extra: {
+        extensions: kaspaSettlementExtensions({
           paymentOutputIndex: 1,
           finality: "accepted",
           requestHash: "98".repeat(32),
-        },
+        }),
       }),
     ).rejects.toThrow("request hash");
   });
@@ -495,11 +500,12 @@ describe("direct-mode client", () => {
       success: true,
       transaction: "",
       network: payment.accepted.network,
-      extra: {
+      amount: "100",
+      extensions: kaspaSettlementExtensions({
         chargedAmount: "100",
         fundingAmount: payment.channel!.fundingAmount,
         channelId: payment.channel!.id,
-      },
+      }),
     };
 
     await expect(client.applySettlement(payment, bad)).rejects.toThrow("commitment id");
@@ -507,7 +513,7 @@ describe("direct-mode client", () => {
     expect(stored?.status).toBe("suspicious");
   });
 
-  it("requires charged amount in settlement response extra", async () => {
+  it("rejects mismatched charged amount in settlement extension", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
@@ -519,10 +525,11 @@ describe("direct-mode client", () => {
       transaction: "",
       network: payment.accepted.network,
       amount: "100",
-      extra: {
+      extensions: kaspaSettlementExtensions({
         commitmentId: COMMITMENT,
+        chargedAmount: "99",
         channelState: channelState(payment.channel!, "100", payment.channel!.signedCumulativeAmount),
-      },
+      }),
     };
 
     await expect(client.applySettlement(payment, bad)).rejects.toThrow("charged amount");
@@ -536,8 +543,8 @@ describe("direct-mode client", () => {
       url: "https://api.example.test/data",
     });
     const bad = makeSettlement(payment.channel!, "100");
-    if (!bad.extra) throw new Error("missing extra");
-    bad.extra.fundingAmount = "999";
+    if (!bad.extensions?.kaspa) throw new Error("missing extension");
+    bad.extensions.kaspa.fundingAmount = "999";
 
     await expect(client.applySettlement(payment, bad)).rejects.toThrow("funding amount");
   });
@@ -752,12 +759,12 @@ describe("direct-mode client", () => {
             network: "kaspa:testnet-10",
             payer: "kaspatest:refund",
             amount: "60",
-            extra: {
+            extensions: kaspaSettlementExtensions({
               maxAmountSompi: "100",
               authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
               refundAddress: "kaspatest:refund",
               finality: "mempool",
-            },
+            }),
           }),
         });
       },
@@ -867,6 +874,54 @@ describe("direct-mode client", () => {
     expect(result.settlement?.response.success).toBe(false);
   });
 
+  it("handles MCP pending settlements before corrective challenges", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeUptoRequired({ amount: "100" });
+    const expectedRequestHash = mcpToolCallFingerprint({
+      toolName: "variable",
+      arguments: { id: "pending" },
+      accepted: required.accepts[0]!,
+    });
+    let attempts = 0;
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        attempts += 1;
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        return {
+          isError: true,
+          structuredContent: required,
+          content: [{ type: "text", text: JSON.stringify(required) }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: {
+              success: false,
+              errorReason: "upto_authorization_pending",
+              transaction: UPTO_TX_ID,
+              network: "kaspa:testnet-10",
+              payer: "kaspatest:refund",
+              amount: "60",
+              extensions: kaspaSettlementExtensions({
+                maxAmountSompi: "100",
+                authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
+                refundAddress: "kaspatest:refund",
+                finality: "mempool",
+              }),
+            } satisfies SettlementResponse,
+          },
+        };
+      },
+      { name: "variable", arguments: { id: "pending" } },
+    );
+
+    expect(attempts).toBe(2);
+    expect(provider.uptoAuthorizations[0]?.requestHash).toBe(expectedRequestHash);
+    expect(result.result.isError).toBe(true);
+    expect(result.settlement?.pending).toBe(true);
+    expect(result.settlement?.response.errorReason).toBe("upto_authorization_pending");
+  });
+
   it("passes payment identifiers through paidFetch retries", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -874,11 +929,9 @@ describe("direct-mode client", () => {
       makeRequired({
         amount: "100",
         extensions: {
-          "payment-identifier": {
-            info: {
-              required: true,
-            },
-          },
+          "payment-identifier": paymentIdentifierExtension({
+            required: true,
+          }),
         },
       }),
     );
@@ -907,12 +960,12 @@ describe("direct-mode client", () => {
       paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0",
     });
 
-    expect(capturedPayment?.extensions?.["payment-identifier"]).toEqual({
-      info: {
+    expect(capturedPayment?.extensions?.["payment-identifier"]).toEqual(
+      paymentIdentifierExtension({
         required: true,
         id: "pay_7d5d747be160e280504c099d984bcfe0",
-      },
-    });
+      }),
+    );
   });
 
   it("handles a corrective paid-fetch 402 before the successful retry", async () => {
@@ -1156,9 +1209,10 @@ function makeMixedRequired(input: { amount: string }): PaymentRequired {
 function makeSettlement(channel: DirectModeChannel, chargedAmount: string, stateOverrides: Partial<ChannelState> = {}): SettlementResponse {
   return {
     success: true,
-    transaction: "",
+    transaction: COMMITMENT,
     network: channel.config.network,
-    extra: {
+    amount: chargedAmount,
+    extensions: kaspaSettlementExtensions({
       commitmentId: COMMITMENT,
       chargedAmount,
       fundingAmount: channel.fundingAmount,
@@ -1166,7 +1220,7 @@ function makeSettlement(channel: DirectModeChannel, chargedAmount: string, state
         ...channelState(channel, addAmounts(channel.chargedCumulativeAmount, chargedAmount), channel.signedCumulativeAmount),
         ...stateOverrides,
       },
-    },
+    }),
   };
 }
 
@@ -1177,11 +1231,11 @@ function exactSettlement(amount: string, requestHash: Hash32Hex): SettlementResp
     network: "kaspa:testnet-10",
     payer: "kaspatest:refund",
     amount,
-    extra: {
+    extensions: kaspaSettlementExtensions({
       paymentOutputIndex: 1,
       finality: "accepted",
       requestHash,
-    },
+    }),
   };
 }
 

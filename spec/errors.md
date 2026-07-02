@@ -1,72 +1,41 @@
-# Error Codes
+# Error Reasons
 
 Status: draft
 
-Kaspa x402 errors use the prefix:
+Kaspa x402 transports expose upstream x402 error reasons on public `PaymentRequired.error`, corrective response bodies, facilitator `invalidReason`, and settlement `errorReason` fields. Kaspa-specific failures are retained as local diagnostic codes, but they must be mapped before they cross the x402 wire surface.
+
+## Public Wire Reasons
+
+| Reason | Used when |
+| ------ | --------- |
+| `invalid_x402_version` | The envelope uses an unsupported x402 version. |
+| `invalid_scheme` | The selected scheme is unsupported or malformed. |
+| `invalid_network` | The selected Kaspa network is unsupported or inconsistent. |
+| `invalid_payment_requirements` | The accepted requirements are not satisfiable or do not match the server offer. |
+| `invalid_payload` | The payment payload, extension envelope, signature material, or identifier payload is malformed. |
+| `invalid_transaction_state` | The payment is structurally valid but cannot settle because of replay, stale state, expired authorization, conflict, or on-chain mismatch. |
+| `unsupported_scheme` | The facilitator or server does not support the requested scheme/action. |
+| `unexpected_settle_error` | The server cannot classify a settlement failure more precisely. |
+
+`upto_authorization_pending` is a transport state, not a new payment challenge. Servers return it in a non-402 response, typically HTTP `202`, after a nonzero `upto` settlement transaction has been broadcast but has not reached the selected finality.
+
+## Local Diagnostics
+
+Implementations may log, test, or expose internal diagnostics out of band with Kaspa-specific codes such as:
 
 ```text
-invalid_kaspa_x402_*
-```
-
-Common initial error set:
-
-```text
-invalid_kaspa_x402_scheme
-invalid_kaspa_x402_network
-invalid_kaspa_x402_asset
 invalid_kaspa_x402_amount
-invalid_kaspa_x402_pay_to
 invalid_kaspa_x402_binding
 invalid_kaspa_x402_payload
-invalid_kaspa_x402_payment_identifier_conflict
-invalid_kaspa_x402_settlement_failed
-```
-
-Scheme-specific initial error set:
-
-```text
-invalid_kaspa_exact_transaction
-invalid_kaspa_exact_transaction_id
-invalid_kaspa_exact_payment_output
+invalid_kaspa_payment_identifier
+missing_kaspa_payment_identifier
+kaspa_payment_identifier_conflict
 invalid_kaspa_exact_replay
-invalid_kaspa_exact_finality
 invalid_kaspa_upto_authorization
 invalid_kaspa_upto_expired
-invalid_kaspa_upto_recipient
-invalid_kaspa_upto_max_amount
 invalid_kaspa_upto_replay
 invalid_kaspa_upto_settlement_amount
-invalid_kaspa_upto_authorization_outpoint
-invalid_kaspa_upto_template
-invalid_kaspa_batch_template
-invalid_kaspa_batch_channel_id
-invalid_kaspa_batch_channel_state
-invalid_kaspa_batch_corrective_state
-invalid_kaspa_batch_funding_outpoint
-invalid_kaspa_batch_funding_amount
-invalid_kaspa_batch_voucher_signature
-invalid_kaspa_batch_voucher_network
-invalid_kaspa_batch_voucher_script
-invalid_kaspa_batch_voucher_outpoint
-invalid_kaspa_batch_cumulative_amount_mismatch
-invalid_kaspa_batch_cumulative_below_claimed
-invalid_kaspa_batch_insufficient_channel_balance
-invalid_kaspa_batch_channel_busy
-invalid_kaspa_batch_commitment
-invalid_kaspa_batch_handler_failed
-invalid_kaspa_batch_refund_not_mature
-invalid_kaspa_batch_claim_dust
-invalid_kaspa_batch_compute_budget
+invalid_kaspa_settlement_response
 ```
 
-Common error meanings:
-
-| Error | Meaning |
-| ----- | ------- |
-| `invalid_kaspa_x402_payment_identifier_conflict` | The same payment identifier was reused for a different normalized request fingerprint. |
-| `invalid_kaspa_x402_settlement_failed` | Verification passed but the scheme-specific settlement or commitment step failed. |
-| `invalid_kaspa_exact_finality` | The exact payment transaction did not reach the required finality policy. |
-| `invalid_kaspa_upto_settlement_amount` | The actual charge exceeds the signed maximum or is malformed. |
-| `invalid_kaspa_batch_corrective_state` | A corrective 402 included channel or voucher state that does not verify. |
-| `invalid_kaspa_batch_commitment` | A batch commitment could not be stored or identified. |
-| `invalid_kaspa_batch_handler_failed` | The protected handler failed and no batch charge was committed. |
+These local codes are not the public x402 compatibility contract. A server that includes one in logs should still emit the mapped public reason on the x402 wire response.

@@ -9,6 +9,7 @@ import {
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  readKaspaSettlementExtension,
   voucherDigest,
 } from "@kaspa-x402/core";
 import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEADER } from "@kaspa-x402/client";
@@ -125,9 +126,11 @@ async function runExactProof() {
   const replayPayment = await client.createPayment(paymentRequiredFor(server, { resource, amount: "100000", scheme: "exact" }), {
     url,
   });
+  const replayPayload = structuredClone(replayPayment.paymentPayload);
+  delete replayPayload.payload.requestHash;
   const replayFirstHash = mockRequestHash({ proof: "offline", scheme: "exact", step: "replay-source" });
   const replaySource = await server.handlePaidRequest(
-    requestWithPayment(replayPayment.paymentPayload, {
+    requestWithPayment(replayPayload, {
       url,
       resource,
       scheme: "exact",
@@ -143,7 +146,7 @@ async function runExactProof() {
 
   let replayExecutions = 0;
   const replay = await server.handlePaidRequest(
-    requestWithPayment(replayPayment.paymentPayload, {
+    requestWithPayment(replayPayload, {
       url,
       resource,
       scheme: "exact",
@@ -159,7 +162,7 @@ async function runExactProof() {
     },
   );
   assert.equal(replay.status, 409);
-  assert.equal(replay.body.error, "exact_payment_replay");
+  assert.equal(replay.body.error, "invalid_transaction_state");
   assert.equal(replayExecutions, 0);
   check("exact replay rejection", {
     status: replay.status,
@@ -225,17 +228,19 @@ async function runUptoZeroProof() {
   }));
   assert.equal(response.status, 204);
   const settlement = decodeResponse(response);
+  const settlementMetadata = requireSettlementMetadata(settlement);
   assert.equal(settlement.success, true);
   assert.equal(settlement.transaction, "");
-  assert.equal(settlement.extra?.chargedAmount, "0");
+  assert.equal(settlement.amount, "0");
+  assert.equal(settlementMetadata.chargedAmount, "0");
   check("upto zero-charge settlement", {
     transaction: settlement.transaction,
-    chargedAmount: settlement.extra?.chargedAmount,
+    chargedAmount: settlementMetadata.chargedAmount,
   });
 
   return {
     transaction: settlement.transaction,
-    chargedAmount: settlement.extra?.chargedAmount,
+    chargedAmount: settlementMetadata.chargedAmount,
   };
 }
 
@@ -330,7 +335,7 @@ async function runUptoNonzeroProof() {
     },
   );
   assert.equal(replay.status, 409);
-  assert.equal(replay.body.error, "upto_authorization_replay");
+  assert.equal(replay.body.error, "invalid_transaction_state");
   assert.equal(replayExecutions, 0);
   check("upto replay rejection", {
     status: replay.status,
@@ -388,14 +393,16 @@ async function runBatchProof() {
   }));
   assert.equal(depositResponse.status, 200);
   const depositSettlement = decodeResponse(depositResponse);
+  const depositSettlementMetadata = requireSettlementMetadata(depositSettlement);
   assert.equal(depositSettlement.success, true);
-  assert.equal(depositSettlement.extra?.chargedAmount, "50000");
-  assert.equal(depositSettlement.extra?.channelState?.chargedCumulativeAmount, "50000");
+  assert.equal(depositSettlement.amount, "50000");
+  assert.equal(depositSettlementMetadata.chargedAmount, "50000");
+  assert.equal(depositSettlementMetadata.channelState?.chargedCumulativeAmount, "50000");
   const appliedDeposit = await client.applySettlement(deposit, depositSettlement);
   assert.equal(appliedDeposit.channel?.chargedCumulativeAmount, "50000");
   check("batch deposit settlement", {
-    commitmentId: depositSettlement.extra?.commitmentId,
-    fundingAmount: depositSettlement.extra?.fundingAmount,
+    commitmentId: depositSettlementMetadata.commitmentId,
+    fundingAmount: depositSettlementMetadata.fundingAmount,
   });
 
   const voucher = await client.createPayment(paymentRequiredFor(server, { resource, amount: "50000", scheme: "batch-settlement" }), {
@@ -435,7 +442,7 @@ async function runBatchProof() {
     }),
   );
   assert.equal(corrective.status, 402);
-  assert.equal(corrective.body.error, "invalid_kaspa_x402_amount");
+  assert.equal(corrective.body.error, "invalid_payment_requirements");
   const correctiveRequired = decodePaymentRequiredHeader(corrective.headers[PAYMENT_REQUIRED_HEADER]);
   const correctiveAccepted = correctiveRequired.accepts[0];
   assert.equal(correctiveAccepted.scheme, "batch-settlement");
@@ -459,12 +466,15 @@ async function runBatchProof() {
   assert.equal(voucherResponse.status, 200);
   assert.equal(executions, 1);
   const voucherSettlement = decodeResponse(voucherResponse);
+  const voucherSettlementMetadata = requireSettlementMetadata(voucherSettlement);
   assert.equal(voucherSettlement.success, true);
-  assert.equal(voucherSettlement.extra?.chargedAmount, "50000");
-  assert.equal(voucherSettlement.extra?.channelState?.chargedCumulativeAmount, "100000");
+  assert.equal(voucherSettlement.amount, "50000");
+  assert.equal(voucherSettlement.transaction, voucherSettlementMetadata.commitmentId);
+  assert.equal(voucherSettlementMetadata.chargedAmount, "50000");
+  assert.equal(voucherSettlementMetadata.channelState?.chargedCumulativeAmount, "100000");
   check("batch voucher settlement", {
-    commitmentId: voucherSettlement.extra?.commitmentId,
-    chargedCumulativeAmount: voucherSettlement.extra?.channelState?.chargedCumulativeAmount,
+    commitmentId: voucherSettlementMetadata.commitmentId,
+    chargedCumulativeAmount: voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
   });
 
   let cachedExecutions = 0;
@@ -503,7 +513,7 @@ async function runBatchProof() {
     },
   );
   assert.equal(staleReplay.status, 402);
-  assert.equal(staleReplay.body.error, "invalid_kaspa_x402_amount");
+  assert.equal(staleReplay.body.error, "invalid_payment_requirements");
   assert.equal(replayExecutions, 0);
   const staleReplayRequired = decodePaymentRequiredHeader(staleReplay.headers[PAYMENT_REQUIRED_HEADER]);
   const staleReplayAccepted = staleReplayRequired.accepts[0];
@@ -609,6 +619,12 @@ function decodeResponse(response) {
   const header = response.headers[PAYMENT_RESPONSE_HEADER];
   assert.equal(typeof header, "string");
   return decodePaymentResponseHeader(header);
+}
+
+function requireSettlementMetadata(settlement) {
+  const metadata = readKaspaSettlementExtension(settlement);
+  assert.ok(metadata);
+  return metadata;
 }
 
 function readJson(relativePath) {

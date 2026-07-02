@@ -7,6 +7,7 @@ import {
   X402_VERSION,
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
+  kaspaSettlementExtensions,
   parseSompiString,
   stableStringify,
   validatePaymentPayload,
@@ -231,12 +232,13 @@ function settleUpto(parsed: ParsedArgs): Record<string, unknown> {
       transaction: "",
       network: paymentPayload.accepted.network,
       payer: paymentPayload.payload.refundAddress,
-      extra: {
+      amount: "0",
+      extensions: kaspaSettlementExtensions({
         maxAmountSompi: paymentPayload.payload.authorization.maxAmountSompi,
         authorizationOutpoint: paymentPayload.payload.authorizationOutpoint,
         refundAddress: paymentPayload.payload.refundAddress,
         chargedAmount: "0",
-      },
+      }),
     };
     const validation = validateSettlementResponse(settlement);
     if (!validation.ok) throw validation.error;

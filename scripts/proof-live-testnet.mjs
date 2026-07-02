@@ -155,7 +155,7 @@ function validateLiveProofResult(result, flows) {
   require(isPositiveSompi(result.exact?.amount), "exact.amount", "must be a positive sompi string");
   require(isFinal(result.exact?.finality), "exact.finality", "must be accepted or confirmed");
   require(result.exact?.replay?.status === 409, "exact.replay.status", "must be 409");
-  require(result.exact?.replay?.error === "exact_payment_replay", "exact.replay.error", "must be exact_payment_replay");
+  require(result.exact?.replay?.error === "invalid_transaction_state", "exact.replay.error", "must be invalid_transaction_state");
 
   require(validOutpoint(result.upto?.zero?.authorizationOutpoint), "upto.zero.authorizationOutpoint", "must be an outpoint");
   require(isPositiveSompi(result.upto?.zero?.maxAmountSompi), "upto.zero.maxAmountSompi", "must be a positive sompi string");
@@ -170,7 +170,7 @@ function validateLiveProofResult(result, flows) {
   require(isHash32(result.upto?.nonzero?.txid), "upto.nonzero.txid", "must be a transaction id");
   require(isIndex(result.upto?.nonzero?.paymentOutputIndex), "upto.nonzero.paymentOutputIndex", "must be a non-negative integer");
   require(result.upto?.replay?.status === 409, "upto.replay.status", "must be 409");
-  require(result.upto?.replay?.error === "upto_authorization_replay", "upto.replay.error", "must be upto_authorization_replay");
+  require(result.upto?.replay?.error === "invalid_transaction_state", "upto.replay.error", "must be invalid_transaction_state");
 
   require(isHash32(result.batch?.deposit?.txid), "batch.deposit.txid", "must be a transaction id");
   require(validOutpoint(result.batch?.deposit?.outpoint), "batch.deposit.outpoint", "must be an outpoint");

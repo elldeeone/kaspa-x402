@@ -63,3 +63,56 @@ export function fail<T = never>(code: KaspaX402ErrorCode, message: string, detai
 export function throwValidation(result: ValidationFailure): never {
   throw result.error;
 }
+
+export function toX402ErrorReason(reason: string | undefined): string {
+  switch (reason) {
+    case "invalid_kaspa_x402_version":
+      return "invalid_x402_version";
+    case "invalid_kaspa_x402_scheme":
+      return "invalid_scheme";
+    case "invalid_kaspa_x402_network":
+      return "invalid_network";
+    case "invalid_kaspa_x402_asset":
+    case "invalid_kaspa_x402_amount":
+    case "invalid_kaspa_x402_binding":
+    case "invalid_kaspa_x402_accepted":
+      return "invalid_payment_requirements";
+    case "invalid_kaspa_x402_payload":
+    case "invalid_kaspa_payment_payload_type":
+    case "invalid_kaspa_public_key":
+    case "invalid_kaspa_signature":
+    case "invalid_kaspa_hex":
+    case "invalid_kaspa_payment_identifier":
+    case "missing_kaspa_payment_identifier":
+      return "invalid_payload";
+    case "invalid_kaspa_settlement_response":
+    case "invalid_kaspa_transaction":
+    case "invalid_kaspa_outpoint":
+    case "invalid_kaspa_channel_id":
+    case "kaspa_payment_identifier_conflict":
+    case "payment_identifier_conflict":
+    case "exact_payment_replay":
+    case "upto_authorization_replay":
+    case "invalid_kaspa_exact_replay":
+    case "invalid_kaspa_upto_replay":
+    case "invalid_kaspa_upto_authorization":
+    case "invalid_kaspa_upto_expired":
+    case "invalid_kaspa_upto_recipient":
+    case "invalid_kaspa_upto_max_amount":
+    case "invalid_kaspa_upto_settlement_amount":
+    case "invalid_kaspa_upto_authorization_outpoint":
+    case "invalid_kaspa_upto_template":
+      return "invalid_transaction_state";
+    case "unsupported_scheme":
+      return "unsupported_scheme";
+    case "unsupported_kaspa_facilitator_action":
+      return "unsupported_scheme";
+    default:
+      return "unexpected_settle_error";
+  }
+}
+
+export function toX402ErrorReasonFromError(error: unknown, fallback = "unexpected_settle_error"): string {
+  if (error instanceof KaspaX402Error) return toX402ErrorReason(error.code);
+  return fallback;
+}

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   X402_VERSION,
   channelId,
+  readKaspaSettlementExtension,
   sha256Hex,
   uptoAuthorizationDigest,
   voucherDigest,
@@ -112,7 +113,7 @@ describe("direct-mode facilitator", () => {
     const verify = await facilitator.verify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
 
     expect(verify.isValid).toBe(false);
-    expect(verify.invalidReason).toBe("invalid_kaspa_x402_accepted");
+    expect(verify.invalidReason).toBe("invalid_payment_requirements");
   });
 
   it("settles exact payments through the shared direct-mode commit path", async () => {
@@ -155,7 +156,7 @@ describe("direct-mode facilitator", () => {
       amount: "70",
       payer: "kaspatest:refund",
     });
-    expect(settlement.extra?.maxAmountSompi).toBe("100");
+    expect(readKaspaSettlementExtension(settlement)?.maxAmountSompi).toBe("100");
   });
 
   it("settles batch deposit vouchers with actual charge below the signed ceiling", async () => {
@@ -172,11 +173,12 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(settlement.transaction).toBe(FUNDING_TX);
-    expect(settlement.amount).toBeUndefined();
-    expect(settlement.extra?.chargedAmount).toBe("70");
-    expect(settlement.extra?.fundingAmount).toBe("1000");
-    expect(settlement.extra?.channelState).toMatchObject({
+    const settlementExtra = readKaspaSettlementExtension(settlement);
+    expect(settlement.transaction).toBe(settlementExtra?.commitmentId);
+    expect(settlement.amount).toBe("70");
+    expect(settlementExtra?.chargedAmount).toBe("70");
+    expect(settlementExtra?.fundingAmount).toBe("1000");
+    expect(settlementExtra?.channelState).toMatchObject({
       chargedCumulativeAmount: "70",
       signedMaxClaimable: "100",
     });
@@ -188,7 +190,7 @@ describe("direct-mode facilitator", () => {
     const response = await handleFacilitatorRequest(facilitator, { method: "POST", path: "/verify", body: { x402Version: X402_VERSION } });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_kaspa_x402_payload" });
+    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_payload" });
   });
 
   it("returns settlement failures for shallow but unusable settlement payloads", async () => {
@@ -210,7 +212,7 @@ describe("direct-mode facilitator", () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: false,
-      errorReason: "invalid_kaspa_x402_payload",
+      errorReason: "invalid_payload",
       transaction: "",
       network: "kaspa:testnet-10",
     });
@@ -243,7 +245,7 @@ describe("direct-mode facilitator", () => {
 
     expect(settlement).toMatchObject({
       success: false,
-      errorReason: "unsupported_kaspa_facilitator_action",
+      errorReason: "unsupported_scheme",
       transaction: "",
     });
   });
@@ -439,7 +441,7 @@ describe("direct-mode facilitator", () => {
 
       expect(settlement).toMatchObject({
         success: false,
-        errorReason: "invalid_kaspa_x402_payload",
+        errorReason: "invalid_payload",
         transaction: "",
       });
     }
@@ -488,7 +490,7 @@ describe("direct-mode facilitator", () => {
 
     expect(settlement).toMatchObject({
       success: false,
-      errorReason: "invalid_kaspa_x402_payload",
+      errorReason: "invalid_payload",
       transaction: "",
     });
     expect(claimSettler).not.toHaveBeenCalled();
@@ -536,7 +538,7 @@ describe("direct-mode facilitator", () => {
 
     expect(settlement).toMatchObject({
       success: false,
-      errorReason: "invalid_kaspa_x402_accepted",
+      errorReason: "invalid_payment_requirements",
       transaction: "",
     });
     expect(claimSettler).not.toHaveBeenCalled();
@@ -584,7 +586,7 @@ describe("direct-mode facilitator", () => {
 
     expect(settlement).toMatchObject({
       success: false,
-      errorReason: "invalid_kaspa_x402_accepted",
+      errorReason: "invalid_payment_requirements",
       transaction: "",
     });
     expect(refundSettler).not.toHaveBeenCalled();
@@ -611,7 +613,7 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_kaspa_exact_replay" });
+    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
   });
 
   it("checks exact replay before invoking the exact verifier when transaction id is present", async () => {
@@ -643,7 +645,7 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_kaspa_exact_replay" });
+    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
     expect(verifier).not.toHaveBeenCalled();
   });
 
@@ -667,7 +669,7 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_kaspa_upto_replay" });
+    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
   });
 
   it("reports protocol errors for malformed public helper payloads before fallback fingerprinting", async () => {
@@ -705,7 +707,7 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_kaspa_x402_payload" });
+    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_payload" });
   });
 
   it("returns settlement failures for unsupported networks", async () => {
@@ -725,7 +727,7 @@ describe("direct-mode facilitator", () => {
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       success: false,
-      errorReason: "invalid_kaspa_x402_network",
+      errorReason: "invalid_network",
       transaction: "",
     });
   });

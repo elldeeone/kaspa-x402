@@ -25,7 +25,200 @@
       "type": "string",
       "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
     },
-    "extra": {
+    "extensions": {
+      "type": "object",
+      "properties": {
+        "kaspa": {
+          "$ref": "#/$defs/kaspaSettlementExtension"
+        }
+      },
+      "additionalProperties": true
+    }
+  },
+  "allOf": [
+    {
+      "not": {
+        "required": ["extra"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": true
+          }
+        },
+        "required": ["success"]
+      },
+      "then": {
+        "required": ["amount"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": false
+          }
+        },
+        "required": ["success"]
+      },
+      "then": {
+        "required": ["errorReason"]
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": false
+          },
+          "errorReason": {
+            "const": "upto_authorization_pending"
+          }
+        },
+        "required": ["success", "errorReason"]
+      },
+      "then": {
+        "required": ["transaction", "payer", "amount", "extensions"],
+        "properties": {
+          "transaction": {
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "extensions": {
+            "required": ["kaspa"],
+            "properties": {
+              "kaspa": {
+                "required": ["maxAmountSompi", "authorizationOutpoint", "refundAddress", "finality"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": true
+          },
+          "transaction": {
+            "const": ""
+          }
+        },
+        "required": ["success", "transaction"]
+      },
+      "then": {
+        "required": ["amount", "extensions"],
+        "properties": {
+          "amount": {
+            "const": "0"
+          },
+          "extensions": {
+            "required": ["kaspa"],
+            "properties": {
+              "kaspa": {
+                "required": ["chargedAmount", "maxAmountSompi", "authorizationOutpoint", "refundAddress"],
+                "properties": {
+                  "chargedAmount": {
+                    "const": "0"
+                  }
+                },
+                "not": {
+                  "required": ["commitmentId"]
+                }
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": true
+          },
+          "extensions": {
+            "properties": {
+              "kaspa": {
+                "required": ["commitmentId"]
+              }
+            },
+            "required": ["kaspa"]
+          }
+        },
+        "required": ["success", "extensions"]
+      },
+      "then": {
+        "required": ["amount", "extensions"],
+        "properties": {
+          "transaction": {
+            "pattern": "^[0-9a-fA-F]{64}$"
+          },
+          "extensions": {
+            "properties": {
+              "kaspa": {
+                "required": ["commitmentId", "chargedAmount", "channelState"]
+              }
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "success": {
+            "const": true
+          },
+          "extensions": {
+            "properties": {
+              "kaspa": {
+                "required": ["fundingAmount"]
+              }
+            },
+            "required": ["kaspa"]
+          }
+        },
+        "required": ["success", "extensions"]
+      },
+      "then": {
+        "required": ["amount", "extensions"],
+        "properties": {
+          "extensions": {
+            "properties": {
+              "kaspa": {
+                "required": ["fundingAmount", "commitmentId", "chargedAmount", "channelState"]
+              }
+            }
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true,
+  "$defs": {
+    "hash32": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "outpoint": {
+      "type": "object",
+      "required": ["txid", "index"],
+      "properties": {
+        "txid": {
+          "$ref": "#/$defs/hash32"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "additionalProperties": false
+    },
+    "kaspaSettlementExtension": {
       "type": "object",
       "properties": {
         "commitmentId": {
@@ -75,133 +268,6 @@
         }
       },
       "additionalProperties": true
-    },
-    "extensions": {
-      "type": "object",
-      "additionalProperties": true
-    }
-  },
-  "allOf": [
-    {
-      "if": {
-        "properties": {
-          "success": {
-            "const": false
-          }
-        },
-        "required": ["success"]
-      },
-      "then": {
-        "required": ["errorReason"]
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "success": {
-            "const": false
-          },
-          "errorReason": {
-            "const": "upto_authorization_pending"
-          }
-        },
-        "required": ["success", "errorReason"]
-      },
-      "then": {
-        "required": ["transaction", "payer", "amount", "extra"],
-        "properties": {
-          "transaction": {
-            "pattern": "^[0-9a-fA-F]{64}$"
-          },
-          "extra": {
-            "required": ["maxAmountSompi", "authorizationOutpoint", "refundAddress", "finality"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "success": {
-            "const": true
-          },
-          "transaction": {
-            "const": ""
-          }
-        },
-        "required": ["success", "transaction"]
-      },
-      "then": {
-        "required": ["extra"],
-        "not": {
-          "required": ["amount"]
-        },
-        "properties": {
-          "extra": {
-            "anyOf": [
-              {
-                "required": ["commitmentId", "chargedAmount", "channelState"]
-              },
-              {
-                "required": ["chargedAmount", "maxAmountSompi", "authorizationOutpoint", "refundAddress"],
-                "properties": {
-                  "chargedAmount": {
-                    "const": "0"
-                  }
-                },
-                "not": {
-                  "required": ["commitmentId"]
-                }
-              }
-            ]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "success": {
-            "const": true
-          },
-          "extra": {
-            "required": ["fundingAmount"]
-          }
-        },
-        "required": ["success", "extra"]
-      },
-      "then": {
-        "not": {
-          "required": ["amount"]
-        },
-        "properties": {
-          "extra": {
-            "required": ["fundingAmount", "commitmentId", "chargedAmount", "channelState"]
-          }
-        }
-      }
-    }
-  ],
-  "additionalProperties": true,
-  "$defs": {
-    "hash32": {
-      "type": "string",
-      "pattern": "^[0-9a-fA-F]{64}$"
-    },
-    "outpoint": {
-      "type": "object",
-      "required": ["txid", "index"],
-      "properties": {
-        "txid": {
-          "$ref": "#/$defs/hash32"
-        },
-        "index": {
-          "type": "integer",
-          "minimum": 0,
-          "maximum": 4294967295
-        }
-      },
-      "additionalProperties": false
     }
   }
 }

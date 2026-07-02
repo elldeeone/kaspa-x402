@@ -9,6 +9,8 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   mcpToolCallFingerprint,
+  paymentIdentifierExtension as buildPaymentIdentifierExtension,
+  readKaspaSettlementExtension,
   readMcpPaymentRequired,
   sha256Hex,
   uptoAuthorizationDigest,
@@ -174,6 +176,8 @@ describe("direct-mode server", () => {
     );
 
     expect(result.isError).toBe(true);
+    expect(readMcpPaymentRequired(result)).toBeUndefined();
+    expect(result.structuredContent).toBeUndefined();
     expect(result.content?.[0]?.text).toBe("upto_authorization_pending");
     const settlement = result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY] as { success?: boolean; errorReason?: string; transaction?: string } | undefined;
     expect(settlement?.success).toBe(false);
@@ -217,6 +221,38 @@ describe("direct-mode server", () => {
     expect(executions).toBe(1);
   });
 
+  it("returns terminal MCP errors without a new payment challenge", async () => {
+    const setup = makeServer({ amount: "100" });
+    const firstRequired = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
+    const firstHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "first" },
+      accepted: firstRequired.accepts[0] as ExactPaymentRequirements,
+    });
+    const payment = makeExactPayment(setup, { requestHash: firstHash });
+
+    await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+      { name: "download", arguments: { id: "first" }, _meta: { [MCP_PAYMENT_META_KEY]: payment } },
+      async () => ({ result: { content: [{ type: "text", text: "paid" }] } }),
+    );
+
+    const replayPayload = structuredClone(payment);
+    delete replayPayload.payload.requestHash;
+    const replay = await handlePaidMcpToolCall(
+      setup.server,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+      { name: "download", arguments: { id: "second" }, _meta: { [MCP_PAYMENT_META_KEY]: replayPayload } },
+      async () => ({ result: { content: [{ type: "text", text: "wrong" }] } }),
+    );
+
+    expect(replay.isError).toBe(true);
+    expect(readMcpPaymentRequired(replay)).toBeUndefined();
+    expect(replay.structuredContent).toBeUndefined();
+    expect(replay.content?.[0]?.text).toBe("invalid_transaction_state");
+  });
+
   it("accepts an exact transfer and commits replay state after handler success", async () => {
     const setup = makeServer();
     const payment = makeExactPayment(setup);
@@ -230,7 +266,7 @@ describe("direct-mode server", () => {
     const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
     expect(settlement.transaction).toBe(EXACT_TX_ID);
     expect(settlement.amount).toBe("100");
-    expect(settlement.extra?.paymentOutputIndex).toBe(1);
+    expect(readKaspaSettlementExtension(settlement)?.paymentOutputIndex).toBe(1);
     const stored = await setup.store.loadExactPayment(EXACT_TX_ID, 1);
     expect(stored?.amount).toBe("100");
     expect(stored?.paymentOutputIndex).toBe(1);
@@ -280,7 +316,7 @@ describe("direct-mode server", () => {
     });
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_x402_payload" });
+    expect(response.body).toEqual({ error: "invalid_payload" });
     expect(executed).toBe(false);
     await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
   });
@@ -318,7 +354,7 @@ describe("direct-mode server", () => {
     });
 
     expect(replay.status).toBe(409);
-    expect(replay.body).toEqual({ error: "exact_payment_replay" });
+    expect(replay.body).toEqual({ error: "invalid_transaction_state" });
     expect(executed).toBe(false);
   });
 
@@ -375,7 +411,7 @@ describe("direct-mode server", () => {
     });
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_x402_amount" });
+    expect(response.body).toEqual({ error: "invalid_payment_requirements" });
     expect(executed).toBe(false);
     await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
   });
@@ -394,8 +430,8 @@ describe("direct-mode server", () => {
     const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
     expect(settlement.transaction).toBe(UPTO_TX_ID);
     expect(settlement.amount).toBe("70");
-    expect(settlement.extra?.authorizationOutpoint).toEqual({ txid: UPTO_TX_ID, index: 0 });
-    expect(settlement.extra?.maxAmountSompi).toBe("100");
+    expect(readKaspaSettlementExtension(settlement)?.authorizationOutpoint).toEqual({ txid: UPTO_TX_ID, index: 0 });
+    expect(readKaspaSettlementExtension(settlement)?.maxAmountSompi).toBe("100");
     const stored = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
     expect(stored?.chargedAmount).toBe("70");
     expect(stored?.response.status).toBe(200);
@@ -414,8 +450,8 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(200);
     const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
     expect(settlement.transaction).toBe("");
-    expect(settlement.amount).toBeUndefined();
-    expect(settlement.extra?.chargedAmount).toBe("0");
+    expect(settlement.amount).toBe("0");
+    expect(readKaspaSettlementExtension(settlement)?.chargedAmount).toBe("0");
     expect(setup.chain.sendCount).toBe(0);
     const stored = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
     expect(stored?.chargedAmount).toBe("0");
@@ -432,7 +468,7 @@ describe("direct-mode server", () => {
     });
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_signature" });
+    expect(response.body).toEqual({ error: "invalid_payload" });
     expect(executed).toBe(false);
     await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
   });
@@ -449,7 +485,7 @@ describe("direct-mode server", () => {
     });
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_upto_expired" });
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
     expect(executed).toBe(false);
   });
 
@@ -460,21 +496,21 @@ describe("direct-mode server", () => {
       body: "wrong",
     }));
     expect(wrongRecipient.status).toBe(402);
-    expect(wrongRecipient.body).toEqual({ error: "invalid_kaspa_upto_recipient" });
+    expect(wrongRecipient.body).toEqual({ error: "invalid_transaction_state" });
 
     const serverKey = makeUptoPayment(setup, { amount: "100", requestHash: "13".repeat(32), serverPublicKey: "aa".repeat(32), index: 1 });
     const wrongServerKey = await setup.server.handlePaidRequest(requestWithPayment(serverKey, { paymentScheme: "upto", requestHash: "13".repeat(32) }), async () => ({
       body: "wrong",
     }));
     expect(wrongServerKey.status).toBe(402);
-    expect(wrongServerKey.body).toEqual({ error: "invalid_kaspa_public_key" });
+    expect(wrongServerKey.body).toEqual({ error: "invalid_payload" });
 
     const maxAmount = makeUptoPayment(setup, { amount: "100", requestHash: "14".repeat(32), maxAmount: "99", index: 2 });
     const wrongMax = await setup.server.handlePaidRequest(requestWithPayment(maxAmount, { paymentScheme: "upto", requestHash: "14".repeat(32) }), async () => ({
       body: "wrong",
     }));
     expect(wrongMax.status).toBe(402);
-    expect(wrongMax.body).toEqual({ error: "invalid_kaspa_upto_max_amount" });
+    expect(wrongMax.body).toEqual({ error: "invalid_transaction_state" });
   });
 
   it("rejects reused upto outpoints for different requests", async () => {
@@ -492,7 +528,7 @@ describe("direct-mode server", () => {
     });
 
     expect(replay.status).toBe(409);
-    expect(replay.body).toEqual({ error: "upto_authorization_replay" });
+    expect(replay.body).toEqual({ error: "invalid_transaction_state" });
     expect(executed).toBe(false);
   });
 
@@ -596,7 +632,7 @@ describe("direct-mode server", () => {
     expect(stillPendingSettlement.errorReason).toBe("upto_authorization_pending");
     expect(stillPendingSettlement.transaction).toBe(UPTO_TX_ID);
     expect(stillPendingSettlement.amount).toBe("70");
-    expect(stillPendingSettlement.extra?.finality).toBe("mempool");
+    expect(readKaspaSettlementExtension(stillPendingSettlement)?.finality).toBe("mempool");
     expect(executions).toBe(1);
     expect(setup.chain.sendCount).toBe(2);
 
@@ -631,7 +667,7 @@ describe("direct-mode server", () => {
     expect(pendingSettlement.success).toBe(false);
     expect(pendingSettlement.errorReason).toBe("upto_authorization_pending");
     expect(pendingSettlement.transaction).toBe(UPTO_TX_ID);
-    expect(pendingSettlement.extra?.finality).toBe("mempool");
+    expect(readKaspaSettlementExtension(pendingSettlement)?.finality).toBe("mempool");
     expect(setup.chain.sendCount).toBe(1);
     const broadcast = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
     expect(broadcast?.status).toBe("broadcast");
@@ -716,7 +752,7 @@ describe("direct-mode server", () => {
 
     expect(pending.status).toBe(202);
     expect(retry.status).toBe(409);
-    expect(retry.body).toEqual({ error: "payment_identifier_conflict" });
+    expect(retry.body).toEqual({ error: "invalid_transaction_state" });
     expect(executions).toBe(1);
     expect(setup.chain.sendCount).toBe(2);
     const settled = await setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }));
@@ -845,7 +881,7 @@ describe("direct-mode server", () => {
     }));
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
     expect(setup.chain.sendCount).toBe(0);
   });
 
@@ -885,7 +921,7 @@ describe("direct-mode server", () => {
     }));
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
     expect(setup.chain.sendCount).toBe(0);
   });
 
@@ -925,7 +961,7 @@ describe("direct-mode server", () => {
     }));
 
     expect(response.status).toBe(402);
-    expect(response.body).toEqual({ error: "invalid_kaspa_transaction" });
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
     expect(setup.chain.sendCount).toBe(0);
   });
 
@@ -1125,7 +1161,7 @@ describe("direct-mode server", () => {
 
     expect(first.status).toBe(200);
     expect(second.status).toBe(409);
-    expect(second.body).toEqual({ error: "payment_identifier_conflict" });
+    expect(second.body).toEqual({ error: "invalid_transaction_state" });
     expect(executions).toBe(1);
     const stored = await requireChannel(setup.store, deposit.channelId);
     expect(stored.chargedCumulativeAmount).toBe("50");
@@ -1180,7 +1216,7 @@ describe("direct-mode server", () => {
     }));
 
     expect(conflict.status).toBe(409);
-    expect(conflict.body).toEqual({ error: "payment_identifier_conflict" });
+    expect(conflict.body).toEqual({ error: "invalid_transaction_state" });
   });
 
   it("serializes same identifier retries across channels", async () => {
@@ -2201,12 +2237,10 @@ async function requireChannel(store: ServerChannelStore, channelId: Hash32Hex): 
 function paymentIdentifierExtension(id: string) {
   return {
     extensions: {
-      "payment-identifier": {
-        info: {
+      "payment-identifier": buildPaymentIdentifierExtension({
           required: true,
           id,
-        },
-      },
+      }),
     },
   };
 }
