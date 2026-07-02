@@ -2,6 +2,10 @@
 
 Kaspa x402 is a proposed set of x402 v2 network bindings for native Kaspa payments.
 
+Status: alpha reference implementation. The current public surface targets
+`kaspa:testnet-10` testnet iteration and review. It is not mainnet-ready and
+must not be used for production funds.
+
 The initial standard targets three first-class x402 schemes:
 
 ```json
@@ -40,7 +44,7 @@ This repository is starting as a standard and reference implementation workspace
 
 ## Current Status
 
-The repository now contains the v0 reference scaffold:
+The repository now contains the alpha reference implementation:
 
 - protocol profiles for `exact`, `upto`, and `batch-settlement`;
 - JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
@@ -54,6 +58,11 @@ The repository now contains the v0 reference scaffold:
 The current implementation focus is native transaction-builder adapters and live proof harnesses. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
+
+See [docs/public-proposal.md](docs/public-proposal.md) for the ecosystem-facing
+proposal draft, [docs/alpha-publish.md](docs/alpha-publish.md) for the npm
+alpha checklist, and [docs/versioning-policy.md](docs/versioning-policy.md) for
+the compatibility rules.
 
 ## Layout
 
@@ -116,6 +125,7 @@ Reference package workspace:
 
 ```text
 @kaspa-x402/core
+@kaspa-x402/covenant
 @kaspa-x402/client
 @kaspa-x402/server
 @kaspa-x402/facilitator

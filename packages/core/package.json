@@ -1,10 +1,13 @@
 {
   "name": "@kaspa-x402/core",
-  "version": "0.0.0",
-  "private": true,
-  "description": "Core types and canonical encoders for Kaspa x402.",
+  "version": "0.1.0-alpha.0",
+  "description": "Alpha core types and canonical encoders for Kaspa x402.",
   "license": "MIT",
   "type": "module",
+  "publishConfig": {
+    "access": "public",
+    "tag": "alpha"
+  },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",
   "exports": {
@@ -17,6 +20,7 @@
     "dist"
   ],
   "scripts": {
+    "prepack": "node ../../scripts/assert-package-dist.mjs",
     "build": "tsup src/index.ts --format esm --dts --clean",
     "test": "vitest run"
   },

@@ -2,6 +2,10 @@
 
 Server SDK for direct-mode Kaspa x402 payments.
 
+Status: alpha. This package targets testnet iteration and reference server
+flows; production deployments need independent review, durable storage, key
+management, and the mainnet gates in the repository docs.
+
 The current implementation covers framework-neutral HTTP gating and MCP paid tool wrappers for `exact` one-shot transfers, `upto` capped one-shot authorizations, and `batch-settlement` escrow channels:
 
 - builds x402 v2 `PAYMENT-REQUIRED` offers;

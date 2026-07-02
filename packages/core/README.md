@@ -2,7 +2,8 @@
 
 Transport-neutral types, codecs, canonical encoders, scheme selection, channel IDs, authorization digests, voucher digest helpers, MCP transport primitives, and facilitator wire types.
 
-Status: alpha.
+Status: alpha. This package is part of a testnet-oriented reference
+implementation and does not imply mainnet readiness.
 
 This package contains deterministic Kaspa x402 protocol primitives only. It does not talk to wallets, RPC nodes, facilitators, HTTP servers, MCP servers, or the filesystem.
 
@@ -33,4 +34,4 @@ The package tests consume `vectors/` directly. Any implementation change that ch
 
 ## Boundary
 
-`@kaspa-x402/core` should stay pure. Covenant builders, transaction signing, RPC submission, HTTP middleware, MCP SDK integration, and facilitator endpoint implementations belong in later packages.
+`@kaspa-x402/core` should stay pure. Covenant builders, transaction signing, RPC submission, HTTP middleware, MCP SDK integration, and facilitator endpoint implementations belong in other packages.

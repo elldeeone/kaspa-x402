@@ -24,7 +24,7 @@
     "test": "npm --workspace @kaspa-x402/client run build && npm --workspace @kaspa-x402/server run build && npm --workspace @kaspa-x402/facilitator run build && npm --workspace @kaspa-x402/cli run build && vitest run && node ../../examples/paid-http-api/index.mjs && node ../../examples/paid-mcp-tool/index.mjs && node ../../examples/self-hosted-facilitator/index.mjs && node ../../examples/recovery/index.mjs"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.0.0",
-    "@kaspa-x402/covenant": "0.0.0"
+    "@kaspa-x402/core": "0.1.0-alpha.0",
+    "@kaspa-x402/covenant": "0.1.0-alpha.0"
   }
 }
