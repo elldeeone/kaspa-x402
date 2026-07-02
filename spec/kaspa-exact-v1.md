@@ -29,12 +29,15 @@ Do not use `exact` for repeated micropayment sessions or variable-cost requests.
 }
 ```
 
-Supported networks:
+Recognized draft network identifiers:
 
 ```text
 kaspa:mainnet
 kaspa:testnet-10
 ```
+
+`kaspa:testnet-10` is the current alpha validation target. `kaspa:mainnet` is a
+reserved profile name, not a readiness claim.
 
 ## PaymentRequirements
 
@@ -176,6 +179,8 @@ must not synthesize a fallback network.
 Servers should advertise the x402 `payment-identifier` extension for `exact`. If it is required:
 
 - the client must include the same id on retries;
+- the client must echo the advertised extension schema and preserve every
+  advertised `info` field while adding the retry id;
 - the server must bind the id to the normalized request fingerprint;
 - same id plus same fingerprint returns the cached result;
 - same id plus different fingerprint fails.

@@ -147,6 +147,7 @@ function validateLiveProofResult(result, flows) {
     validOutpoint(right) &&
     left.txid.toLowerCase() === right.txid.toLowerCase() &&
     left.index === right.index;
+  const sameAmount = (left, right) => isSompi(left) && isSompi(right) && BigInt(left) === BigInt(right);
 
   require(isObject(result), "result", "must be an object");
   if (!isObject(result)) throw new Error(`live proof result failed validation: ${errors.join("; ")}`);
@@ -169,6 +170,7 @@ function validateLiveProofResult(result, flows) {
   require(isTxVersion(result.upto?.zero?.authorizationTxVersion), "upto.zero.authorizationTxVersion", "must state the authorization transaction version");
   require(isTxVersionSource(result.upto?.zero?.authorizationTxVersionSource), "upto.zero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
   require(result.upto?.zero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.zero.authorizationTxVersionSource", "must be sdk-generated-transaction");
+  require(isFinal(result.upto?.zero?.authorizationFinality), "upto.zero.authorizationFinality", "must be accepted or confirmed");
   require(isPositiveSompi(result.upto?.zero?.maxAmountSompi), "upto.zero.maxAmountSompi", "must be a positive sompi string");
   require(result.upto?.zero?.chargedAmount === "0", "upto.zero.chargedAmount", "must be zero");
   require(result.upto?.zero?.transaction === "", "upto.zero.transaction", "must be empty for zero-charge");
@@ -178,6 +180,7 @@ function validateLiveProofResult(result, flows) {
   require(isTxVersion(result.upto?.nonzero?.authorizationTxVersion), "upto.nonzero.authorizationTxVersion", "must state the authorization transaction version");
   require(isTxVersionSource(result.upto?.nonzero?.authorizationTxVersionSource), "upto.nonzero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
   require(result.upto?.nonzero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.nonzero.authorizationTxVersionSource", "must be sdk-generated-transaction");
+  require(isFinal(result.upto?.nonzero?.authorizationFinality), "upto.nonzero.authorizationFinality", "must be accepted or confirmed");
   require(isPositiveSompi(result.upto?.nonzero?.maxAmountSompi), "upto.nonzero.maxAmountSompi", "must be a positive sompi string");
   require(isPositiveSompi(result.upto?.nonzero?.chargedAmount), "upto.nonzero.chargedAmount", "must be a positive sompi string");
   if (isSompi(result.upto?.nonzero?.chargedAmount) && isSompi(result.upto?.nonzero?.maxAmountSompi)) {
@@ -188,6 +191,7 @@ function validateLiveProofResult(result, flows) {
   require(isTxVersionSource(result.upto?.nonzero?.txVersionSource), "upto.nonzero.txVersionSource", "must state an allowed version evidence source");
   require(result.upto?.nonzero?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "upto.nonzero.txVersionSource", "must be adapter-submitted-transaction-shape");
   require(isIndex(result.upto?.nonzero?.paymentOutputIndex), "upto.nonzero.paymentOutputIndex", "must be a non-negative integer");
+  require(isFinal(result.upto?.nonzero?.finality), "upto.nonzero.finality", "must be accepted or confirmed");
   require(result.upto?.replay?.status === 409, "upto.replay.status", "must be 409");
   require(result.upto?.replay?.error === "invalid_transaction_state", "upto.replay.error", "must be invalid_transaction_state");
 
@@ -203,10 +207,53 @@ function validateLiveProofResult(result, flows) {
   require(isPositiveSompi(result.batch?.deposit?.fundingAmountSompi), "batch.deposit.fundingAmountSompi", "must be a positive sompi string");
   require(isHash32(result.batch?.deposit?.channelId), "batch.deposit.channelId", "must be a channel id");
   require(isHash32(result.batch?.deposit?.settlementCommitment), "batch.deposit.settlementCommitment", "must be a commitment id");
+  require(isFinal(result.batch?.deposit?.finality), "batch.deposit.finality", "must be accepted or confirmed");
+  require(isSompi(result.batch?.deposit?.chargedAmount), "batch.deposit.chargedAmount", "must be a sompi string");
+  require(isSompi(result.batch?.deposit?.settlementAmount), "batch.deposit.settlementAmount", "must be a sompi string");
+  require(isSompi(result.batch?.deposit?.extensionChargedAmount), "batch.deposit.extensionChargedAmount", "must be a sompi string");
+  require(isSompi(result.batch?.deposit?.chargedCumulativeBefore), "batch.deposit.chargedCumulativeBefore", "must be a sompi string");
+  require(isSompi(result.batch?.deposit?.chargedCumulativeAmount), "batch.deposit.chargedCumulativeAmount", "must be a sompi string");
+  if (isSompi(result.batch?.deposit?.chargedCumulativeBefore) && isSompi(result.batch?.deposit?.chargedAmount) && isSompi(result.batch?.deposit?.chargedCumulativeAmount)) {
+    require(
+      BigInt(result.batch.deposit.chargedCumulativeBefore) + BigInt(result.batch.deposit.chargedAmount) === BigInt(result.batch.deposit.chargedCumulativeAmount),
+      "batch.deposit.chargedCumulativeAmount",
+      "must equal chargedCumulativeBefore plus chargedAmount",
+    );
+  }
+  if (isSompi(result.batch?.deposit?.chargedAmount)) {
+    require(sameAmount(result.batch.deposit.chargedAmount, result.batch.deposit.settlementAmount), "batch.deposit.settlementAmount", "must equal chargedAmount");
+    require(sameAmount(result.batch.deposit.chargedAmount, result.batch.deposit.extensionChargedAmount), "batch.deposit.extensionChargedAmount", "must equal chargedAmount");
+  }
   require(result.batch?.voucherOnly?.openedChannel === false, "batch.voucherOnly.openedChannel", "must be false");
+  require(isHash32(result.batch?.voucherOnly?.channelId), "batch.voucherOnly.channelId", "must be a channel id");
+  require(validOutpoint(result.batch?.voucherOnly?.activeOutpoint), "batch.voucherOnly.activeOutpoint", "must be an active outpoint");
+  if (isHash32(result.batch?.voucherOnly?.channelId) && isHash32(result.batch?.deposit?.channelId)) {
+    require(result.batch.voucherOnly.channelId.toLowerCase() === result.batch.deposit.channelId.toLowerCase(), "batch.voucherOnly.channelId", "must match deposit channelId");
+  }
+  if (validOutpoint(result.batch?.voucherOnly?.activeOutpoint) && validOutpoint(result.batch?.deposit?.outpoint)) {
+    require(sameOutpoint(result.batch.voucherOnly.activeOutpoint, result.batch.deposit.outpoint), "batch.voucherOnly.activeOutpoint", "must match deposit outpoint");
+  }
   require(isHash32(result.batch?.voucherOnly?.settlementCommitment), "batch.voucherOnly.settlementCommitment", "must be a commitment id");
+  require(isSompi(result.batch?.voucherOnly?.chargedAmount), "batch.voucherOnly.chargedAmount", "must be a sompi string");
+  require(isSompi(result.batch?.voucherOnly?.settlementAmount), "batch.voucherOnly.settlementAmount", "must be a sompi string");
+  require(isSompi(result.batch?.voucherOnly?.extensionChargedAmount), "batch.voucherOnly.extensionChargedAmount", "must be a sompi string");
+  require(isSompi(result.batch?.voucherOnly?.chargedCumulativeBefore), "batch.voucherOnly.chargedCumulativeBefore", "must be a sompi string");
   require(isPositiveSompi(result.batch?.voucherOnly?.chargedCumulativeAmount), "batch.voucherOnly.chargedCumulativeAmount", "must be a positive sompi string");
   require(isPositiveSompi(result.batch?.voucherOnly?.signedMaxClaimable), "batch.voucherOnly.signedMaxClaimable", "must be a positive sompi string");
+  if (isSompi(result.batch?.voucherOnly?.chargedCumulativeBefore) && isSompi(result.batch?.deposit?.chargedCumulativeAmount)) {
+    require(sameAmount(result.batch.voucherOnly.chargedCumulativeBefore, result.batch.deposit.chargedCumulativeAmount), "batch.voucherOnly.chargedCumulativeBefore", "must equal deposit chargedCumulativeAmount");
+  }
+  if (isSompi(result.batch?.voucherOnly?.chargedCumulativeBefore) && isSompi(result.batch?.voucherOnly?.chargedAmount) && isSompi(result.batch?.voucherOnly?.chargedCumulativeAmount)) {
+    require(
+      BigInt(result.batch.voucherOnly.chargedCumulativeBefore) + BigInt(result.batch.voucherOnly.chargedAmount) === BigInt(result.batch.voucherOnly.chargedCumulativeAmount),
+      "batch.voucherOnly.chargedCumulativeAmount",
+      "must equal chargedCumulativeBefore plus chargedAmount",
+    );
+  }
+  if (isSompi(result.batch?.voucherOnly?.chargedAmount)) {
+    require(sameAmount(result.batch.voucherOnly.chargedAmount, result.batch.voucherOnly.settlementAmount), "batch.voucherOnly.settlementAmount", "must equal chargedAmount");
+    require(sameAmount(result.batch.voucherOnly.chargedAmount, result.batch.voucherOnly.extensionChargedAmount), "batch.voucherOnly.extensionChargedAmount", "must equal chargedAmount");
+  }
   require(isHash32(result.batch?.claim?.txid), "batch.claim.txid", "must be a transaction id");
   require(result.batch?.claim?.txVersion === 1, "batch.claim.txVersion", "must be transaction v1");
   require(isTxVersionSource(result.batch?.claim?.txVersionSource), "batch.claim.txVersionSource", "must state an allowed version evidence source");
@@ -214,10 +261,52 @@ function validateLiveProofResult(result, flows) {
   require(isFinal(result.batch?.claim?.finality), "batch.claim.finality", "must be accepted or confirmed");
   require(validOutpoint(result.batch?.claim?.originalOutpoint), "batch.claim.originalOutpoint", "must be an outpoint");
   require(validOutpoint(result.batch?.claim?.continuationOutpoint), "batch.claim.continuationOutpoint", "must be an outpoint");
+  if (validOutpoint(result.batch?.claim?.originalOutpoint) && validOutpoint(result.batch?.deposit?.outpoint)) {
+    require(sameOutpoint(result.batch.claim.originalOutpoint, result.batch.deposit.outpoint), "batch.claim.originalOutpoint", "must match deposit outpoint");
+  }
   if (validOutpoint(result.batch?.claim?.continuationOutpoint) && isHash32(result.batch?.claim?.txid)) {
     require(result.batch.claim.continuationOutpoint.txid.toLowerCase() === result.batch.claim.txid.toLowerCase(), "batch.claim.continuationOutpoint", "must belong to claim txid");
   }
+  require(isPositiveSompi(result.batch?.claim?.inputAmountSompi), "batch.claim.inputAmountSompi", "must be a positive sompi string");
+  require(isSompi(result.batch?.claim?.claimedCumulativeAmount), "batch.claim.claimedCumulativeAmount", "must be a sompi string");
+  require(isPositiveSompi(result.batch?.claim?.activeChargedAmountSompi), "batch.claim.activeChargedAmountSompi", "must be a positive sompi string");
+  require(isPositiveSompi(result.batch?.claim?.claimAmountSompi), "batch.claim.claimAmountSompi", "must be a positive sompi string");
+  require(isPositiveSompi(result.batch?.claim?.serverOutputAmountSompi), "batch.claim.serverOutputAmountSompi", "must be a positive sompi string");
+  require(isSompi(result.batch?.claim?.feeSompi), "batch.claim.feeSompi", "must be a sompi string");
   require(isPositiveSompi(result.batch?.claim?.continuationFundingAmountSompi), "batch.claim.continuationFundingAmountSompi", "must be a positive sompi string");
+  if (isSompi(result.batch?.claim?.inputAmountSompi) && isSompi(result.batch?.deposit?.fundingAmountSompi)) {
+    require(sameAmount(result.batch.claim.inputAmountSompi, result.batch.deposit.fundingAmountSompi), "batch.claim.inputAmountSompi", "must equal deposit fundingAmountSompi");
+  }
+  if (isSompi(result.batch?.claim?.claimedCumulativeAmount) && isSompi(result.batch?.deposit?.chargedCumulativeBefore)) {
+    require(sameAmount(result.batch.claim.claimedCumulativeAmount, result.batch.deposit.chargedCumulativeBefore), "batch.claim.claimedCumulativeAmount", "must match the pre-claim cumulative amount");
+  }
+  if (isSompi(result.batch?.voucherOnly?.chargedCumulativeAmount) && isSompi(result.batch?.claim?.claimedCumulativeAmount) && isSompi(result.batch?.claim?.activeChargedAmountSompi)) {
+    require(
+      BigInt(result.batch.voucherOnly.chargedCumulativeAmount) - BigInt(result.batch.claim.claimedCumulativeAmount) === BigInt(result.batch.claim.activeChargedAmountSompi),
+      "batch.claim.activeChargedAmountSompi",
+      "must equal voucherOnly chargedCumulativeAmount minus claimedCumulativeAmount",
+    );
+  }
+  if (isSompi(result.batch?.claim?.claimAmountSompi) && isSompi(result.batch?.claim?.activeChargedAmountSompi)) {
+    require(sameAmount(result.batch.claim.claimAmountSompi, result.batch.claim.activeChargedAmountSompi), "batch.claim.claimAmountSompi", "must equal activeChargedAmountSompi");
+  }
+  if (isSompi(result.batch?.claim?.claimAmountSompi) && isSompi(result.batch?.voucherOnly?.signedMaxClaimable)) {
+    require(BigInt(result.batch.claim.claimAmountSompi) <= BigInt(result.batch.voucherOnly.signedMaxClaimable), "batch.claim.claimAmountSompi", "must not exceed signedMaxClaimable");
+  }
+  if (isSompi(result.batch?.claim?.inputAmountSompi) && isSompi(result.batch?.claim?.claimAmountSompi) && isSompi(result.batch?.claim?.continuationFundingAmountSompi)) {
+    require(
+      BigInt(result.batch.claim.inputAmountSompi) === BigInt(result.batch.claim.claimAmountSompi) + BigInt(result.batch.claim.continuationFundingAmountSompi),
+      "batch.claim.continuationFundingAmountSompi",
+      "must reconcile inputAmountSompi minus claimAmountSompi",
+    );
+  }
+  if (isSompi(result.batch?.claim?.claimAmountSompi) && isSompi(result.batch?.claim?.serverOutputAmountSompi) && isSompi(result.batch?.claim?.feeSompi)) {
+    require(
+      BigInt(result.batch.claim.claimAmountSompi) === BigInt(result.batch.claim.serverOutputAmountSompi) + BigInt(result.batch.claim.feeSompi),
+      "batch.claim.serverOutputAmountSompi",
+      "must reconcile claimAmountSompi minus feeSompi",
+    );
+  }
   require(result.batch?.replay?.rejected === true, "batch.replay.rejected", "must be true");
   require(validOutpoint(result.batch?.replay?.oldOutpoint), "batch.replay.oldOutpoint", "must be an outpoint");
   if (validOutpoint(result.batch?.replay?.oldOutpoint) && validOutpoint(result.batch?.claim?.originalOutpoint)) {
@@ -228,6 +317,7 @@ function validateLiveProofResult(result, flows) {
   require(result.batch?.replay?.attemptedTxVersion === 1, "batch.replay.attemptedTxVersion", "must be transaction v1");
   require(isTxVersionSource(result.batch?.replay?.attemptedTxVersionSource), "batch.replay.attemptedTxVersionSource", "must state an allowed version evidence source");
   require(result.batch?.replay?.attemptedTxVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.replay.attemptedTxVersionSource", "must be adapter-submitted-transaction-shape");
+  require(result.batch?.replay?.finality === "rejected", "batch.replay.finality", "must be rejected");
   if (validOutpoint(result.batch?.replay?.attemptedInputOutpoint) && validOutpoint(result.batch?.claim?.continuationOutpoint)) {
     require(sameOutpoint(result.batch.replay.attemptedInputOutpoint, result.batch.claim.continuationOutpoint), "batch.replay.attemptedInputOutpoint", "must match continuation outpoint");
   }
@@ -242,9 +332,22 @@ function validateLiveProofResult(result, flows) {
   require(result.batch?.refund?.txVersion === 1, "batch.refund.txVersion", "must be transaction v1");
   require(isTxVersionSource(result.batch?.refund?.txVersionSource), "batch.refund.txVersionSource", "must state an allowed version evidence source");
   require(result.batch?.refund?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.refund.txVersionSource", "must be adapter-submitted-transaction-shape");
+  require(isFinal(result.batch?.refund?.finality), "batch.refund.finality", "must be accepted or confirmed");
   require(isNonEmptyString(result.batch?.refund?.refundAddress), "batch.refund.refundAddress", "must be present");
+  require(isPositiveSompi(result.batch?.refund?.inputAmountSompi), "batch.refund.inputAmountSompi", "must be a positive sompi string");
   require(isPositiveSompi(result.batch?.refund?.refundAmountSompi), "batch.refund.refundAmountSompi", "must be a positive sompi string");
+  require(isSompi(result.batch?.refund?.feeSompi), "batch.refund.feeSompi", "must be a sompi string");
   require(isIndex(result.batch?.refund?.outputIndex), "batch.refund.outputIndex", "must be a non-negative integer");
+  if (isSompi(result.batch?.refund?.inputAmountSompi) && isSompi(result.batch?.claim?.continuationFundingAmountSompi)) {
+    require(sameAmount(result.batch.refund.inputAmountSompi, result.batch.claim.continuationFundingAmountSompi), "batch.refund.inputAmountSompi", "must equal claim continuationFundingAmountSompi");
+  }
+  if (isSompi(result.batch?.refund?.inputAmountSompi) && isSompi(result.batch?.refund?.refundAmountSompi) && isSompi(result.batch?.refund?.feeSompi)) {
+    require(
+      BigInt(result.batch.refund.inputAmountSompi) === BigInt(result.batch.refund.refundAmountSompi) + BigInt(result.batch.refund.feeSompi),
+      "batch.refund.refundAmountSompi",
+      "must reconcile inputAmountSompi minus feeSompi",
+    );
+  }
 
   if (errors.length > 0) {
     throw new Error(`live proof result failed validation: ${errors.join("; ")}`);

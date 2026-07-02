@@ -900,6 +900,7 @@ function paymentIdentifierExtensions(paymentRequired: CreatePaymentResult["payme
   return {
     "payment-identifier": paymentIdentifierExtension(
       {
+        ...(isRecord(info) ? info : {}),
         required,
         id: context.paymentIdentifier,
       },

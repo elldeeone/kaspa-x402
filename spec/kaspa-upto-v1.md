@@ -29,12 +29,15 @@ Do not use `upto` as a recurring allowance or a repeated micropayment channel. U
 }
 ```
 
-Supported networks:
+Recognized draft network identifiers:
 
 ```text
 kaspa:mainnet
 kaspa:testnet-10
 ```
+
+`kaspa:testnet-10` is the current alpha validation target. `kaspa:mainnet` is a
+reserved profile name, not a readiness claim.
 
 ## PaymentRequirements
 
@@ -334,9 +337,14 @@ Servers should require the x402 `payment-identifier` extension for `upto`.
 
 The server must bind the payment identifier to the normalized request fingerprint and the authorization outpoint. Same id plus same fingerprint returns the cached result. Same id plus different fingerprint fails. The same authorization outpoint or nonce must not be used for multiple request fingerprints.
 
+The retry payload must echo the advertised `payment-identifier` schema and
+preserve every advertised `info` field while adding the retry id. This prevents
+clients from stripping server-provided metadata that participates in request
+binding or policy decisions.
+
 ## Toccata Notes
 
-The mainnet `upto` profile is covenant-backed:
+The reserved mainnet `upto` profile is covenant-backed:
 
 - transaction v1 must be used for covenant spends;
 - v1 inputs use `compute_budget`;

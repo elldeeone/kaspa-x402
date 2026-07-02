@@ -2,7 +2,8 @@
 
 Optional self-hosted facilitator endpoints for `/supported`, `/verify`, and `/settle`.
 
-Status: alpha.
+Status: workspace-private alpha tooling. It is not published on npm and should
+not be treated as a hosted production facilitator or settlement service.
 
 This package wraps a configured `DirectModeServer` and exposes the x402 v2 facilitator shape without requiring a hosted third-party service.
 

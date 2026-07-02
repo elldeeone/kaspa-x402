@@ -64,24 +64,55 @@ Before mainnet:
 
 ## Template Hash
 
-The batch escrow template id is `kaspa-x402-escrow-v1`.
+The current template ids are:
 
-Current reproducibility checks cover:
+- batch escrow: `kaspa-x402-escrow-v1`;
+- one-shot `upto` authorization: `kaspa-x402-upto-v1`.
 
-- source hash from `contracts/fixtures/kaspa-x402-escrow-v1.json`;
+The current alpha target is `kaspa:testnet-10`. As of 2026-07-02, the upstream
+`kaspanet/silverscript` README at HEAD
+`d25bd3427a093c17327ca3d6b9e1aa5f7688c863` still describes SilverScript as
+experimental and says compiled scripts are valid only on Kaspa Testnet 12. This
+repository's testnet-10 result is empirical testnet evidence for the committed
+fixtures, not an upstream production or mainnet compatibility guarantee.
+
+Current reproducibility checks cover both committed template fixtures where
+applicable:
+
+- source hash from `contracts/fixtures/kaspa-x402-escrow-v1.json` and
+  `contracts/fixtures/kaspa-x402-upto-v1.json`;
+- fixture hash and compiler provenance metadata for each template fixture;
 - domain tag hash;
 - deterministic redeem script;
 - serialized script public key;
 - payout and refund script-public-key hashes;
 - claim and refund argument encodings;
+- `upto` settle and refund argument encodings;
 - claim, refund, and nonzero upto settlement transaction-v1 vectors.
 
 Before mainnet:
 
-- publish the exact template source hash and fixture hash in release notes;
-- pin compiler and node versions used for the reviewed artifact;
+- publish every reviewed template source hash and fixture hash in release notes;
+- pin compiler and node versions used for each reviewed artifact;
+- pin an upstream compiler release or otherwise document the exact compiler
+  provenance accepted by reviewers;
 - reject deployment when local template hash differs from the reviewed hash;
+- treat every non-byte-identical recompile of either template as a
+  template-version-changing event;
 - rerun fixture reproducibility and transaction-vector checks in CI.
+
+## Network And Asset Registry
+
+The draft uses `kaspa:testnet-10`, `kaspa:mainnet`, and `KAS` as implementation
+conventions. They are not yet formal registry claims.
+
+Before mainnet or stable release:
+
+- align the `kaspa:` namespace with the relevant x402 and CAIP registry process;
+- document the native KAS asset convention and whether it remains `"KAS"` or
+  moves to a more explicit native-asset identifier;
+- update schemas, vectors, package docs, and examples if the accepted registry
+  names differ from the draft names.
 
 ## Package Versions
 

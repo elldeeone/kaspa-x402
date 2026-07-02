@@ -20,7 +20,8 @@ Out of scope for this repository:
 - third-party custody controls;
 - hosted facilitator authentication policy;
 - production monitoring and alerting systems;
-- external audit findings not yet imported into this repo.
+- external audit findings not recorded in
+  [review-closure-ledger.md](./review-closure-ledger.md).
 
 ## Trust Boundaries
 

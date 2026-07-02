@@ -1,21 +1,29 @@
 # Live Testnet Report
 
-Generated from a successful `kaspa:testnet-10` run on 2026-07-02 at 07:25:56 UTC.
+Generated from two successful strict `kaspa:testnet-10` runs on 2026-07-02.
+The canonical repeat run completed at 09:15:20 UTC, after an initial strict run
+completed at 09:11:54 UTC.
 
-The live run used an explicit testnet RPC endpoint, an operator-provided testnet funding wallet, and a local adapter module. Private keys, recovery material, and the full machine-local report remain in `.kaspa-x402-live/`, which is ignored by git.
+The live runs used the committed proof runner, an explicit testnet RPC endpoint,
+an operator-provided testnet funding wallet, and a local adapter module. Private
+keys, recovery material, adapter code for these runs, and the full machine-local
+reports remain in `.kaspa-x402-live/`, which is ignored by git.
 
 ## Summary
 
-- Status: complete
+- Status: complete under the current strict live proof contract
+- Repeat report: `.kaspa-x402-live/report-strict-repeat.json`
+- Initial strict report: `.kaspa-x402-live/report-strict-current.json`
 - Network: `kaspa:testnet-10`
 - Node network id: `testnet-10`
 - Finality target: `accepted`
-- Refund timeout: `506189090` DAA
+- Refund timeout: `506254793` DAA
+- Required flows: all passed
 
 ## Exact
 
 - Amount: `100000000` sompi
-- Transaction: `e717d43ad6d3c1b06fab2dcf2ac4e55d432b20fb46f0d1c64a813622f30d1043`
+- Transaction: `49ae6a1c53c73881e406e9851f3dbd9a4f031c8e59e72afea3e03294d5f56525`
 - Transaction version: `0` (source: sdk-generated-transaction)
 - Payment output index: `0`
 - Finality: `accepted`
@@ -24,47 +32,74 @@ The live run used an explicit testnet RPC endpoint, an operator-provided testnet
 
 ## Upto
 
-- Zero-charge authorization outpoint: `28202613b2486195c2640d7c12c05b87881d8986af8436e4d65d5288b904435d:0`
+- Zero-charge authorization outpoint: `e43a8166bd645eb9e82b9e3102c0ae51e5b74d6f027189345636176732ebafa3:0`
 - Zero-charge authorization transaction version: `0` (source: sdk-generated-transaction)
+- Zero-charge authorization finality: `accepted`
 - Zero-charge maximum: `100000000` sompi
 - Zero-charge settlement transaction: empty, as expected
 - Zero-charge settlement transaction version: none (no transaction)
-- Nonzero authorization outpoint: `865215d9ab6cbb03a5b6ed28925dbea33d1754d41eede12eae3c79151f0e92f8:0`
+- Nonzero authorization outpoint: `9086a497baeba11b6971b337a5e177e093431b599341001a6ed79dd7943b7bb6:0`
 - Nonzero authorization transaction version: `0` (source: sdk-generated-transaction)
+- Nonzero authorization finality: `accepted`
 - Nonzero maximum: `100000000` sompi
 - Nonzero charged amount: `50000000` sompi
-- Nonzero settlement transaction: `db4df3ceb7c1af6966c3dd9dc26321d0306ce1b71d33e8690b24e14a588cc933`
+- Nonzero settlement transaction: `41f1abe1672eb4a92d36c45550ab327aef9d7925a7289f62b751a608a1514b47`
 - Nonzero settlement transaction version: `1` (source: adapter-submitted-transaction-shape)
+- Nonzero settlement finality: `accepted`
 - Payment output index: `0`
 - Replay result: `409 invalid_transaction_state`
-- Validation scope: adapter-submitted transaction-v1 shape for the nonzero settlement, node acceptance of that submitted transaction, output/refund accounting verification, and application-store replay rejection. The zero-charge path intentionally has no transaction.
+- Validation scope: adapter-submitted transaction-v1 shape for the nonzero settlement, accepted authorization funding transactions, node acceptance of the submitted settlement transaction, output/refund accounting verification, and application-store replay rejection. The zero-charge path intentionally has no settlement transaction.
 
 ## Batch Settlement
 
-- Escrow address: `kaspatest:pz69jle2zkhpaqj6uxg8n8ye0z2ltqs48wcwwx3fpagqep6rrjdlydz7kt4l4`
-- Channel id: `50681f06a1383e9a25a0ae6ac83dd8901ce847873837a29154c16dfc791685cc`
-- Deposit transaction: `81109d56f2ae5f1210a4d8a27bd0aaa5d866773b0f968b7f51988c18361f6c94`
+- Escrow address: `kaspatest:pzpnhc9v7xmq3027282nz5rd4w290d6mj0qvx2wcvzn8hdnzlmcs2zxu6f26t`
+- Channel id: `a7dda2e3f13c802a69bb3456b901ba390c5d6d9c05b46fb7c65b70377b1f9740`
+- Deposit transaction: `7ff9fd1b90aed48535305d6c63d3ec151f3df0b23c7c980fbcde762086ff59dd`
 - Deposit transaction version: `0` (source: sdk-generated-transaction)
-- Deposit outpoint: `81109d56f2ae5f1210a4d8a27bd0aaa5d866773b0f968b7f51988c18361f6c94:0`
+- Deposit finality: `accepted`
+- Deposit outpoint: `7ff9fd1b90aed48535305d6c63d3ec151f3df0b23c7c980fbcde762086ff59dd:0`
 - Deposit amount: `400000000` sompi
-- First settlement commitment: `979d4797d4b469da1623b07d51ad06a6fc75c9f62725330d725350b991e7940d`
-- Latest settlement commitment: `2908bf22028205be8f2888ae251fb694d37b83432263afebdfb74d7e77a9b847`
+- Deposit actual charge: `100000000` sompi
+- Deposit top-level settlement amount: `100000000` sompi
+- Deposit extension charged amount: `100000000` sompi
+- Deposit cumulative charge: `0` to `100000000` sompi
+- First settlement commitment: `9aa455da3f01520bcaf6cd15b1e2cca514334b02c896b5db01fd35aa0d6e1c58`
 - Voucher-only request opened a second channel: `false`
-- Charged cumulative amount after voucher-only request: `200000000` sompi
-- Claim transaction: `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b`
+- Voucher-only active outpoint: `7ff9fd1b90aed48535305d6c63d3ec151f3df0b23c7c980fbcde762086ff59dd:0`
+- Voucher-only actual charge: `100000000` sompi
+- Voucher-only top-level settlement amount: `100000000` sompi
+- Voucher-only extension charged amount: `100000000` sompi
+- Voucher-only cumulative charge: `100000000` to `200000000` sompi
+- Voucher-only signed maximum claimable: `200000000` sompi
+- Latest settlement commitment: `a3a9ba52888c6cf4614a2844c5ec4eb368ecd626682beacbd95b383ffab2d991`
+- Claim transaction: `398d7931218bad19c7557ff7f1e4d2c11e70496ff747759689b60a8a0589f927`
 - Claim transaction version: `1` (source: adapter-submitted-transaction-shape)
-- Continuation outpoint: `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b:1`
+- Claim finality: `accepted`
+- Claim input amount: `400000000` sompi
+- Claimed cumulative amount before claim: `0` sompi
+- Active charged amount: `200000000` sompi
+- Claim amount: `200000000` sompi
+- Server output amount: `198000000` sompi
+- Claim fee: `2000000` sompi
+- Continuation outpoint: `398d7931218bad19c7557ff7f1e4d2c11e70496ff747759689b60a8a0589f927:1`
 - Continuation amount: `200000000` sompi
 - Replay result: rejected by node script verification
 - Replay attempted transaction version: `1` (source: adapter-submitted-transaction-shape)
-- Replay validation: the attempted replay spent `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b:1` with `98000000` sompi to the server and `100000000` sompi to the continuation; the node rejection reason included `failed to verify the signature script`
-- Refund transaction: `7dad095da86176f0c26b2d9bfe9491266a728b571b3164ccb22ae8e4b467d7a6`
+- Replay finality: `rejected`
+- Replay validation: the attempted replay spent the continuation outpoint with `98000000` sompi to the server and `100000000` sompi to the continuation; the node rejection reason included signature-script verification failure.
+- Refund transaction: `a8abefca93a5c616fe21336e3488a54328e50cfe5448c8284a7f27336a6c86da`
 - Refund transaction version: `1` (source: adapter-submitted-transaction-shape)
+- Refund finality: `accepted`
+- Refund input amount: `200000000` sompi
 - Refund amount: `198000000` sompi
-- Validation scope: script-level covenant validation for claim, replay rejection, and refund; adapter-submitted transaction-v1 shapes plus node acceptance/rejection for claim/replay attempt/refund; application-store validation for channel state and voucher replay handling.
+- Refund fee: `2000000` sompi
+- Validation scope: strict live proof validation for batch actual-charge fields, same-channel/outpoint continuity, claim input/output/fee reconciliation, replay rejection, refund input/output/fee reconciliation, transaction-version evidence, and accepted finality where applicable.
 
 ## Caveats
 
 - This is testnet evidence only.
-- The live adapter is intentionally external to the public package boundary for this run.
-- Failed exploratory runs before this final report may have produced additional testnet transactions not listed here.
+- The committed runner validates required flows, transaction-version evidence,
+  finality evidence, actual-charge evidence, and claim/refund reconciliation, but
+  the live adapter is intentionally external to the public package boundary for
+  these runs.
+- Failed exploratory runs before these final reports may have produced additional testnet transactions not listed here.

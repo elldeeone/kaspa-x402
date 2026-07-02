@@ -11,8 +11,9 @@ draft defines three scheme/network profiles:
 - `batch-settlement` for repeated micropayments backed by escrow/channel state.
 
 The network strings are `kaspa:testnet-10` for alpha validation and
-`kaspa:mainnet` as a reserved profile name. The current implementation and live
-evidence are testnet-only. Mainnet use is blocked by the gates in
+`kaspa:mainnet` as a reserved profile name. They are draft binding identifiers,
+not proof of CAIP or x402 registry acceptance. The current implementation and
+live evidence are testnet-only. Mainnet use is blocked by the gates in
 `docs/mainnet-readiness.md`.
 
 ## Why Three Profiles
@@ -45,9 +46,12 @@ The Kaspa binding is UTXO-native:
 - transaction-v1 claim/refund artifacts include compute-budget and hash context
   evidence.
 
-The public wire format stays aligned with x402 v2 transports. HTTP uses
+The public wire format uses x402 v2 transport primitives. HTTP uses
 `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`; MCP uses the
-standard `_meta` payment fields.
+standard `_meta` payment fields. Kaspa-specific finality behavior adds
+documented extension states for nonzero `upto` pending settlement and MCP
+settlement failure metadata; those states need upstream discussion before being
+described as strict transport compatibility.
 
 ## Facilitator Lock-In
 
@@ -65,6 +69,7 @@ The repository contains:
 - JSON schemas in `schemas/`;
 - conformance vectors in `vectors/`;
 - transaction-v1 claim/refund reference vectors for the escrow profile;
+- a review closure ledger in `docs/review-closure-ledger.md`;
 - mock HTTP, MCP, facilitator, and recovery examples in `examples/`;
 - a live `kaspa:testnet-10` report in `docs/live-testnet-report.md`;
 - a threat model in `docs/security-threat-model.md`;
@@ -76,7 +81,8 @@ testnet. It is not a production approval, audit result, or mainnet safety claim.
 ## Proposed Community Path
 
 1. Share this proposal with the x402 and Kaspa communities.
-2. Open a focused x402 discussion or issue for `kaspa:*` network binding names.
+2. Open a focused x402 discussion or issue for `kaspa:*` network binding names,
+   CAIP namespace alignment, and the native KAS asset convention.
 3. Keep the first external discussion grounded in spec text, vectors, and live
    testnet evidence rather than production claims.
 4. Iterate on naming, schema shape, and compatibility with existing x402

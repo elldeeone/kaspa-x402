@@ -10,7 +10,9 @@ This document defines common rules for x402 v2 payments on Kaspa. Scheme-specifi
 
 ## x402 Relationship
 
-x402 separates the logical payment scheme from the network-specific implementation. Kaspa x402 defines the following `(scheme, network)` pairs:
+x402 separates the logical payment scheme from the network-specific
+implementation. Kaspa x402 recognizes the following draft `(scheme, network)`
+identifier pairs:
 
 ```text
 exact              + kaspa:mainnet
@@ -21,7 +23,11 @@ batch-settlement   + kaspa:mainnet
 batch-settlement   + kaspa:testnet-10
 ```
 
-Servers may advertise more than one option in `PaymentRequired.accepts`. Clients choose the entry they can satisfy.
+Servers may advertise more than one option in `PaymentRequired.accepts`. Clients
+choose the entry they can satisfy. In the current alpha, `kaspa:testnet-10` is
+the testnet validation target and `kaspa:mainnet` is a reserved profile name
+that requires explicit runtime opt-in plus the mainnet gates in
+`docs/mainnet-readiness.md`.
 
 ## Scheme Selection
 
@@ -56,13 +62,16 @@ kaspa:mainnet
 kaspa:testnet-10
 ```
 
-The `kaspa:` namespace is CAIP-style. Formal registry work is deferred until the binding is stable enough to submit upstream.
+The `kaspa:` namespace is CAIP-style but not yet a formal registry claim.
+Formal registry work is deferred until the binding is stable enough to submit
+upstream.
 
 Implementations must reject non-colon network aliases such as `mainnet`, `testnet-10`, `tn10`, and any other non-listed network value.
 
 ## Asset and Amounts
 
-`asset` is `"KAS"` for native Kaspa.
+`asset` is `"KAS"` for native Kaspa in this draft. This is a proposed native
+asset convention, not a final registry decision.
 
 All x402 amount fields are decimal strings in atomic sompi units:
 
@@ -191,6 +200,12 @@ For paid retries, the server should bind the payment identifier to a normalized 
 - same id plus different fingerprint fails with a conflict;
 - the fingerprint should include method or tool name, URL or MCP tool id, request body or params, selected scheme, network, asset, amount, and recipient;
 - the fingerprint must not include volatile transport headers that change across retries.
+
+When a challenge advertises the `payment-identifier` extension, the retry
+payload must echo the advertised extension schema and preserve every advertised
+`info` field. The client may add the retry `id` and other schema-allowed fields,
+but it must not strip server-provided metadata such as tenant, route, or policy
+fields.
 
 Scheme-specific replay protection still applies even when `payment-identifier` is absent.
 

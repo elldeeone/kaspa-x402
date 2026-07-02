@@ -2,6 +2,9 @@
 
 CLI tools for conformance vectors, channel inspection, claim preview, claim execution, and refund workflows.
 
+Status: workspace-private alpha tooling. It is not published on npm and must not
+be treated as a production broadcaster or custody tool.
+
 ## Build
 
 ```sh

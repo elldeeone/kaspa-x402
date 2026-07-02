@@ -29,12 +29,15 @@ Use [exact](kaspa-exact-v1.md) for fixed-price one-shot purchases. Use [upto](ka
 }
 ```
 
-Supported networks:
+Recognized draft network identifiers:
 
 ```text
 kaspa:mainnet
 kaspa:testnet-10
 ```
+
+`kaspa:testnet-10` is the current alpha validation target. `kaspa:mainnet` is a
+reserved profile name, not a readiness claim.
 
 `extra.binding` is `"kaspa-escrow-v1"` because the initial Kaspa `batch-settlement` binding is a covenant escrow/channel profile. Future batch-settlement bindings may use a different binding label.
 

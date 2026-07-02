@@ -64,6 +64,26 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
+## Current Registry And Tarball Recheck
+
+Checked on 2026-07-02:
+
+- `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
+  `@kaspa-x402/server` are published only at `0.1.0-alpha.0`;
+- those packages have both `alpha` and `latest` dist-tags pointing to
+  `0.1.0-alpha.0`, so docs must keep recommending explicit `@alpha` installs;
+- `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
+  unpublished/private;
+- dry-run tarballs for the publishable `0.1.0-alpha.1` manifests contain only
+  `LICENSE`, `README.md`, `package.json`, `dist/index.js`, and
+  `dist/index.d.ts`;
+- ignored local planning, review, and live-run artifacts are not in the dry-run
+  package file lists;
+- a clean temporary project installed the four local `0.1.0-alpha.1` tarballs
+  together and imported `@kaspa-x402/core`, `@kaspa-x402/covenant`,
+  `@kaspa-x402/client`, and `@kaspa-x402/server` successfully;
+- `npm audit --audit-level=low` reported zero vulnerabilities.
+
 ## Publish Boundary
 
 Publishing requires an authenticated npm account with access to the

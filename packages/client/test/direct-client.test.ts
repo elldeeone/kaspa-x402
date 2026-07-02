@@ -1018,6 +1018,7 @@ describe("direct-mode client", () => {
         extensions: {
           "payment-identifier": paymentIdentifierExtension({
             required: true,
+            tenant: "tenant-a",
           }),
         },
       }),
@@ -1050,6 +1051,7 @@ describe("direct-mode client", () => {
     expect(capturedPayment?.extensions?.["payment-identifier"]).toEqual(
       paymentIdentifierExtension({
         required: true,
+        tenant: "tenant-a",
         id: "pay_7d5d747be160e280504c099d984bcfe0",
       }),
     );

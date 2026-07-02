@@ -49,13 +49,17 @@ The repository now contains the alpha reference implementation:
 - protocol profiles for `exact`, `upto`, and `batch-settlement`;
 - JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
 - TypeScript core helpers for canonical headers, validation, IDs, voucher and upto authorization digests, and amounts;
-- covenant helpers, escrow fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement`;
+- covenant helpers, escrow and `upto` fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement` and nonzero `upto`;
 - client and server direct-mode packages for `exact`, `upto`, and channel-backed batch payments over HTTP and MCP helper surfaces;
 - an optional self-hosted facilitator package exposing framework-neutral `/supported`, `/verify`, and `/settle` handlers over the direct-mode verifier;
 - a `kaspa-x402` CLI for conformance vector verification and offline payment/channel inspection workflows;
 - runnable mock examples for paid HTTP, paid MCP tools, self-hosted facilitator settlement, and recovery scenarios.
 
-The current remaining implementation focus is native transaction-builder adapters, release hardening, and review feedback. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
+The current remaining implementation focus is production-grade native adapters,
+release hardening, and independent review. Nonzero `upto` settlement is
+adapter-gated: the server requires an independent settlement transaction
+verifier, and any built-in mainnet builder remains blocked on audit, release
+provenance, durable stores, custody, and current-node validation.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 
@@ -111,7 +115,12 @@ npm run proof:live:check -- --config-file live-proof.env.example --write-report
 
 See [docs/live-testnet-proof.md](docs/live-testnet-proof.md) for the required live configuration and artifact paths.
 
-Security posture and mainnet caveats are documented in [docs/security-threat-model.md](docs/security-threat-model.md) and [docs/mainnet-readiness.md](docs/mainnet-readiness.md). Mainnet is not implied ready by the draft specs, package names, vectors, or live testnet proof, and reference runtimes require explicit `allowMainnet` opt-in.
+Security posture, review closure, and mainnet caveats are documented in
+[docs/security-threat-model.md](docs/security-threat-model.md),
+[docs/review-closure-ledger.md](docs/review-closure-ledger.md), and
+[docs/mainnet-readiness.md](docs/mainnet-readiness.md). Mainnet is not implied
+ready by the draft specs, package names, vectors, or live testnet proof, and
+reference runtimes require explicit `allowMainnet` opt-in.
 
 ## Package Scope
 

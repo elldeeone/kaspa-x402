@@ -15,6 +15,7 @@ import { stableStringify } from "./stable-json.js";
 import type {
   BatchRequirementsExtra,
   ChannelState,
+  JsonRecord,
   KaspaPaymentPayload,
   KaspaRequirementsExtra,
   PaymentIdentifierExtension,
@@ -82,7 +83,11 @@ export function validateChannelState(value: unknown): ValidationResult<ChannelSt
   return validateWithSchema<ChannelState>(SCHEMA_IDS.channelState, value, () => "invalid_kaspa_x402_payload");
 }
 
-export function validatePaymentIdentifierInfo(value: unknown): ValidationResult<PaymentIdentifierInfo> {
+export function validatePaymentIdentifierInfo(value: unknown, schema?: JsonRecord): ValidationResult<PaymentIdentifierInfo> {
+  if (schema) {
+    const advertised = validateWithInlineSchema<PaymentIdentifierInfo>(schema, value, () => "invalid_kaspa_payment_identifier");
+    if (!advertised.ok) return advertised;
+  }
   return validateWithSchema<PaymentIdentifierInfo>(SCHEMA_IDS.paymentIdentifier, value, () => "invalid_kaspa_payment_identifier");
 }
 
@@ -129,14 +134,17 @@ export function validatePaymentRetry(input: {
   const paymentIdentifier = readPaymentIdentifierExtension(required.value);
   if (!paymentIdentifier.ok) return paymentIdentifier;
   if (paymentIdentifier.present) {
-    const info = validatePaymentIdentifierInfo(paymentIdentifier.value.info);
+    const info = validatePaymentIdentifierInfo(paymentIdentifier.value.info, paymentIdentifier.value.schema);
     if (!info.ok) return info;
   }
 
   const payloadPaymentIdentifier = readPaymentIdentifierExtension(payload.value);
   if (!payloadPaymentIdentifier.ok) return payloadPaymentIdentifier;
   if (payloadPaymentIdentifier.present) {
-    const info = validatePaymentIdentifierInfo(payloadPaymentIdentifier.value.info);
+    const info = validatePaymentIdentifierInfo(
+      payloadPaymentIdentifier.value.info,
+      paymentIdentifier.present ? paymentIdentifier.value.schema : payloadPaymentIdentifier.value.schema,
+    );
     if (!info.ok) return info;
   }
 
@@ -145,6 +153,10 @@ export function validatePaymentRetry(input: {
 
   if (requiredInfo?.required === true && !payloadInfo?.id) {
     return fail("missing_kaspa_payment_identifier", "payment-identifier extension is required for this retry");
+  }
+  if (paymentIdentifier.present && payloadPaymentIdentifier.present) {
+    const echo = validatePaymentIdentifierEcho(paymentIdentifier.value, payloadPaymentIdentifier.value);
+    if (!echo.ok) return echo;
   }
 
   return ok({ paymentRequired: required.value, paymentPayload: payload.value });
@@ -185,6 +197,42 @@ function validateWithSchema<T>(
   }
 
   return fail(classify(value), `value failed ${schemaId}`, validate.errors);
+}
+
+function validateWithInlineSchema<T>(
+  schema: JsonRecord,
+  value: unknown,
+  classify: (value: unknown) => KaspaX402ErrorCode,
+): ValidationResult<T> {
+  let validate: ValidateFunction;
+  try {
+    validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
+  } catch (error) {
+    return fail(classify(value), "payment-identifier extension schema is invalid", error instanceof Error ? { message: error.message } : error);
+  }
+
+  if (validate(value)) {
+    return ok(value as T);
+  }
+
+  return fail(classify(value), "value failed advertised payment-identifier extension schema", validate.errors);
+}
+
+function validatePaymentIdentifierEcho(
+  advertised: PaymentIdentifierExtension,
+  echoed: PaymentIdentifierExtension,
+): ValidationResult<PaymentIdentifierExtension> {
+  if (stableStringify(echoed.schema) !== stableStringify(advertised.schema)) {
+    return fail("invalid_kaspa_payment_identifier", "payment-identifier extension schema must echo the advertised schema");
+  }
+
+  for (const [key, value] of Object.entries(advertised.info)) {
+    if (!Object.hasOwn(echoed.info, key) || stableStringify(echoed.info[key]) !== stableStringify(value)) {
+      return fail("invalid_kaspa_payment_identifier", "payment-identifier extension info must preserve advertised fields");
+    }
+  }
+
+  return ok(echoed);
 }
 
 function getSchema(schemaId: SchemaId): ValidateFunction {
