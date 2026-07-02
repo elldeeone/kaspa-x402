@@ -1,6 +1,8 @@
 node_modules/
 dist/
 coverage/
+site/dist/
+.wrangler/
 .env
 .env.*
 *.log

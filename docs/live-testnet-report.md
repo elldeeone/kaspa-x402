@@ -6,7 +6,7 @@ Generated: `2026-07-02T11:16:51.204Z`
 
 Network: `kaspa:testnet-10`
 
-Node: `10.0.3.26`, synced with UTXO index enabled.
+Node: private `kaspa:testnet-10` node, synced with UTXO index enabled.
 
 The live proof runner validated only the shipped exact and batch-settlement
 profiles.

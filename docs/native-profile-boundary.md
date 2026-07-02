@@ -14,13 +14,42 @@ the shipped compatibility contract until they can be expressed with native
 Kaspa validation and covered by the same level of schemas, vectors, tests, and
 live evidence.
 
-The upstream `upto` scheme is intentionally absent from the shipped surface. The
-current Kaspa script surface can enforce the server signature, authorization
-digest, cap, outpoint binding, output hashes, and refund path, but it cannot
-enforce a settlement-expiry upper bound from current chain time or current DAA
-score inside the spend path. Treating verifier-side expiry policy as a native
-covenant guarantee would overstate the on-chain security model, so the profile
-remains archived research until that guarantee is enforceable natively.
+## Absent Upstream Schemes
+
+Upstream x402 currently defines four schemes: `exact`, `upto`,
+`batch-settlement`, and `auth-capture`. This binding ships the first and
+third. The other two are absent for reviewable reasons, not oversight, and
+both share one technical constraint: UTXO-style script supports only
+lower-bound time locks, because a once-valid transaction must not become
+invalid. A settlement-expiry upper bound therefore cannot be a hard spend-path
+invalidation; it can only be expressed as a race in which a refund branch
+becomes spendable at the deadline and a late-settling counterparty can be
+beaten by the client's refund. Upstream batch-settlement already accepts this
+escape-hatch model for its timed withdrawal delay, which is why the shipped
+escrow profile is unaffected by the constraint.
+
+### upto
+
+Kaspa covenants can enforce every fund-safety property of a one-shot capped
+authorization on-chain: server signature, client authorization digest, charge
+cap, single-use outpoint binding, payout and refund output hashes, and a
+bounded fee reserve. Only the expiry bound degrades to the refund race
+described above. Upstream `upto`, however, currently defines its time-bound
+requirement only through hard contract-enforced deadlines. Shipping a
+race-based expiry under that scheme name would overstate the guarantee, so the
+profile remains archived research until upstream clarifies whether a
+client-refundable expiry satisfies `upto`'s time-bound requirement. If it
+does, the archived covenant and its consensus-validated artifacts are a viable
+basis for reintroduction.
+
+### auth-capture
+
+`auth-capture` maps naturally to Kaspa: the authorization is a funded covenant
+output — a real on-chain hold, stronger than an allowance-style hold — and
+capture is a bounded claim, with the same expiry-by-refund-race caveat as
+`upto`. It is absent for priority rather than feasibility: upstream currently
+has a single EVM binding and little adoption pressure, and any new profile
+must clear the full readiness bar below before it can ship.
 
 ## Boundary Rules
 
