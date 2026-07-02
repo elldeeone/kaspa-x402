@@ -40,7 +40,7 @@ The initial standard targets three first-class x402 schemes:
 
 Use `exact` for fixed-price one-shot purchases, `upto` for one-shot variable usage with a client-authorized cap, and `batch-settlement` for repeated micropayments backed by escrow/channel state.
 
-This repository is starting as a standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
+This repository is an alpha standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
 
 ## Current Status
 
@@ -55,7 +55,7 @@ The repository now contains the alpha reference implementation:
 - a `kaspa-x402` CLI for conformance vector verification and offline payment/channel inspection workflows;
 - runnable mock examples for paid HTTP, paid MCP tools, self-hosted facilitator settlement, and recovery scenarios.
 
-The current implementation focus is native transaction-builder adapters and live proof harnesses. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
+The current remaining implementation focus is native transaction-builder adapters, release hardening, and review feedback. Nonzero `upto` settlement is adapter-gated: the server requires an independent settlement transaction verifier, and native transaction-v1 fixtures remain a blocker before any built-in mainnet builder is considered complete.
 
 Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
 
