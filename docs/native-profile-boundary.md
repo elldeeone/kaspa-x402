@@ -14,6 +14,14 @@ the shipped compatibility contract until they can be expressed with native
 Kaspa validation and covered by the same level of schemas, vectors, tests, and
 live evidence.
 
+The upstream `upto` scheme is intentionally absent from the shipped surface. The
+current Kaspa script surface can enforce the server signature, authorization
+digest, cap, outpoint binding, output hashes, and refund path, but it cannot
+enforce a settlement-expiry upper bound from current chain time or current DAA
+score inside the spend path. Treating verifier-side expiry policy as a native
+covenant guarantee would overstate the on-chain security model, so the profile
+remains archived research until that guarantee is enforceable natively.
+
 ## Boundary Rules
 
 - Public schemas accept only `exact` and `batch-settlement`.
@@ -25,6 +33,13 @@ live evidence.
   transaction builders.
 - Client, server, facilitator, and CLI packages must not advertise or accept
   unsupported schemes.
+- The boundary is enforced at different points on the two sides of the wire:
+  servers emit only strict Kaspa envelopes, while clients parse incoming
+  `PaymentRequired` envelopes leniently, skip entries for other schemes,
+  networks, or assets during offer selection, and pay only entries that
+  validate as Kaspa requirements. A client fails an offer only when no
+  supported Kaspa entry remains, so mixed multi-rail envelopes from upstream
+  x402 servers stay consumable.
 - Documentation and examples must frame `kaspa:mainnet` as a reserved profile
   name, not a readiness claim.
 

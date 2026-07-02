@@ -225,28 +225,30 @@ export class DirectModeServer {
   async handlePaidRequest(request: PaidRequest, handler: ProtectedHandler): Promise<ServerResponse> {
     const resource = request.resource ?? { url: request.url };
     const paymentAmount = request.paymentAmount;
+    const requiredOptions = paymentRequirementRouteOptions(request);
+    const requestedScheme = verificationRequestedScheme(request);
     const paymentHeader = readHeader(request.headers, PAYMENT_SIGNATURE_HEADER);
     if (!paymentHeader) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
     }
 
     let paymentPayload: PaymentPayload;
     try {
       paymentPayload = await this.extractPayment(paymentHeader);
     } catch {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
     }
-    if (request.paymentScheme && paymentPayload.accepted.scheme !== request.paymentScheme) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+    if (!isPaymentSchemeAllowed(request, paymentPayload.accepted.scheme)) {
+      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
     }
 
     const paymentLockKey = safePaymentLockKey(paymentPayload);
     if (!paymentLockKey) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
     }
     const paymentIdentifier = readPaymentIdentifier(paymentPayload);
     if (this.#config.requirePaymentIdentifier && !paymentIdentifier) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
     }
 
     const lockManager = this.#config.lockManager ?? new MemoryChannelLockManager();
@@ -256,16 +258,16 @@ export class DirectModeServer {
       try {
         fingerprint = request.requestHash ?? fingerprintRequest(request, paymentPayload.accepted);
       } catch {
-        return this.#paymentRequiredResponse({ resource, amount: paymentAmount, scheme: request.paymentScheme });
+        return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
       }
       const cached = await this.#checkIdempotency(paymentIdentifier, fingerprint, safePaymentScopeIdHint(paymentPayload), paymentPayload);
       if (cached) return cached;
 
       let verified: VerifiedPayment;
       try {
-        verified = await this.#verifyPayment(paymentPayload, resource, fingerprint, paymentAmount, request.paymentScheme);
+        verified = await this.#verifyPayment(paymentPayload, resource, fingerprint, paymentAmount, requestedScheme);
       } catch (error) {
-        return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, request.paymentScheme);
+        return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, requestedScheme);
       }
       const runVerified = async () => {
         if (verified.scheme === "exact") {
@@ -299,7 +301,7 @@ export class DirectModeServer {
           }
         } catch (error) {
           await this.#preserveLiveDepositTransition(verified);
-          return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, request.paymentScheme);
+          return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, requestedScheme);
         }
 
         if (verified.scheme === "exact") {
@@ -1091,8 +1093,22 @@ export class DirectModeServer {
 }
 
 function makePaymentRequired(config: ResolvedServerConfig, options: BuildPaymentRequiredOptions): PaymentRequired {
-  if (options.scheme === "exact") {
-    const accepted: ExactPaymentRequirements = {
+  return {
+    x402Version: X402_VERSION,
+    resource: options.resource,
+    accepts: paymentRequirementSchemes(options).map((scheme) => makeAcceptedRequirement(config, options, scheme)),
+    ...(options.error ? { error: options.error } : {}),
+    ...requiredPaymentIdentifierExtensions(config),
+  };
+}
+
+function makeAcceptedRequirement(
+  config: ResolvedServerConfig,
+  options: BuildPaymentRequiredOptions,
+  scheme: "exact" | "batch-settlement",
+): ExactPaymentRequirements | BatchPaymentRequirements {
+  if (scheme === "exact") {
+    return {
       scheme: "exact",
       network: config.network,
       amount: options.amount ?? config.amount,
@@ -1104,16 +1120,9 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
         finality: config.acceptedFinality,
       },
     };
-    return {
-      x402Version: X402_VERSION,
-      resource: options.resource,
-      accepts: [accepted],
-      ...(options.error ? { error: options.error } : {}),
-      ...requiredPaymentIdentifierExtensions(config),
-    };
   }
 
-  const accepted: BatchPaymentRequirements = {
+  return {
     scheme: "batch-settlement",
     network: config.network,
     amount: options.amount ?? config.amount,
@@ -1131,13 +1140,26 @@ function makePaymentRequired(config: ResolvedServerConfig, options: BuildPayment
       ...(options.voucherState ? { voucherState: options.voucherState } : {}),
     },
   };
-  return {
-    x402Version: X402_VERSION,
-    resource: options.resource,
-    accepts: [accepted],
-    ...(options.error ? { error: options.error } : {}),
-    ...requiredPaymentIdentifierExtensions(config),
-  };
+}
+
+function paymentRequirementSchemes(options: BuildPaymentRequiredOptions): Array<"exact" | "batch-settlement"> {
+  const schemes = options.schemes && options.schemes.length > 0 ? options.schemes : [options.scheme ?? "batch-settlement"];
+  return [...new Set(schemes)];
+}
+
+function paymentRequirementRouteOptions(request: PaidRequest): Pick<BuildPaymentRequiredOptions, "scheme" | "schemes"> {
+  if (request.paymentSchemes !== undefined) return { schemes: request.paymentSchemes };
+  return { scheme: request.paymentScheme };
+}
+
+function verificationRequestedScheme(request: PaidRequest): "exact" | "batch-settlement" | undefined {
+  if (request.paymentSchemes !== undefined) return request.paymentSchemes.length === 1 ? request.paymentSchemes[0] : undefined;
+  return request.paymentScheme;
+}
+
+function isPaymentSchemeAllowed(request: PaidRequest, scheme: "exact" | "batch-settlement"): boolean {
+  if (request.paymentSchemes !== undefined) return request.paymentSchemes.includes(scheme);
+  return request.paymentScheme === undefined || request.paymentScheme === scheme;
 }
 
 function requiredPaymentIdentifierExtensions(config: Pick<ResolvedServerConfig, "requirePaymentIdentifier">): Pick<PaymentRequired, "extensions"> | Record<string, never> {

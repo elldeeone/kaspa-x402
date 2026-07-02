@@ -5,8 +5,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   X402_VERSION,
-  decodePaymentRequiredHeader,
+  decodePaymentRequiredEnvelopeHeader,
   decodePaymentSignatureHeader,
+  narrowPaymentRequiredEnvelope,
   parseSompiString,
   stableStringify,
   validatePaymentPayload,
@@ -286,7 +287,10 @@ function readPaymentPayload(parsed: ParsedArgs): PaymentPayload {
 
 function readPaymentRequiredForRetry(parsed: ParsedArgs, paymentPayload: PaymentPayload): PaymentRequired {
   if (typeof parsed.options["payment-required-header"] === "string") {
-    return decodePaymentRequiredHeader(parsed.options["payment-required-header"]);
+    const envelope = decodePaymentRequiredEnvelopeHeader(parsed.options["payment-required-header"]);
+    const narrowed = narrowPaymentRequiredEnvelope(envelope);
+    if (!narrowed.ok) throw narrowed.error;
+    return narrowed.value.paymentRequired;
   }
   const raw = readJsonInput(parsed, "requirements");
   const required = validatePaymentRequired(raw);

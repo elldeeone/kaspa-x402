@@ -12,6 +12,8 @@ Servers return HTTP `402 Payment Required` and place the x402 v2 `PaymentRequire
 PAYMENT-REQUIRED: base64(PaymentRequired)
 ```
 
+Clients must parse this header as an x402 v2 envelope and select a supported Kaspa entry from `accepts`, skipping entries for other schemes, networks, or assets instead of rejecting the whole envelope. Kaspa servers must emit only `exact` and `batch-settlement` entries defined by this binding.
+
 ## Payment Retry
 
 Clients retry with:

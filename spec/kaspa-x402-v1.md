@@ -22,10 +22,16 @@ batch-settlement   + kaspa:testnet-10
 ```
 
 Servers may advertise more than one option in `PaymentRequired.accepts`. Clients
-choose the entry they can satisfy. In the current alpha, `kaspa:testnet-10` is
-the testnet validation target and `kaspa:mainnet` is a reserved profile name
-that requires explicit runtime opt-in plus the mainnet gates in
-`docs/mainnet-readiness.md`.
+choose the entry they can satisfy. A `PaymentRequired.accepts` array from an
+upstream x402 server may also contain entries for schemes, networks, or assets
+outside this binding. Kaspa clients must not reject the envelope because such
+entries are present: they must skip entries that do not validate as Kaspa
+requirements during offer selection and fail with `invalid_kaspa_x402_accepted`
+only when no supported Kaspa entry remains. Kaspa servers, in contrast, must
+emit only entries defined by this binding. In the current alpha,
+`kaspa:testnet-10` is the testnet validation target and `kaspa:mainnet` is a
+reserved profile name that requires explicit runtime opt-in plus the mainnet
+gates in `docs/mainnet-readiness.md`.
 
 ## Scheme Selection
 

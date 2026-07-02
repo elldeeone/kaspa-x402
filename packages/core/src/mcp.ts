@@ -1,9 +1,17 @@
 import { X402_VERSION } from "./constants.js";
 import { KaspaX402Error } from "./errors.js";
 import { sha256Hex } from "./binary.js";
-import { validatePaymentPayload, validatePaymentRequired, validateSettlementResponse } from "./schema-validation.js";
+import { validatePaymentPayload, validatePaymentRequiredEnvelope, validateSettlementResponse } from "./schema-validation.js";
 import { stableStringify } from "./stable-json.js";
-import type { Hash32Hex, JsonRecord, PaymentPayload, PaymentRequired, PaymentRequirements, SettlementResponse } from "./types.js";
+import type {
+  Hash32Hex,
+  JsonRecord,
+  PaymentPayload,
+  PaymentRequired,
+  PaymentRequiredEnvelope,
+  PaymentRequirements,
+  SettlementResponse,
+} from "./types.js";
 
 export const MCP_PAYMENT_META_KEY = "x402/payment";
 export const MCP_PAYMENT_RESPONSE_META_KEY = "x402/payment-response";
@@ -84,7 +92,7 @@ export function mcpPaymentRequiredResult(paymentRequired: PaymentRequired): McpT
   };
 }
 
-export function readMcpPaymentRequired(result: McpToolResult): PaymentRequired | undefined {
+export function readMcpPaymentRequired(result: McpToolResult): PaymentRequiredEnvelope | undefined {
   if (result.isError !== true) return undefined;
   const structured = readPaymentRequiredCandidate(result.structuredContent);
   if (structured) return structured;
@@ -135,9 +143,9 @@ export function withMcpPaymentResponse(result: McpToolResult, settlement: Settle
   };
 }
 
-function readPaymentRequiredCandidate(value: unknown): PaymentRequired | undefined {
+function readPaymentRequiredCandidate(value: unknown): PaymentRequiredEnvelope | undefined {
   if (!isRecord(value) || value.x402Version !== X402_VERSION || !Array.isArray(value.accepts)) return undefined;
-  const result = validatePaymentRequired(value);
+  const result = validatePaymentRequiredEnvelope(value);
   if (!result.ok) throw result.error;
   return result.value;
 }

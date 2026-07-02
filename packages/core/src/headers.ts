@@ -1,7 +1,12 @@
 import { KaspaX402Error } from "./errors.js";
 import { stableStringify } from "./stable-json.js";
-import type { PaymentPayload, PaymentRequired, SettlementResponse } from "./types.js";
-import { validatePaymentPayload, validatePaymentRequired, validateSettlementResponse } from "./schema-validation.js";
+import type { PaymentPayload, PaymentRequired, PaymentRequiredEnvelope, SettlementResponse } from "./types.js";
+import {
+  validatePaymentPayload,
+  validatePaymentRequired,
+  validatePaymentRequiredEnvelope,
+  validateSettlementResponse,
+} from "./schema-validation.js";
 
 export function encodePaymentRequiredHeader(value: PaymentRequired): string {
   return encodeHeader(value, validatePaymentRequired);
@@ -9,6 +14,14 @@ export function encodePaymentRequiredHeader(value: PaymentRequired): string {
 
 export function decodePaymentRequiredHeader(value: string): PaymentRequired {
   return decodeHeader(value, validatePaymentRequired);
+}
+
+export function encodePaymentRequiredEnvelopeHeader(value: PaymentRequiredEnvelope): string {
+  return encodeHeader(value, validatePaymentRequiredEnvelope);
+}
+
+export function decodePaymentRequiredEnvelopeHeader(value: string): PaymentRequiredEnvelope {
+  return decodeHeader(value, validatePaymentRequiredEnvelope);
 }
 
 export function encodePaymentSignatureHeader(value: PaymentPayload): string {

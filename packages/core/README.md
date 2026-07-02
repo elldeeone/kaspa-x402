@@ -1,6 +1,6 @@
 # @kaspa-x402/core
 
-Transport-neutral types, codecs, canonical encoders, scheme selection, channel IDs, authorization digests, voucher digest helpers, MCP transport primitives, and facilitator wire types.
+Transport-neutral types, codecs, canonical encoders, scheme selection, channel IDs, voucher digest helpers, MCP transport primitives, and facilitator wire types.
 
 Status: alpha. This package is part of a testnet-oriented reference
 implementation and does not imply mainnet readiness.

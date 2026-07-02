@@ -331,6 +331,7 @@ export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;
   amount?: SompiString;
   scheme?: "exact" | "batch-settlement";
+  schemes?: readonly ("exact" | "batch-settlement")[];
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
   error?: string;
@@ -360,6 +361,7 @@ export interface PaidRequest {
   resource?: ResourceInfo;
   paymentAmount?: SompiString;
   paymentScheme?: "exact" | "batch-settlement";
+  paymentSchemes?: readonly ("exact" | "batch-settlement")[];
   requestHash?: Hash32Hex;
 }
 

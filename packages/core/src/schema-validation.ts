@@ -9,7 +9,7 @@ import paymentPayloadSchema from "../../../schemas/payment-payload.schema.json";
 import paymentRequiredSchema from "../../../schemas/payment-required.schema.json";
 import settlementResponseSchema from "../../../schemas/settlement-response.schema.json";
 
-import { HASH32_PATTERN, SIGNATURE64_PATTERN, U32_MAX, U64_DECIMAL_PATTERN } from "./constants.js";
+import { HASH32_PATTERN, SIGNATURE64_PATTERN, U32_MAX, U64_DECIMAL_PATTERN, X402_VERSION } from "./constants.js";
 import { KaspaX402Error, fail, ok, type KaspaX402ErrorCode, type ValidationResult } from "./errors.js";
 import { stableStringify } from "./stable-json.js";
 import type {
@@ -23,6 +23,8 @@ import type {
   PaymentIdentifierObservation,
   PaymentPayload,
   PaymentRequired,
+  PaymentRequiredEnvelope,
+  PaymentRequirements,
   SettlementResponse,
 } from "./types.js";
 
@@ -55,8 +57,65 @@ for (const schema of schemaEntries) {
   ajv.addSchema(schema);
 }
 
+const PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID = "https://kaspa-x402.org/schemas/internal/payment-requirements-entry.schema.json";
+ajv.addSchema({
+  $id: PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID,
+  $ref: `${SCHEMA_IDS.paymentRequired}#/$defs/paymentRequirements`,
+});
+
 export function validatePaymentRequired(value: unknown): ValidationResult<PaymentRequired> {
   return validateWithSchema<PaymentRequired>(SCHEMA_IDS.paymentRequired, value, classifyPaymentRequired);
+}
+
+export function validateKaspaPaymentRequirement(value: unknown): ValidationResult<PaymentRequirements> {
+  return validateWithSchema<PaymentRequirements>(PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID, value, (entry) =>
+    classifyRequirementEntry(asRecord(entry)),
+  );
+}
+
+export function validatePaymentRequiredEnvelope(value: unknown): ValidationResult<PaymentRequiredEnvelope> {
+  const record = asRecord(value);
+  if (!record) return fail("invalid_kaspa_x402_payload", "PaymentRequired must be a JSON object");
+  if (record.x402Version !== X402_VERSION) return fail("invalid_kaspa_x402_version", "PaymentRequired must use x402Version 2");
+  const resource = asRecord(record.resource);
+  if (!resource || typeof resource.url !== "string" || resource.url.length === 0) {
+    return fail("invalid_kaspa_x402_payload", "PaymentRequired.resource must include a url");
+  }
+  if (!Array.isArray(record.accepts) || record.accepts.length === 0 || !record.accepts.every((entry) => asRecord(entry) !== undefined)) {
+    return fail("invalid_kaspa_x402_payload", "PaymentRequired.accepts must be a non-empty array of objects");
+  }
+  if (record.error !== undefined && typeof record.error !== "string") {
+    return fail("invalid_kaspa_x402_payload", "PaymentRequired.error must be a string");
+  }
+  if (record.extensions !== undefined && !asRecord(record.extensions)) {
+    return fail("invalid_kaspa_x402_payload", "PaymentRequired.extensions must be an object");
+  }
+  return ok(record as PaymentRequiredEnvelope);
+}
+
+export interface NarrowedPaymentRequired {
+  paymentRequired: PaymentRequired;
+  skippedAccepts: JsonRecord[];
+}
+
+export function narrowPaymentRequiredEnvelope(value: unknown): ValidationResult<NarrowedPaymentRequired> {
+  const envelope = validatePaymentRequiredEnvelope(value);
+  if (!envelope.ok) return envelope;
+
+  const accepts: PaymentRequirements[] = [];
+  const skippedAccepts: JsonRecord[] = [];
+  for (const entry of envelope.value.accepts) {
+    const requirement = validateKaspaPaymentRequirement(entry);
+    if (requirement.ok) accepts.push(requirement.value);
+    else skippedAccepts.push(entry);
+  }
+  if (accepts.length === 0) {
+    return fail("invalid_kaspa_x402_accepted", "no supported Kaspa x402 requirement was offered");
+  }
+
+  const narrowed = validatePaymentRequired({ ...envelope.value, accepts });
+  if (!narrowed.ok) return narrowed;
+  return ok({ paymentRequired: narrowed.value, skippedAccepts });
 }
 
 export function validatePaymentPayload(value: unknown): ValidationResult<PaymentPayload> {
@@ -187,7 +246,7 @@ export function validatePaymentIdentifierReuse(
 }
 
 function validateWithSchema<T>(
-  schemaId: SchemaId,
+  schemaId: SchemaId | typeof PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID,
   value: unknown,
   classify: (value: unknown) => KaspaX402ErrorCode,
 ): ValidationResult<T> {
@@ -235,7 +294,7 @@ function validatePaymentIdentifierEcho(
   return ok(echoed);
 }
 
-function getSchema(schemaId: SchemaId): ValidateFunction {
+function getSchema(schemaId: SchemaId | typeof PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID): ValidateFunction {
   const validate = ajv.getSchema(schemaId);
   if (!validate) {
     throw new Error(`schema not loaded: ${schemaId}`);
@@ -249,17 +308,21 @@ function classifyPaymentRequired(value: unknown): KaspaX402ErrorCode {
   const firstRequirement = Array.isArray(requirement) ? asRecord(requirement[0]) : undefined;
 
   if (asRecord(value)?.x402Version !== 2) return "invalid_kaspa_x402_version";
-  if (!firstRequirement || !["exact", "batch-settlement"].includes(String(firstRequirement.scheme))) {
+  return classifyRequirementEntry(firstRequirement);
+}
+
+function classifyRequirementEntry(entry: Record<string, unknown> | undefined): KaspaX402ErrorCode {
+  if (!entry || !["exact", "batch-settlement"].includes(String(entry.scheme))) {
     return "invalid_kaspa_x402_scheme";
   }
-  if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(String(firstRequirement.network))) return "invalid_kaspa_x402_network";
-  if (firstRequirement.asset !== "KAS") return "invalid_kaspa_x402_asset";
-  if (typeof firstRequirement.amount !== "string" || !U64_DECIMAL_PATTERN.test(firstRequirement.amount)) {
+  if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(String(entry.network))) return "invalid_kaspa_x402_network";
+  if (entry.asset !== "KAS") return "invalid_kaspa_x402_asset";
+  if (typeof entry.amount !== "string" || !U64_DECIMAL_PATTERN.test(entry.amount)) {
     return "invalid_kaspa_x402_amount";
   }
 
-  const extra = asRecord(firstRequirement.extra);
-  if (extra?.binding !== expectedBindingForScheme(String(firstRequirement.scheme))) return "invalid_kaspa_x402_binding";
+  const extra = asRecord(entry.extra);
+  if (extra?.binding !== expectedBindingForScheme(String(entry.scheme))) return "invalid_kaspa_x402_binding";
 
   return "invalid_kaspa_x402_payload";
 }

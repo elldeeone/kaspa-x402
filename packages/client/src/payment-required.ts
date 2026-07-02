@@ -1,12 +1,14 @@
 import {
   X402_VERSION,
-  decodePaymentRequiredHeader,
+  decodePaymentRequiredEnvelopeHeader,
+  narrowPaymentRequiredEnvelope,
   parseSompiString,
   type BatchPaymentRequirements,
   type ExactPaymentRequirements,
   type NetworkId,
   type PaymentRequirements,
   type PaymentRequired,
+  type PaymentRequiredEnvelope,
   type PaymentScheme,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
@@ -21,18 +23,19 @@ const DEFAULT_SUPPORTED_NETWORKS: readonly NetworkId[] = ["kaspa:testnet-10"];
 const DEFAULT_SUPPORTED_SCHEMES: readonly PaymentScheme[] = ["exact", "batch-settlement"];
 
 export function parsePaymentRequiredHeaderValue(header: string, options: ParsePaymentRequiredOptions = {}): ParsedPaymentRequired {
-  const paymentRequired = decodePaymentRequiredHeader(header);
+  const paymentRequired = decodePaymentRequiredEnvelopeHeader(header);
   return selectPaymentRequirement(paymentRequired, options);
 }
 
-export function selectPaymentRequirement(paymentRequired: PaymentRequired, options: ParsePaymentRequiredOptions = {}): ParsedPaymentRequired {
-  if (paymentRequired.x402Version !== X402_VERSION) {
-    throw new KaspaX402Error("invalid_kaspa_x402_version", "only x402 v2 payment requirements are supported");
-  }
+export function selectPaymentRequirement(
+  paymentRequired: PaymentRequired | PaymentRequiredEnvelope,
+  options: ParsePaymentRequiredOptions = {},
+): ParsedPaymentRequired {
+  const narrowed = narrowKaspaPaymentRequired(paymentRequired);
 
   const supportedNetworks = options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
   const supportedSchemes = options.supportedSchemes ?? DEFAULT_SUPPORTED_SCHEMES;
-  const accepted = paymentRequired.accepts.find((requirement): requirement is ExactPaymentRequirements | BatchPaymentRequirements => {
+  const accepted = narrowed.accepts.find((requirement): requirement is ExactPaymentRequirements | BatchPaymentRequirements => {
     return (
       supportedNetworks.includes(requirement.network) &&
       supportedSchemes.includes(requirement.scheme) &&
@@ -47,21 +50,19 @@ export function selectPaymentRequirement(paymentRequired: PaymentRequired, optio
   validateSupportedRequirement(accepted);
 
   return {
-    paymentRequired,
+    paymentRequired: narrowed,
     accepted,
   };
 }
 
 export function selectBatchPaymentRequired(
-  paymentRequired: PaymentRequired,
+  paymentRequired: PaymentRequired | PaymentRequiredEnvelope,
   options: ParsePaymentRequiredOptions = {},
 ): ParsedPaymentRequired {
-  if (paymentRequired.x402Version !== X402_VERSION) {
-    throw new KaspaX402Error("invalid_kaspa_x402_version", "only x402 v2 payment requirements are supported");
-  }
+  const narrowed = narrowKaspaPaymentRequired(paymentRequired);
 
   const supportedNetworks = options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
-  const accepted = paymentRequired.accepts.find((requirement): requirement is BatchPaymentRequirements => {
+  const accepted = narrowed.accepts.find((requirement): requirement is BatchPaymentRequirements => {
     return (
       requirement.scheme === "batch-settlement" &&
       supportedNetworks.includes(requirement.network) &&
@@ -80,9 +81,19 @@ export function selectBatchPaymentRequired(
   parseSompiString(accepted.extra.refundTimeoutDaa);
 
   return {
-    paymentRequired,
+    paymentRequired: narrowed,
     accepted,
   };
+}
+
+function narrowKaspaPaymentRequired(paymentRequired: PaymentRequired | PaymentRequiredEnvelope): PaymentRequired {
+  if (paymentRequired.x402Version !== X402_VERSION) {
+    throw new KaspaX402Error("invalid_kaspa_x402_version", "only x402 v2 payment requirements are supported");
+  }
+
+  const narrowed = narrowPaymentRequiredEnvelope(paymentRequired);
+  if (!narrowed.ok) throw narrowed.error;
+  return narrowed.value.paymentRequired;
 }
 
 function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirement is ExactPaymentRequirements | BatchPaymentRequirements {

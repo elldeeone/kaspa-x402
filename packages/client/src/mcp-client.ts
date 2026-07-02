@@ -1,5 +1,5 @@
 import {
-  encodePaymentRequiredHeader,
+  encodePaymentRequiredEnvelopeHeader,
   mcpToolCallFingerprint,
   readMcpPaymentRequired,
   readMcpPaymentResponse,
@@ -40,7 +40,7 @@ export async function paidMcpToolCall(
 
   const maxPaymentRetries = options.maxPaymentRetries ?? 2;
   for (let attempt = 0; attempt <= maxPaymentRetries; attempt += 1) {
-    const header = encodePaymentRequiredHeader(paymentRequired);
+    const header = encodePaymentRequiredEnvelopeHeader(paymentRequired);
     const parsed = parsePaymentRequiredHeaderValue(header, {
       supportedNetworks: client.supportedNetworks(),
       supportedSchemes: client.supportedSchemes(),

@@ -66,6 +66,14 @@ export interface PaymentRequired extends JsonRecord {
   extensions?: PaymentExtensions;
 }
 
+export interface PaymentRequiredEnvelope extends JsonRecord {
+  x402Version: typeof X402_VERSION;
+  resource: ResourceInfo;
+  accepts: JsonRecord[];
+  error?: string;
+  extensions?: JsonRecord;
+}
+
 export interface PaymentPayload extends JsonRecord {
   x402Version: typeof X402_VERSION;
   accepted: PaymentRequirements;

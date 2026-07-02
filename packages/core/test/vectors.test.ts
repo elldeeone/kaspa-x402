@@ -4,9 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  decodePaymentRequiredEnvelopeHeader,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   decodePaymentSignatureHeader,
+  encodePaymentRequiredEnvelopeHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
@@ -14,9 +16,11 @@ import {
   isDecimalSompi,
   isKaspaX402Network,
   mcpPaymentRequiredResult,
+  narrowPaymentRequiredEnvelope,
   paymentIdentifierExtension,
   parseSompiString,
   readMcpPaymentRequired,
+  validateKaspaPaymentRequirement,
   validatePaymentIdentifierReuse,
   validatePaymentRetry,
   validateSchemaById,
@@ -90,6 +94,32 @@ type NegativeVector =
 
 function readJson<T>(relativePath: string): T {
   return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8")) as T;
+}
+
+function foreignEvmEntry(): Record<string, unknown> {
+  return {
+    scheme: "exact",
+    network: "eip155:8453",
+    amount: "1000",
+    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    payTo: "0x0000000000000000000000000000000000000001",
+    maxTimeoutSeconds: 60,
+    extra: {},
+  };
+}
+
+function foreignUptoEntry(): Record<string, unknown> {
+  return {
+    scheme: "upto",
+    network: "kaspa:testnet-10",
+    amount: "1000",
+    asset: "KAS",
+    payTo: "kaspatest:payout",
+    maxTimeoutSeconds: 60,
+    extra: {
+      binding: "kaspa-upto-v1",
+    },
+  };
 }
 
 function listJson(relativeDir: string): string[] {
@@ -198,6 +228,59 @@ describe("x402 HTTP vectors", () => {
       }),
     ).toThrow("JSON-serializable");
   });
+
+  it("accepts mixed exact and batch-settlement offers in one envelope", () => {
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const batch = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const paymentRequired: PaymentRequired = {
+      ...exact.paymentRequired,
+      accepts: [exact.paymentRequired.accepts[0]!, batch.paymentRequired.accepts[0]!],
+    };
+
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", paymentRequired).ok).toBe(true);
+    expect(decodePaymentRequiredHeader(encodePaymentRequiredHeader(paymentRequired))).toEqual(paymentRequired);
+    expect(validatePaymentRetry({ paymentRequired, paymentPayload: exact.paymentPayload }).ok).toBe(true);
+    expect(validatePaymentRetry({ paymentRequired, paymentPayload: batch.paymentPayload }).ok).toBe(true);
+  });
+
+  it("narrows envelopes that mix Kaspa entries with entries from other schemes or networks", () => {
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const kaspaEntry = exact.paymentRequired.accepts[0]!;
+    const envelope = {
+      ...exact.paymentRequired,
+      accepts: [foreignEvmEntry(), kaspaEntry, foreignUptoEntry()],
+    };
+
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", envelope).ok).toBe(false);
+
+    const decoded = decodePaymentRequiredEnvelopeHeader(encodePaymentRequiredEnvelopeHeader(envelope));
+    const narrowed = narrowPaymentRequiredEnvelope(decoded);
+    expect(narrowed.ok).toBe(true);
+    if (!narrowed.ok) return;
+    expect(narrowed.value.paymentRequired.accepts).toEqual([kaspaEntry]);
+    expect(narrowed.value.skippedAccepts).toHaveLength(2);
+    expect(validatePaymentRetry({ paymentRequired: narrowed.value.paymentRequired, paymentPayload: exact.paymentPayload }).ok).toBe(true);
+  });
+
+  it("rejects envelopes without any Kaspa entry instead of narrowing to an empty offer", () => {
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const envelope = {
+      ...exact.paymentRequired,
+      accepts: [foreignEvmEntry(), foreignUptoEntry()],
+    };
+
+    const narrowed = narrowPaymentRequiredEnvelope(envelope);
+    expect(narrowed.ok).toBe(false);
+    if (narrowed.ok) return;
+    expect(narrowed.error.code).toBe("invalid_kaspa_x402_accepted");
+  });
+
+  it("keeps single Kaspa requirement validation strict for narrowed entries", () => {
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    expect(validateKaspaPaymentRequirement(exact.paymentRequired.accepts[0]).ok).toBe(true);
+    expect(validateKaspaPaymentRequirement(foreignEvmEntry()).ok).toBe(false);
+    expect(validateKaspaPaymentRequirement(foreignUptoEntry()).ok).toBe(false);
+  });
 });
 
 describe("MCP helpers", () => {
@@ -210,6 +293,28 @@ describe("MCP helpers", () => {
     expect(readMcpPaymentRequired(challenge)?.accepts[0]).toEqual(vector.paymentRequired.accepts[0]);
     expect(readMcpPaymentRequired({ ...challenge, isError: false })).toBeUndefined();
     expect(readMcpPaymentRequired({ structuredContent: challenge.structuredContent, content: challenge.content })).toBeUndefined();
+  });
+
+  it("reads mixed challenges from upstream servers without rejecting the envelope", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const kaspaEntry = vector.paymentRequired.accepts[0]!;
+    const mixed = {
+      ...vector.paymentRequired,
+      accepts: [foreignEvmEntry(), kaspaEntry, foreignUptoEntry()],
+    };
+    const challenge = {
+      isError: true,
+      structuredContent: mixed,
+      content: [{ type: "text" as const, text: JSON.stringify(mixed) }],
+    };
+
+    const envelope = readMcpPaymentRequired(challenge);
+    expect(envelope?.accepts).toHaveLength(3);
+
+    const narrowed = narrowPaymentRequiredEnvelope(envelope);
+    expect(narrowed.ok).toBe(true);
+    if (!narrowed.ok) return;
+    expect(narrowed.value.paymentRequired.accepts).toEqual([kaspaEntry]);
   });
 });
 

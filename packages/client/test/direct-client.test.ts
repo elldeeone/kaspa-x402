@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MCP_PAYMENT_RESPONSE_META_KEY,
   X402_VERSION,
+  encodePaymentRequiredEnvelopeHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   kaspaSettlementExtensions,
@@ -189,6 +190,47 @@ describe("direct-mode client", () => {
     expect(payment.paymentPayload.payload.type).toBe("deposit-voucher");
     expect(provider.deposits).toHaveLength(1);
     expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("selects the supported Kaspa entry from an envelope with foreign scheme and network entries", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const kaspaEntry = makeExactRequired({ amount: "250" }).accepts[0]!;
+    const header = encodePaymentRequiredEnvelopeHeader({
+      x402Version: X402_VERSION,
+      resource: {
+        url: "https://api.example.test/file",
+      },
+      accepts: [foreignEvmEntry(), foreignUptoEntry(), kaspaEntry],
+    });
+
+    const payment = await client.createPayment(header, {
+      url: "https://api.example.test/file",
+      requestHash: "99".repeat(32),
+    });
+
+    expect(payment.scheme).toBe("exact");
+    expect(payment.accepted).toEqual(kaspaEntry);
+    expect(payment.paymentRequired.accepts).toEqual([kaspaEntry]);
+    expect(payment.paymentPayload.payload.type).toBe("exact-transfer");
+  });
+
+  it("rejects envelopes that offer no supported Kaspa entry", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const header = encodePaymentRequiredEnvelopeHeader({
+      x402Version: X402_VERSION,
+      resource: {
+        url: "https://api.example.test/file",
+      },
+      accepts: [foreignEvmEntry(), foreignUptoEntry()],
+    });
+
+    await expect(
+      client.createPayment(header, {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_kaspa_x402_accepted" });
   });
 
   it("applies successful exact settlement without channel state", async () => {
@@ -992,6 +1034,32 @@ function makeMixedRequired(input: { amount: string }): PaymentRequired {
       url: "https://api.example.test/file",
     },
     accepts: [makeExactRequired(input).accepts[0], makeRequired(input).accepts[0]],
+  };
+}
+
+function foreignEvmEntry(): Record<string, unknown> {
+  return {
+    scheme: "exact",
+    network: "eip155:8453",
+    amount: "1000",
+    asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+    payTo: "0x0000000000000000000000000000000000000001",
+    maxTimeoutSeconds: 60,
+    extra: {},
+  };
+}
+
+function foreignUptoEntry(): Record<string, unknown> {
+  return {
+    scheme: "upto",
+    network: "kaspa:testnet-10",
+    amount: "1000",
+    asset: "KAS",
+    payTo: "kaspatest:payout",
+    maxTimeoutSeconds: 60,
+    extra: {
+      binding: "kaspa-upto-v1",
+    },
   };
 }
 

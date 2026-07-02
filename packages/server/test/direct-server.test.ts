@@ -93,6 +93,21 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
   });
 
+  it("can advertise exact and batch-settlement requirements from one route", async () => {
+    const { server } = makeServer({ amount: "100" });
+
+    const response = await server.handlePaidRequest({ url: RESOURCE.url, paymentAmount: "75", paymentSchemes: ["exact", "batch-settlement"] }, async () => ({
+      body: "secret",
+    }));
+
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts.map((requirement) => requirement.scheme)).toEqual(["exact", "batch-settlement"]);
+    expect(required.accepts.map((requirement) => requirement.amount)).toEqual(["75", "75"]);
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
+    expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v1");
+  });
+
   it("returns MCP payment requirements for unpaid tool calls", async () => {
     const setup = makeServer({ amount: "100" });
     let executed = false;
@@ -223,6 +238,21 @@ describe("direct-mode server", () => {
     expect(stored?.amount).toBe("100");
     expect(stored?.paymentOutputIndex).toBe(1);
     expect(stored?.response.status).toBe(200);
+  });
+
+  it("accepts an exact transfer selected from a mixed route", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup);
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentSchemes: ["exact", "batch-settlement"] }), async () => ({
+      body: "secret",
+    }));
+
+    expect(response.status).toBe(200);
+    const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(settlement.success).toBe(true);
+    expect(settlement.transaction).toBe(EXACT_TX_ID);
+    expect(settlement.amount).toBe("100");
   });
 
   it("rejects batch payments submitted to exact routes", async () => {
@@ -1591,7 +1621,13 @@ function makeVoucherPayment(
 
 function requestWithPayment(
   paymentPayload: PaymentPayload,
-  options: { requestHash?: Hash32Hex; paymentAmount?: string; paymentScheme?: "exact" | "batch-settlement"; body?: unknown } = {},
+  options: {
+    requestHash?: Hash32Hex;
+    paymentAmount?: string;
+    paymentScheme?: "exact" | "batch-settlement";
+    paymentSchemes?: readonly ("exact" | "batch-settlement")[];
+    body?: unknown;
+  } = {},
 ) {
   return {
     url: RESOURCE.url,
@@ -1599,6 +1635,7 @@ function requestWithPayment(
     body: options.body,
     paymentAmount: options.paymentAmount,
     paymentScheme: options.paymentScheme,
+    paymentSchemes: options.paymentSchemes,
     requestHash: options.requestHash,
     headers: {
       [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),

@@ -18,6 +18,8 @@ structuredContent = PaymentRequired
 content[0].text = JSON.stringify(PaymentRequired)
 ```
 
+Clients must treat the challenge as an x402 v2 envelope and select a supported Kaspa entry from `accepts`, skipping entries for other schemes, networks, or assets instead of rejecting the whole challenge. Kaspa MCP servers must emit only `exact` and `batch-settlement` entries defined by this binding.
+
 ## Payment Retry
 
 The client retries the tool call with:
@@ -37,6 +39,8 @@ result._meta["x402/payment-response"] = SettlementResponse
 Servers should require the `payment-identifier` extension for idempotent agent retries.
 
 If settlement fails after tool execution, the server must not include the paid tool result in `content` or `structuredContent`. It should return an error result with the failed `SettlementResponse` in `_meta["x402/payment-response"]`.
+
+This is an intentional Kaspa MCP transport deviation from the upstream MCP settlement-failure shape, which reuses `PaymentRequired` in `structuredContent`. Kaspa keeps the failed `SettlementResponse` in `_meta` so clients can inspect the settlement `success`, `errorReason`, network, amount, and Kaspa extension fields without treating the protected tool result as paid content.
 
 ## Tool-Call Fingerprint
 
