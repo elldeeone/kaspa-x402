@@ -1,5 +1,7 @@
 import {
   isFacilitatorRequest,
+  isKaspaX402Network,
+  assertMainnetAllowed,
   toX402ErrorReason,
   validatePaymentRetry,
   type FacilitatorRequest,
@@ -22,6 +24,7 @@ export interface FacilitatorConfig {
   signers?: Record<string, string[]>;
   claimSettler?: FacilitatorActionSettler;
   refundSettler?: FacilitatorActionSettler;
+  allowMainnet?: boolean;
 }
 
 export interface FacilitatorActionContext {
@@ -50,6 +53,9 @@ export class DirectModeFacilitator {
   readonly #config: FacilitatorConfig;
 
   constructor(config: FacilitatorConfig) {
+    for (const kind of [...config.server.supportedKinds(), ...(config.supportedKinds ?? [])]) {
+      assertMainnetAllowed(kind.network, config.allowMainnet, "DirectModeFacilitator");
+    }
     this.#config = config;
   }
 
@@ -210,9 +216,9 @@ function paymentPayloadType(request: FacilitatorRequest): string | undefined {
   return typeof payload.type === "string" ? payload.type : undefined;
 }
 
-function networkFromRequest(request: FacilitatorRequest): string {
+function networkFromRequest(request: FacilitatorRequest): string | undefined {
   const network = request.paymentRequirements.network;
-  return typeof network === "string" ? network : "kaspa:testnet-10";
+  return typeof network === "string" ? network : undefined;
 }
 
 function validateActionRequest(request: FacilitatorRequest): string | undefined {
@@ -234,12 +240,12 @@ function invalidVerify(invalidReason: string): VerifyResponse {
   };
 }
 
-function invalidSettlement(errorReason: string, network = "kaspa:testnet-10"): SettlementResponse {
+function invalidSettlement(errorReason: string, network?: string): SettlementResponse {
   return {
     success: false,
     errorReason: toX402ErrorReason(errorReason),
     transaction: "",
-    network: network === "kaspa:mainnet" ? "kaspa:mainnet" : "kaspa:testnet-10",
+    ...(network && isKaspaX402Network(network) ? { network } : {}),
   };
 }
 

@@ -5,6 +5,10 @@ Status: not mainnet-ready.
 This repository defines draft Kaspa x402 bindings and a reference implementation. It has deterministic vectors, offline proof, and a live testnet proof, but those artifacts do not authorize production mainnet use.
 
 Mainnet support must remain opt-in, explicitly configured, and blocked by the gates below.
+The reference server and facilitator constructors fail closed for
+`kaspa:mainnet` unless `allowMainnet: true` is explicitly configured. The
+reference client fails closed for mainnet funding providers and configured
+mainnet offer selection; its default offer selector accepts testnet only.
 
 ## Required Audits
 
@@ -117,6 +121,7 @@ At minimum:
 - Live proof evidence is testnet-only.
 - The local live adapter is intentionally outside the public package boundary.
 - In-memory stores are examples only and are not production durable stores.
+- Production server stores must satisfy `docs/server-store-contract.md`.
 - Hot-wallet mode is a development convenience, not a custody recommendation.
 - Facilitator authentication and tenant isolation are not provided by the reference package.
 - Fee policy, dust policy, and finality policy need operator-specific configuration.

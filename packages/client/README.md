@@ -17,4 +17,8 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
 - detects MCP payment-required tool results, retries with `_meta["x402/payment"]`, and applies `_meta["x402/payment-response"]`;
 - exposes refund eligibility and adapter-driven refund broadcast hooks.
 
+Mainnet funding fails closed unless `allowMainnet: true` is set. The default
+offer selector accepts only `kaspa:testnet-10`; operators that opt into mainnet
+must provide explicit funding, signer, node, custody, and review controls.
+
 Wallet, node, address-codec, and transaction-builder behavior is injected through typed adapters. Amounts on the wire remain decimal sompi strings.

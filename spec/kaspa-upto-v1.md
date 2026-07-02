@@ -68,7 +68,7 @@ kaspa:testnet-10
 | `extra.binding` | yes | Must equal `"kaspa-upto-v1"`. |
 | `extra.authorizationTemplateId` | yes | Must equal `"kaspa-x402-upto-v1"` for the v0.1 covenant-backed profile. |
 | `extra.serverPublicKey` | yes | Server key allowed to settle the one-shot authorization. |
-| `extra.authorizationTimeoutDaa` | yes | DAA score after which the authorization must not be settled. |
+| `extra.authorizationTimeoutDaa` | yes | Absolute DAA score after which this specific authorization offer must not be settled. |
 | `extra.settlementFeeReserveSompi` | yes | Signed maximum fee reserve for nonzero settlement. |
 | `extra.finality` | no | One of `"accepted"` or `"confirmed"`. If absent, default is `"accepted"`. |
 
@@ -76,6 +76,12 @@ x402 `upto` has phase-dependent amount semantics:
 
 - during `verify`, `PaymentRequirements.amount` is the maximum amount the client authorizes;
 - during `settle`, `PaymentRequirements.amount` is the actual amount to charge, and it must be less than or equal to the signed maximum.
+
+`authorizationTimeoutDaa` is an absolute value on the wire. Server operators
+should normally derive it from a relative per-offer policy, such as "current
+virtual DAA score plus N", and enforce a maximum window cap when verifying
+retries. Clients must copy the offered absolute value into `validBeforeDaa`;
+they must not extend it locally.
 
 ## Lifecycle
 
@@ -197,7 +203,7 @@ Verification must reject with the relevant error code if:
 - signed `serverPublicKey` does not equal `extra.serverPublicKey`;
 - signed fee reserve does not equal `extra.settlementFeeReserveSompi`;
 - signed payout or refund script public key hashes do not match `payTo` and `refundAddress`;
-- the authorization is not active, is expired, or exceeds `extra.authorizationTimeoutDaa`;
+- the authorization is not active, is expired, exceeds `extra.authorizationTimeoutDaa`, or exceeds the server's configured maximum authorization window;
 - the authorization outpoint or nonce was already consumed;
 - the authorization UTXO is missing and no valid funding transaction is provided;
 - the authorization UTXO does not pay to the expected script public key;
@@ -314,6 +320,11 @@ Failure response:
   "payer": "kaspatest:..."
 }
 ```
+
+Failure responses may include `network` only when the implementation can echo a
+valid canonical request network. Invalid, malformed, or unknown network failures
+must not synthesize a fallback network. Pending settlement responses are
+network-bound and must include `network`.
 
 `amount` is the actual settled amount on success. It may be lower than the verify-time maximum.
 

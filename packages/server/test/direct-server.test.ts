@@ -37,6 +37,7 @@ import {
   type ChainUtxo,
   type ClaimAttemptRecord,
   type DirectModeServerConfig,
+  type ExactSettlementCommit,
   type ServerChainProvider,
   type ServerChannelRecord,
   type ServerChannelStore,
@@ -77,6 +78,13 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.amount).toBe("75");
   });
 
+  it("rejects mainnet server configs unless explicitly enabled", () => {
+    expect(() => makeServer({ network: "kaspa:mainnet" })).toThrow("allowMainnet");
+
+    const { server } = makeServer({ network: "kaspa:mainnet", allowMainnet: true });
+    expect(server.supportedKinds().every((kind) => kind.network === "kaspa:mainnet")).toBe(true);
+  });
+
   it("offers exact requirements for exact paid routes", async () => {
     const { server } = makeServer({ amount: "100" });
 
@@ -108,6 +116,27 @@ describe("direct-mode server", () => {
       serverPublicKey: SERVER_KEY,
       authorizationTimeoutDaa: "1500",
     });
+  });
+
+  it("materializes relative upto authorization windows for live payment challenges", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "9000", authorizationWindowDaa: "50", maxAuthorizationWindowDaa: "60" });
+
+    const first = await setup.server.handlePaidRequest({ url: RESOURCE.url, paymentScheme: "upto" }, async () => ({
+      body: "secret",
+    }));
+    setup.chain.daa = "1200";
+    const second = await setup.server.handlePaidRequest({ url: RESOURCE.url, paymentScheme: "upto" }, async () => ({
+      body: "secret",
+    }));
+
+    const firstRequired = decodePaymentRequiredHeader(first.headers[PAYMENT_REQUIRED_HEADER]);
+    const secondRequired = decodePaymentRequiredHeader(second.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(firstRequired.accepts[0]?.extra.authorizationTimeoutDaa).toBe("1050");
+    expect(secondRequired.accepts[0]?.extra.authorizationTimeoutDaa).toBe("1250");
+  });
+
+  it("rejects relative upto windows beyond the configured cap", () => {
+    expect(() => makeServer({ authorizationWindowDaa: "61", maxAuthorizationWindowDaa: "60" })).toThrow("maximum authorization window");
   });
 
   it("returns MCP payment requirements for unpaid tool calls", async () => {
@@ -267,7 +296,7 @@ describe("direct-mode server", () => {
     expect(settlement.transaction).toBe(EXACT_TX_ID);
     expect(settlement.amount).toBe("100");
     expect(readKaspaSettlementExtension(settlement)?.paymentOutputIndex).toBe(1);
-    const stored = await setup.store.loadExactPayment(EXACT_TX_ID, 1);
+    const stored = await setup.store.loadExactPayment(EXACT_TX_ID);
     expect(stored?.amount).toBe("100");
     expect(stored?.paymentOutputIndex).toBe(1);
     expect(stored?.response.status).toBe(200);
@@ -318,7 +347,7 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(402);
     expect(response.body).toEqual({ error: "invalid_payload" });
     expect(executed).toBe(false);
-    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
   });
 
   it("returns the cached response for an identical exact payment retry", async () => {
@@ -340,6 +369,37 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
+  it("lets application outbox state prevent duplicate exact side effects after commit failure", async () => {
+    const store = new FailingExactCommitStore(1);
+    const setup = makeServer({ requirePaymentIdentifier: true, store });
+    const requestHash = "12".repeat(32);
+    const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
+    const payment = makeExactPayment(setup, { requestHash, paymentIdentifier });
+    const outbox = new Map<string, { body: string }>();
+    let handlerInvocations = 0;
+    let externalEffects = 0;
+    const handler = ({ paymentIdentifier: id, requestFingerprint }: { paymentIdentifier?: string; requestFingerprint: Hash32Hex }) => {
+      handlerInvocations += 1;
+      const key = `${id}:${requestFingerprint}`;
+      const cached = outbox.get(key);
+      if (cached) return cached;
+      externalEffects += 1;
+      const result = { body: "download" };
+      outbox.set(key, result);
+      return result;
+    };
+
+    const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), handler);
+    const second = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), handler);
+
+    expect(first.status).toBe(500);
+    expect(second.status).toBe(200);
+    expect(second.body).toBe("download");
+    expect(handlerInvocations).toBe(2);
+    expect(externalEffects).toBe(1);
+    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeTruthy();
+  });
+
   it("rejects exact transaction replay against a different request", async () => {
     const setup = makeServer();
     const payment = makeExactPayment(setup);
@@ -358,7 +418,7 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
-  it("serializes concurrent exact requests that share one transaction", async () => {
+  it("rejects a second exact payment from the same transaction", async () => {
     const setup = makeServer();
     const firstPayment = makeExactPayment(setup, { paymentOutputIndex: 1 });
     const secondPayment = makeExactPayment(setup, { paymentOutputIndex: 2 });
@@ -379,12 +439,68 @@ describe("direct-mode server", () => {
       setup.server.handlePaidRequest(requestWithPayment(secondPayment, { paymentScheme: "exact", requestHash: "22".repeat(32) }), handler),
     ]);
 
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    expect(executions).toBe(1);
+    expect(maxActiveHandlers).toBe(1);
+    const stored = await setup.store.loadExactPayment(EXACT_TX_ID);
+    expect(stored?.paymentOutputIndex === 1 || stored?.paymentOutputIndex === 2).toBe(true);
+  });
+
+  it("does not double execute mixed hinted and non-hinted exact retries", async () => {
+    const setup = makeServer();
+    const hinted = makeExactPayment(setup, { requestHash: "21".repeat(32) });
+    const noHint = structuredClone(hinted);
+    if (noHint.payload.type !== "exact-transfer") throw new Error("expected exact payload");
+    delete noHint.payload.transactionId;
+    let activeHandlers = 0;
+    let maxActiveHandlers = 0;
+    let executions = 0;
+    const handler = async () => {
+      activeHandlers += 1;
+      maxActiveHandlers = Math.max(maxActiveHandlers, activeHandlers);
+      await new Promise((resolve) => setTimeout(resolve, 10));
+      executions += 1;
+      activeHandlers -= 1;
+      return { body: `download-${executions}` };
+    };
+
+    const [first, second] = await Promise.all([
+      setup.server.handlePaidRequest(requestWithPayment(hinted, { paymentScheme: "exact", requestHash: "21".repeat(32) }), handler),
+      setup.server.handlePaidRequest(requestWithPayment(noHint, { paymentScheme: "exact", requestHash: "21".repeat(32) }), handler),
+    ]);
+
     expect(first.status).toBe(200);
     expect(second.status).toBe(200);
-    expect(executions).toBe(2);
+    expect(first.body).toBe("download-1");
+    expect(second.body).toBe("download-1");
+    expect(executions).toBe(1);
     expect(maxActiveHandlers).toBe(1);
-    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeTruthy();
-    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 2)).resolves.toBeTruthy();
+  });
+
+  it("rejects mixed hinted and non-hinted exact replay against another request", async () => {
+    const setup = makeServer();
+    const hinted = makeExactPayment(setup);
+    const noHint = structuredClone(hinted);
+    if (noHint.payload.type !== "exact-transfer") throw new Error("expected exact payload");
+    delete noHint.payload.transactionId;
+    let executions = 0;
+
+    const [first, second] = await Promise.all([
+      setup.server.handlePaidRequest(requestWithPayment(hinted, { paymentScheme: "exact", requestHash: "21".repeat(32) }), async () => {
+        executions += 1;
+        await new Promise((resolve) => setTimeout(resolve, 10));
+        return { body: "first" };
+      }),
+      setup.server.handlePaidRequest(requestWithPayment(noHint, { paymentScheme: "exact", requestHash: "22".repeat(32) }), async () => {
+        executions += 1;
+        return { body: "second" };
+      }),
+    ]);
+
+    const statuses = [first.status, second.status].sort();
+    expect(statuses).toEqual([200, 409]);
+    expect(executions).toBe(1);
   });
 
   it("rejects exact transfers whose verified output does not match the offer", async () => {
@@ -413,7 +529,7 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(402);
     expect(response.body).toEqual({ error: "invalid_payment_requirements" });
     expect(executed).toBe(false);
-    await expect(setup.store.loadExactPayment(EXACT_TX_ID, 1)).resolves.toBeUndefined();
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
   });
 
   it("accepts an upto authorization and commits nonzero settlement after handler success", async () => {
@@ -542,6 +658,25 @@ describe("direct-mode server", () => {
     const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
       executed = true;
       return {};
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
+    expect(executed).toBe(false);
+  });
+
+  it("rejects upto authorizations whose advertised timeout exceeds the runtime cap", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "9000", authorizationWindowDaa: "50", maxAuthorizationWindowDaa: "60" });
+    const payment = makeUptoPayment(setup, {
+      amount: "100",
+      requestHash: "12".repeat(32),
+      authorizationTimeoutDaa: "1070",
+    });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executed = true;
+      return { body: "wrong", chargedAmount: "70" };
     });
 
     expect(response.status).toBe(402);
@@ -2178,11 +2313,13 @@ function makeUptoPayment(
     payTo?: string;
     serverPublicKey?: string;
     maxAmount?: string;
+    authorizationTimeoutDaa?: string;
     badSignature?: boolean;
   },
 ): PaymentPayload {
   const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "upto", amount: options.amount });
   const accepted = structuredClone(required.accepts[0]) as UptoPaymentRequirements;
+  if (options.authorizationTimeoutDaa) accepted.extra.authorizationTimeoutDaa = options.authorizationTimeoutDaa;
   const index = options.index ?? 0;
   const nonce = options.nonce ?? SALT;
   const outpoint = { txid: UPTO_TX_ID, index };
@@ -2454,6 +2591,23 @@ class FakeChainProvider implements ServerChainProvider {
 class FailingCommitStore extends MemoryServerChannelStore {
   async commitSettlement(_record: SettlementCommit): Promise<void> {
     throw new Error("settlement store unavailable");
+  }
+}
+
+class FailingExactCommitStore extends MemoryServerChannelStore {
+  #remainingFailures: number;
+
+  constructor(remainingFailures = Number.POSITIVE_INFINITY) {
+    super();
+    this.#remainingFailures = remainingFailures;
+  }
+
+  async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
+    if (this.#remainingFailures > 0) {
+      this.#remainingFailures -= 1;
+      throw new Error("exact store unavailable");
+    }
+    await super.commitExactPayment(record);
   }
 }
 

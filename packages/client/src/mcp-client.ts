@@ -41,7 +41,10 @@ export async function paidMcpToolCall(
   const maxPaymentRetries = options.maxPaymentRetries ?? 2;
   for (let attempt = 0; attempt <= maxPaymentRetries; attempt += 1) {
     const header = encodePaymentRequiredHeader(paymentRequired);
-    const parsed = parsePaymentRequiredHeaderValue(header);
+    const parsed = parsePaymentRequiredHeaderValue(header, {
+      supportedNetworks: client.supportedNetworks(),
+      supportedSchemes: client.supportedSchemes(),
+    });
     const requestHash =
       options.requestHash ??
       mcpToolCallFingerprint({

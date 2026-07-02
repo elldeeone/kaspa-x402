@@ -3,7 +3,7 @@
   "$id": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
   "title": "Kaspa x402 SettlementResponse",
   "type": "object",
-  "required": ["success", "transaction", "network"],
+  "required": ["success", "transaction"],
   "properties": {
     "success": {
       "type": "boolean"
@@ -51,7 +51,7 @@
         "required": ["success"]
       },
       "then": {
-        "required": ["amount"]
+        "required": ["network", "amount"]
       }
     },
     {
@@ -80,7 +80,7 @@
         "required": ["success", "errorReason"]
       },
       "then": {
-        "required": ["transaction", "payer", "amount", "extensions"],
+        "required": ["transaction", "network", "payer", "amount", "extensions"],
         "properties": {
           "transaction": {
             "pattern": "^[0-9a-fA-F]{64}$"

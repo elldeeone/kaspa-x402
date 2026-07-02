@@ -319,6 +319,7 @@ export interface DirectModeClientOptions {
   addressCodec: AddressCodec;
   refundAddress?: string;
   supportedNetworks?: readonly NetworkId[];
+  allowMainnet?: boolean;
   fundingPolicy?: FundingPolicy;
   fetch?: FetchLike;
   refundBuilder?: RefundTransactionBuilder;

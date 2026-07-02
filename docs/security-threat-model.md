@@ -37,7 +37,7 @@ Facilitator mode wraps the same direct-mode verifier and settlement paths. A fac
 | Threat | Required invariant | Current mitigation | Residual risk |
 | --- | --- | --- | --- |
 | Malicious client underpays or points to the wrong output | The verifier derives or verifies transaction identity and selected output data before releasing content. | Exact verification rejects payload hints that do not match verifier output and checks amount, script, and finality. | Correctness depends on the injected transaction verifier in live deployments. |
-| Malicious client reuses an exact transaction | One transaction output buys one request unless it is the identical cached retry. | Server stores exact replay records keyed by transaction id plus output index and returns replay conflicts for different request fingerprints. | Store durability is required; in-memory stores are test/demo only. |
+| Malicious client reuses an exact transaction | One transaction buys one request unless it is the same verified transaction, output, and request fingerprint retry. | Server stores exact replay records keyed by transaction id, takes a verifier-derived transaction lock before handler execution, and returns replay conflicts for different request fingerprints or sibling outputs. | Store durability is required; in-memory stores are test/demo only. |
 | Malicious client reuses an upto authorization | An authorization outpoint and nonce are single-use. | Upto verification checks both outpoint scope and nonce scope before handler execution. | Store durability and cross-process locking are required in production. |
 | Malicious client submits stale or underpaid batch vouchers | Voucher amount must be the required cumulative ceiling and must leave claim reserve. | Batch verification computes the required cumulative voucher amount, checks funding UTXO, rejects reserve-consuming vouchers, and returns corrective channel state when useful. | Operators must tune fee reserves for live network conditions. |
 | Voucher replay against a successor or sibling output | Voucher digest must bind domain, network, active script, txid, vout, and amount; the voucher signature must verify that digest against the channel client key. | `voucherDigest` binds the full outpoint and active script; the server verifies the voucher signature separately; the covenant test requires the same-txid/different-vout digest to change. | Any future digest version must preserve full outpoint and script binding. |
@@ -68,7 +68,7 @@ Required safety properties:
 Evidence:
 
 - `packages/server/src/direct-server.ts` verifies output amount, script, payload hint consistency, and finality before returning a verified exact payment.
-- `packages/server/test/direct-server.test.ts` covers request-hash mismatch, cached exact retry, different-request replay rejection, concurrent same-transaction serialization, and output mismatch rejection.
+- `packages/server/test/direct-server.test.ts` covers request-hash mismatch, cached exact retry, different-request replay rejection, same-transaction sibling-output rejection, mixed hinted/non-hinted transaction locking, and output mismatch rejection.
 - `scripts/proof-offline.mjs` and `docs/live-testnet-report.md` record exact replay rejection.
 
 Residual risk:

@@ -1,5 +1,6 @@
 import {
   X402_VERSION,
+  assertMainnetAllowed,
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
@@ -53,13 +54,25 @@ export class DirectModeClient {
   readonly #options: DirectModeClientOptions;
 
   constructor(options: DirectModeClientOptions) {
+    assertMainnetAllowed(options.fundingProvider.networkId, options.allowMainnet, "DirectModeClient");
+    if (!options.allowMainnet && options.supportedNetworks?.includes("kaspa:mainnet")) {
+      throw new KaspaX402Error("invalid_kaspa_x402_network", "DirectModeClient requires allowMainnet for kaspa:mainnet");
+    }
     this.#options = options;
+  }
+
+  supportedNetworks(): readonly ("kaspa:mainnet" | "kaspa:testnet-10")[] {
+    return supportedNetworksForClient(this.#options);
+  }
+
+  supportedSchemes(): readonly ("exact" | "upto" | "batch-settlement")[] {
+    return supportedSchemesForClient(this.#options);
   }
 
   async createPayment(header: string, context: PaymentRequestContext): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
     const parsed = parsePaymentRequiredHeaderValue(header, {
-      supportedNetworks: this.#options.supportedNetworks,
+      supportedNetworks: supportedNetworksForClient(this.#options),
       supportedSchemes: supportedSchemesForClient(this.#options),
     });
     assertProviderNetwork(this.#options, parsed.accepted.network);
@@ -695,9 +708,15 @@ function assertFundingPolicy(options: DirectModeClientOptions): void {
 }
 
 function assertProviderNetwork(options: DirectModeClientOptions, network: string): void {
+  if (network === "kaspa:mainnet") assertMainnetAllowed(network, options.allowMainnet, "DirectModeClient");
   if (options.fundingProvider.networkId !== network) {
     throw new KaspaX402Error("invalid_kaspa_x402_network", `funding provider network ${options.fundingProvider.networkId} does not match ${network}`);
   }
+}
+
+function supportedNetworksForClient(options: DirectModeClientOptions): readonly ("kaspa:mainnet" | "kaspa:testnet-10")[] {
+  const networks = options.supportedNetworks ?? (options.allowMainnet ? ["kaspa:mainnet", "kaspa:testnet-10"] : ["kaspa:testnet-10"]);
+  return options.allowMainnet ? networks : networks.filter((network) => network !== "kaspa:mainnet");
 }
 
 function supportedSchemesForClient(options: DirectModeClientOptions): readonly ("exact" | "upto" | "batch-settlement")[] {

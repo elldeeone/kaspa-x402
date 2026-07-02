@@ -219,7 +219,7 @@ export interface SettlementResponse extends JsonRecord {
   success: boolean;
   errorReason?: string;
   transaction: string;
-  network: NetworkId;
+  network?: NetworkId;
   payer?: string;
   amount?: SompiString;
   extra?: SettlementResponseExtra;

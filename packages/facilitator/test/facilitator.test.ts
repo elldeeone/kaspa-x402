@@ -89,6 +89,13 @@ describe("direct-mode facilitator", () => {
     expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual(["batch-settlement"]);
   });
 
+  it("rejects mainnet facilitator configs unless explicitly enabled", () => {
+    expect(() => makeFacilitator({ network: "kaspa:mainnet", allowMainnet: true })).toThrow("allowMainnet");
+
+    const { facilitator } = makeFacilitator({ network: "kaspa:mainnet", allowMainnet: true }, { allowMainnet: true });
+    expect(facilitator.supported().kinds.every((kind) => kind.network === "kaspa:mainnet")).toBe(true);
+  });
+
   it("verifies exact payments with the same payer and metadata as direct verification", async () => {
     const { server, facilitator } = makeFacilitator();
     const paymentPayload = makeExactPayment(server);
@@ -728,10 +735,57 @@ describe("direct-mode facilitator", () => {
       errorReason: "invalid_network",
       transaction: "",
     });
+    expect(response.body).not.toHaveProperty("network");
+  });
+
+  it("does not coerce malformed facilitator settlement networks to testnet", async () => {
+    const { facilitator, server } = makeFacilitator();
+    const paymentPayload = makeExactPayment(server);
+    const paymentRequirements = {
+      ...paymentPayload.accepted,
+      network: "testnet-10",
+    } as unknown as ExactPaymentRequirements;
+
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/settle",
+      body: { x402Version: X402_VERSION, paymentPayload: { ...paymentPayload, accepted: paymentRequirements }, paymentRequirements },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      success: false,
+      errorReason: "invalid_network",
+      transaction: "",
+    });
+    expect(response.body).not.toHaveProperty("network");
+  });
+
+  it("preserves safe mainnet network labels in facilitator settlement failures", async () => {
+    const { facilitator, server } = makeFacilitator();
+    const paymentPayload = makeExactPayment(server);
+    const paymentRequirements = {
+      ...paymentPayload.accepted,
+      network: "kaspa:mainnet",
+    } as ExactPaymentRequirements;
+
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/settle",
+      body: { x402Version: X402_VERSION, paymentPayload: { ...paymentPayload, accepted: paymentRequirements }, paymentRequirements },
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      success: false,
+      errorReason: "invalid_network",
+      transaction: "",
+      network: "kaspa:mainnet",
+    });
   });
 });
 
-function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}) {
+function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facilitatorOptions: { allowMainnet?: boolean } = {}) {
   const store = overrides.store ?? new MemoryServerChannelStore();
   const chain = new FakeChainProvider();
   const server = new DirectModeServer({
@@ -803,7 +857,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}) {
   (server as unknown as { __testChain?: FakeChainProvider }).__testChain = chain;
   return {
     server,
-    facilitator: new DirectModeFacilitator({ server }),
+    facilitator: new DirectModeFacilitator({ server, allowMainnet: facilitatorOptions.allowMainnet }),
     chain,
     store,
   };

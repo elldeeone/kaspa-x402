@@ -22,6 +22,7 @@ import type {
   NetworkId,
   PaymentPayload,
   PaymentRequired,
+  PaymentScheme,
   SettlementResponse,
   UptoPaymentRequirements,
 } from "@kaspa-x402/core";
@@ -123,10 +124,25 @@ describe("direct-mode client", () => {
     expect(provider.deposits).toHaveLength(0);
   });
 
+  it("rejects mainnet funding providers without opt-in", async () => {
+    const provider = new FakeFundingProvider("hot-wallet", "kaspa:mainnet");
+    const store = new MemoryChannelStore();
+
+    expect(() => makeClient({ provider, store })).toThrow("allowMainnet");
+    await expect(store.loadChannels({})).resolves.toHaveLength(0);
+  });
+
+  it("rejects mainnet offer selection without opt-in", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+
+    expect(() => makeClient({ provider, store, supportedNetworks: ["kaspa:testnet-10", "kaspa:mainnet"] })).toThrow("allowMainnet");
+  });
+
   it("rejects the wrong funding network before store or funding work", async () => {
     const provider = new FakeFundingProvider("hot-wallet", "kaspa:mainnet");
     const store = new MemoryChannelStore();
-    const client = makeClient({ provider, store });
+    const client = makeClient({ provider, store, allowMainnet: true });
 
     await expect(
       client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
@@ -821,6 +837,67 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
   });
 
+  it("uses client mainnet opt-in for paid MCP tool calls", async () => {
+    const provider = new FakeFundingProvider("hot-wallet", "kaspa:mainnet");
+    const client = makeClient({ provider, store: new MemoryChannelStore(), allowMainnet: true });
+    const required = makeExactRequired({ amount: "100", network: "kaspa:mainnet" });
+    const expectedRequestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "mainnet" },
+      accepted: required.accepts[0]!,
+    });
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        return {
+          content: [{ type: "text", text: "paid data" }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash, "kaspa:mainnet"),
+          },
+        };
+      },
+      { name: "download", arguments: { id: "mainnet" } },
+    );
+
+    expect(result.payment?.accepted.network).toBe("kaspa:mainnet");
+    expect(result.settlement?.response.network).toBe("kaspa:mainnet");
+    expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
+  });
+
+  it("uses client scheme policy when fingerprinting MCP payment requirements", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore(), supportedSchemes: ["exact"] });
+    const exactRequired = makeExactRequired({ amount: "100" });
+    const required: PaymentRequired = {
+      ...exactRequired,
+      accepts: [makeRequired({ amount: "100" }).accepts[0], exactRequired.accepts[0]],
+    };
+    const expectedRequestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "scheme-policy" },
+      accepted: exactRequired.accepts[0]!,
+    });
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        return {
+          content: [{ type: "text", text: "paid data" }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+          },
+        };
+      },
+      { name: "download", arguments: { id: "scheme-policy" } },
+    );
+
+    expect(result.payment?.accepted.scheme).toBe("exact");
+    expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
+  });
+
   it("parses MCP payment requirements from text fallback content", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
@@ -1109,6 +1186,9 @@ function makeClient(options: {
   fetch?: FetchLike;
   verifyVoucherSignature?: (voucher: { amount: string; signature: string }, channel: DirectModeChannel) => boolean;
   refundBuilder?: RefundTransactionBuilder;
+  allowMainnet?: boolean;
+  supportedNetworks?: readonly NetworkId[];
+  supportedSchemes?: readonly PaymentScheme[];
 }): DirectModeClient {
   const provider = options.provider ?? new FakeFundingProvider();
   return new DirectModeClient({
@@ -1120,6 +1200,9 @@ function makeClient(options: {
     fetch: options.fetch as never,
     verifyVoucherSignature: options.verifyVoucherSignature,
     refundBuilder: options.refundBuilder,
+    allowMainnet: options.allowMainnet,
+    supportedNetworks: options.supportedNetworks,
+    supportedSchemes: options.supportedSchemes,
   });
 }
 
@@ -1157,7 +1240,7 @@ function makeRequired(input: {
   };
 }
 
-function makeExactRequired(input: { amount: string; finality?: "mempool" | "accepted" | "confirmed" }): PaymentRequired {
+function makeExactRequired(input: { amount: string; finality?: "mempool" | "accepted" | "confirmed"; network?: NetworkId }): PaymentRequired {
   return {
     x402Version: X402_VERSION,
     resource: {
@@ -1166,7 +1249,7 @@ function makeExactRequired(input: { amount: string; finality?: "mempool" | "acce
     accepts: [
       {
         scheme: "exact",
-        network: "kaspa:testnet-10",
+        network: input.network ?? "kaspa:testnet-10",
         amount: input.amount,
         asset: "KAS",
         payTo: "kaspatest:payout",
@@ -1235,11 +1318,11 @@ function makeSettlement(channel: DirectModeChannel, chargedAmount: string, state
   };
 }
 
-function exactSettlement(amount: string, requestHash: Hash32Hex): SettlementResponse {
+function exactSettlement(amount: string, requestHash: Hash32Hex, network: NetworkId = "kaspa:testnet-10"): SettlementResponse {
   return {
     success: true,
     transaction: EXACT_TX_ID,
-    network: "kaspa:testnet-10",
+    network,
     payer: "kaspatest:refund",
     amount,
     extensions: kaspaSettlementExtensions({

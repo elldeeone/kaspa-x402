@@ -37,3 +37,8 @@ const response = await handleFacilitatorRequest(facilitator, {
 ```
 
 The package does not ship a hosted URL, signer, wallet, RPC client, or database. Production deployments should provide durable server state, authenticated settlement callers, and explicit signer metadata if they advertise signers through `/supported`.
+
+Mainnet facilitator capability fails closed unless `allowMainnet: true` is set
+on the facilitator and the wrapped server is also explicitly mainnet-enabled.
+Malformed or unknown settlement request networks return `invalid_network`
+without being reported as testnet settlements.

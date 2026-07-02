@@ -18,7 +18,7 @@ export interface ParsePaymentRequiredOptions {
   supportedSchemes?: readonly PaymentScheme[];
 }
 
-const DEFAULT_SUPPORTED_NETWORKS: readonly NetworkId[] = ["kaspa:mainnet", "kaspa:testnet-10"];
+const DEFAULT_SUPPORTED_NETWORKS: readonly NetworkId[] = ["kaspa:testnet-10"];
 const DEFAULT_SUPPORTED_SCHEMES: readonly PaymentScheme[] = ["exact", "upto", "batch-settlement"];
 
 export function parsePaymentRequiredHeaderValue(header: string, options: ParsePaymentRequiredOptions = {}): ParsedPaymentRequired {

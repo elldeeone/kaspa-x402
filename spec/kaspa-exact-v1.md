@@ -165,6 +165,10 @@ Failure response:
 }
 ```
 
+Failure responses may include `network` only when the implementation can echo a
+valid canonical request network. Invalid, malformed, or unknown network failures
+must not synthesize a fallback network.
+
 `amount` is the amount settled for this request. For `exact`, it must equal `PaymentRequirements.amount` on success.
 
 ## Idempotency

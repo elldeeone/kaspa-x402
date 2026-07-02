@@ -56,8 +56,8 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return record ? clone(record) : undefined;
   }
 
-  async loadExactPayment(transactionId: Hash32Hex, paymentOutputIndex: number): Promise<ExactPaymentRecord | undefined> {
-    const record = this.#exactPayments.get(exactPaymentKey(transactionId, paymentOutputIndex));
+  async loadExactPayment(transactionId: Hash32Hex): Promise<ExactPaymentRecord | undefined> {
+    const record = this.#exactPayments.get(exactPaymentKey(transactionId));
     return record ? clone(record) : undefined;
   }
 
@@ -69,6 +69,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const paymentIdentifier = record.paymentIdentifier ? clone(record.paymentIdentifier) : undefined;
     const commitment = clone(record.commitment);
     const channel = clone(record.channel);
+    if (paymentIdentifier) this.#assertPaymentIdentifierAvailable(paymentIdentifier);
     this.#commitments.set(commitment.commitmentId, commitment);
     if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
     this.#channels.set(channel.channelId, channel);
@@ -76,7 +77,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
     const payment = clone(record.payment);
-    const key = exactPaymentKey(payment.transactionId, payment.paymentOutputIndex);
+    const key = exactPaymentKey(payment.transactionId);
     const existing = this.#exactPayments.get(key);
     if (existing) {
       if (
@@ -192,6 +193,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
+    for (const existing of this.#claimAttempts.values()) {
+      if (existing.channelId === record.channelId && existing.status !== "applied" && existing.attemptId !== record.attemptId) {
+        throw new Error("claim attempt is already pending");
+      }
+    }
     this.#claimAttempts.set(record.attemptId, clone(record));
   }
 
@@ -258,8 +264,8 @@ function clone<T>(value: T): T {
   return structuredClone(value);
 }
 
-function exactPaymentKey(transactionId: Hash32Hex, paymentOutputIndex: number): string {
-  return `${transactionId.toLowerCase()}:${paymentOutputIndex}`;
+function exactPaymentKey(transactionId: Hash32Hex): string {
+  return transactionId.toLowerCase();
 }
 
 function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {

@@ -19,3 +19,9 @@ export function assertSupportedNetwork(value: unknown, supported: readonly Netwo
   }
   return value as NetworkId;
 }
+
+export function assertMainnetAllowed(network: NetworkId, allowMainnet = false, component = "Kaspa x402 runtime"): void {
+  if (network === "kaspa:mainnet" && !allowMainnet) {
+    throw new KaspaX402Error("invalid_kaspa_x402_network", `${component} requires allowMainnet for kaspa:mainnet`);
+  }
+}

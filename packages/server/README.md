@@ -24,4 +24,13 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
 - exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.
 
-Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Production deployments should back the state store with durable transactional storage. Amounts on the wire remain decimal sompi strings.
+Mainnet runtime use fails closed unless `allowMainnet: true` is set. Upto offers
+can use `authorizationWindowDaa` plus `maxAuthorizationWindowDaa` to materialize
+a fresh absolute timeout into each live `402` challenge.
+
+Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Production deployments should back the state store with durable transactional storage that follows [the server store contract](../../docs/server-store-contract.md). Amounts on the wire remain decimal sompi strings.
+
+Protected handlers run after payment verification and before the durable payment
+commit. Handlers with non-repeatable side effects should require the
+`payment-identifier` extension and keep their own idempotency or outbox record
+keyed by payment identifier and request fingerprint.

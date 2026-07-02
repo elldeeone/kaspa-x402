@@ -261,6 +261,10 @@ export interface SettlementCommit {
 }
 
 export interface SettlementCommitStore {
+  /**
+   * Atomically writes the commitment, optional payment identifier, and next
+   * channel state only if the current channel still matches `expected`.
+   */
   commitSettlement(record: SettlementCommit): Promise<void>;
 }
 
@@ -270,7 +274,17 @@ export interface ExactSettlementCommit {
 }
 
 export interface ExactPaymentStore {
-  loadExactPayment(transactionId: Hash32Hex, paymentOutputIndex: number): Promise<ExactPaymentRecord | undefined>;
+  /**
+   * Loads the consumed exact-payment record for a transaction id. Exact replay
+   * scope is transaction-wide, even though the selected output index remains
+   * part of settlement evidence.
+   */
+  loadExactPayment(transactionId: Hash32Hex): Promise<ExactPaymentRecord | undefined>;
+  /**
+   * Atomically records a consumed exact transaction and optional payment
+   * identifier. Existing identical records are idempotent; conflicting txid or
+   * payment-identifier writes must fail without partial writes.
+   */
   commitExactPayment(record: ExactSettlementCommit): Promise<void>;
 }
 
@@ -328,8 +342,14 @@ export interface UptoSettlementCommit {
 
 export interface UptoAuthorizationStore {
   loadUptoAuthorization(scopeId: Hash32Hex): Promise<UptoAuthorizationRecord | undefined>;
+  /**
+   * Atomically reserves both authorization outpoint and nonce scopes before any
+   * nonzero settlement broadcast.
+   */
   reserveUptoAuthorization(record: UptoPendingAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void>;
+  /** Atomically promotes a reserved authorization to broadcast state. */
   markUptoAuthorizationBroadcast(record: UptoBroadcastAuthorizationRecord, paymentIdentifier?: PaymentIdentifierRecord): Promise<void>;
+  /** Atomically commits terminal settlement for both authorization scopes. */
   commitUptoSettlement(record: UptoSettlementCommit): Promise<void>;
   abandonUptoAuthorization(scopeId: Hash32Hex, reason?: string): Promise<void>;
 }
@@ -359,7 +379,9 @@ export interface ClaimAttemptRecord {
 
 export interface ClaimAttemptStore {
   loadOpenClaimAttempt(channelId: Hash32Hex): Promise<ClaimAttemptRecord | undefined>;
+  /** Saves one open claim attempt per channel; durable adapters must reject conflicting open attempts. */
   saveClaimAttempt(record: ClaimAttemptRecord): Promise<void>;
+  /** Applies a claim only if the channel still matches the attempt snapshot. */
   applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void>;
   abandonClaimAttempt(attemptId: Hash32Hex, reason?: string): Promise<void>;
 }
@@ -426,6 +448,8 @@ export interface DirectModeServerConfig {
   amount: SompiString;
   refundTimeoutDaa: SompiString;
   authorizationTimeoutDaa?: SompiString;
+  authorizationWindowDaa?: SompiString;
+  maxAuthorizationWindowDaa?: SompiString;
   settlementFeeReserveSompi?: SompiString;
   maxTimeoutSeconds?: number;
   store: ServerStateStore;
@@ -440,6 +464,7 @@ export interface DirectModeServerConfig {
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
   requirePaymentIdentifier?: boolean;
+  allowMainnet?: boolean;
   acceptedFinality?: Exclude<SettlementFinality, "broadcast">;
   topUpVerifier?: TopUpVerifier;
 }
@@ -451,6 +476,7 @@ export interface BuildPaymentRequiredOptions {
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
   error?: string;
+  authorizationTimeoutDaa?: SompiString;
 }
 
 export interface DirectPaymentVerificationOptions {
