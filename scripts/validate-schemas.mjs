@@ -8,6 +8,8 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
+const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
+const TX_V1_CONSENSUS_COMMIT = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
@@ -235,6 +237,7 @@ function assertTxV1Vector(file, vector, expectedKind) {
   if (!vector.input || !vector.expected) {
     throw new Error(`${file}: tx-v1 vectors require input and expected`);
   }
+  assertTxV1Validation(file, vector.validation);
   const artifact = vector.expected;
   if (artifact.format !== "kaspa-x402-tx-v1-reference-v1") {
     throw new Error(`${file}: unexpected tx-v1 artifact format`);
@@ -288,6 +291,7 @@ function assertTxV1Vector(file, vector, expectedKind) {
   for (const [index, output] of (artifact.transaction.outputs ?? []).entries()) {
     if (!isUint64String(output.amount)) throw new Error(`${file}:outputs[${index}].amount must be a uint64 string`);
     assertHexBytes(output.scriptPublicKey, `${file}:outputs[${index}].scriptPublicKey`);
+    if (output.covenant !== null) throw new Error(`${file}:outputs[${index}].covenant must be null unless explicitly supported`);
   }
 
   if (expectedKind === "batch-claim") {
@@ -299,6 +303,63 @@ function assertTxV1Vector(file, vector, expectedKind) {
   } else if (expectedKind === "batch-refund") {
     if (artifact.fee?.source !== "refund-output") throw new Error(`${file}: refund fee source must be refund-output`);
     if ((artifact.transaction.outputs ?? []).length !== 1) throw new Error(`${file}: refund vector must have one output`);
+  } else if (expectedKind === "upto-settlement") {
+    if (artifact.fee?.source !== "settlement-reserve") throw new Error(`${file}: upto settlement fee source must be settlement-reserve`);
+    if ((artifact.transaction.outputs ?? []).length !== 2) throw new Error(`${file}: upto settlement vector must have two outputs`);
+    assertEqual(artifact.payment?.outputIndex, 0, `${file}:payment.outputIndex`);
+    assertEqual(artifact.refund?.outputIndex, 1, `${file}:refund.outputIndex`);
+    assertEqual(artifact.payment?.amount, artifact.transaction.outputs[0]?.amount, `${file}:payment.amount`);
+    assertEqual(artifact.refund?.amount, artifact.transaction.outputs[1]?.amount, `${file}:refund.amount`);
+  }
+}
+
+function assertTxV1Validation(file, validation) {
+  if (!validation || typeof validation !== "object") {
+    throw new Error(`${file}: tx-v1 vector requires validation metadata`);
+  }
+  if (validation.status !== "consensus-cross-validated") {
+    throw new Error(`${file}: tx-v1 validation.status must be consensus-cross-validated`);
+  }
+  if (validation.tool !== "kaspa-consensus-core") {
+    throw new Error(`${file}: tx-v1 validation.tool must be kaspa-consensus-core`);
+  }
+  if (validation.toolVersion !== "2.0.1") {
+    throw new Error(`${file}: tx-v1 validation.toolVersion must be 2.0.1`);
+  }
+  if (typeof validation.sourceCommit !== "string" || !GIT_COMMIT_PATTERN.test(validation.sourceCommit)) {
+    throw new Error(`${file}: tx-v1 validation.sourceCommit must be a git commit id`);
+  }
+  if (validation.sourceCommit !== TX_V1_CONSENSUS_COMMIT) {
+    throw new Error(`${file}: tx-v1 validation.sourceCommit must match the pinned consensus source`);
+  }
+  if (typeof validation.command !== "string" || !validation.command.includes("validate:tx-v1-consensus")) {
+    throw new Error(`${file}: tx-v1 validation.command must name validate:tx-v1-consensus`);
+  }
+  const checkedFields = validation.checkedFields;
+  if (!Array.isArray(checkedFields)) {
+    throw new Error(`${file}: tx-v1 validation.checkedFields must be an array`);
+  }
+  for (const field of [
+    "transactionId",
+    "transactionHash",
+    "serializedTransaction",
+    "hash.preimage",
+    "txid.payloadDigest",
+    "txid.restPreimage",
+    "txid.restDigest",
+    "sighash.preimage",
+    "sighash.digest",
+    "transaction.mass",
+    "transaction.estimatedSerializedSize",
+    "transaction.inputs[].computeBudget",
+    "transaction.outputs[].covenant",
+  ]) {
+    if (!checkedFields.includes(field)) {
+      throw new Error(`${file}: tx-v1 validation.checkedFields must include ${field}`);
+    }
+  }
+  if (!["offline-reference", "node-broadcast"].includes(validation.liveStatus)) {
+    throw new Error(`${file}: tx-v1 validation.liveStatus is invalid`);
   }
 }
 
@@ -346,7 +407,7 @@ function applyUptoMutation(paymentPayload, mutation) {
   }
 }
 
-function validateVector(ajv, file, vector) {
+function validateVector(ajv, file, vector, rootDir = root) {
   switch (vector.kind) {
     case "voucher-digest": {
       for (const item of vector.cases) {
@@ -483,8 +544,36 @@ function validateVector(ajv, file, vector) {
       break;
     }
     case "tx-v1-plan": {
-      if (!Array.isArray(vector.requiredFutureVectors) || vector.requiredFutureVectors.length === 0) {
-        throw new Error(`${file}: tx-v1 plan must list required future vectors`);
+      if (stableStringify(vector).includes("blocked-until-")) {
+        throw new Error(`${file}: tx-v1 plan must not contain blocked-until entries`);
+      }
+      if (!Array.isArray(vector.coveredVectors) || vector.coveredVectors.length === 0) {
+        throw new Error(`${file}: tx-v1 plan must list covered vectors`);
+      }
+      const coveredPaths = new Set();
+      const requiredValidationByPath = new Map([
+        ["vectors/tx-v1/batch-claim.json", "consensus-cross-validated-offline-reference"],
+        ["vectors/tx-v1/batch-refund.json", "consensus-cross-validated-offline-reference"],
+        ["vectors/tx-v1/upto-settlement.json", "consensus-cross-validated-offline-reference"],
+        ["vectors/upto/authorization.json", "no-transaction"],
+      ]);
+      for (const item of vector.coveredVectors) {
+        if (typeof item.path !== "string" || typeof item.validation !== "string") {
+          throw new Error(`${file}: tx-v1 covered vectors require path and validation`);
+        }
+        if (!fs.existsSync(path.join(rootDir, item.path))) {
+          throw new Error(`${file}: tx-v1 covered vector file is missing: ${item.path}`);
+        }
+        const requiredValidation = requiredValidationByPath.get(item.path);
+        if (requiredValidation && item.validation !== requiredValidation) {
+          throw new Error(`${file}: tx-v1 covered vector ${item.path} must use validation ${requiredValidation}`);
+        }
+        coveredPaths.add(item.path);
+      }
+      for (const requiredPath of requiredValidationByPath.keys()) {
+        if (!coveredPaths.has(requiredPath)) {
+          throw new Error(`${file}: tx-v1 plan missing covered vector ${requiredPath}`);
+        }
       }
       break;
     }
@@ -494,6 +583,10 @@ function validateVector(ajv, file, vector) {
     }
     case "tx-v1-batch-refund": {
       assertTxV1Vector(file, vector, "batch-refund");
+      break;
+    }
+    case "tx-v1-upto-settlement": {
+      assertTxV1Vector(file, vector, "upto-settlement");
       break;
     }
     default:
@@ -522,7 +615,7 @@ export function validateSchemasAndVectors(options = {}) {
   }
 
   for (const file of vectorFiles) {
-    validateVector(ajv, path.relative(rootDir, file), readJson(file));
+    validateVector(ajv, path.relative(rootDir, file), readJson(file), rootDir);
   }
 
   return {

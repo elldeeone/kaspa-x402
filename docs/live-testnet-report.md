@@ -1,6 +1,6 @@
 # Live Testnet Report
 
-Generated from a successful `kaspa:testnet-10` run on 2026-07-02 at 04:56:23 UTC.
+Generated from a successful `kaspa:testnet-10` run on 2026-07-02 at 07:25:56 UTC.
 
 The live run used an explicit testnet RPC endpoint, an operator-provided testnet funding wallet, and a local adapter module. Private keys, recovery material, and the full machine-local report remain in `.kaspa-x402-live/`, which is ignored by git.
 
@@ -10,45 +10,58 @@ The live run used an explicit testnet RPC endpoint, an operator-provided testnet
 - Network: `kaspa:testnet-10`
 - Node network id: `testnet-10`
 - Finality target: `accepted`
-- Refund timeout: `506098319` DAA
+- Refund timeout: `506189090` DAA
 
 ## Exact
 
 - Amount: `100000000` sompi
-- Transaction: `29dbc10a6cc4de21a51a639e7e2156ce6ee3d132f125d4e3d1bd3c745d46f75f`
+- Transaction: `e717d43ad6d3c1b06fab2dcf2ac4e55d432b20fb46f0d1c64a813622f30d1043`
+- Transaction version: `0` (source: sdk-generated-transaction)
 - Payment output index: `0`
 - Finality: `accepted`
 - Replay result: `409 invalid_transaction_state`
+- Validation scope: application-store replay rejection plus exact output/finality verification.
 
 ## Upto
 
-- Zero-charge authorization outpoint: `bb06a0d33b5b3119ae129947c1b2534f905864deab4c3b9c8678ae3b23f1b548:0`
+- Zero-charge authorization outpoint: `28202613b2486195c2640d7c12c05b87881d8986af8436e4d65d5288b904435d:0`
+- Zero-charge authorization transaction version: `0` (source: sdk-generated-transaction)
 - Zero-charge maximum: `100000000` sompi
 - Zero-charge settlement transaction: empty, as expected
-- Nonzero authorization outpoint: `3710cb09e4e91a68897ac962672d381a5b633bbcb031a565ace0278620a0691a:0`
+- Zero-charge settlement transaction version: none (no transaction)
+- Nonzero authorization outpoint: `865215d9ab6cbb03a5b6ed28925dbea33d1754d41eede12eae3c79151f0e92f8:0`
+- Nonzero authorization transaction version: `0` (source: sdk-generated-transaction)
 - Nonzero maximum: `100000000` sompi
 - Nonzero charged amount: `50000000` sompi
-- Nonzero settlement transaction: `e46b454a14838d44bee1bc33c78647f2f83956ad96d2776918451412acda5947`
+- Nonzero settlement transaction: `db4df3ceb7c1af6966c3dd9dc26321d0306ce1b71d33e8690b24e14a588cc933`
+- Nonzero settlement transaction version: `1` (source: adapter-submitted-transaction-shape)
 - Payment output index: `0`
 - Replay result: `409 invalid_transaction_state`
+- Validation scope: adapter-submitted transaction-v1 shape for the nonzero settlement, node acceptance of that submitted transaction, output/refund accounting verification, and application-store replay rejection. The zero-charge path intentionally has no transaction.
 
 ## Batch Settlement
 
-- Escrow address: `kaspatest:pzkjwllhjpk4x2ky0w3yvzycepv5029rfqpdx8atlqmrr4hlv7x7vwh2erpw8`
-- Channel id: `1351b7d95cfd8556e1b65c090f59e271e7289605a8bb7f7896296eb67068ba6b`
-- Deposit outpoint: `6fd6ecbf7583f9848b6899e4e8b315cae6bedb416820d34d583e534aaf174c3c:0`
+- Escrow address: `kaspatest:pz69jle2zkhpaqj6uxg8n8ye0z2ltqs48wcwwx3fpagqep6rrjdlydz7kt4l4`
+- Channel id: `50681f06a1383e9a25a0ae6ac83dd8901ce847873837a29154c16dfc791685cc`
+- Deposit transaction: `81109d56f2ae5f1210a4d8a27bd0aaa5d866773b0f968b7f51988c18361f6c94`
+- Deposit transaction version: `0` (source: sdk-generated-transaction)
+- Deposit outpoint: `81109d56f2ae5f1210a4d8a27bd0aaa5d866773b0f968b7f51988c18361f6c94:0`
 - Deposit amount: `400000000` sompi
-- First settlement commitment: `ea5c9294115f0f8bdae55ec42e1a2c4e4a21316cf5fc236379d2b26649f47dc7`
-- Latest settlement commitment: `4b1c163f4987b5bcdfd45aae547768e6c91e42d76d9b11bb752d315c5943b41f`
+- First settlement commitment: `979d4797d4b469da1623b07d51ad06a6fc75c9f62725330d725350b991e7940d`
+- Latest settlement commitment: `2908bf22028205be8f2888ae251fb694d37b83432263afebdfb74d7e77a9b847`
 - Voucher-only request opened a second channel: `false`
 - Charged cumulative amount after voucher-only request: `200000000` sompi
-- Claim transaction: `cc1633df26558510013c822e2988b1c74ed7c7f9a05bd9229122957138e490ed`
-- Continuation outpoint: `cc1633df26558510013c822e2988b1c74ed7c7f9a05bd9229122957138e490ed:1`
+- Claim transaction: `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b`
+- Claim transaction version: `1` (source: adapter-submitted-transaction-shape)
+- Continuation outpoint: `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b:1`
 - Continuation amount: `200000000` sompi
 - Replay result: rejected by node script verification
-- Replay validation: the attempted replay spent `cc1633df26558510013c822e2988b1c74ed7c7f9a05bd9229122957138e490ed:1` with `98000000` sompi to the server and `100000000` sompi to the continuation; the node rejection reason included `failed to verify the signature script`
-- Refund transaction: `4dde8a9a7501c460b5dedabbbfe4ee74c23b2e9e8389a13fe9eb2917e4e621f8`
+- Replay attempted transaction version: `1` (source: adapter-submitted-transaction-shape)
+- Replay validation: the attempted replay spent `96903251646ac55b5b2a9ddd587f762afbadf2599dcf0763d249e906d8bf373b:1` with `98000000` sompi to the server and `100000000` sompi to the continuation; the node rejection reason included `failed to verify the signature script`
+- Refund transaction: `7dad095da86176f0c26b2d9bfe9491266a728b571b3164ccb22ae8e4b467d7a6`
+- Refund transaction version: `1` (source: adapter-submitted-transaction-shape)
 - Refund amount: `198000000` sompi
+- Validation scope: script-level covenant validation for claim, replay rejection, and refund; adapter-submitted transaction-v1 shapes plus node acceptance/rejection for claim/replay attempt/refund; application-store validation for channel state and voucher replay handling.
 
 ## Caveats
 

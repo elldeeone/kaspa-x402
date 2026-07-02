@@ -6,17 +6,24 @@ no mainnet builder should ship until each production path has a vector with a
 serialized transaction body/projection, transaction id, hash, sighash input,
 compute budget, and fee accounting.
 
-Batch claim/refund now have reference transaction-v1 vectors under
-`vectors/tx-v1/`. `upto` authorization and zero-charge settlement fixtures are
-covered by `vectors/upto/authorization.json`; the native nonzero `upto`
-transaction-v1 body remains future work. Until that vector exists, nonzero
-`upto` settlement support is adapter-gated and requires an implementation
-provided settlement transaction verifier; it must not be presented as a built-in
-mainnet-ready transaction builder.
+Batch claim, batch refund, and nonzero `upto` settlement now have reference
+transaction-v1 vectors under `vectors/tx-v1/`. `upto` authorization and
+zero-charge settlement fixtures are covered by `vectors/upto/authorization.json`.
+The transaction-v1 vectors are cross-validated against `kaspa-consensus-core`
+2.0.1 at commit `ef1a093bcf8560fe05221b56f0c896f97e7d8d77` by
+`npm run validate:tx-v1-consensus`.
 In those vectors, `serializedTransaction` is the deterministic transaction hash
 preimage/projection, not a submit-ready RPC transaction payload. The `mass`
 field is contextual storage mass and must not be replaced with serialized-size
 estimates.
+
+Canonical transaction-v1 semantics used by the vectors:
+
+- txid `rest_digest` excludes signature scripts, payload, mass, and compute budget;
+- transaction hash includes v1 compute budget and the v1 mass field;
+- v1 sighash excludes compute budget;
+- empty payload txid uses the canonical `PayloadDigest` empty-payload digest, while empty native sighash payload uses the zero hash;
+- storage mass and estimated serialized size are calculated by canonical consensus code.
 
 ## Batch Settlement Claim
 
@@ -51,11 +58,14 @@ estimates.
 - Amount rule: server output is the actual settled amount, bounded by the signed maximum amount, and the authorization input must include enough value for the signed fee reserve plus the required positive refund output.
 - Zero-charge rule: the zero-charge path must use the no-transaction settlement response shape already defined in `kaspa-upto-v1`; it must not pretend value moved.
 - Fee rule: non-zero settlement fees come from the authorization value after satisfying the bounded server payment.
-- Readiness rule: built-in nonzero settlement builders must remain disabled or external-adapter-only until the executable transaction vector covers the serialized body, txid/hash, sighash, compute budget, and script-unit estimate.
+- Lock rule: transaction lock time must be greater than or equal to the authorization `validAfterDaa`.
+- Script-unit estimate: `260000`.
+- Compute budget: `26`, derived from Toccata's `compute_budget * 10000 + 9999` allowance.
+- Reference vector: `vectors/tx-v1/upto-settlement.json` covers the serialized body, txid/hash, sighash, compute budget, script-unit estimate, storage mass, and no-output-covenant decision.
 
-## Required Vectors
+## Implemented Vectors
 
-- `upto-settlement-transaction-body`
+- `upto-settlement-transaction-body` - covered by `vectors/tx-v1/upto-settlement.json`
 - `upto-zero-charge-no-transaction-response` - covered by `vectors/upto/authorization.json`
 - `batch-claim-transaction-body` - covered by `vectors/tx-v1/batch-claim.json`
 - `batch-refund-transaction-body` - covered by `vectors/tx-v1/batch-refund.json`

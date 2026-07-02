@@ -9,7 +9,7 @@ This directory holds implementation-independent vectors for:
 - voucher digest preimages and hashes;
 - same-txid/different-vout replay rejection;
 - wrong-network and wrong-script rejection;
-- transaction v1 claim/refund hashes and compute-budget sizing.
+- transaction v1 claim/refund/upto-settlement hashes and compute-budget sizing.
 
 Vectors should be consumable without importing the TypeScript SDK.
 
@@ -23,7 +23,7 @@ vectors/
   x402-http/            HTTP header base64 fixtures.
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
   negative/             Schema and semantic rejection fixtures.
-  tx-v1/                Transaction v1 plan plus batch claim/refund fixtures.
+  tx-v1/                Transaction v1 plan plus batch claim/refund/upto-settlement fixtures.
 ```
 
 ## Vector Kinds
@@ -37,9 +37,10 @@ Every JSON vector has a `kind` field:
 - `settlement-response`: validate settlement responses and corrective 402 payloads.
 - `negative`: assert a JSON object fails the referenced schema and carries an `expectedError`.
 - `semantic-negative`: assert cross-object protocol failures that JSON Schema cannot express.
-- `tx-v1-plan`: enumerate required future transaction v1 fixtures.
+- `tx-v1-plan`: enumerate implemented transaction v1 fixtures.
 - `tx-v1-batch-claim`: reproduce the batch claim transaction-v1 reference artifact.
 - `tx-v1-batch-refund`: reproduce the batch refund transaction-v1 reference artifact.
+- `tx-v1-upto-settlement`: reproduce the nonzero upto settlement transaction-v1 reference artifact.
 
 For transaction-v1 vectors, `serializedTransaction` is the deterministic
 transaction hash preimage/projection used by the vector. It is not a

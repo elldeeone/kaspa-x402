@@ -25,6 +25,7 @@ import {
   buildUptoRedeemScript,
   buildUptoRefundArgs,
   buildUptoSettleArgs,
+  buildUptoSettlementTxV1Artifact,
   checkEscrowFixtureReproducibility,
   checkUptoFixtureReproducibility,
   computeBudgetForScriptUnits,
@@ -43,6 +44,7 @@ import {
   validateUptoRefundOutputPlan,
   validateUptoSettlementOutputPlan,
   vectorBackedBatchTransactionBuilder,
+  vectorBackedUptoSettlementTransactionBuilder,
   voucherDigest,
   voucherPreimage,
 } from "../src/index.js";
@@ -52,6 +54,8 @@ import type {
   BatchRefundTxV1Artifact,
   BatchRefundTxV1Input,
   EscrowTemplateParams,
+  UptoSettlementTxV1Artifact,
+  UptoSettlementTxV1Input,
   UptoTemplateParams,
 } from "../src/index.js";
 
@@ -566,9 +570,9 @@ describe("escrow covenant template", () => {
       "voucher amount cannot exceed active input amount",
     );
     expect(() => buildBatchClaimTxV1Artifact({ ...item.input, mass: "734" })).toThrow("storage mass must match contextual storage mass");
-    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, gas: "1" })).toThrow("batch transaction-v1 artifacts must use zero gas");
+    expect(() => buildBatchClaimTxV1Artifact({ ...item.input, gas: "1" })).toThrow("transaction-v1 artifacts must use zero gas");
     expect(() => buildBatchClaimTxV1Artifact({ ...item.input, subnetworkId: "11".repeat(20) })).toThrow(
-      "batch transaction-v1 artifacts must use the native subnetwork",
+      "transaction-v1 artifacts must use the native subnetwork",
     );
     expect(() =>
       buildBatchClaimTxV1Artifact({
@@ -584,7 +588,7 @@ describe("escrow covenant template", () => {
           },
         ],
       }),
-    ).toThrow("batch transaction-v1 artifacts do not support output covenant bindings yet");
+    ).toThrow("transaction-v1 artifacts do not support output covenant bindings yet");
   });
 
   it("reproduces the batch refund transaction-v1 vector", () => {
@@ -623,9 +627,9 @@ describe("escrow covenant template", () => {
       }),
     ).toThrow("refund output script public key must match");
     expect(() => buildBatchRefundTxV1Artifact({ ...item.input, mass: "607" })).toThrow("storage mass must match contextual storage mass");
-    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, gas: "1" })).toThrow("batch transaction-v1 artifacts must use zero gas");
+    expect(() => buildBatchRefundTxV1Artifact({ ...item.input, gas: "1" })).toThrow("transaction-v1 artifacts must use zero gas");
     expect(() => buildBatchRefundTxV1Artifact({ ...item.input, subnetworkId: "11".repeat(20) })).toThrow(
-      "batch transaction-v1 artifacts must use the native subnetwork",
+      "transaction-v1 artifacts must use the native subnetwork",
     );
     expect(() =>
       buildBatchRefundTxV1Artifact({
@@ -640,6 +644,72 @@ describe("escrow covenant template", () => {
           },
         ],
       }),
-    ).toThrow("batch transaction-v1 artifacts do not support output covenant bindings yet");
+    ).toThrow("transaction-v1 artifacts do not support output covenant bindings yet");
+  });
+
+  it("reproduces the upto settlement transaction-v1 vector", () => {
+    const item = vector<UptoSettlementTxV1Input, UptoSettlementTxV1Artifact>("vectors/tx-v1/upto-settlement.json");
+    expect(buildUptoSettlementTxV1Artifact(item.input)).toEqual(item.expected);
+    expect(vectorBackedUptoSettlementTransactionBuilder.buildUptoSettlementTxV1(item.input)).toEqual(item.expected);
+    expect(item.expected.fee.source).toBe("settlement-reserve");
+    expect(item.expected.fee.paymentOutputAmount).toBe("100000");
+    expect(item.expected.fee.refundOutputAmount).toBe("199000");
+    expect(item.expected.transaction.inputs[0]?.computeBudget).toBe(UPTO_SETTLE_COMPUTE_BUDGET);
+    expect(item.expected.transaction.lockTime).toBe(uptoFixture().sample.params.validAfterDaa);
+    expect(item.expected.transaction.mass).toBe("11691792");
+    expect(item.expected.transaction.estimatedSerializedSize).toBe(855);
+  });
+
+  it("rejects malformed upto settlement transaction-v1 plans", () => {
+    const item = vector<UptoSettlementTxV1Input, UptoSettlementTxV1Artifact>("vectors/tx-v1/upto-settlement.json");
+    const outputs = item.expected.transaction.outputs;
+
+    expect(() =>
+      buildUptoSettlementTxV1Artifact({
+        ...item.input,
+        computeBudget: undefined,
+      } as unknown as UptoSettlementTxV1Input),
+    ).toThrow("upto settlement compute budget is required");
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, lockTimeDaa: "122999" })).toThrow(
+      "upto settlement lock time must be greater than or equal to validAfterDaa",
+    );
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, chargeAmount: "0" })).toThrow("upto settlement charge must be positive");
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, chargeAmount: "250001" })).toThrow(
+      "upto settlement charge cannot exceed max amount",
+    );
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, fee: "2001" })).toThrow(
+      "upto settlement fee cannot exceed the signed reserve",
+    );
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, mass: "665" })).toThrow(
+      "storage mass must match contextual storage mass",
+    );
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, gas: "1" })).toThrow("transaction-v1 artifacts must use zero gas");
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, subnetworkId: "11".repeat(20) })).toThrow(
+      "transaction-v1 artifacts must use the native subnetwork",
+    );
+    expect(() => buildUptoSettlementTxV1Artifact({ ...item.input, redeemScript: fixture().sample.redeemScript })).toThrow(
+      "upto settlement redeem script must match authorization script public key",
+    );
+    expect(() =>
+      buildUptoSettlementTxV1Artifact({
+        ...item.input,
+        outputs: [outputs[1]!, outputs[0]!],
+      }),
+    ).toThrow("upto settlement output 0 must pay the charged amount");
+    expect(() =>
+      buildUptoSettlementTxV1Artifact({
+        ...item.input,
+        outputs: [
+          outputs[0]!,
+          {
+            ...outputs[1]!,
+            covenant: {
+              authorizingInput: 0,
+              covenantId: "11".repeat(32),
+            },
+          },
+        ],
+      }),
+    ).toThrow("transaction-v1 artifacts do not support output covenant bindings yet");
   });
 });

@@ -11,7 +11,7 @@ Mainnet support must remain opt-in, explicitly configured, and blocked by the ga
 Mainnet use requires independent review of:
 
 - the exact transaction verifier, including transaction id derivation, selected output validation, finality handling, and replay-store durability;
-- the upto authorization digest, signer, verifier, nonzero settlement builder, settlement verifier, refund-output accounting, finality recovery, and authorization-store durability;
+- the upto authorization digest, signer, verifier, nonzero settlement transaction-v1 builder, settlement verifier, refund-output accounting, finality recovery, and authorization-store durability;
 - the batch escrow template source, compiled artifact, script arguments, voucher digest, claim/refund transaction-v1 builders, compute-budget assumptions, storage-mass assumptions, and live adapter;
 - the server state store, including atomic settlement commits, idempotency records, claim attempts, replay stores, channel state, and cross-process locking;
 - the client channel store, including backup, recovery, refund readiness, and stale-state handling;
@@ -38,7 +38,7 @@ Known limitation: the reference types expose hot-wallet and external adapter mod
 
 ## Fee And Compute-Budget Policy
 
-Batch claim and refund transaction-v1 artifacts currently pin:
+Batch claim, batch refund, and nonzero upto settlement transaction-v1 artifacts currently pin:
 
 - native subnetwork;
 - zero gas;
@@ -46,7 +46,8 @@ Batch claim and refund transaction-v1 artifacts currently pin:
 - reviewed script-unit estimates;
 - explicit compute budgets;
 - claim fees paid from the server output;
-- refund fees paid from the refund output.
+- refund fees paid from the refund output;
+- nonzero upto fees paid from the signed settlement reserve.
 
 Before mainnet:
 
@@ -54,7 +55,7 @@ Before mainnet:
 - claim reserve policy must include a margin above estimated fees;
 - dust thresholds must be measured against current node policy;
 - transaction-v1 builders must be tested against current node software;
-- the nonzero upto settlement builder and verifier must have deterministic reference vectors;
+- transaction-v1 vectors must be cross-validated against the exact node release used by operators;
 - the live proof harness must be rerun after any transaction-builder, node, or template change.
 
 ## Template Hash
@@ -69,7 +70,7 @@ Current reproducibility checks cover:
 - serialized script public key;
 - payout and refund script-public-key hashes;
 - claim and refund argument encodings;
-- claim and refund transaction-v1 vectors.
+- claim, refund, and nonzero upto settlement transaction-v1 vectors.
 
 Before mainnet:
 
@@ -112,7 +113,7 @@ At minimum:
 ## Known Limitations
 
 - Mainnet profile is not audited.
-- Built-in nonzero upto transaction-v1 construction is not complete; current nonzero live proof is adapter-driven.
+- Deterministic transaction-v1 vectors and live testnet proof are not substitutes for independent audit.
 - Live proof evidence is testnet-only.
 - The local live adapter is intentionally outside the public package boundary.
 - In-memory stores are examples only and are not production durable stores.

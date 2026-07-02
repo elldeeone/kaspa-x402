@@ -29,6 +29,8 @@ const requiredFlows = [
   "replay rejection across exact, upto, and batch-settlement",
   "batch refund transaction construction and broadcast after timeout",
 ];
+const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
+const ADAPTER_SUBMITTED_TX_VERSION_SOURCE = "adapter-submitted-transaction-shape";
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -134,6 +136,9 @@ function validateLiveProofResult(result, flows) {
   const isSompi = (value) => typeof value === "string" && /^(?:0|[1-9][0-9]*)$/.test(value);
   const isPositiveSompi = (value) => isSompi(value) && BigInt(value) > 0n;
   const isIndex = (value) => Number.isInteger(value) && value >= 0;
+  const isTxVersion = (value) => Number.isInteger(value) && value >= 0;
+  const isTxVersionSource = (value) =>
+    value === SDK_GENERATED_TX_VERSION_SOURCE || value === ADAPTER_SUBMITTED_TX_VERSION_SOURCE;
   const isFinal = (value) => value === "accepted" || value === "confirmed";
   const isHexBytes = (value) => typeof value === "string" && value.length > 0 && value.length % 2 === 0 && /^[0-9a-fA-F]+$/.test(value);
   const validOutpoint = (value) => isObject(value) && isHash32(value.txid) && isIndex(value.index);
@@ -151,6 +156,9 @@ function validateLiveProofResult(result, flows) {
   }
 
   require(isHash32(result.exact?.txid), "exact.txid", "must be a transaction id");
+  require(isTxVersion(result.exact?.txVersion), "exact.txVersion", "must state the transaction version");
+  require(isTxVersionSource(result.exact?.txVersionSource), "exact.txVersionSource", "must state an allowed version evidence source");
+  require(result.exact?.txVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "exact.txVersionSource", "must be sdk-generated-transaction");
   require(isIndex(result.exact?.outputIndex), "exact.outputIndex", "must be a non-negative integer");
   require(isPositiveSompi(result.exact?.amount), "exact.amount", "must be a positive sompi string");
   require(isFinal(result.exact?.finality), "exact.finality", "must be accepted or confirmed");
@@ -158,21 +166,35 @@ function validateLiveProofResult(result, flows) {
   require(result.exact?.replay?.error === "invalid_transaction_state", "exact.replay.error", "must be invalid_transaction_state");
 
   require(validOutpoint(result.upto?.zero?.authorizationOutpoint), "upto.zero.authorizationOutpoint", "must be an outpoint");
+  require(isTxVersion(result.upto?.zero?.authorizationTxVersion), "upto.zero.authorizationTxVersion", "must state the authorization transaction version");
+  require(isTxVersionSource(result.upto?.zero?.authorizationTxVersionSource), "upto.zero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
+  require(result.upto?.zero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.zero.authorizationTxVersionSource", "must be sdk-generated-transaction");
   require(isPositiveSompi(result.upto?.zero?.maxAmountSompi), "upto.zero.maxAmountSompi", "must be a positive sompi string");
   require(result.upto?.zero?.chargedAmount === "0", "upto.zero.chargedAmount", "must be zero");
   require(result.upto?.zero?.transaction === "", "upto.zero.transaction", "must be empty for zero-charge");
+  require(result.upto?.zero?.txVersion === null, "upto.zero.txVersion", "must be null for zero-charge");
+  require(result.upto?.zero?.txVersionSource === "no-transaction", "upto.zero.txVersionSource", "must state no-transaction");
   require(validOutpoint(result.upto?.nonzero?.authorizationOutpoint), "upto.nonzero.authorizationOutpoint", "must be an outpoint");
+  require(isTxVersion(result.upto?.nonzero?.authorizationTxVersion), "upto.nonzero.authorizationTxVersion", "must state the authorization transaction version");
+  require(isTxVersionSource(result.upto?.nonzero?.authorizationTxVersionSource), "upto.nonzero.authorizationTxVersionSource", "must state an allowed authorization version evidence source");
+  require(result.upto?.nonzero?.authorizationTxVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "upto.nonzero.authorizationTxVersionSource", "must be sdk-generated-transaction");
   require(isPositiveSompi(result.upto?.nonzero?.maxAmountSompi), "upto.nonzero.maxAmountSompi", "must be a positive sompi string");
   require(isPositiveSompi(result.upto?.nonzero?.chargedAmount), "upto.nonzero.chargedAmount", "must be a positive sompi string");
   if (isSompi(result.upto?.nonzero?.chargedAmount) && isSompi(result.upto?.nonzero?.maxAmountSompi)) {
     require(BigInt(result.upto.nonzero.chargedAmount) <= BigInt(result.upto.nonzero.maxAmountSompi), "upto.nonzero.chargedAmount", "must not exceed maxAmountSompi");
   }
   require(isHash32(result.upto?.nonzero?.txid), "upto.nonzero.txid", "must be a transaction id");
+  require(result.upto?.nonzero?.txVersion === 1, "upto.nonzero.txVersion", "must be transaction v1");
+  require(isTxVersionSource(result.upto?.nonzero?.txVersionSource), "upto.nonzero.txVersionSource", "must state an allowed version evidence source");
+  require(result.upto?.nonzero?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "upto.nonzero.txVersionSource", "must be adapter-submitted-transaction-shape");
   require(isIndex(result.upto?.nonzero?.paymentOutputIndex), "upto.nonzero.paymentOutputIndex", "must be a non-negative integer");
   require(result.upto?.replay?.status === 409, "upto.replay.status", "must be 409");
   require(result.upto?.replay?.error === "invalid_transaction_state", "upto.replay.error", "must be invalid_transaction_state");
 
   require(isHash32(result.batch?.deposit?.txid), "batch.deposit.txid", "must be a transaction id");
+  require(isTxVersion(result.batch?.deposit?.txVersion), "batch.deposit.txVersion", "must state the transaction version");
+  require(isTxVersionSource(result.batch?.deposit?.txVersionSource), "batch.deposit.txVersionSource", "must state an allowed version evidence source");
+  require(result.batch?.deposit?.txVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "batch.deposit.txVersionSource", "must be sdk-generated-transaction");
   require(validOutpoint(result.batch?.deposit?.outpoint), "batch.deposit.outpoint", "must be an outpoint");
   if (validOutpoint(result.batch?.deposit?.outpoint) && isHash32(result.batch?.deposit?.txid)) {
     require(result.batch.deposit.outpoint.txid.toLowerCase() === result.batch.deposit.txid.toLowerCase(), "batch.deposit.outpoint", "must belong to deposit txid");
@@ -186,6 +208,9 @@ function validateLiveProofResult(result, flows) {
   require(isPositiveSompi(result.batch?.voucherOnly?.chargedCumulativeAmount), "batch.voucherOnly.chargedCumulativeAmount", "must be a positive sompi string");
   require(isPositiveSompi(result.batch?.voucherOnly?.signedMaxClaimable), "batch.voucherOnly.signedMaxClaimable", "must be a positive sompi string");
   require(isHash32(result.batch?.claim?.txid), "batch.claim.txid", "must be a transaction id");
+  require(result.batch?.claim?.txVersion === 1, "batch.claim.txVersion", "must be transaction v1");
+  require(isTxVersionSource(result.batch?.claim?.txVersionSource), "batch.claim.txVersionSource", "must state an allowed version evidence source");
+  require(result.batch?.claim?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.claim.txVersionSource", "must be adapter-submitted-transaction-shape");
   require(isFinal(result.batch?.claim?.finality), "batch.claim.finality", "must be accepted or confirmed");
   require(validOutpoint(result.batch?.claim?.originalOutpoint), "batch.claim.originalOutpoint", "must be an outpoint");
   require(validOutpoint(result.batch?.claim?.continuationOutpoint), "batch.claim.continuationOutpoint", "must be an outpoint");
@@ -200,6 +225,9 @@ function validateLiveProofResult(result, flows) {
   }
   require(isHexBytes(result.batch?.replay?.oldScriptPublicKey), "batch.replay.oldScriptPublicKey", "must be hex bytes");
   require(validOutpoint(result.batch?.replay?.attemptedInputOutpoint), "batch.replay.attemptedInputOutpoint", "must be an outpoint");
+  require(result.batch?.replay?.attemptedTxVersion === 1, "batch.replay.attemptedTxVersion", "must be transaction v1");
+  require(isTxVersionSource(result.batch?.replay?.attemptedTxVersionSource), "batch.replay.attemptedTxVersionSource", "must state an allowed version evidence source");
+  require(result.batch?.replay?.attemptedTxVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.replay.attemptedTxVersionSource", "must be adapter-submitted-transaction-shape");
   if (validOutpoint(result.batch?.replay?.attemptedInputOutpoint) && validOutpoint(result.batch?.claim?.continuationOutpoint)) {
     require(sameOutpoint(result.batch.replay.attemptedInputOutpoint, result.batch.claim.continuationOutpoint), "batch.replay.attemptedInputOutpoint", "must match continuation outpoint");
   }
@@ -211,6 +239,9 @@ function validateLiveProofResult(result, flows) {
     require(!/zero value|malformed|invalid output/i.test(result.batch.replay.reason), "batch.replay.reason", "must not be a malformed transaction rejection");
   }
   require(isHash32(result.batch?.refund?.txid), "batch.refund.txid", "must be a transaction id");
+  require(result.batch?.refund?.txVersion === 1, "batch.refund.txVersion", "must be transaction v1");
+  require(isTxVersionSource(result.batch?.refund?.txVersionSource), "batch.refund.txVersionSource", "must state an allowed version evidence source");
+  require(result.batch?.refund?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.refund.txVersionSource", "must be adapter-submitted-transaction-shape");
   require(isNonEmptyString(result.batch?.refund?.refundAddress), "batch.refund.refundAddress", "must be present");
   require(isPositiveSompi(result.batch?.refund?.refundAmountSompi), "batch.refund.refundAmountSompi", "must be a positive sompi string");
   require(isIndex(result.batch?.refund?.outputIndex), "batch.refund.outputIndex", "must be a non-negative integer");

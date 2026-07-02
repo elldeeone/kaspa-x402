@@ -91,11 +91,12 @@ Evidence:
 - `packages/core/src/upto.ts` defines the signed digest fields.
 - `packages/server/src/direct-server.ts` checks max amount, recipient, server key, validity window, derived script, UTXO, signature, single-use outpoint, single-use nonce, and settlement transaction evidence.
 - `packages/server/test/direct-server.test.ts` covers zero-charge consumption, nonzero settlement, invalid signatures, expired authorizations, recipient/server-key/max-amount mismatches, outpoint replay, nonce replay, pending recovery, and output/refund evidence rejection.
+- `vectors/tx-v1/upto-settlement.json` records the nonzero transaction-v1 body, txid, tx hash, sighash, storage mass, compute budget, and output plan.
 - `docs/live-testnet-report.md` records zero-charge and nonzero testnet runs plus replay rejection.
 
 Residual risk:
 
-- nonzero transaction construction is adapter-gated; mainnet use requires a reviewed native builder and verifier pair.
+- mainnet use still requires independent review of the native builder, verifier, finality, and store durability.
 
 ### Batch Vouchers
 

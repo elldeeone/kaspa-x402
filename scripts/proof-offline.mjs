@@ -17,6 +17,7 @@ import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEA
 import {
   buildBatchClaimTxV1Artifact,
   buildBatchRefundTxV1Artifact,
+  buildUptoSettlementTxV1Artifact,
   checkEscrowFixtureReproducibility,
 } from "../packages/covenant/dist/index.js";
 import { NETWORK, createMockDirectModeEnvironment, mockRequestHash, paymentRequiredFor } from "../examples/lib/mock-direct-mode.mjs";
@@ -577,6 +578,16 @@ function runTxV1Proof() {
     computeBudget: refund.compute.computeBudget,
   });
 
+  const uptoSettlementVector = readJson("vectors/tx-v1/upto-settlement.json");
+  const uptoSettlement = buildUptoSettlementTxV1Artifact(uptoSettlementVector.input);
+  assert.deepEqual(uptoSettlement, uptoSettlementVector.expected);
+  check("upto settlement tx-v1 construction", {
+    transactionId: uptoSettlement.transactionId,
+    paymentOutputAmount: uptoSettlement.payment.amount,
+    refundOutputAmount: uptoSettlement.refund.amount,
+    computeBudget: uptoSettlement.compute.computeBudget,
+  });
+
   return {
     fixtureChecks: fixtureReport.checks.length,
     claim: {
@@ -588,6 +599,12 @@ function runTxV1Proof() {
       transactionId: refund.transactionId,
       refundOutputAmount: refund.fee.refundOutputAmount,
       computeBudget: refund.compute.computeBudget,
+    },
+    uptoSettlement: {
+      transactionId: uptoSettlement.transactionId,
+      paymentOutputAmount: uptoSettlement.payment.amount,
+      refundOutputAmount: uptoSettlement.refund.amount,
+      computeBudget: uptoSettlement.compute.computeBudget,
     },
   };
 }

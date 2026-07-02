@@ -1,6 +1,29 @@
 {
   "kind": "tx-v1-batch-claim",
   "description": "Reference transaction-v1 artifact for claiming a charged amount from a batch-settlement escrow.",
+  "validation": {
+    "status": "consensus-cross-validated",
+    "tool": "kaspa-consensus-core",
+    "toolVersion": "2.0.1",
+    "sourceCommit": "ef1a093bcf8560fe05221b56f0c896f97e7d8d77",
+    "command": "KASPA_X402_KASPA_CONSENSUS_ROOT=<kaspa-consensus-checkout> npm run validate:tx-v1-consensus",
+    "checkedFields": [
+      "transactionId",
+      "transactionHash",
+      "serializedTransaction",
+      "hash.preimage",
+      "txid.payloadDigest",
+      "txid.restPreimage",
+      "txid.restDigest",
+      "sighash.preimage",
+      "sighash.digest",
+      "transaction.mass",
+      "transaction.estimatedSerializedSize",
+      "transaction.inputs[].computeBudget",
+      "transaction.outputs[].covenant"
+    ],
+    "liveStatus": "offline-reference"
+  },
   "input": {
     "network": "kaspa:testnet-10",
     "activeOutpoint": {

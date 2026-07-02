@@ -6,6 +6,7 @@ coverage/
 *.log
 .DS_Store
 .kaspa-x402-live/
+.kaspa-x402-consensus-target/
 docs/standard-plan.md
 docs/goal.md
 docs/*-review.md

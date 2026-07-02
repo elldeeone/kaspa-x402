@@ -37,3 +37,6 @@ KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS
 ```
 
 The required live flows are exact payment and replay rejection, upto zero-charge authorization, upto nonzero settlement, batch deposit-voucher settlement, batch voucher-only settlement, batch claim construction and broadcast, replay rejection across all schemes, and batch refund construction and broadcast after timeout.
+
+The live result must state the transaction version and version-evidence source for every broadcast transaction. The nonzero upto settlement, batch claim, batch replay attempt, and batch refund paths must be transaction v1; zero-charge upto settlement must explicitly report that no transaction exists.
+Accepted version-evidence sources are `sdk-generated-transaction` for SDK funding transactions and `adapter-submitted-transaction-shape` for locally assembled covenant transactions.

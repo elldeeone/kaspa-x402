@@ -6,13 +6,19 @@ import {
   CLAIM_SCRIPT_UNITS_ESTIMATE,
   REFUND_COMPUTE_BUDGET,
   REFUND_SCRIPT_UNITS_ESTIMATE,
+  UPTO_SETTLE_COMPUTE_BUDGET,
+  UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE,
   buildClaimArgs,
   buildRefundArgs,
+  buildUptoSettleArgs,
   bytesToHex,
   computeBudgetForScriptUnits,
   escrowScriptPubKeyHash,
   hexToBytes,
+  payToScriptHashScript,
   scriptUnitAllowance,
+  serializedScriptPublicKey,
+  validateUptoSettlementOutputPlan,
   voucherDigest,
 } from "./template.js";
 import type { FundingOutpoint, NetworkId, ScriptPublicKey } from "./template.js";
@@ -68,6 +74,33 @@ export interface BatchRefundTxV1Input {
   computeBudget: number;
   scriptUnitsEstimate: number;
   mass?: Uint64Value;
+  subnetworkId?: string;
+  gas?: Uint64Value;
+  payload?: string;
+  outputs?: readonly TxV1OutputPlan[];
+}
+
+export interface UptoSettlementTxV1Input {
+  authorizationOutpoint: FundingOutpoint;
+  authorizationAmount: Uint64Value;
+  authorizationScriptPublicKey: string;
+  redeemScript: string;
+  paymentOutputScriptPublicKey: string;
+  expectedPayoutScriptPublicKeyHash: string;
+  refundOutputScriptPublicKey: string;
+  expectedRefundScriptPublicKeyHash: string;
+  chargeAmount: Uint64Value;
+  maxAmountSompi: Uint64Value;
+  validAfterDaa: Uint64Value;
+  settlementFeeReserveSompi: Uint64Value;
+  fee: Uint64Value;
+  serverSignature: string | Uint8Array;
+  clientAuthorization: string | Uint8Array;
+  computeBudget: number;
+  scriptUnitsEstimate: number;
+  mass?: Uint64Value;
+  sequence?: Uint64Value;
+  lockTimeDaa: Uint64Value;
   subnetworkId?: string;
   gas?: Uint64Value;
   payload?: string;
@@ -178,12 +211,53 @@ export interface BatchRefundTxV1Artifact {
   };
 }
 
+export interface UptoSettlementTxV1Artifact {
+  format: "kaspa-x402-tx-v1-reference-v1";
+  kind: "upto-settlement";
+  transaction: TxV1ReferenceTransaction;
+  serializedTransaction: string;
+  transactionId: string;
+  transactionHash: string;
+  txid: TxV1IdDebug;
+  hash: TxV1DigestDebug;
+  sighash: TxV1SighashDebug;
+  signatureScript: string;
+  fee: {
+    amount: string;
+    source: "settlement-reserve";
+    chargeAmount: string;
+    maxAmountSompi: string;
+    settlementFeeReserveSompi: string;
+    paymentOutputAmount: string;
+    refundOutputAmount: string;
+  };
+  payment: {
+    outputIndex: 0;
+    amount: string;
+    scriptPublicKey: string;
+  };
+  refund: {
+    outputIndex: 1;
+    amount: string;
+    scriptPublicKey: string;
+  };
+  compute: {
+    computeBudget: number;
+    scriptUnitsEstimate: number;
+    scriptUnitAllowance: number;
+  };
+}
+
 export interface BatchClaimTransactionBuilder {
   buildBatchClaimTxV1(input: BatchClaimTxV1Input): BatchClaimTxV1Artifact;
 }
 
 export interface BatchRefundTransactionBuilder {
   buildBatchRefundTxV1(input: BatchRefundTxV1Input): BatchRefundTxV1Artifact;
+}
+
+export interface UptoSettlementTransactionBuilder {
+  buildUptoSettlementTxV1(input: UptoSettlementTxV1Input): UptoSettlementTxV1Artifact;
 }
 
 const FORMAT = "kaspa-x402-tx-v1-reference-v1" as const;
@@ -419,9 +493,157 @@ export function buildBatchRefundTxV1Artifact(input: BatchRefundTxV1Input): Batch
   };
 }
 
+export function buildUptoSettlementTxV1Artifact(input: UptoSettlementTxV1Input): UptoSettlementTxV1Artifact {
+  requireComputeBudget(input.computeBudget, UPTO_SETTLE_COMPUTE_BUDGET, "upto settlement");
+  requireScriptUnits(input.scriptUnitsEstimate, UPTO_SETTLE_SCRIPT_UNITS_ESTIMATE, "upto settlement");
+
+  const authorizationAmount = normalizeUint64(input.authorizationAmount, "authorizationAmount");
+  const chargeAmount = normalizeUint64(input.chargeAmount, "chargeAmount");
+  const maxAmount = normalizeUint64(input.maxAmountSompi, "maxAmountSompi");
+  const validAfterDaa = normalizeUint64(input.validAfterDaa, "validAfterDaa");
+  const reserveAmount = normalizeUint64(input.settlementFeeReserveSompi, "settlementFeeReserveSompi");
+  const fee = normalizeUint64(input.fee, "fee");
+  const lockTimeDaa = normalizeUint64(input.lockTimeDaa, "lockTimeDaa");
+  const refundOutputAmount = authorizationAmount - chargeAmount - fee;
+
+  if (fee > reserveAmount) {
+    throw new Error("upto settlement fee cannot exceed the signed reserve");
+  }
+  if (chargeAmount === 0n) {
+    throw new Error("upto settlement charge must be positive");
+  }
+  if (chargeAmount > authorizationAmount) {
+    throw new Error("upto settlement charge cannot exceed authorization amount");
+  }
+  if (refundOutputAmount <= 0n) {
+    throw new Error("upto settlement refund output must be positive");
+  }
+  if (lockTimeDaa < validAfterDaa) {
+    throw new Error("upto settlement lock time must be greater than or equal to validAfterDaa");
+  }
+
+  const authorizationScriptPublicKey = normalizeSerializedScriptPublicKey(input.authorizationScriptPublicKey, "authorizationScriptPublicKey");
+  const redeemScript = normalizeHex(input.redeemScript, "redeemScript");
+  const expectedAuthorizationScriptPublicKey = serializedScriptPublicKey(payToScriptHashScript(redeemScript));
+  if (authorizationScriptPublicKey !== expectedAuthorizationScriptPublicKey) {
+    throw new Error("upto settlement redeem script must match authorization script public key");
+  }
+
+  const paymentScriptPublicKey = normalizeSerializedScriptPublicKey(input.paymentOutputScriptPublicKey, "paymentOutputScriptPublicKey");
+  const refundScriptPublicKey = normalizeSerializedScriptPublicKey(input.refundOutputScriptPublicKey, "refundOutputScriptPublicKey");
+  const expectedOutputs = [
+    {
+      amount: chargeAmount.toString(),
+      scriptPublicKey: paymentScriptPublicKey,
+      covenant: null,
+    },
+    {
+      amount: refundOutputAmount.toString(),
+      scriptPublicKey: refundScriptPublicKey,
+      covenant: null,
+    },
+  ] satisfies TxV1ReferenceOutput[];
+  const outputs = normalizeOutputs(input.outputs ?? expectedOutputs);
+
+  if (outputs.length !== 2) {
+    throw new Error("upto settlement transaction must have exactly two outputs");
+  }
+  if (outputs[0]?.amount !== chargeAmount.toString()) {
+    throw new Error("upto settlement output 0 must pay the charged amount");
+  }
+  if (outputs[0].scriptPublicKey !== paymentScriptPublicKey) {
+    throw new Error("upto settlement output 0 must use the payment script public key");
+  }
+  if (outputs[1]?.amount !== refundOutputAmount.toString()) {
+    throw new Error("upto settlement output 1 must preserve the uncharged authorization remainder after fees");
+  }
+  if (outputs[1].scriptPublicKey !== refundScriptPublicKey) {
+    throw new Error("upto settlement output 1 must use the refund script public key");
+  }
+  validateUptoSettlementOutputPlan({
+    inputAmount: authorizationAmount,
+    maxAmountSompi: maxAmount,
+    chargeAmount,
+    settlementFeeReserveSompi: reserveAmount,
+    paymentOutputAmount: outputs[0].amount,
+    paymentOutputScriptPublicKey: outputs[0].scriptPublicKey,
+    expectedPayoutScriptPublicKeyHash: input.expectedPayoutScriptPublicKeyHash,
+    refundOutputAmount: outputs[1].amount,
+    refundOutputScriptPublicKey: outputs[1].scriptPublicKey,
+    expectedRefundScriptPublicKeyHash: input.expectedRefundScriptPublicKeyHash,
+  });
+
+  const storageMass = resolveStorageMass({
+    providedMass: input.mass,
+    inputAmount: authorizationAmount,
+    inputScriptPublicKey: authorizationScriptPublicKey,
+    outputs,
+  });
+  const signatureScript = `${buildUptoSettleArgs({
+    serverSignature: input.serverSignature,
+    clientAuthorization: input.clientAuthorization,
+  })}${pushDataHex(redeemScript)}`;
+  const transaction = buildTransaction({
+    previousOutpoint: normalizeOutpoint(input.authorizationOutpoint),
+    inputAmount: authorizationAmount,
+    inputScriptPublicKey: authorizationScriptPublicKey,
+    signatureScript,
+    sequence: normalizeUint64(input.sequence ?? "0", "sequence"),
+    computeBudget: input.computeBudget,
+    outputs,
+    lockTime: lockTimeDaa,
+    subnetworkId: normalizeNativeSubnetworkId(input.subnetworkId),
+    gas: normalizeZeroGas(input.gas),
+    payload: normalizeHex(input.payload ?? "", "payload"),
+    mass: storageMass,
+  });
+  const debug = buildDigestDebug(transaction);
+
+  return {
+    format: FORMAT,
+    kind: "upto-settlement",
+    transaction,
+    serializedTransaction: debug.hash.preimage,
+    transactionId: debug.txid.digest,
+    transactionHash: debug.hash.digest,
+    txid: debug.txid,
+    hash: debug.hash,
+    sighash: debug.sighash,
+    signatureScript,
+    fee: {
+      amount: fee.toString(),
+      source: "settlement-reserve",
+      chargeAmount: chargeAmount.toString(),
+      maxAmountSompi: maxAmount.toString(),
+      settlementFeeReserveSompi: reserveAmount.toString(),
+      paymentOutputAmount: chargeAmount.toString(),
+      refundOutputAmount: refundOutputAmount.toString(),
+    },
+    payment: {
+      outputIndex: 0,
+      amount: chargeAmount.toString(),
+      scriptPublicKey: paymentScriptPublicKey,
+    },
+    refund: {
+      outputIndex: 1,
+      amount: refundOutputAmount.toString(),
+      scriptPublicKey: refundScriptPublicKey,
+    },
+    compute: {
+      computeBudget: input.computeBudget,
+      scriptUnitsEstimate: input.scriptUnitsEstimate,
+      scriptUnitAllowance: scriptUnitAllowance(input.computeBudget),
+    },
+  };
+}
+
 export const vectorBackedBatchTransactionBuilder: BatchClaimTransactionBuilder & BatchRefundTransactionBuilder = {
   buildBatchClaimTxV1: buildBatchClaimTxV1Artifact,
   buildBatchRefundTxV1: buildBatchRefundTxV1Artifact,
+};
+
+export const vectorBackedUptoSettlementTransactionBuilder: UptoSettlementTransactionBuilder = {
+  buildUptoSettlementTxV1: buildUptoSettlementTxV1Artifact,
 };
 
 function buildTransaction(input: {
@@ -709,7 +931,7 @@ function normalizeNoCovenant(covenant: TxV1CovenantBinding | null, label: string
     throw new Error(`${label}.authorizingInput must fit in uint16`);
   }
   normalizeHash32(covenant.covenantId, `${label}.covenantId`);
-  throw new Error("batch transaction-v1 artifacts do not support output covenant bindings yet");
+  throw new Error("transaction-v1 artifacts do not support output covenant bindings yet");
 }
 
 function normalizeOutpoint(outpoint: FundingOutpoint): FundingOutpoint {
@@ -722,7 +944,7 @@ function normalizeOutpoint(outpoint: FundingOutpoint): FundingOutpoint {
 function normalizeNativeSubnetworkId(subnetworkId = NATIVE_SUBNETWORK_ID): string {
   const normalized = bytesToHex(hexToBytes(subnetworkId, 20, "subnetworkId"));
   if (normalized !== NATIVE_SUBNETWORK_ID) {
-    throw new Error("batch transaction-v1 artifacts must use the native subnetwork");
+    throw new Error("transaction-v1 artifacts must use the native subnetwork");
   }
   return normalized;
 }
@@ -730,7 +952,7 @@ function normalizeNativeSubnetworkId(subnetworkId = NATIVE_SUBNETWORK_ID): strin
 function normalizeZeroGas(gas: Uint64Value = "0"): bigint {
   const normalized = normalizeUint64(gas, "gas");
   if (normalized !== 0n) {
-    throw new Error("batch transaction-v1 artifacts must use zero gas");
+    throw new Error("transaction-v1 artifacts must use zero gas");
   }
   return normalized;
 }

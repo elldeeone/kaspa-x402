@@ -23,6 +23,7 @@
     "build": "npm run build --workspaces --if-present",
     "test": "npm run test --workspaces --if-present",
     "validate:schemas": "node scripts/validate-schemas.mjs",
+    "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
     "proof:offline": "node scripts/proof-offline.mjs",
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
