@@ -155,22 +155,14 @@ function channelIdPreimage(input) {
 }
 
 function uptoAuthorizationPreimage(input) {
-  const requestHashBytes = hexToBytes(input.requestHash);
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:upto-authorization:v1", "utf8")),
+    sha256(Buffer.from("kaspa:x402:upto-authorization:v2", "utf8")),
     sha256(Buffer.from(input.network, "utf8")),
-    sha256(Buffer.from("KAS", "utf8")),
-    sha256(Buffer.from(input.payTo, "utf8")),
-    sha256(Buffer.from(input.refundAddress, "utf8")),
-    hexToBytes(input.clientPublicKey),
-    hexToBytes(input.serverPublicKey),
+    sha256(hexToBytes(input.activeScriptPublicKey)),
     hexToBytes(input.authorizationOutpoint.txid),
     le32(input.authorizationOutpoint.index),
-    le64(input.maxAmountSompi),
-    le64(input.validAfterDaa),
-    le64(input.validBeforeDaa),
+    hexToBytes(input.requestHash),
     hexToBytes(input.nonce),
-    sha256(requestHashBytes),
   ]);
 }
 
@@ -215,16 +207,10 @@ function assertUptoDigestInputMatchesPayload(vector, label) {
   const input = vector.authorizationDigest.input;
   const expectedFields = {
     network: accepted.network,
-    payTo: authorization.payTo,
-    refundAddress: payload.refundAddress,
-    clientPublicKey: payload.clientPublicKey,
-    serverPublicKey: authorization.serverPublicKey,
+    activeScriptPublicKey: payload.authorizationScriptPublicKey,
     authorizationOutpoint: payload.authorizationOutpoint,
-    maxAmountSompi: authorization.maxAmountSompi,
-    validAfterDaa: authorization.validAfterDaa,
-    validBeforeDaa: authorization.validBeforeDaa,
-    nonce: authorization.nonce,
     requestHash: authorization.requestHash,
+    nonce: authorization.nonce,
   };
   for (const [key, expected] of Object.entries(expectedFields)) {
     if (stableStringify(input[key]) !== stableStringify(expected)) {
@@ -325,15 +311,18 @@ function classifyUptoRejection(vector, rejection) {
   if (rejection.consumed === "outpoint" || rejection.consumed === "nonce") return "invalid_kaspa_upto_replay";
   const currentDaa = BigInt(rejection.currentDaa ?? authorization.validAfterDaa);
   if (
-    BigInt(authorization.validAfterDaa) > BigInt(authorization.validBeforeDaa) ||
+    BigInt(authorization.validAfterDaa) >= BigInt(authorization.validBeforeDaa) ||
     BigInt(authorization.validBeforeDaa) > BigInt(accepted.extra.authorizationTimeoutDaa) ||
     currentDaa < BigInt(authorization.validAfterDaa) ||
-    currentDaa > BigInt(authorization.validBeforeDaa)
+    currentDaa >= BigInt(authorization.validBeforeDaa)
   ) {
     return "invalid_kaspa_upto_expired";
   }
   if (authorization.payTo !== accepted.payTo) return "invalid_kaspa_upto_recipient";
   if (authorization.maxAmountSompi !== accepted.amount) return "invalid_kaspa_upto_max_amount";
+  if (BigInt(payload.authorizationAmountSompi) < BigInt(authorization.maxAmountSompi) + BigInt(authorization.settlementFeeReserveSompi) + 1n) {
+    return "invalid_kaspa_x402_amount";
+  }
   return "ok";
 }
 

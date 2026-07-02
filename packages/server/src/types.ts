@@ -47,11 +47,13 @@ export interface TransactionBroadcast {
   finality: SettlementFinality;
 }
 
+export type PreparedTransaction = string;
+
 export interface ServerChainProvider {
   getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null>;
   getVirtualDaaScore(): Promise<SompiString>;
   estimateClaimFee(channel: ServerChannelRecord): Promise<SompiString>;
-  sendTransaction(transaction: ByteHex): Promise<TransactionBroadcast>;
+  sendTransaction(transaction: PreparedTransaction): Promise<TransactionBroadcast>;
 }
 
 export interface VoucherVerificationRequest {
@@ -106,16 +108,6 @@ export interface TopUpVerifier {
   verifyTopUp(request: TopUpVerificationRequest): Promise<boolean> | boolean;
 }
 
-export interface UptoAuthorizationScriptDerivationRequest {
-  accepted: UptoPaymentRequirements;
-  payload: UptoAuthorizationPayload;
-  requestFingerprint: Hash32Hex;
-}
-
-export interface UptoAuthorizationScriptDeriver {
-  deriveAuthorizationScript(request: UptoAuthorizationScriptDerivationRequest): Promise<ByteHex> | ByteHex;
-}
-
 export interface UptoAuthorizationVerificationRequest {
   accepted: UptoPaymentRequirements;
   payload: UptoAuthorizationPayload;
@@ -137,13 +129,13 @@ export interface UptoSettlementTransactionRequest {
 }
 
 export interface UptoSettlementTransactionResult {
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
 }
 
 export interface UptoSettlementTransactionVerificationRequest {
   accepted: UptoPaymentRequirements;
   payload: UptoAuthorizationPayload;
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
   chargeAmount: SompiString;
   requestFingerprint: Hash32Hex;
   authorizationOutpoint: FundingOutpoint;
@@ -293,6 +285,8 @@ export interface UptoAuthorizationRecordBase {
   requiredFinality: Exclude<SettlementFinality, "broadcast">;
   maxAmountSompi: SompiString;
   authorizationAmountSompi: SompiString;
+  validAfterDaa: SompiString;
+  validBeforeDaa: SompiString;
   chargedAmount: SompiString;
   refundAddress: string;
   payerAddress?: string;
@@ -303,7 +297,7 @@ export interface UptoAuthorizationRecordBase {
 
 export interface UptoPendingAuthorizationRecord extends UptoAuthorizationRecordBase {
   status: "pending";
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
   transactionId: Hash32Hex;
   settlement: SettlementResponse;
   response: ServerResponse;
@@ -311,7 +305,7 @@ export interface UptoPendingAuthorizationRecord extends UptoAuthorizationRecordB
 
 export interface UptoBroadcastAuthorizationRecord extends UptoAuthorizationRecordBase {
   status: "broadcast";
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
   settlement: SettlementResponse;
   response: ServerResponse;
   transactionId: Hash32Hex;
@@ -354,7 +348,7 @@ export interface ClaimAttemptRecord {
   signedMaxClaimable: SompiString;
   voucherSignature?: SignatureHex;
   channelStatus: ChannelStatus;
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
   status: ClaimAttemptStatus;
   transactionId?: Hash32Hex;
   finality?: SettlementFinality;
@@ -397,7 +391,7 @@ export interface ClaimTransactionRequest {
 }
 
 export interface ClaimTransactionResult {
-  transaction: ByteHex;
+  transaction: PreparedTransaction;
   claimAmount: SompiString;
   continuationOutpoint?: FundingOutpoint;
   continuationScriptPublicKey?: ByteHex;
@@ -432,13 +426,13 @@ export interface DirectModeServerConfig {
   amount: SompiString;
   refundTimeoutDaa: SompiString;
   authorizationTimeoutDaa?: SompiString;
+  settlementFeeReserveSompi?: SompiString;
   maxTimeoutSeconds?: number;
   store: ServerStateStore;
   chainProvider: ServerChainProvider;
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
-  uptoScriptDeriver?: UptoAuthorizationScriptDeriver;
   uptoAuthorizationVerifier?: UptoAuthorizationVerifier;
   uptoSettlementBuilder?: UptoSettlementTransactionBuilder;
   uptoSettlementVerifier?: UptoSettlementTransactionVerifier;

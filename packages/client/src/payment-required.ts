@@ -93,7 +93,8 @@ function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirem
     return (
       requirement.extra.binding === "kaspa-upto-v1" &&
       requirement.extra.authorizationTemplateId === "kaspa-x402-upto-v1" &&
-      typeof requirement.extra.serverPublicKey === "string"
+      typeof requirement.extra.serverPublicKey === "string" &&
+      typeof requirement.extra.settlementFeeReserveSompi === "string"
     );
   }
   return (
@@ -107,6 +108,7 @@ function validateSupportedRequirement(accepted: ExactPaymentRequirements | UptoP
   parseSompiString(accepted.amount);
   if (accepted.scheme === "upto") {
     parseSompiString(accepted.extra.authorizationTimeoutDaa);
+    parseSompiString(accepted.extra.settlementFeeReserveSompi);
   }
   if (accepted.scheme === "batch-settlement") {
     parseSompiString(accepted.extra.minDepositSompi);

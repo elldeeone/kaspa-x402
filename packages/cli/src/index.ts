@@ -8,6 +8,7 @@ import {
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
   kaspaSettlementExtensions,
+  minimumUptoAuthorizationAmount,
   parseSompiString,
   stableStringify,
   validatePaymentPayload,
@@ -259,7 +260,7 @@ function settleUpto(parsed: ParsedArgs): Record<string, unknown> {
     maxAmountSompi: paymentPayload.payload.authorization.maxAmountSompi,
     authorizationOutpoint: paymentPayload.payload.authorizationOutpoint,
     refundAddress: paymentPayload.payload.refundAddress,
-    requiredEvidence: ["verified settlement transaction id", "authorization input consumption", "payment output", "refund output or zero remainder"],
+    requiredEvidence: ["verified settlement transaction id", "authorization input consumption", "payment output", "positive refund output"],
   };
 }
 
@@ -383,10 +384,16 @@ function assertUptoPayloadConsistent(paymentPayload: PaymentPayload): void {
   if (authorization.serverPublicKey !== accepted.extra.serverPublicKey) {
     throw new CliError("upto authorization server key does not match accepted requirements");
   }
-  if (parseSompiString(payload.authorizationAmountSompi) < parseSompiString(authorization.maxAmountSompi)) {
-    throw new CliError("upto authorization funding amount is below signed maximum");
+  if (authorization.settlementFeeReserveSompi !== accepted.extra.settlementFeeReserveSompi) {
+    throw new CliError("upto authorization fee reserve does not match accepted requirements");
   }
-  if (parseSompiString(authorization.validAfterDaa) > parseSompiString(authorization.validBeforeDaa)) {
+  if (
+    parseSompiString(payload.authorizationAmountSompi) <
+    parseSompiString(minimumUptoAuthorizationAmount(authorization.maxAmountSompi, authorization.settlementFeeReserveSompi))
+  ) {
+    throw new CliError("upto authorization funding amount is below signed maximum plus fee reserve and refund output");
+  }
+  if (parseSompiString(authorization.validAfterDaa) >= parseSompiString(authorization.validBeforeDaa)) {
     throw new CliError("upto authorization validity window is inverted");
   }
   if (parseSompiString(authorization.validBeforeDaa) > parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
@@ -486,17 +493,26 @@ function assertDryRun(parsed: ParsedArgs, command: string): void {
 }
 
 async function verifyCovenantFixture(root: string): Promise<{ checks: number }> {
-  const fixturePath = path.join(root, "contracts", "fixtures", "kaspa-x402-escrow-v1.json");
-  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
-  if (!isRecord(fixture) || typeof fixture.source !== "string") throw new CliError("covenant fixture is missing source");
-  const source = fs.readFileSync(path.join(root, fixture.source));
+  const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v1.json");
+  const uptoFixture = readCovenantFixture(root, "kaspa-x402-upto-v1.json");
   const module = (await import("@kaspa-x402/covenant")) as {
     checkEscrowFixtureReproducibility: (fixture: unknown, source: Uint8Array) => { checks: readonly unknown[] };
+    checkUptoFixtureReproducibility: (fixture: unknown, source: Uint8Array) => { checks: readonly unknown[] };
   };
-  const report = module.checkEscrowFixtureReproducibility(fixture, source);
-  return { checks: report.checks.length };
+  const escrowReport = module.checkEscrowFixtureReproducibility(escrowFixture.fixture, escrowFixture.source);
+  const uptoReport = module.checkUptoFixtureReproducibility(uptoFixture.fixture, uptoFixture.source);
+  return { checks: escrowReport.checks.length + uptoReport.checks.length };
 }
 
+function readCovenantFixture(root: string, name: string): { fixture: unknown; source: Uint8Array } {
+  const fixturePath = path.join(root, "contracts", "fixtures", name);
+  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  if (!isRecord(fixture) || typeof fixture.source !== "string") throw new CliError(`${name} covenant fixture is missing source`);
+  return {
+    fixture,
+    source: fs.readFileSync(path.join(root, fixture.source)),
+  };
+}
 
 function parseArgs(argv: string[]): ParsedArgs {
   const command: string[] = [];

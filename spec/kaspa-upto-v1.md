@@ -51,6 +51,7 @@ kaspa:testnet-10
     "authorizationTemplateId": "kaspa-x402-upto-v1",
     "serverPublicKey": "<32-byte x-only hex>",
     "authorizationTimeoutDaa": "123456789",
+    "settlementFeeReserveSompi": "2000",
     "finality": "accepted"
   }
 }
@@ -68,6 +69,7 @@ kaspa:testnet-10
 | `extra.authorizationTemplateId` | yes | Must equal `"kaspa-x402-upto-v1"` for the v0.1 covenant-backed profile. |
 | `extra.serverPublicKey` | yes | Server key allowed to settle the one-shot authorization. |
 | `extra.authorizationTimeoutDaa` | yes | DAA score after which the authorization must not be settled. |
+| `extra.settlementFeeReserveSompi` | yes | Signed maximum fee reserve for nonzero settlement. |
 | `extra.finality` | no | One of `"accepted"` or `"confirmed"`. If absent, default is `"accepted"`. |
 
 x402 `upto` has phase-dependent amount semantics:
@@ -107,8 +109,11 @@ The payload type is `upto-authorization`.
   "authorization": {
     "maxAmountSompi": "25000000",
     "payTo": "kaspatest:...",
+    "payoutScriptPublicKeyHash": "<32-byte script public key hash hex>",
+    "refundScriptPublicKeyHash": "<32-byte script public key hash hex>",
     "validAfterDaa": "123450000",
     "validBeforeDaa": "123456789",
+    "settlementFeeReserveSompi": "2000",
     "nonce": "<32-byte hex>",
     "serverPublicKey": "<32-byte x-only hex>",
     "requestHash": "<sha256 request fingerprint hex>",
@@ -124,13 +129,16 @@ The payload type is `upto-authorization`.
 | `clientPublicKey` | yes | Public key that signs the authorization digest. |
 | `authorizationOutpoint` | yes | Exact UTXO backing this one-shot authorization. |
 | `authorizationScriptPublicKey` | yes | Script public key for the backing authorization UTXO. |
-| `authorizationAmountSompi` | yes | Value locked by the authorization UTXO. Must cover maximum amount plus fees or template-defined reserve. |
+| `authorizationAmountSompi` | yes | Value locked by the authorization UTXO. Must be at least `authorization.maxAmountSompi + authorization.settlementFeeReserveSompi + 1` so the required refund output can be positive. |
 | `refundAddress` | yes | Address that receives uncharged value according to the authorization rules. |
 | `fundingTransaction` | no | Serialized transaction that creates `authorizationOutpoint`, when the verifier has not observed it yet. |
 | `authorization.maxAmountSompi` | yes | Signed maximum charge. Must equal verify-time `PaymentRequirements.amount`. |
 | `authorization.payTo` | yes | Signed recipient. Must equal `PaymentRequirements.payTo`. |
+| `authorization.payoutScriptPublicKeyHash` | yes | Signed hash of the payout script public key derived from `payTo`. |
+| `authorization.refundScriptPublicKeyHash` | yes | Signed hash of the refund script public key derived from `refundAddress`. |
 | `authorization.validAfterDaa` | yes | Earliest DAA score for settlement. |
-| `authorization.validBeforeDaa` | yes | Latest DAA score for settlement. |
+| `authorization.validBeforeDaa` | yes | Exclusive latest DAA score for settlement and start DAA score for client refund. |
+| `authorization.settlementFeeReserveSompi` | yes | Signed maximum fee reserve. Must equal `extra.settlementFeeReserveSompi`. |
 | `authorization.nonce` | yes | Single-use nonce. |
 | `authorization.serverPublicKey` | yes | Server key allowed to settle. Must match `extra.serverPublicKey`. |
 | `authorization.requestHash` | yes | SHA-256 of the normalized request fingerprint. Required for direct-mode request binding. |
@@ -142,20 +150,13 @@ The client signs this digest:
 
 ```text
 sha256(
-  sha256("kaspa:x402:upto-authorization:v1") ||
+  sha256("kaspa:x402:upto-authorization:v2") ||
   sha256(network) ||
-  sha256("KAS") ||
-  sha256(payTo utf8) ||
-  sha256(refundAddress utf8) ||
-  clientPublicKey32 ||
-  serverPublicKey32 ||
+  sha256(serialized authorizationScriptPublicKey bytes) ||
   authorizationOutpointTxid32 ||
   authorizationOutpointIndex_le32 ||
-  maxAmountSompi_le64 ||
-  validAfterDaa_le64 ||
-  validBeforeDaa_le64 ||
-  nonce32 ||
-  sha256(requestHash32)
+  requestHash32 ||
+  nonce32
 )
 ```
 
@@ -163,9 +164,26 @@ Digest rules:
 
 - strings are UTF-8 before hashing;
 - txids are hex decoded from their canonical display order;
+- `authorizationScriptPublicKey` is the serialized Kaspa script public key with uint16 little-endian version prefix, and the version must be `0`;
 - integers are unsigned little-endian values of the stated byte width;
 - `requestHash` is a required 32-byte request-fingerprint hash;
 - implementations must reject values that cannot be represented in the required integer width.
+
+## Covenant Template
+
+`authorizationTemplateId = "kaspa-x402-upto-v1"` identifies a single-use SilverScript authorization template. The template constructor binds:
+
+- client and server public keys;
+- network hash;
+- payout and refund script public key hashes;
+- request hash and nonce;
+- maximum charge, settlement lower bound, refund lower bound, and settlement fee reserve.
+
+The settlement branch requires the server signature and the client authorization digest, enforces the constructor cap, requires exactly two outputs, pays output 0 to the payout script hash, returns output 1 to the refund script hash, and caps fees at `settlementFeeReserveSompi`. The redeem script is kept below the 520-byte P2SH element limit.
+
+The refund branch requires the client signature, a sequence-0 input, one refund output, and `tx.time >= validBeforeDaa`.
+
+The current SilverScript compiler profile used for the fixture supports `tx.time` as a lower-bound lock only. Because of that parser limitation, the settlement upper bound `validBeforeDaa` is enforced by verifiers before handler execution, immediately before nonzero settlement construction, immediately before broadcast, and before recovery rebroadcasts. The template enforces settlement `validAfterDaa` and refund `validBeforeDaa` on-chain.
 
 ## Verification
 
@@ -177,12 +195,14 @@ Verification must reject with the relevant error code if:
 - signed maximum does not equal verify-time `PaymentRequirements.amount`;
 - signed `payTo` does not equal `PaymentRequirements.payTo`;
 - signed `serverPublicKey` does not equal `extra.serverPublicKey`;
+- signed fee reserve does not equal `extra.settlementFeeReserveSompi`;
+- signed payout or refund script public key hashes do not match `payTo` and `refundAddress`;
 - the authorization is not active, is expired, or exceeds `extra.authorizationTimeoutDaa`;
 - the authorization outpoint or nonce was already consumed;
 - the authorization UTXO is missing and no valid funding transaction is provided;
 - the authorization UTXO does not pay to the expected script public key;
 - the script public key does not match `extra.authorizationTemplateId`;
-- the authorization amount is below the maximum plus required fee or reserve policy;
+- the authorization amount is below the maximum plus signed fee reserve plus the required positive refund output;
 - the signature is invalid;
 - a required `payment-identifier` extension is absent;
 - `requestHash` does not match the server's normalized request fingerprint.
@@ -199,7 +219,9 @@ Settlement rules:
 - if the actual charge is greater than `0`, the settlement transaction must consume `authorizationOutpoint`;
 - if the actual charge is greater than `0`, the settlement transaction must pay the actual charge to `payTo`;
 - if the actual charge is `0`, no transaction is broadcast and no dust or zero-value payment output is created;
-- for nonzero charges, remaining value must return to `refundAddress` or follow the template-defined refund route after fees;
+- for nonzero charges, remaining value must return to `refundAddress` after fees;
+- for nonzero charges, the refund output must be present and positive;
+- for nonzero charges, fee accounting must not exceed `authorization.settlementFeeReserveSompi`;
 - for nonzero charges, the settlement transaction must reach `extensions.kaspa.finality` before `SettlementResponse.success = true`;
 - after a nonzero settlement transaction is broadcast below the selected finality, the server must preserve the authorization state and return a non-402 pending response instead of issuing another payment challenge;
 - for zero-charge success, the server or facilitator must durably store the authorization consumption before `SettlementResponse.success = true`;

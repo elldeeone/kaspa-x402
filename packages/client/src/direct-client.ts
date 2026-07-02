@@ -5,6 +5,7 @@ import {
   encodePaymentSignatureHeader,
   formatSompiString,
   hexToBytes,
+  minimumUptoAuthorizationAmount,
   paymentIdentifierExtension,
   parseSompiString,
   readKaspaSettlementExtension,
@@ -29,7 +30,7 @@ import {
   type Voucher,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import { deriveEscrowAddress, deriveUptoAddress, escrowScriptPublicKey, serializedScriptPublicKey, uptoScriptPublicKey } from "@kaspa-x402/covenant";
 import { parsePaymentRequiredHeaderValue } from "./payment-required.js";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -452,19 +453,47 @@ export class DirectModeClient {
     }
     const refundAddress = this.#options.refundAddress ?? identity.address;
     const validAfterDaa = await this.#options.fundingProvider.getVirtualDaaScore();
-    if (parseSompiString(validAfterDaa) > parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
+    if (parseSompiString(validAfterDaa) >= parseSompiString(accepted.extra.authorizationTimeoutDaa)) {
       throw new KaspaX402Error("invalid_kaspa_upto_expired", "upto authorization window is already expired");
     }
     const nonce = this.#options.signer.randomNonce ? await this.#options.signer.randomNonce() : await this.#options.signer.randomSalt();
+    const payoutScriptPublicKey = this.#options.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
+    const refundScriptPublicKey = this.#options.addressCodec.scriptPublicKeyForAddress(refundAddress, accepted.network);
+    const payoutScriptPublicKeyHash = scriptPublicKeyHash(payoutScriptPublicKey);
+    const refundScriptPublicKeyHash = scriptPublicKeyHash(refundScriptPublicKey);
+    const settlementFeeReserveSompi = accepted.extra.settlementFeeReserveSompi;
+    const authorizationParams = {
+      clientPublicKey: identity.publicKey,
+      serverPublicKey: accepted.extra.serverPublicKey,
+      network: accepted.network,
+      payoutScriptPublicKeyHash,
+      refundScriptPublicKeyHash,
+      requestHash: context.requestHash,
+      nonce,
+      maxAmountSompi: accepted.amount,
+      validAfterDaa,
+      validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+      settlementFeeReserveSompi,
+    };
+    const authorizationScriptPublicKey = serializedScriptPublicKey(uptoScriptPublicKey(authorizationParams));
+    const authorizationAddress = deriveUptoAddress(authorizationParams, (input) => this.#options.addressCodec.encodeScriptAddress(input));
+    const authorizationFundingAmount = minimumUptoAuthorizationAmount(accepted.amount, settlementFeeReserveSompi);
     const funding = await this.#options.fundingProvider.fundUptoAuthorization({
       network: accepted.network,
-      amount: accepted.amount,
+      amount: authorizationFundingAmount,
       payTo: accepted.payTo,
       refundAddress,
+      authorizationAddress,
+      authorizationScriptPublicKey,
+      payoutScriptPublicKey,
+      refundScriptPublicKey,
+      payoutScriptPublicKeyHash,
+      refundScriptPublicKeyHash,
       clientPublicKey: identity.publicKey,
       serverPublicKey: accepted.extra.serverPublicKey,
       validAfterDaa,
       validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+      settlementFeeReserveSompi,
       nonce,
       requestHash: context.requestHash,
       fundingSource: this.#options.fundingPolicy?.requiredSource,
@@ -472,22 +501,19 @@ export class DirectModeClient {
     if (this.#options.fundingPolicy?.requiredSource && funding.fundingSource && funding.fundingSource !== this.#options.fundingPolicy.requiredSource) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "upto authorization funding source does not satisfy policy");
     }
-    if (parseSompiString(funding.amount) < parseSompiString(accepted.amount)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "upto authorization amount is below the signed maximum");
+    if (funding.scriptPublicKey.toLowerCase() !== authorizationScriptPublicKey.toLowerCase()) {
+      throw new KaspaX402Error("invalid_kaspa_upto_template", "upto authorization funding script does not match derived covenant script");
+    }
+    if (parseSompiString(funding.amount) < parseSompiString(authorizationFundingAmount)) {
+      throw new KaspaX402Error("invalid_kaspa_x402_amount", "upto authorization amount is below the signed maximum plus fee reserve and refund output");
     }
 
     const digestInput = {
       network: accepted.network,
-      payTo: accepted.payTo,
-      refundAddress,
-      clientPublicKey: identity.publicKey,
-      serverPublicKey: accepted.extra.serverPublicKey,
+      activeScriptPublicKey: authorizationScriptPublicKey,
       authorizationOutpoint: funding.outpoint,
-      maxAmountSompi: accepted.amount,
-      validAfterDaa,
-      validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
-      nonce,
       requestHash: context.requestHash,
+      nonce,
     };
     const digest = uptoAuthorizationDigest(digestInput);
     const preimage = uptoAuthorizationPreimageHex(digestInput);
@@ -496,8 +522,12 @@ export class DirectModeClient {
       preimage,
       accepted,
       authorizationOutpoint: funding.outpoint,
-      authorizationScriptPublicKey: funding.scriptPublicKey,
+      authorizationScriptPublicKey,
       authorizationAmountSompi: funding.amount,
+      authorizationAddress,
+      payoutScriptPublicKeyHash,
+      refundScriptPublicKeyHash,
+      settlementFeeReserveSompi,
       clientPublicKey: identity.publicKey,
       refundAddress,
       nonce,
@@ -509,15 +539,18 @@ export class DirectModeClient {
       type: "upto-authorization",
       clientPublicKey: identity.publicKey,
       authorizationOutpoint: funding.outpoint,
-      authorizationScriptPublicKey: funding.scriptPublicKey,
+      authorizationScriptPublicKey,
       authorizationAmountSompi: funding.amount,
       refundAddress,
       ...(funding.fundingTransaction ? { fundingTransaction: funding.fundingTransaction } : {}),
       authorization: {
         maxAmountSompi: accepted.amount,
         payTo: accepted.payTo,
+        payoutScriptPublicKeyHash,
+        refundScriptPublicKeyHash,
         validAfterDaa,
         validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+        settlementFeeReserveSompi,
         nonce,
         serverPublicKey: accepted.extra.serverPublicKey,
         requestHash: context.requestHash,

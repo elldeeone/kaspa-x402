@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   X402_VERSION,
   channelId,
+  minimumUptoAuthorizationAmount,
   readKaspaSettlementExtension,
   sha256Hex,
   uptoAuthorizationDigest,
@@ -17,7 +18,7 @@ import {
   type PaymentPayload,
   type UptoPaymentRequirements,
 } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey, uptoScriptPublicKey } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
   MemoryServerChannelStore,
@@ -37,7 +38,6 @@ const FUNDING_TX = "44".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
 const UPTO_TX_ID = "88".repeat(32);
-const UPTO_SCRIPT = "0000" + "12".repeat(34);
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
@@ -81,7 +81,6 @@ describe("direct-mode facilitator", () => {
   it("does not advertise exact or upto when required server adapters are absent", () => {
     const { facilitator } = makeFacilitator({
       exactTransactionVerifier: undefined,
-      uptoScriptDeriver: undefined,
       uptoAuthorizationVerifier: undefined,
       uptoSettlementBuilder: undefined,
       uptoSettlementVerifier: undefined,
@@ -321,7 +320,6 @@ describe("direct-mode facilitator", () => {
   it("does not let custom supported kinds expand direct server capabilities", () => {
     const { server } = makeFacilitator({
       exactTransactionVerifier: undefined,
-      uptoScriptDeriver: undefined,
       uptoAuthorizationVerifier: undefined,
       uptoSettlementBuilder: undefined,
       uptoSettlementVerifier: undefined,
@@ -743,6 +741,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}) {
     minDepositSompi: "1000",
     amount: "100",
     refundTimeoutDaa: "1000",
+    authorizationTimeoutDaa: "1500",
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
@@ -764,11 +763,6 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}) {
         };
       },
     },
-    uptoScriptDeriver: {
-      deriveAuthorizationScript() {
-        return UPTO_SCRIPT;
-      },
-    },
     uptoAuthorizationVerifier: {
       verifyUptoAuthorization({ digest, payload }) {
         return payload.authorization.signature === `${digest}${digest}`;
@@ -787,29 +781,26 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}) {
           inputAmount: payload.authorizationAmountSompi,
           chargeAmount,
           feeAmount: "0",
-          outputCount: refundAmount === "0" ? 1 : 2,
+          outputCount: 2,
           authorizationOutpoint: payload.authorizationOutpoint,
           paymentOutput: {
             outputIndex: 0,
             amount: chargeAmount,
             scriptPublicKey: payToScriptPublicKey,
           },
-          ...(refundAmount !== "0"
-            ? {
-                refundOutput: {
-                  outputIndex: 1,
-                  amount: refundAmount,
-                  scriptPublicKey: refundScriptPublicKey,
-                },
-              }
-            : {}),
+          refundOutput: {
+            outputIndex: 1,
+            amount: refundAmount,
+            scriptPublicKey: refundScriptPublicKey,
+          },
           paymentOutputIndex: 0,
-          ...(refundAmount !== "0" ? { refundOutputIndex: 1 } : {}),
+          refundOutputIndex: 1,
         };
       },
     },
     ...overrides,
   });
+  (server as unknown as { __testChain?: FakeChainProvider }).__testChain = chain;
   return {
     server,
     facilitator: new DirectModeFacilitator({ server }),
@@ -844,22 +835,43 @@ function makeUptoPayment(server: DirectModeServer, options: { amount: string; re
     payTo: accepted.payTo,
     validAfterDaa: "900",
     validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+    settlementFeeReserveSompi: accepted.extra.settlementFeeReserveSompi,
     nonce: SALT,
     serverPublicKey: accepted.extra.serverPublicKey,
     requestHash: options.requestHash,
   };
+  const addressCodec = new FakeAddressCodec();
+  const payoutScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress(authorization.payTo, accepted.network)));
+  const refundScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress("kaspatest:refund", accepted.network)));
+  const authorizationScriptPublicKey = serializedScriptPublicKey(
+    uptoScriptPublicKey({
+      clientPublicKey: CLIENT_KEY,
+      serverPublicKey: authorization.serverPublicKey,
+      network: accepted.network,
+      payoutScriptPublicKeyHash,
+      refundScriptPublicKeyHash,
+      requestHash: authorization.requestHash,
+      nonce: authorization.nonce,
+      maxAmountSompi: authorization.maxAmountSompi,
+      validAfterDaa: authorization.validAfterDaa,
+      validBeforeDaa: authorization.validBeforeDaa,
+      settlementFeeReserveSompi: authorization.settlementFeeReserveSompi,
+    }),
+  );
+  const authorizationAmount = minimumUptoAuthorizationAmount(authorization.maxAmountSompi, authorization.settlementFeeReserveSompi);
   const digest = uptoAuthorizationDigest({
     network: accepted.network,
-    payTo: authorization.payTo,
-    refundAddress: "kaspatest:refund",
-    clientPublicKey: CLIENT_KEY,
-    serverPublicKey: authorization.serverPublicKey,
+    activeScriptPublicKey: authorizationScriptPublicKey,
     authorizationOutpoint: outpoint,
-    maxAmountSompi: authorization.maxAmountSompi,
-    validAfterDaa: authorization.validAfterDaa,
-    validBeforeDaa: authorization.validBeforeDaa,
-    nonce: authorization.nonce,
     requestHash: options.requestHash,
+    nonce: authorization.nonce,
+  });
+  const serverChain = (server as unknown as { __testChain?: FakeChainProvider }).__testChain;
+  serverChain?.setUtxo({
+    outpoint,
+    amount: authorizationAmount,
+    scriptPublicKey: authorizationScriptPublicKey,
+    finality: "accepted",
   });
   return {
     x402Version: X402_VERSION,
@@ -868,11 +880,13 @@ function makeUptoPayment(server: DirectModeServer, options: { amount: string; re
       type: "upto-authorization",
       clientPublicKey: CLIENT_KEY,
       authorizationOutpoint: outpoint,
-      authorizationScriptPublicKey: UPTO_SCRIPT,
-      authorizationAmountSompi: accepted.amount,
+      authorizationScriptPublicKey,
+      authorizationAmountSompi: authorizationAmount,
       refundAddress: "kaspatest:refund",
       authorization: {
         ...authorization,
+        payoutScriptPublicKeyHash,
+        refundScriptPublicKeyHash,
         signature: `${digest}${digest}`,
       },
     },
@@ -962,15 +976,6 @@ class FakeAddressCodec implements AddressCodec {
 class FakeChainProvider implements ServerChainProvider {
   readonly utxos = new Map<string, ChainUtxo>();
   daa = "1000";
-
-  constructor() {
-    this.setUtxo({
-      outpoint: { txid: UPTO_TX_ID, index: 0 },
-      amount: "100",
-      scriptPublicKey: UPTO_SCRIPT,
-      finality: "accepted",
-    });
-  }
 
   setUtxo(utxo: ChainUtxo): void {
     this.utxos.set(outpointKey(utxo.outpoint), structuredClone(utxo));

@@ -41,7 +41,9 @@
       "$ref": "#/$defs/outpoint"
     },
     "authorizationScriptPublicKey": {
-      "$ref": "#/$defs/hex"
+      "type": "string",
+      "description": "Serialized Kaspa ScriptPublicKey: uint16_le version followed by script bytes. Kaspa x402 v1 requires version 0.",
+      "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
     },
     "authorizationAmountSompi": {
       "$ref": "#/$defs/amount"
@@ -57,8 +59,11 @@
       "required": [
         "maxAmountSompi",
         "payTo",
+        "payoutScriptPublicKeyHash",
+        "refundScriptPublicKeyHash",
         "validAfterDaa",
         "validBeforeDaa",
+        "settlementFeeReserveSompi",
         "nonce",
         "serverPublicKey",
         "requestHash",
@@ -71,10 +76,19 @@
         "payTo": {
           "type": "string"
         },
+        "payoutScriptPublicKeyHash": {
+          "$ref": "#/$defs/hash32"
+        },
+        "refundScriptPublicKeyHash": {
+          "$ref": "#/$defs/hash32"
+        },
         "validAfterDaa": {
           "$ref": "#/$defs/amount"
         },
         "validBeforeDaa": {
+          "$ref": "#/$defs/amount"
+        },
+        "settlementFeeReserveSompi": {
           "$ref": "#/$defs/amount"
         },
         "nonce": {

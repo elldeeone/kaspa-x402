@@ -47,8 +47,8 @@ estimates.
 ## Upto Settlement
 
 - Input: the authorization outpoint defined by the `kaspa-upto-v1` binding.
-- Nonzero outputs: payment to server, and change/refund output when value remains.
-- Amount rule: server output is the actual settled amount, bounded by the signed maximum amount.
+- Nonzero outputs: exactly two outputs, with output 0 paying the server and output 1 returning a positive refund amount to the client refund script.
+- Amount rule: server output is the actual settled amount, bounded by the signed maximum amount, and the authorization input must include enough value for the signed fee reserve plus the required positive refund output.
 - Zero-charge rule: the zero-charge path must use the no-transaction settlement response shape already defined in `kaspa-upto-v1`; it must not pretend value moved.
 - Fee rule: non-zero settlement fees come from the authorization value after satisfying the bounded server payment.
 - Readiness rule: built-in nonzero settlement builders must remain disabled or external-adapter-only until the executable transaction vector covers the serialized body, txid/hash, sighash, compute budget, and script-unit estimate.

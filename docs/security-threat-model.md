@@ -79,7 +79,7 @@ Residual risk:
 
 Required safety properties:
 
-- digest binds domain, network, asset, recipient, refund address, server key, client key, exact outpoint, max amount, validity window, nonce, and request hash;
+- digest binds domain, network, active script public key, exact outpoint, nonce, and request hash; the active script binds asset lane, recipient, refund address, server key, client key, max amount, validity window, and fee reserve;
 - actual charge cannot exceed signed maximum;
 - authorization outpoint and nonce are consumed at most once;
 - zero-charge success stores consumption before content release;

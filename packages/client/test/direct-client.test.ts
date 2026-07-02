@@ -8,6 +8,7 @@ import {
   kaspaSettlementExtensions,
   mcpPaymentRequiredResult,
   mcpToolCallFingerprint,
+  minimumUptoAuthorizationAmount,
   paymentIdentifierExtension,
   sha256Hex,
   uptoAuthorizationDigest,
@@ -57,7 +58,7 @@ const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
 const UPTO_TX_ID = "88".repeat(32);
-const UPTO_SCRIPT = "0000" + "12".repeat(34);
+const UPTO_RESERVE = "25";
 
 describe("direct-mode client", () => {
   it("opens a deposit-voucher channel for the first paid request", async () => {
@@ -181,37 +182,32 @@ describe("direct-mode client", () => {
     expect(payment.openedChannel).toBe(false);
     expect(payment.channel).toBeUndefined();
     expect(provider.uptoAuthorizations).toEqual([
-      {
-        amount: "250",
+      expect.objectContaining({
+        amount: minimumUptoAuthorizationAmount("250", UPTO_RESERVE),
         payTo: "kaspatest:payout",
         requestHash,
-      },
+      }),
     ]);
     const payload = payment.paymentPayload.payload;
     if (payload.type !== "upto-authorization") throw new Error("expected upto payload");
+    expect(provider.uptoAuthorizations[0]?.authorizationScriptPublicKey).toBe(payload.authorizationScriptPublicKey);
     const digest = uptoAuthorizationDigest({
       network: payment.accepted.network,
-      payTo: payload.authorization.payTo,
-      refundAddress: payload.refundAddress,
-      clientPublicKey: payload.clientPublicKey,
-      serverPublicKey: payload.authorization.serverPublicKey,
+      activeScriptPublicKey: payload.authorizationScriptPublicKey,
       authorizationOutpoint: payload.authorizationOutpoint,
-      maxAmountSompi: payload.authorization.maxAmountSompi,
-      validAfterDaa: payload.authorization.validAfterDaa,
-      validBeforeDaa: payload.authorization.validBeforeDaa,
+      requestHash: payload.authorization.requestHash,
       nonce: payload.authorization.nonce,
-      requestHash,
     });
     expect(payload).toMatchObject({
       type: "upto-authorization",
       clientPublicKey: CLIENT_KEY,
       authorizationOutpoint: { txid: UPTO_TX_ID, index: 0 },
-      authorizationScriptPublicKey: UPTO_SCRIPT,
-      authorizationAmountSompi: "250",
+      authorizationAmountSompi: minimumUptoAuthorizationAmount("250", UPTO_RESERVE),
       refundAddress: "kaspatest:refund",
       authorization: {
         maxAmountSompi: "250",
         payTo: "kaspatest:payout",
+        settlementFeeReserveSompi: UPTO_RESERVE,
         validAfterDaa: "1000",
         validBeforeDaa: "1500",
         nonce: SALT,
@@ -220,6 +216,20 @@ describe("direct-mode client", () => {
         signature: `${digest}${digest}`,
       },
     });
+  });
+
+  it("rejects upto authorization windows that start at the timeout", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1500";
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(makeUptoRequired({ amount: "250" })), {
+        url: "https://api.example.test/variable",
+        requestHash: "12".repeat(32),
+      }),
+    ).rejects.toThrow("upto authorization window is already expired");
+    expect(provider.uptoAuthorizations).toHaveLength(0);
   });
 
   it("derives a request hash for upto authorizations when one is not supplied", async () => {
@@ -1189,6 +1199,7 @@ function makeUptoRequired(input: { amount: string; finality?: "accepted" | "conf
           authorizationTemplateId: "kaspa-x402-upto-v1",
           serverPublicKey: SERVER_KEY,
           authorizationTimeoutDaa: "1500",
+          settlementFeeReserveSompi: UPTO_RESERVE,
           ...(input.finality ? { finality: input.finality } : {}),
         },
       } satisfies UptoPaymentRequirements,
@@ -1287,7 +1298,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
   readonly exactPayments: Array<{ amount: string; payTo: string; requestHash?: string }> = [];
-  readonly uptoAuthorizations: Array<{ amount: string; payTo: string; requestHash: string }> = [];
+  readonly uptoAuthorizations: Array<{ amount: string; payTo: string; requestHash: string; authorizationScriptPublicKey: string }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" = "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
@@ -1352,11 +1363,12 @@ class FakeFundingProvider implements FundingProvider {
       amount: request.amount,
       payTo: request.payTo,
       requestHash: request.requestHash,
+      authorizationScriptPublicKey: request.authorizationScriptPublicKey,
     });
     return {
       outpoint: { txid: UPTO_TX_ID, index: this.uptoAuthorizations.length - 1 },
       amount: request.amount,
-      scriptPublicKey: UPTO_SCRIPT,
+      scriptPublicKey: request.authorizationScriptPublicKey,
       payerAddress: "kaspatest:refund",
       finality: "accepted" as const,
       fundingSource: this.sourceKind,

@@ -8,7 +8,6 @@ export const SERVER_PUBLIC_KEY = "11".repeat(32);
 export const CLIENT_PUBLIC_KEY = "22".repeat(32);
 export const REFUND_ADDRESS = "kaspatest:refund";
 export const PAYOUT_ADDRESS = "kaspatest:payout";
-export const UPTO_SCRIPT_PUBLIC_KEY = "0000" + "12".repeat(34);
 
 export function createMockDirectModeEnvironment() {
   const chainProvider = new MockChainProvider();
@@ -44,11 +43,6 @@ export function createMockDirectModeEnvironment() {
         };
       },
     },
-    uptoScriptDeriver: {
-      deriveAuthorizationScript() {
-        return UPTO_SCRIPT_PUBLIC_KEY;
-      },
-    },
     uptoAuthorizationVerifier: {
       verifyUptoAuthorization({ digest, payload }) {
         return payload.authorization.signature === mockSignature(digest);
@@ -67,24 +61,20 @@ export function createMockDirectModeEnvironment() {
           inputAmount: payload.authorizationAmountSompi,
           chargeAmount,
           feeAmount: "0",
-          outputCount: refundAmount === "0" ? 1 : 2,
+          outputCount: 2,
           authorizationOutpoint: payload.authorizationOutpoint,
           paymentOutput: {
             outputIndex: 0,
             amount: chargeAmount,
             scriptPublicKey: payToScriptPublicKey,
           },
-          ...(refundAmount !== "0"
-            ? {
-                refundOutput: {
-                  outputIndex: 1,
-                  amount: refundAmount,
-                  scriptPublicKey: refundScriptPublicKey,
-                },
-              }
-            : {}),
+          refundOutput: {
+            outputIndex: 1,
+            amount: refundAmount,
+            scriptPublicKey: refundScriptPublicKey,
+          },
           paymentOutputIndex: 0,
-          ...(refundAmount !== "0" ? { refundOutputIndex: 1 } : {}),
+          refundOutputIndex: 1,
         };
       },
     },
@@ -249,13 +239,13 @@ class MockFundingProvider {
     this.chainProvider.setUtxo({
       outpoint,
       amount: request.amount,
-      scriptPublicKey: UPTO_SCRIPT_PUBLIC_KEY,
+      scriptPublicKey: request.authorizationScriptPublicKey,
       finality: "accepted",
     });
     return {
       outpoint,
       amount: request.amount,
-      scriptPublicKey: UPTO_SCRIPT_PUBLIC_KEY,
+      scriptPublicKey: request.authorizationScriptPublicKey,
       fundingTransaction: mockTransaction(`upto-funding:${outpoint.txid}`),
       payerAddress: REFUND_ADDRESS,
       finality: "accepted",

@@ -40,6 +40,7 @@ export interface UptoRequirementsExtra extends JsonRecord {
   authorizationTemplateId: "kaspa-x402-upto-v1";
   serverPublicKey: PublicKeyHex;
   authorizationTimeoutDaa: SompiString;
+  settlementFeeReserveSompi: SompiString;
   finality?: "accepted" | "confirmed";
   assetKind?: "native";
   assetDecimals?: 8;
@@ -128,8 +129,11 @@ export interface ExactTransferPayload extends JsonRecord {
 export interface UptoAuthorization extends JsonRecord {
   maxAmountSompi: SompiString;
   payTo: string;
+  payoutScriptPublicKeyHash: Hash32Hex;
+  refundScriptPublicKeyHash: Hash32Hex;
   validAfterDaa: SompiString;
   validBeforeDaa: SompiString;
+  settlementFeeReserveSompi: SompiString;
   nonce: Hash32Hex;
   serverPublicKey: PublicKeyHex;
   requestHash: Hash32Hex;

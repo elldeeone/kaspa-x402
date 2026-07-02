@@ -81,10 +81,17 @@ export interface UptoAuthorizationFundingRequest {
   amount: SompiString;
   payTo: string;
   refundAddress: string;
+  authorizationAddress: string;
+  authorizationScriptPublicKey: ByteHex;
+  payoutScriptPublicKey: ByteHex;
+  refundScriptPublicKey: ByteHex;
+  payoutScriptPublicKeyHash: Hash32Hex;
+  refundScriptPublicKeyHash: Hash32Hex;
   clientPublicKey: PublicKeyHex;
   serverPublicKey: PublicKeyHex;
   validAfterDaa: SompiString;
   validBeforeDaa: SompiString;
+  settlementFeeReserveSompi: SompiString;
   nonce: Hash32Hex;
   requestHash: Hash32Hex;
   fundingSource?: FundingSourceKind;
@@ -156,6 +163,10 @@ export interface UptoAuthorizationSignRequest {
   authorizationOutpoint: FundingOutpoint;
   authorizationScriptPublicKey: ByteHex;
   authorizationAmountSompi: SompiString;
+  authorizationAddress: string;
+  payoutScriptPublicKeyHash: Hash32Hex;
+  refundScriptPublicKeyHash: Hash32Hex;
+  settlementFeeReserveSompi: SompiString;
   clientPublicKey: PublicKeyHex;
   refundAddress: string;
   nonce: Hash32Hex;

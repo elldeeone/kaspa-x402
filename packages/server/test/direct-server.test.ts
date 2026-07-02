@@ -9,6 +9,7 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   mcpToolCallFingerprint,
+  minimumUptoAuthorizationAmount,
   paymentIdentifierExtension as buildPaymentIdentifierExtension,
   readKaspaSettlementExtension,
   readMcpPaymentRequired,
@@ -24,7 +25,7 @@ import {
   type PaymentPayload,
   type UptoPaymentRequirements,
 } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey, uptoScriptPublicKey } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
   MemoryServerChannelStore,
@@ -54,7 +55,6 @@ const CLAIM_TX = "55".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TX = "aa".repeat(96);
 const UPTO_TX_ID = "88".repeat(32);
-const UPTO_SCRIPT = "0000" + "12".repeat(34);
 const RESOURCE = { url: "https://api.example.test/data" };
 
 describe("direct-mode server", () => {
@@ -438,6 +438,66 @@ describe("direct-mode server", () => {
     expect(setup.chain.sendCount).toBe(1);
   });
 
+  it("accepts full-cap upto settlement when the required refund output remains positive", async () => {
+    const setup = makeServer({
+      authorizationTimeoutDaa: "1500",
+      uptoSettlementVerifier: {
+        verifyUptoSettlementTransaction({ chargeAmount, payload, payToScriptPublicKey, refundScriptPublicKey }) {
+          return {
+            transactionId: UPTO_TX_ID,
+            inputAmount: payload.authorizationAmountSompi,
+            chargeAmount,
+            feeAmount: payload.authorization.settlementFeeReserveSompi,
+            outputCount: 2,
+            authorizationOutpoint: payload.authorizationOutpoint,
+            paymentOutput: {
+              outputIndex: 0,
+              amount: chargeAmount,
+              scriptPublicKey: payToScriptPublicKey,
+            },
+            refundOutput: {
+              outputIndex: 1,
+              amount: "1",
+              scriptPublicKey: refundScriptPublicKey,
+            },
+            paymentOutputIndex: 0,
+            refundOutputIndex: 1,
+          };
+        },
+      },
+    });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "full-cap",
+      chargedAmount: "100",
+    }));
+
+    expect(response.status).toBe(200);
+    expect(setup.chain.sendCount).toBe(1);
+  });
+
+  it("rejects nonzero upto settlement when the authorization reaches the refund boundary during handler execution", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executed = true;
+      setup.chain.daa = "1500";
+      return {
+        body: "late",
+        chargedAmount: "70",
+      };
+    });
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
+    expect(executed).toBe(true);
+    expect(setup.chain.sendCount).toBe(0);
+    await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+  });
+
   it("commits zero-charge upto consumption without broadcasting", async () => {
     const setup = makeServer({ authorizationTimeoutDaa: "1500" });
     const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
@@ -475,7 +535,7 @@ describe("direct-mode server", () => {
 
   it("rejects expired upto authorizations", async () => {
     const setup = makeServer({ authorizationTimeoutDaa: "1500" });
-    setup.chain.daa = "1501";
+    setup.chain.daa = "1500";
     const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
     let executed = false;
 
@@ -601,6 +661,26 @@ describe("direct-mode server", () => {
     await expect(store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
   });
 
+  it("abandons upto reservations that expire before broadcast", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    const reserve = setup.store.reserveUptoAuthorization.bind(setup.store);
+    setup.store.reserveUptoAuthorization = async (...args) => {
+      await reserve(...args);
+      setup.chain.daa = "1500";
+    };
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => ({
+      body: "charged",
+      chargedAmount: "70",
+    }));
+
+    expect(response.status).toBe(402);
+    expect(response.body).toEqual({ error: "invalid_transaction_state" });
+    expect(setup.chain.sendCount).toBe(0);
+    await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+  });
+
   it("keeps a recoverable upto reservation when broadcast fails", async () => {
     const setup = makeServer({ authorizationTimeoutDaa: "1500" });
     setup.chain.sendFailure = new Error("node unavailable");
@@ -645,6 +725,47 @@ describe("direct-mode server", () => {
     expect(recovered.body).toBe("charged");
     expect(executions).toBe(1);
     expect(setup.chain.sendCount).toBe(3);
+  });
+
+  it("does not recover a pending upto reservation after the refund boundary", async () => {
+    const setup = makeServer({ authorizationTimeoutDaa: "1500" });
+    setup.chain.sendFailure = new Error("node unavailable");
+    const payment = makeUptoPayment(setup, { amount: "100", requestHash: "12".repeat(32) });
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return {
+        body: "charged",
+        chargedAmount: "70",
+      };
+    });
+
+    expect(first.status).toBe(500);
+    expect(setup.chain.sendCount).toBe(1);
+    setup.chain.sendFailure = undefined;
+    setup.chain.daa = "1500";
+
+    const pending = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(pending.status).toBe(202);
+    expect(pending.body).toEqual({ error: "upto_authorization_pending" });
+    expect(executions).toBe(1);
+    expect(setup.chain.sendCount).toBe(1);
+    await expect(setup.store.loadUptoAuthorization(authorizationScopeId({ txid: UPTO_TX_ID, index: 0 }))).resolves.toBeUndefined();
+
+    let retriedExpired = false;
+    const expired = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "upto", requestHash: "12".repeat(32) }), async () => {
+      retriedExpired = true;
+      return { body: "wrong" };
+    });
+
+    expect(expired.status).toBe(402);
+    expect(expired.body).toEqual({ error: "invalid_transaction_state" });
+    expect(retriedExpired).toBe(false);
   });
 
   it("keeps a recoverable upto broadcast when broadcast finality is insufficient", async () => {
@@ -772,8 +893,8 @@ describe("direct-mode server", () => {
     });
     setup.chain.setUtxo({
       outpoint: { txid: UPTO_TX_ID, index: 0 },
-      amount: "100",
-      scriptPublicKey: UPTO_SCRIPT,
+      amount: first.payload.authorizationAmountSompi,
+      scriptPublicKey: first.payload.authorizationScriptPublicKey,
       finality: "confirmed",
     });
     const retry = makeUptoPayment(setup, {
@@ -1974,11 +2095,6 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         };
       },
     },
-    uptoScriptDeriver: {
-      deriveAuthorizationScript() {
-        return UPTO_SCRIPT;
-      },
-    },
     uptoAuthorizationVerifier: {
       verifyUptoAuthorization({ digest, payload }) {
         return payload.authorization.signature === `${digest}${digest}`;
@@ -1999,22 +2115,18 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
           inputAmount: payload.authorizationAmountSompi,
           chargeAmount,
           feeAmount: "0",
-          outputCount: refundAmount === "0" ? 1 : 2,
+          outputCount: 2,
           authorizationOutpoint: payload.authorizationOutpoint,
           paymentOutput: {
             outputIndex: 0,
             amount: chargeAmount,
             scriptPublicKey: payToScriptPublicKey,
           },
-          ...(refundAmount !== "0"
-            ? {
-                refundOutput: {
-                  outputIndex: 1,
-                  amount: refundAmount,
-                  scriptPublicKey: refundScriptPublicKey,
-                },
-              }
-            : {}),
+          refundOutput: {
+            outputIndex: 1,
+            amount: refundAmount,
+            scriptPublicKey: refundScriptPublicKey,
+          },
           paymentOutputIndex: 0,
           refundOutputIndex: 1,
         };
@@ -2079,27 +2191,41 @@ function makeUptoPayment(
     payTo: options.payTo ?? accepted.payTo,
     validAfterDaa: "900",
     validBeforeDaa: accepted.extra.authorizationTimeoutDaa,
+    settlementFeeReserveSompi: accepted.extra.settlementFeeReserveSompi,
     nonce,
     serverPublicKey: options.serverPublicKey ?? accepted.extra.serverPublicKey,
     requestHash: options.requestHash,
   };
+  const addressCodec = new FakeAddressCodec();
+  const payoutScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress(authorization.payTo, accepted.network)));
+  const refundScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress("kaspatest:refund", accepted.network)));
+  const authorizationScriptPublicKey = serializedScriptPublicKey(
+    uptoScriptPublicKey({
+      clientPublicKey: CLIENT_KEY,
+      serverPublicKey: authorization.serverPublicKey,
+      network: accepted.network,
+      payoutScriptPublicKeyHash,
+      refundScriptPublicKeyHash,
+      requestHash: authorization.requestHash,
+      nonce,
+      maxAmountSompi: authorization.maxAmountSompi,
+      validAfterDaa: authorization.validAfterDaa,
+      validBeforeDaa: authorization.validBeforeDaa,
+      settlementFeeReserveSompi: authorization.settlementFeeReserveSompi,
+    }),
+  );
+  const authorizationAmount = minimumUptoAuthorizationAmount(authorization.maxAmountSompi, authorization.settlementFeeReserveSompi);
   const digest = uptoAuthorizationDigest({
     network: accepted.network,
-    payTo: authorization.payTo,
-    refundAddress: "kaspatest:refund",
-    clientPublicKey: CLIENT_KEY,
-    serverPublicKey: authorization.serverPublicKey,
+    activeScriptPublicKey: authorizationScriptPublicKey,
     authorizationOutpoint: outpoint,
-    maxAmountSompi: authorization.maxAmountSompi,
-    validAfterDaa: authorization.validAfterDaa,
-    validBeforeDaa: authorization.validBeforeDaa,
-    nonce,
     requestHash: options.requestHash,
+    nonce,
   });
   setup.chain.setUtxo({
     outpoint,
-    amount: accepted.amount,
-    scriptPublicKey: UPTO_SCRIPT,
+    amount: authorizationAmount,
+    scriptPublicKey: authorizationScriptPublicKey,
     finality: "accepted",
   });
   return {
@@ -2109,11 +2235,13 @@ function makeUptoPayment(
       type: "upto-authorization",
       clientPublicKey: CLIENT_KEY,
       authorizationOutpoint: outpoint,
-      authorizationScriptPublicKey: UPTO_SCRIPT,
-      authorizationAmountSompi: accepted.amount,
+      authorizationScriptPublicKey,
+      authorizationAmountSompi: authorizationAmount,
       refundAddress: "kaspatest:refund",
       authorization: {
         ...authorization,
+        payoutScriptPublicKeyHash,
+        refundScriptPublicKeyHash,
         signature: options.badSignature ? "ff".repeat(64) : `${digest}${digest}`,
       },
     },

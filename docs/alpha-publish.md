@@ -1,6 +1,7 @@
 # Alpha Publish Checklist
 
-Status: alpha packages published at `0.1.0-alpha.0`. Publishing requires npm
+Status: alpha packages previously published at `0.1.0-alpha.0`; current
+package manifests are prepared for `0.1.0-alpha.1`. Publishing requires npm
 authorization and must not happen accidentally from CI or an unauthenticated
 shell.
 
@@ -11,12 +12,15 @@ version can own `latest`.
 
 ## Package Set
 
-Initial alpha packages:
+Public alpha package set:
 
-- `@kaspa-x402/core@0.1.0-alpha.0`;
-- `@kaspa-x402/covenant@0.1.0-alpha.0`;
-- `@kaspa-x402/client@0.1.0-alpha.0`;
-- `@kaspa-x402/server@0.1.0-alpha.0`.
+- `@kaspa-x402/core@0.1.0-alpha.1`;
+- `@kaspa-x402/covenant@0.1.0-alpha.1`;
+- `@kaspa-x402/client@0.1.0-alpha.1`;
+- `@kaspa-x402/server@0.1.0-alpha.1`.
+
+`0.1.0-alpha.0` was the initial published alpha. `0.1.0-alpha.1` carries the
+next breaking alpha wire update.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public

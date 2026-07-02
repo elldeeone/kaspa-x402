@@ -27,7 +27,7 @@ describe("kaspa-x402 CLI", () => {
     expect(report.ok).toBe(true);
     expect(report.schemas).toBeGreaterThan(0);
     expect(report.vectors).toBeGreaterThan(0);
-    expect(report.covenantFixtureChecks).toBeGreaterThan(0);
+    expect(report.covenantFixtureChecks).toBeGreaterThanOrEqual(44);
   });
 
   it("inspects and verifies exact payloads", () => {

@@ -158,7 +158,8 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
         "binding": "kaspa-upto-v1",
         "authorizationTemplateId": "kaspa-x402-upto-v1",
         "serverPublicKey": "<32-byte x-only hex>",
-        "authorizationTimeoutDaa": "123456789"
+        "authorizationTimeoutDaa": "123456789",
+        "settlementFeeReserveSompi": "2000"
       }
     },
     {
