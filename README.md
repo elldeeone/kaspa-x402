@@ -74,6 +74,7 @@ Start with [spec/kaspa-x402-v1.md](spec/kaspa-x402-v1.md), then read the scheme 
 npm run build
 npm run validate:schemas
 node packages/cli/dist/index.js vectors verify
+npm run proof:offline
 npm --workspace @kaspa-x402/cli test
 ```
 
@@ -85,6 +86,21 @@ node examples/paid-mcp-tool/index.mjs
 node examples/self-hosted-facilitator/index.mjs
 node examples/recovery/index.mjs
 ```
+
+The offline proof harness exercises exact and upto replay rejection, batch settlement, idempotency, corrective stale-voucher handling, and tx-v1 claim/refund artifact construction against mock adapters:
+
+```sh
+npm run build
+npm run proof:offline
+```
+
+Live testnet proof is fail-closed and adapter-driven. Start with:
+
+```sh
+npm run proof:live:check -- --config-file live-proof.env.example --write-report
+```
+
+See [docs/live-testnet-proof.md](docs/live-testnet-proof.md) for the required live configuration and artifact paths.
 
 ## Package Scope
 

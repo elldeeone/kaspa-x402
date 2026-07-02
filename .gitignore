@@ -5,6 +5,7 @@ coverage/
 .env.*
 *.log
 .DS_Store
+.kaspa-x402-live/
 docs/standard-plan.md
 docs/goal.md
 finding.md
