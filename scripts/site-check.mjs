@@ -8,11 +8,13 @@ import {
   PRIVATE_SITE_PATTERNS,
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
+  RELEASE_DOC_FILES,
   RELEASE_LOCK_DIR,
   RELEASE_SNAPSHOT_DIR,
   SCHEMA_FILES,
   SITE_ASSET_FILES,
   SITE_DIST,
+  SITE_PACKAGE_NAMES,
   SITE_SRC,
   SPEC_FILES,
   VENDORED_KASPA_WASM,
@@ -64,10 +66,13 @@ function checkSchemaInventory() {
 
 function checkCopiedArtifacts() {
   const vectors = trackedFiles("vectors").filter((file) => file.endsWith(".json") || file.endsWith(".md"));
-  const files = [...SCHEMA_FILES, ...SPEC_FILES, ...PUBLIC_DOC_FILES, ...vectors];
+  const activeFiles = [...SCHEMA_FILES, ...SPEC_FILES, ...PUBLIC_DOC_FILES, ...vectors];
+  const releaseFiles = [...SCHEMA_FILES, ...SPEC_FILES, ...RELEASE_DOC_FILES, ...vectors];
   const releasePath = readJson(path.join(outDir, "site-manifest.json")).releasePath;
-  for (const source of files) {
+  for (const source of activeFiles) {
     assertSameBytes(path.join(root, source), path.join(outDir, source), source);
+  }
+  for (const source of releaseFiles) {
     assertSameBytes(path.join(root, source), path.join(outDir, releasePath, source), `${releasePath}/${source}`);
   }
 }
@@ -349,18 +354,27 @@ function readJson(file) {
 }
 
 function readPackages() {
-  return trackedFiles("packages")
-    .filter((file) => file.endsWith("package.json"))
-    .map((file) => {
+  const packagesByName = new Map(
+    trackedPackageFiles().map((file) => {
       const pkg = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
-      return {
-        name: pkg.name,
-        version: pkg.version,
-        private: pkg.private === true,
-        publishTag: pkg.publishConfig?.tag,
-        path: path.dirname(file),
-      };
-    })
+      return [
+        pkg.name,
+        {
+          name: pkg.name,
+          version: pkg.version,
+          private: pkg.private === true,
+          publishTag: pkg.publishConfig?.tag,
+          path: path.dirname(file),
+        },
+      ];
+    }),
+  );
+  return SITE_PACKAGE_NAMES.map((name) => {
+    const pkg = packagesByName.get(name);
+    if (pkg === undefined) fail(`missing site package metadata: ${name}`);
+    return pkg;
+  })
+    .filter(Boolean)
     .sort((a, b) => a.name.localeCompare(b.name));
 }
 
@@ -374,7 +388,7 @@ function dirtyPublishableInputs() {
     ...SPEC_FILES,
     ...PUBLIC_DOC_FILES,
     ...vectors,
-    ...trackedFiles("packages").filter((file) => file.endsWith("package.json")),
+    ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
     ...listFiles(path.join(root, RELEASE_LOCK_DIR)).map((file) => path.relative(root, file).replaceAll(path.sep, "/")),
@@ -387,6 +401,15 @@ function dirtyPublishableInputs() {
     .map((file) => file.replace(/^"|"$/g, ""))
     .filter((file) => inputs.has(file) || [...inputs].some((input) => file.startsWith(`${input}/`)))
     .sort();
+}
+
+function trackedPackageFiles() {
+  return trackedFiles("packages").filter((file) => file.endsWith("package.json"));
+}
+
+function sitePackageFiles() {
+  const sitePackages = new Set(SITE_PACKAGE_NAMES);
+  return trackedPackageFiles().filter((file) => sitePackages.has(readJson(path.join(root, file)).name));
 }
 
 function readReleaseLock(version) {

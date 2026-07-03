@@ -662,6 +662,53 @@ describe("direct-mode server", () => {
     expect(executions).toBe(1);
   });
 
+  it("returns cached deposit-voucher responses without a payment identifier", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "cached", chargedAmount: "50" };
+    });
+    const second = await setup.server.handlePaidRequest(requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }), async () => {
+      executions += 1;
+      return { body: "wrong" };
+    });
+
+    expect(first.status).toBe(200);
+    expect(second.status).toBe(200);
+    expect(second.body).toBe("cached");
+    expect(second.headers[PAYMENT_RESPONSE_HEADER]).toBe(first.headers[PAYMENT_RESPONSE_HEADER]);
+    expect(executions).toBe(1);
+    const stored = await requireChannel(setup.store, payment.channelId);
+    expect(stored.chargedCumulativeAmount).toBe("50");
+    expect(stored.signedMaxClaimable).toBe("100");
+  });
+
+  it("keeps stale batch vouchers corrective after a later commitment", async () => {
+    const setup = makeServer();
+    const deposit = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }), async () => ({
+      chargedAmount: "50",
+    }));
+    const channel = await requireChannel(setup.store, deposit.channelId);
+    const voucher = makeVoucherPayment(setup, channel);
+    await setup.server.handlePaidRequest(requestWithPayment(voucher, { requestHash: "bb".repeat(32) }), async () => ({
+      chargedAmount: "50",
+    }));
+    let executed = false;
+
+    const stale = await setup.server.handlePaidRequest(requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }), async () => {
+      executed = true;
+      return { body: "wrong" };
+    });
+
+    expect(stale.status).toBe(402);
+    expect(stale.body).toEqual({ error: "invalid_payment_requirements" });
+    expect(executed).toBe(false);
+  });
+
   it("rejects changed payment payloads for reused payment identifiers", async () => {
     const setup = makeServer({ requirePaymentIdentifier: true });
     const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";

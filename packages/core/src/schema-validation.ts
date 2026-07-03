@@ -1,16 +1,17 @@
-import Ajv2020, { type ValidateFunction } from "ajv/dist/2020.js";
-
-import channelStateSchema from "../../../schemas/channel-state.schema.json";
-import kaspaBatchExtraSchema from "../../../schemas/kaspa-batch-extra.schema.json";
-import kaspaPaymentPayloadSchema from "../../../schemas/kaspa-payment-payload.schema.json";
-import kaspaRequirementsExtraSchema from "../../../schemas/kaspa-requirements-extra.schema.json";
-import paymentIdentifierSchema from "../../../schemas/payment-identifier.schema.json";
-import paymentPayloadSchema from "../../../schemas/payment-payload.schema.json";
-import paymentRequiredSchema from "../../../schemas/payment-required.schema.json";
-import settlementResponseSchema from "../../../schemas/settlement-response.schema.json";
-
 import { HASH32_PATTERN, SIGNATURE64_PATTERN, U32_MAX, U64_DECIMAL_PATTERN, X402_VERSION } from "./constants.js";
 import { KaspaX402Error, fail, ok, type KaspaX402ErrorCode, type ValidationResult } from "./errors.js";
+import {
+  validateChannelState as validateChannelStateSchema,
+  validateKaspaBatchExtra as validateKaspaBatchExtraSchema,
+  validateKaspaPaymentPayload as validateKaspaPaymentPayloadSchema,
+  validateKaspaRequirementsExtra as validateKaspaRequirementsExtraSchema,
+  validatePaymentIdentifier as validatePaymentIdentifierSchema,
+  validatePaymentPayload as validatePaymentPayloadSchema,
+  validatePaymentRequired as validatePaymentRequiredSchema,
+  validatePaymentRequirementsEntry as validatePaymentRequirementsEntrySchema,
+  validateSettlementResponse as validateSettlementResponseSchema,
+  type StandaloneValidateFunction,
+} from "./generated/schema-validators.js";
 import { stableStringify } from "./stable-json.js";
 import type {
   BatchRequirementsExtra,
@@ -41,27 +42,19 @@ export const SCHEMA_IDS = {
 
 type SchemaId = (typeof SCHEMA_IDS)[keyof typeof SCHEMA_IDS];
 
-const schemaEntries = [
-  channelStateSchema,
-  kaspaBatchExtraSchema,
-  kaspaPaymentPayloadSchema,
-  kaspaRequirementsExtraSchema,
-  paymentIdentifierSchema,
-  paymentPayloadSchema,
-  paymentRequiredSchema,
-  settlementResponseSchema,
-];
-
-const ajv = new Ajv2020({ allErrors: true, strict: false });
-for (const schema of schemaEntries) {
-  ajv.addSchema(schema);
-}
-
 const PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID = "https://kaspa-x402.org/schemas/internal/payment-requirements-entry.schema.json";
-ajv.addSchema({
-  $id: PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID,
-  $ref: `${SCHEMA_IDS.paymentRequired}#/$defs/paymentRequirements`,
-});
+
+const compiledSchemas: Record<SchemaId | typeof PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID, StandaloneValidateFunction> = {
+  [SCHEMA_IDS.channelState]: validateChannelStateSchema,
+  [SCHEMA_IDS.kaspaBatchExtra]: validateKaspaBatchExtraSchema,
+  [SCHEMA_IDS.kaspaPaymentPayload]: validateKaspaPaymentPayloadSchema,
+  [SCHEMA_IDS.kaspaRequirementsExtra]: validateKaspaRequirementsExtraSchema,
+  [SCHEMA_IDS.paymentIdentifier]: validatePaymentIdentifierSchema,
+  [SCHEMA_IDS.paymentPayload]: validatePaymentPayloadSchema,
+  [SCHEMA_IDS.paymentRequired]: validatePaymentRequiredSchema,
+  [SCHEMA_IDS.settlementResponse]: validateSettlementResponseSchema,
+  [PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID]: validatePaymentRequirementsEntrySchema,
+};
 
 export function validatePaymentRequired(value: unknown): ValidationResult<PaymentRequired> {
   return validateWithSchema<PaymentRequired>(SCHEMA_IDS.paymentRequired, value, classifyPaymentRequired);
@@ -263,18 +256,173 @@ function validateWithInlineSchema<T>(
   value: unknown,
   classify: (value: unknown) => KaspaX402ErrorCode,
 ): ValidationResult<T> {
-  let validate: ValidateFunction;
-  try {
-    validate = new Ajv2020({ allErrors: true, strict: false }).compile(schema);
-  } catch (error) {
-    return fail(classify(value), "payment-identifier extension schema is invalid", error instanceof Error ? { message: error.message } : error);
-  }
-
-  if (validate(value)) {
+  const result = validateJsonSchemaSubset(schema, value);
+  if (result.ok) {
     return ok(value as T);
   }
 
-  return fail(classify(value), "value failed advertised payment-identifier extension schema", validate.errors);
+  return fail(
+    classify(value),
+    result.schemaSupported ? "value failed advertised payment-identifier extension schema" : "payment-identifier extension schema is invalid",
+    result.errors,
+  );
+}
+
+type SubsetValidationResult =
+  | {
+      ok: true;
+      schemaSupported: true;
+    }
+  | {
+      ok: false;
+      schemaSupported: boolean;
+      errors: Array<{ path: string; message: string }>;
+    };
+
+function validateJsonSchemaSubset(schema: unknown, value: unknown, path = ""): SubsetValidationResult {
+  const schemaRecord = asRecord(schema);
+  if (!schemaRecord) return subsetFailure(path, "schema must be an object", false);
+
+  const unsupportedKeyword = firstUnsupportedSchemaKeyword(schemaRecord);
+  if (unsupportedKeyword) return subsetFailure(path, `unsupported schema keyword: ${unsupportedKeyword}`, false);
+
+  const type = schemaRecord.type;
+  if (type !== undefined && type !== "object" && type !== "string" && type !== "boolean" && type !== "number" && type !== "integer") {
+    return subsetFailure(path, "unsupported schema type", false);
+  }
+
+  if (Object.hasOwn(schemaRecord, "const") && stableStringify(value) !== stableStringify(schemaRecord.const)) {
+    return subsetFailure(path, "must equal const", true);
+  }
+
+  const enumValues = schemaRecord.enum;
+  if (enumValues !== undefined) {
+    if (!Array.isArray(enumValues)) return subsetFailure(path, "enum must be an array", false);
+    if (!enumValues.some((candidate) => stableStringify(candidate) === stableStringify(value))) return subsetFailure(path, "must equal one enum value", true);
+  }
+
+  const effectiveType = type ?? inferSchemaType(schemaRecord, path);
+  if (typeof effectiveType !== "string") return effectiveType;
+
+  if (effectiveType === "object") {
+    const valueRecord = asRecord(value);
+    if (!valueRecord) return subsetFailure(path, "must be an object", true);
+
+    const required = schemaRecord.required;
+    if (required !== undefined) {
+      if (!Array.isArray(required) || !required.every((field) => typeof field === "string")) {
+        return subsetFailure(path, "required must be an array of strings", false);
+      }
+      for (const field of required) {
+        if (!Object.hasOwn(valueRecord, field)) return subsetFailure(joinPath(path, field), "required property is missing", true);
+      }
+    }
+
+    const properties = asRecord(schemaRecord.properties);
+    if (schemaRecord.properties !== undefined && !properties) return subsetFailure(path, "properties must be an object", false);
+    if (properties) {
+      for (const [key, propertySchema] of Object.entries(properties)) {
+        if (!Object.hasOwn(valueRecord, key)) continue;
+        const propertyResult = validateJsonSchemaSubset(propertySchema, valueRecord[key], joinPath(path, key));
+        if (!propertyResult.ok) return propertyResult;
+      }
+    }
+
+    if (schemaRecord.additionalProperties === false) {
+      for (const key of Object.keys(valueRecord)) {
+        if (!properties || !Object.hasOwn(properties, key)) return subsetFailure(joinPath(path, key), "additional property is not allowed", true);
+      }
+    } else if (schemaRecord.additionalProperties !== undefined && schemaRecord.additionalProperties !== true) {
+      return subsetFailure(path, "additionalProperties must be boolean", false);
+    }
+
+    return { ok: true, schemaSupported: true };
+  }
+
+  if (effectiveType === "string") {
+    if (typeof value !== "string") return subsetFailure(path, "must be a string", true);
+    if (schemaRecord.minLength !== undefined && (!Number.isInteger(schemaRecord.minLength) || value.length < Number(schemaRecord.minLength))) {
+      return subsetFailure(path, "string is shorter than minLength", Number.isInteger(schemaRecord.minLength));
+    }
+    if (schemaRecord.maxLength !== undefined && (!Number.isInteger(schemaRecord.maxLength) || value.length > Number(schemaRecord.maxLength))) {
+      return subsetFailure(path, "string is longer than maxLength", Number.isInteger(schemaRecord.maxLength));
+    }
+    if (schemaRecord.pattern !== undefined) {
+      if (typeof schemaRecord.pattern !== "string") return subsetFailure(path, "pattern must be a string", false);
+      let pattern: RegExp;
+      try {
+        pattern = new RegExp(schemaRecord.pattern);
+      } catch {
+        return subsetFailure(path, "pattern must be a valid regular expression", false);
+      }
+      if (!pattern.test(value)) return subsetFailure(path, "string does not match pattern", true);
+    }
+    return { ok: true, schemaSupported: true };
+  }
+
+  if (effectiveType === "boolean") {
+    return typeof value === "boolean" ? { ok: true, schemaSupported: true } : subsetFailure(path, "must be a boolean", true);
+  }
+
+  if (effectiveType === "number") {
+    return typeof value === "number" && Number.isFinite(value) ? { ok: true, schemaSupported: true } : subsetFailure(path, "must be a number", true);
+  }
+
+  if (effectiveType === "integer") {
+    return Number.isInteger(value) ? { ok: true, schemaSupported: true } : subsetFailure(path, "must be an integer", true);
+  }
+
+  return { ok: true, schemaSupported: true };
+}
+
+const SUPPORTED_INLINE_SCHEMA_KEYWORDS = new Set([
+  "$id",
+  "$schema",
+  "additionalProperties",
+  "const",
+  "default",
+  "description",
+  "enum",
+  "examples",
+  "maxLength",
+  "minLength",
+  "pattern",
+  "properties",
+  "required",
+  "title",
+  "type",
+]);
+
+function firstUnsupportedSchemaKeyword(schema: JsonRecord): string | undefined {
+  return Object.keys(schema).find((key) => !SUPPORTED_INLINE_SCHEMA_KEYWORDS.has(key));
+}
+
+function inferSchemaType(schema: JsonRecord, path: string): "object" | "string" | SubsetValidationResult {
+  const objectKeywords = ["additionalProperties", "properties", "required"].filter((key) => Object.hasOwn(schema, key));
+  const stringKeywords = ["maxLength", "minLength", "pattern"].filter((key) => Object.hasOwn(schema, key));
+  if (objectKeywords.length > 0 && stringKeywords.length > 0) {
+    return subsetFailure(path, "type is required when object and string keywords are mixed", false);
+  }
+  if (objectKeywords.length > 0) return "object";
+  if (stringKeywords.length > 0) return "string";
+  return { ok: true, schemaSupported: true };
+}
+
+function subsetFailure(path: string, message: string, schemaSupported: boolean): SubsetValidationResult {
+  return {
+    ok: false,
+    schemaSupported,
+    errors: [
+      {
+        path,
+        message,
+      },
+    ],
+  };
+}
+
+function joinPath(path: string, key: string): string {
+  return path ? `${path}.${key}` : key;
 }
 
 function validatePaymentIdentifierEcho(
@@ -294,8 +442,8 @@ function validatePaymentIdentifierEcho(
   return ok(echoed);
 }
 
-function getSchema(schemaId: SchemaId | typeof PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID): ValidateFunction {
-  const validate = ajv.getSchema(schemaId);
+function getSchema(schemaId: SchemaId | typeof PAYMENT_REQUIREMENTS_ENTRY_SCHEMA_ID): StandaloneValidateFunction {
+  const validate = compiledSchemas[schemaId];
   if (!validate) {
     throw new Error(`schema not loaded: ${schemaId}`);
   }

@@ -1,0 +1,390 @@
+import type {
+  BatchCommitmentRecord,
+  ChannelLockManager,
+  ClaimAttemptRecord,
+  ExactPaymentRecord,
+  ExactSettlementCommit,
+  PaymentIdentifierRecord,
+  ServerChannelRecord,
+  ServerStateStore,
+  SettlementCommit,
+} from "@kaspa-x402/server";
+
+type GatewayTransaction = {
+  get<T = unknown>(key: string): Promise<T | undefined>;
+  put<T = unknown>(key: string, value: T): Promise<void>;
+  delete(key: string): Promise<boolean | void>;
+};
+
+export type GatewayStorage = GatewayTransaction & {
+  list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>>;
+  transaction<T>(closure: (txn: GatewayTransaction) => Promise<T>): Promise<T>;
+};
+
+type LockRecord = {
+  token: string;
+  expiresAt: number;
+};
+
+type RateRecord = {
+  count: number;
+  resetAt: number;
+};
+
+export type GatewayStateMethod =
+  | "loadChannel"
+  | "saveChannel"
+  | "retireChannel"
+  | "listChannels"
+  | "loadCommitment"
+  | "loadPaymentIdentifier"
+  | "loadExactPayment"
+  | "commitSettlement"
+  | "commitExactPayment"
+  | "loadOpenClaimAttempt"
+  | "saveClaimAttempt"
+  | "applyClaimAttempt"
+  | "abandonClaimAttempt"
+  | "acquireLock"
+  | "releaseLock"
+  | "checkRateLimit"
+  | "incrementMetric"
+  | "metrics";
+
+export interface GatewayStateRequest {
+  method: GatewayStateMethod;
+  payload?: unknown;
+}
+
+export class GatewayLedger implements ServerStateStore {
+  readonly #storage: GatewayStorage;
+
+  constructor(storage: GatewayStorage) {
+    this.#storage = storage;
+  }
+
+  async loadChannel(channelId: string): Promise<ServerChannelRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<ServerChannelRecord>(channelKey(channelId)));
+  }
+
+  async saveChannel(channel: ServerChannelRecord): Promise<void> {
+    await this.#storage.put(channelKey(channel.channelId), clone(channel));
+  }
+
+  async retireChannel(channelId: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const channel = await txn.get<ServerChannelRecord>(channelKey(channelId));
+      if (!channel) return;
+      await txn.put(channelKey(channelId), { ...clone(channel), status: "retired" });
+    });
+  }
+
+  async listChannels(): Promise<ServerChannelRecord[]> {
+    return Array.from((await this.#storage.list<ServerChannelRecord>({ prefix: "channel:" })).values()).map(clone);
+  }
+
+  async loadCommitment(commitmentId: string): Promise<BatchCommitmentRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<BatchCommitmentRecord>(commitmentKey(commitmentId)));
+  }
+
+  async loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<PaymentIdentifierRecord>(paymentIdentifierKey(id)));
+  }
+
+  async loadExactPayment(transactionId: string): Promise<ExactPaymentRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<ExactPaymentRecord>(exactPaymentKey(transactionId)));
+  }
+
+  async commitSettlement(record: SettlementCommit): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<ServerChannelRecord>(channelKey(record.expected.channelId));
+      if (!matchesExpectedChannel(current, record.expected)) {
+        throw new Error("channel state changed before settlement commit");
+      }
+      if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      await txn.put(commitmentKey(record.commitment.commitmentId), clone(record.commitment));
+      if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
+      await txn.put(channelKey(record.channel.channelId), clone(record.channel));
+    });
+  }
+
+  async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const payment = clone(record.payment);
+      const existing = await txn.get<ExactPaymentRecord>(exactPaymentKey(payment.transactionId));
+      if (existing) {
+        if (
+          existing.requestFingerprint !== payment.requestFingerprint ||
+          existing.paymentPayloadHash !== payment.paymentPayloadHash ||
+          existing.paymentOutputIndex !== payment.paymentOutputIndex
+        ) {
+          throw new Error("exact payment transaction was already committed for a different request");
+        }
+        return;
+      }
+      if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
+      await txn.put(exactPaymentKey(payment.transactionId), payment);
+    });
+  }
+
+  async loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {
+    const attemptId = await this.#storage.get<string>(openClaimKey(channelId));
+    return attemptId ? cloneOrUndefined(await this.#storage.get<ClaimAttemptRecord>(claimAttemptKey(attemptId))) : undefined;
+  }
+
+  async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const openAttemptId = await txn.get<string>(openClaimKey(record.channelId));
+      if (openAttemptId && openAttemptId !== record.attemptId) {
+        const open = await txn.get<ClaimAttemptRecord>(claimAttemptKey(openAttemptId));
+        if (open && open.status !== "applied") throw new Error("claim attempt is already pending");
+      }
+      await txn.put(claimAttemptKey(record.attemptId), clone(record));
+      if (record.status !== "applied") await txn.put(openClaimKey(record.channelId), record.attemptId);
+    });
+  }
+
+  async applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const currentAttempt = await txn.get<ClaimAttemptRecord>(claimAttemptKey(attempt.attemptId));
+      if (!currentAttempt || currentAttempt.status === "applied") {
+        throw new Error("claim attempt is not open");
+      }
+      const currentChannel = await txn.get<ServerChannelRecord>(channelKey(channel.channelId));
+      if (!matchesClaimSnapshot(currentChannel, attempt)) {
+        throw new Error("channel state changed before claim apply");
+      }
+      await txn.put(channelKey(channel.channelId), clone(channel));
+      await txn.put(claimAttemptKey(attempt.attemptId), { ...clone(attempt), status: "applied" });
+      await txn.delete(openClaimKey(attempt.channelId));
+    });
+  }
+
+  async abandonClaimAttempt(attemptId: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<ClaimAttemptRecord>(claimAttemptKey(attemptId));
+      if (!current || current.status === "applied") return;
+      await txn.delete(claimAttemptKey(attemptId));
+      await txn.delete(openClaimKey(current.channelId));
+    });
+  }
+
+  async acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const current = await txn.get<LockRecord>(lockKey(key));
+      if (current && current.token !== token && current.expiresAt > nowMs) return false;
+      await txn.put(lockKey(key), { token, expiresAt: nowMs + ttlMs });
+      return true;
+    });
+  }
+
+  async releaseLock(key: string, token: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<LockRecord>(lockKey(key));
+      if (current?.token === token) await txn.delete(lockKey(key));
+    });
+  }
+
+  async checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }> {
+    if (limit <= 0) return { allowed: true, count: 0, resetAt: nowMs + windowMs };
+    const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
+    const key = rateKey(scope, resetAt);
+    return this.#storage.transaction(async (txn) => {
+      const current = (await txn.get<RateRecord>(key)) ?? { count: 0, resetAt };
+      const next = { count: current.count + 1, resetAt };
+      await txn.put(key, next);
+      return { allowed: next.count <= limit, count: next.count, resetAt };
+    });
+  }
+
+  async incrementMetric(name: string, amount = 1): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const key = metricKey(name);
+      const current = (await txn.get<number>(key)) ?? 0;
+      await txn.put(key, current + amount);
+    });
+  }
+
+  async metrics(): Promise<Record<string, number>> {
+    const entries = await this.#storage.list<number>({ prefix: "metric:" });
+    const metrics: Record<string, number> = {};
+    for (const [key, value] of entries) metrics[key.slice("metric:".length)] = value;
+    return metrics;
+  }
+}
+
+export class DurableGatewayLockManager implements ChannelLockManager {
+  readonly #state: GatewayStateClient;
+  readonly #ttlMs: number;
+
+  constructor(state: GatewayStateClient, ttlMs = 30_000) {
+    this.#state = state;
+    this.#ttlMs = ttlMs;
+  }
+
+  async runExclusive<T>(channelId: string, fn: () => Promise<T>): Promise<T> {
+    const token = crypto.randomUUID();
+    const started = Date.now();
+    for (;;) {
+      if (await this.#state.acquireLock(channelId, token, Date.now(), this.#ttlMs)) break;
+      if (Date.now() - started > this.#ttlMs) throw new Error("gateway lock acquisition timed out");
+      await new Promise((resolve) => setTimeout(resolve, 50));
+    }
+    try {
+      return await fn();
+    } finally {
+      await this.#state.releaseLock(channelId, token);
+    }
+  }
+}
+
+export type GatewayStateClient = ServerStateStore & {
+  acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean>;
+  releaseLock(key: string, token: string): Promise<void>;
+  checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }>;
+  incrementMetric(name: string, amount?: number): Promise<void>;
+  metrics(): Promise<Record<string, number>>;
+};
+
+export async function dispatchGatewayState(ledger: GatewayLedger, request: GatewayStateRequest): Promise<unknown> {
+  switch (request.method) {
+    case "loadChannel":
+      return ledger.loadChannel(readPayload<{ channelId: string }>(request).channelId);
+    case "saveChannel":
+      return ledger.saveChannel(readPayload<{ channel: ServerChannelRecord }>(request).channel);
+    case "retireChannel":
+      return ledger.retireChannel(readPayload<{ channelId: string }>(request).channelId);
+    case "listChannels":
+      return ledger.listChannels();
+    case "loadCommitment":
+      return ledger.loadCommitment(readPayload<{ commitmentId: string }>(request).commitmentId);
+    case "loadPaymentIdentifier":
+      return ledger.loadPaymentIdentifier(readPayload<{ id: string }>(request).id);
+    case "loadExactPayment":
+      return ledger.loadExactPayment(readPayload<{ transactionId: string }>(request).transactionId);
+    case "commitSettlement":
+      return ledger.commitSettlement(readPayload<{ record: SettlementCommit }>(request).record);
+    case "commitExactPayment":
+      return ledger.commitExactPayment(readPayload<{ record: ExactSettlementCommit }>(request).record);
+    case "loadOpenClaimAttempt":
+      return ledger.loadOpenClaimAttempt(readPayload<{ channelId: string }>(request).channelId);
+    case "saveClaimAttempt":
+      return ledger.saveClaimAttempt(readPayload<{ record: ClaimAttemptRecord }>(request).record);
+    case "applyClaimAttempt": {
+      const payload = readPayload<{ channel: ServerChannelRecord; attempt: ClaimAttemptRecord }>(request);
+      return ledger.applyClaimAttempt(payload.channel, payload.attempt);
+    }
+    case "abandonClaimAttempt":
+      return ledger.abandonClaimAttempt(readPayload<{ attemptId: string }>(request).attemptId);
+    case "acquireLock": {
+      const payload = readPayload<{ key: string; token: string; nowMs: number; ttlMs: number }>(request);
+      return ledger.acquireLock(payload.key, payload.token, payload.nowMs, payload.ttlMs);
+    }
+    case "releaseLock": {
+      const payload = readPayload<{ key: string; token: string }>(request);
+      return ledger.releaseLock(payload.key, payload.token);
+    }
+    case "checkRateLimit": {
+      const payload = readPayload<{ scope: string; nowMs: number; limit: number; windowMs: number }>(request);
+      return ledger.checkRateLimit(payload.scope, payload.nowMs, payload.limit, payload.windowMs);
+    }
+    case "incrementMetric": {
+      const payload = readPayload<{ name: string; amount?: number }>(request);
+      return ledger.incrementMetric(payload.name, payload.amount);
+    }
+    case "metrics":
+      return ledger.metrics();
+  }
+}
+
+function readPayload<T>(request: GatewayStateRequest): T {
+  return (request.payload ?? {}) as T;
+}
+
+async function assertPaymentIdentifierAvailable(txn: GatewayTransaction, paymentIdentifier: PaymentIdentifierRecord): Promise<void> {
+  const existing = await txn.get<PaymentIdentifierRecord>(paymentIdentifierKey(paymentIdentifier.id));
+  if (
+    existing &&
+    (existing.fingerprint !== paymentIdentifier.fingerprint ||
+      existing.paymentPayloadHash !== paymentIdentifier.paymentPayloadHash ||
+      existing.paymentScopeId !== paymentIdentifier.paymentScopeId)
+  ) {
+    throw new Error("payment identifier was already committed for a different payment");
+  }
+}
+
+function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {
+  if (!current) {
+    return expected.chargedCumulativeAmount === "0" && expected.claimedCumulativeAmount === "0" && expected.signedMaxClaimable === "0";
+  }
+  return (
+    current.channelId === expected.channelId &&
+    current.chargedCumulativeAmount === expected.chargedCumulativeAmount &&
+    current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
+    current.signedMaxClaimable === expected.signedMaxClaimable &&
+    current.status === expected.status &&
+    current.activeOutpoint.txid.toLowerCase() === expected.activeOutpoint.txid.toLowerCase() &&
+    current.activeOutpoint.index === expected.activeOutpoint.index &&
+    current.activeScriptPublicKey.toLowerCase() === expected.activeScriptPublicKey.toLowerCase()
+  );
+}
+
+function matchesClaimSnapshot(current: ServerChannelRecord | undefined, attempt: ClaimAttemptRecord): boolean {
+  return Boolean(
+    current &&
+      current.activeOutpoint.txid.toLowerCase() === attempt.activeOutpoint.txid.toLowerCase() &&
+      current.activeOutpoint.index === attempt.activeOutpoint.index &&
+      current.activeScriptPublicKey.toLowerCase() === attempt.activeScriptPublicKey.toLowerCase() &&
+      current.fundingAmount === attempt.fundingAmount &&
+      current.chargedCumulativeAmount === attempt.chargedCumulativeAmount &&
+      current.claimedCumulativeAmount === attempt.claimedCumulativeAmount &&
+      current.signedMaxClaimable === attempt.signedMaxClaimable &&
+      current.voucherSignature === attempt.voucherSignature &&
+      current.status === attempt.channelStatus,
+  );
+}
+
+function channelKey(channelId: string): string {
+  return `channel:${channelId.toLowerCase()}`;
+}
+
+function commitmentKey(commitmentId: string): string {
+  return `commitment:${commitmentId.toLowerCase()}`;
+}
+
+function exactPaymentKey(transactionId: string): string {
+  return `exact:${transactionId.toLowerCase()}`;
+}
+
+function paymentIdentifierKey(id: string): string {
+  return `payment-identifier:${id}`;
+}
+
+function claimAttemptKey(attemptId: string): string {
+  return `claim-attempt:${attemptId.toLowerCase()}`;
+}
+
+function openClaimKey(channelId: string): string {
+  return `open-claim:${channelId.toLowerCase()}`;
+}
+
+function lockKey(key: string): string {
+  return `lock:${key.toLowerCase()}`;
+}
+
+function rateKey(scope: string, resetAt: number): string {
+  return `rate:${scope}:${resetAt}`;
+}
+
+function metricKey(name: string): string {
+  return `metric:${name}`;
+}
+
+function clone<T>(value: T): T {
+  return structuredClone(value);
+}
+
+function cloneOrUndefined<T>(value: T | undefined): T | undefined {
+  return value === undefined ? undefined : clone(value);
+}

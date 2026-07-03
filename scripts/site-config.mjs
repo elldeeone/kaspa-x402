@@ -79,7 +79,7 @@ export const SPEC_FILES = [
   "spec/transaction-v1-plan.md",
 ];
 
-export const PUBLIC_DOC_FILES = [
+export const RELEASE_DOC_FILES = [
   "docs/public-proposal.md",
   "docs/adoption-examples.md",
   "docs/live-testnet-report.md",
@@ -91,6 +91,13 @@ export const PUBLIC_DOC_FILES = [
   "docs/native-profile-boundary.md",
   "docs/server-store-contract.md",
   "docs/server-runtime-lock-contract.md",
+];
+
+export const PUBLIC_DOC_FILES = [
+  "docs/public-proposal.md",
+  "docs/adoption-examples.md",
+  "docs/testnet-gateway.md",
+  ...RELEASE_DOC_FILES.slice(2),
 ];
 
 // One-line purpose for each published artifact, shown next to it in index pages.
@@ -133,6 +140,8 @@ export const ARTIFACT_NOTES = {
     "Ecosystem-facing proposal: what is proposed to the x402 and Kaspa communities, and why.",
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
+  "docs/testnet-gateway.md":
+    "Hosted `kaspa:testnet-10` gateway for exact and batch-settlement integration tests.",
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
@@ -156,6 +165,7 @@ export const ARTIFACT_NOTES = {
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
   { title: "Proposal", files: ["docs/public-proposal.md", "docs/adoption-examples.md"] },
+  { title: "Deployment", files: ["docs/testnet-gateway.md"] },
   {
     title: "Evidence",
     files: ["docs/live-testnet-report.md", "docs/live-testnet-proof.md", "docs/review-closure-ledger.md"],
@@ -199,5 +209,14 @@ export const PUBLISHABLE_PACKAGES = [
   "@kaspa-x402/core",
   "@kaspa-x402/covenant",
   "@kaspa-x402/client",
+  "@kaspa-x402/server",
+];
+
+export const SITE_PACKAGE_NAMES = [
+  "@kaspa-x402/cli",
+  "@kaspa-x402/client",
+  "@kaspa-x402/core",
+  "@kaspa-x402/covenant",
+  "@kaspa-x402/facilitator",
   "@kaspa-x402/server",
 ];

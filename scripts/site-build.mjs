@@ -9,12 +9,14 @@ import {
   DOC_GROUPS,
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
+  RELEASE_DOC_FILES,
   RELEASE_LOCK_DIR,
   RELEASE_SNAPSHOT_DIR,
   SITE_ASSET_FILES,
   SCHEMA_FILES,
   SITE_BASE_URL,
   SITE_DIST,
+  SITE_PACKAGE_NAMES,
   SITE_SRC,
   SPEC_FILES,
   VENDORED_KASPA_WASM,
@@ -28,6 +30,7 @@ const requireClean = process.argv.includes("--require-clean");
 const schemaFiles = SCHEMA_FILES;
 const specFiles = SPEC_FILES;
 const docFiles = PUBLIC_DOC_FILES;
+const releaseDocFiles = RELEASE_DOC_FILES;
 const htmlSourceFiles = new Set([...specFiles, ...docFiles]);
 const vectorFiles = trackedFiles("vectors").filter((file) => file.endsWith(".json") || file.endsWith(".md"));
 const siteScriptFiles = ["scripts/site-build.mjs", "scripts/site-check.mjs", "scripts/site-config.mjs", "scripts/site-serve.mjs"];
@@ -68,7 +71,7 @@ writeJson("vectors/index.json", vectorIndex);
 writeJson("packages.json", { generatedFrom: commit, releaseVersion, packages });
 
 writeIndexPages();
-writeReleaseSnapshot(copiedArtifacts, vectorIndex);
+writeReleaseSnapshot(releaseArtifacts(copiedArtifacts), vectorIndex);
 copyStoredReleaseSnapshots();
 writeManifest(copiedArtifacts, vectorIndex);
 
@@ -382,7 +385,7 @@ function writeDemoPage() {
           </select>
         </label>
         <label>Amount (sompi)
-          <input id="demo-amount" type="text" inputmode="numeric" value="1000">
+          <input id="demo-amount" type="text" inputmode="numeric" value="20000000">
         </label>
         <label>Timeout seconds
           <input id="demo-timeout" type="number" min="1" max="4294967295" value="60">
@@ -405,7 +408,7 @@ function writeDemoPage() {
         <label for="demo-server-public-key">Server public key</label>
         <input id="demo-server-public-key" type="text" spellcheck="false" value="0000000000000000000000000000000000000000000000000000000000000000">
         <label for="demo-min-deposit">Minimum deposit (sompi)</label>
-        <input id="demo-min-deposit" type="text" inputmode="numeric" value="1000000">
+        <input id="demo-min-deposit" type="text" inputmode="numeric" value="20000000">
         <label for="demo-refund-daa">Refund timeout DAA</label>
         <input id="demo-refund-daa" type="text" inputmode="numeric" value="1000000">
       </div>
@@ -497,12 +500,15 @@ function writePnnSpikeJson() {
       constraints: ["testnet-only", "no implicit key persistence", "manual transaction broadcast only"],
     },
     worker: {
-      status: "not yet suitable for the hosted gateway",
-      verifiedCapabilities: [],
-      blockers: [
-        "committed validation covers the browser client only, not a Worker gateway adapter",
-        "a gateway should use a dedicated chain adapter and its own reproducible Worker test before accepting paid requests",
+      status: "separate Worker gateway deployed at https://demo.kaspa-x402.org",
+      verifiedCapabilities: [
+        "REST chain health",
+        "Durable Object state",
+        "exact 402 offers",
+        "batch-settlement 402 offers",
+        "unsupported-scheme rejection",
       ],
+      constraints: ["testnet-only", "claim broadcasting disabled", "not part of the apex static site"],
     },
     packageBoundary: {
       browserSafeToday: ["static schemas", "browser SDK", "browser-native header encoder"],
@@ -552,6 +558,11 @@ function copyCollection(files, routeRoot) {
     copyFile(file, target);
     return artifactRecord(file, target);
   });
+}
+
+function releaseArtifacts(copiedArtifacts) {
+  const releaseSources = new Set([...schemaFiles, ...specFiles, ...releaseDocFiles, ...vectorFiles]);
+  return copiedArtifacts.filter((artifact) => releaseSources.has(artifact.source));
 }
 
 function copyStaticAssets() {
@@ -1012,19 +1023,26 @@ function writeRedirects() {
 }
 
 function readPackages() {
-  return trackedFiles("packages")
-    .filter((file) => file.endsWith("package.json"))
-    .map((file) => {
+  const packagesByName = new Map(
+    trackedPackageFiles().map((file) => {
       const pkg = readJson(file);
-      return {
-        name: pkg.name,
-        version: pkg.version,
-        private: pkg.private === true,
-        publishTag: pkg.publishConfig?.tag,
-        path: path.dirname(file),
-      };
-    })
-    .sort((a, b) => a.name.localeCompare(b.name));
+      return [
+        pkg.name,
+        {
+          name: pkg.name,
+          version: pkg.version,
+          private: pkg.private === true,
+          publishTag: pkg.publishConfig?.tag,
+          path: path.dirname(file),
+        },
+      ];
+    }),
+  );
+  return SITE_PACKAGE_NAMES.map((name) => {
+    const pkg = packagesByName.get(name);
+    if (pkg === undefined) throw new Error(`missing site package metadata: ${name}`);
+    return pkg;
+  }).sort((a, b) => a.name.localeCompare(b.name));
 }
 
 function dirtyPublishableInputs() {
@@ -1036,7 +1054,7 @@ function dirtyPublishableInputs() {
     ...specFiles,
     ...docFiles,
     ...vectorFiles,
-    ...trackedFiles("packages").filter((file) => file.endsWith("package.json")),
+    ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
     ...listFiles(RELEASE_LOCK_DIR),
@@ -1049,6 +1067,15 @@ function dirtyPublishableInputs() {
     .map((file) => file.replace(/^"|"$/g, ""))
     .filter((file) => inputs.has(file) || [...inputs].some((input) => file.startsWith(`${input}/`)))
     .sort();
+}
+
+function trackedPackageFiles() {
+  return trackedFiles("packages").filter((file) => file.endsWith("package.json"));
+}
+
+function sitePackageFiles() {
+  const sitePackages = new Set(SITE_PACKAGE_NAMES);
+  return trackedPackageFiles().filter((file) => sitePackages.has(readJson(file).name));
 }
 
 function readReleaseLock(version) {

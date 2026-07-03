@@ -1,0 +1,44 @@
+{
+  "name": "kaspa-x402-demo-gateway",
+  "account_id": "4d306be42951e0fb5e88bc49f0af7137",
+  "main": "src/index.ts",
+  "compatibility_date": "2026-06-02",
+  "compatibility_flags": ["nodejs_compat"],
+  "routes": [
+    {
+      "pattern": "demo.kaspa-x402.org",
+      "custom_domain": true
+    }
+  ],
+  "observability": {
+    "enabled": true
+  },
+  "durable_objects": {
+    "bindings": [
+      {
+        "name": "GATEWAY_STATE",
+        "class_name": "GatewayState"
+      }
+    ]
+  },
+  "migrations": [
+    {
+      "tag": "v1",
+      "new_sqlite_classes": ["GatewayState"]
+    }
+  ],
+  "vars": {
+    "KASPA_X402_NETWORK": "kaspa:testnet-10",
+    "KASPA_X402_CHAIN_API_BASE": "https://api-tn10.kaspa.org",
+    "KASPA_X402_PAY_TO": "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
+    "KASPA_X402_SERVER_PUBLIC_KEY": "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
+    "KASPA_X402_EXACT_AMOUNT": "20000000",
+    "KASPA_X402_BATCH_AMOUNT": "500",
+    "KASPA_X402_MIN_DEPOSIT_SOMPI": "20000000",
+    "KASPA_X402_REFUND_TIMEOUT_DAA": "3600",
+    "KASPA_X402_MAX_TIMEOUT_SECONDS": "60",
+    "KASPA_X402_CLAIM_FEE_SOMPI": "10000",
+    "KASPA_X402_RATE_LIMIT_PER_MINUTE": "60",
+    "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org"
+  }
+}

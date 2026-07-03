@@ -9,12 +9,11 @@ release snapshots, and a static testnet-only browser client. It must not host a
 custodial wallet, hosted signer, facilitator, payment API, or protected paid
 resource on the apex domain.
 
-Hosted demo or gateway experiments belong on a separate subdomain such as
+Hosted gateway experiments belong on a separate subdomain such as
 `demo.kaspa-x402.org` or `testnet.kaspa-x402.org`. Those services have a
-different trust model because they may connect to nodes, wallets, signers,
-funding adapters, or hosted payment endpoints. A static client may live at
-`/demo/` only while private key material stays in browser memory and the apex
-site remains static.
+different trust model because they may connect to nodes, funding adapters, or
+hosted payment endpoints. A static client may live at `/demo/` only while
+private key material stays in browser memory and the apex site remains static.
 
 ## Design Intent
 
@@ -36,6 +35,8 @@ no marketing sections. Every page exists for a reason:
 - `/demo/` is a static, testnet-only browser client for PNN connectivity checks
   and local x402 transcript rehearsal. It is not a hosted gateway.
 - `/releases/` lists the immutable versioned snapshots.
+- `demo.kaspa-x402.org` is the separate Worker-backed testnet gateway. It is
+  not hosted under the apex static site.
 
 There is no separate packages page; the package table lives on the homepage
 and `packages.json` remains the machine-readable route. Artifact indexes show
@@ -92,3 +93,17 @@ Pages project should use:
 The static output includes `_headers` for schema JSON routes and `_redirects`
 for stable compatibility aliases. No npm publish credentials, live proof
 secrets, RPC endpoints, or wallet material are required for deployment.
+
+## Gateway Deployment
+
+The Worker-backed testnet gateway is a separate Cloudflare Workers project with
+its own `packages/demo-gateway/wrangler.jsonc`. It uses:
+
+- Worker name: `kaspa-x402-demo-gateway`;
+- Durable Object class: `GatewayState`;
+- network: `kaspa:testnet-10`;
+- chain evidence source: `https://api-tn10.kaspa.org`;
+- custom domain: `demo.kaspa-x402.org`.
+
+The gateway package is private and is not part of the public npm release
+surface. Its Worker build must pass before the custom subdomain is advertised.

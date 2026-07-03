@@ -262,6 +262,8 @@ export class DirectModeServer {
       }
       const cached = await this.#checkIdempotency(paymentIdentifier, fingerprint, safePaymentScopeIdHint(paymentPayload), paymentPayload);
       if (cached) return cached;
+      const batchReplay = await this.#checkBatchReplay(paymentPayload, fingerprint);
+      if (batchReplay) return batchReplay;
 
       let verified: VerifiedPayment;
       try {
@@ -1003,6 +1005,26 @@ export class DirectModeServer {
     };
   }
 
+  async #checkBatchReplay(paymentPayload: PaymentPayload, fingerprint: Hash32Hex): Promise<ServerResponse | undefined> {
+    if (paymentPayload.accepted.scheme !== "batch-settlement") return undefined;
+    const channelId = safePaymentChannelId(paymentPayload);
+    if (!channelId) return undefined;
+    const channel = await this.#config.store.loadChannel(channelId);
+    if (!channel?.lastCommitmentId) return undefined;
+    const record = await this.#config.store.loadCommitment(channel.lastCommitmentId);
+    if (!record) return undefined;
+    const payload = paymentPayload.payload;
+    if (payload.type !== "deposit-voucher" && payload.type !== "voucher") return undefined;
+    if (record.requestFingerprint !== fingerprint) return undefined;
+    if (record.channelId !== channelId) return undefined;
+    if (record.paymentRequirementsHash !== bytesToHex(batchPaymentRequirementsHash(paymentPayload.accepted))) return undefined;
+    if (!sameActiveOutpoint({ activeOutpoint: record.activeOutpoint, activeScriptPublicKey: record.activeScriptPublicKey }, payload.fundingOutpoint, payload.activeScriptPublicKey)) {
+      return undefined;
+    }
+    if (record.voucher.amount !== payload.voucher.amount || record.voucher.signature !== payload.voucher.signature) return undefined;
+    return record.response;
+  }
+
   async #assertVerifyNotReplayed(verified: VerifiedPayment, fingerprint: Hash32Hex, paymentPayload: PaymentPayload): Promise<void> {
     if (verified.scheme === "exact") {
       const record = await this.#config.store.loadExactPayment(verified.transactionId);
@@ -1498,7 +1520,11 @@ function maxAmount(a: SompiString, b: SompiString): SompiString {
   return parseSompiString(a) >= parseSompiString(b) ? a : b;
 }
 
-function sameActiveOutpoint(channel: ServerChannelRecord, outpoint: FundingOutpoint, activeScriptPublicKey: string): boolean {
+function sameActiveOutpoint(
+  channel: Pick<ServerChannelRecord, "activeOutpoint" | "activeScriptPublicKey">,
+  outpoint: FundingOutpoint,
+  activeScriptPublicKey: string,
+): boolean {
   return (
     channel.activeOutpoint.txid.toLowerCase() === outpoint.txid.toLowerCase() &&
     channel.activeOutpoint.index === outpoint.index &&

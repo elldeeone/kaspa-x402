@@ -524,6 +524,118 @@ describe("payment-identifier semantic validation", () => {
     expectFailureCode(result, "invalid_kaspa_payment_identifier");
   });
 
+  it("enforces type-less enum constraints in advertised payment-identifier schemas", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = {
+      type: "object",
+      required: ["required", "tenant"],
+      properties: {
+        required: { type: "boolean" },
+        id: { type: "string" },
+        tenant: { enum: ["tenant-a"] },
+      },
+      additionalProperties: true,
+    };
+    const result = validatePaymentRetry({
+      paymentRequired: {
+        ...vector.paymentRequired,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, tenant: "tenant-a" },
+            schema,
+          },
+        },
+      },
+      paymentPayload: {
+        ...vector.paymentPayload,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, tenant: "tenant-b", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            schema,
+          },
+        },
+      },
+    });
+
+    expectFailureCode(result, "invalid_kaspa_payment_identifier");
+  });
+
+  it("rejects unsupported advertised payment-identifier schema references", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = {
+      type: "object",
+      required: ["required", "tenant"],
+      properties: {
+        required: { type: "boolean" },
+        id: { type: "string" },
+        tenant: { $ref: "#/$defs/tenant" },
+      },
+      $defs: {
+        tenant: { const: "tenant-a" },
+      },
+      additionalProperties: true,
+    };
+    const result = validatePaymentRetry({
+      paymentRequired: {
+        ...vector.paymentRequired,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, tenant: "tenant-a" },
+            schema,
+          },
+        },
+      },
+      paymentPayload: {
+        ...vector.paymentPayload,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, tenant: "tenant-a", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            schema,
+          },
+        },
+      },
+    });
+
+    expectFailureCode(result, "invalid_kaspa_payment_identifier");
+    if (result.ok) throw new Error("expected unsupported schema failure");
+    expect(result.error.message).toBe("payment-identifier extension schema is invalid");
+  });
+
+  it("rejects unsupported advertised payment-identifier schema composition", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = {
+      oneOf: [
+        {
+          type: "object",
+          required: ["required"],
+          properties: { required: { type: "boolean" } },
+        },
+      ],
+    };
+    const result = validatePaymentRetry({
+      paymentRequired: {
+        ...vector.paymentRequired,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true },
+            schema,
+          },
+        },
+      },
+      paymentPayload: {
+        ...vector.paymentPayload,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            schema,
+          },
+        },
+      },
+    });
+
+    expectFailureCode(result, "invalid_kaspa_payment_identifier");
+  });
+
   it("accepts payment-identifier retries that preserve advertised info and schema", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const schema = {
