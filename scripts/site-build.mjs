@@ -118,7 +118,8 @@ function writeHomePage() {
     <h2 id="status">Status</h2>
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
-      <li>Network target: <code>kaspa:testnet-10</code> only. Reference flows have been executed live on testnet; see the <a href="/docs/live-testnet-report/">live testnet report</a>.</li>
+      <li>Network target: <code>kaspa:testnet-10</code> only.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> serves paid <code>exact</code> and <code>batch-settlement</code> endpoints with recorded live runs; see the <a href="/docs/testnet-gateway/">gateway reference</a>.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -126,7 +127,7 @@ function writeHomePage() {
     <p class="muted">Generated from commit <code>${escapeHtml(commit.slice(0, 12))}</code> (${escapeHtml(commitDate.slice(0, 10))}). Unversioned routes track the active alpha; immutable snapshots are listed under <a href="/releases/">releases</a>.</p>
 
     <h2>What is x402</h2>
-    <p>x402 is an open protocol that turns the HTTP <code>402 Payment Required</code> status code into a machine-payable flow: a server answers an unpaid request with a 402 carrying a machine-readable offer, the client retries with a signed payment payload, and the server verifies the payment, settles it, and serves the response. The same primitives work over HTTP headers and MCP <code>_meta</code> fields, so paid APIs and paid tools are usable by autonomous agents, not only by humans with checkout pages. See <a href="https://www.x402.org">x402.org</a>.</p>
+    <p>x402 is an open protocol that turns the HTTP <code>402 Payment Required</code> status code into a machine-payable flow: a server answers an unpaid request with a 402 carrying a machine-readable offer, the client retries with a signed payment payload, and the server verifies the payment, settles it, and serves the response. The same primitives work over HTTP headers and MCP <code>_meta</code> fields, so paid APIs and tools are usable by autonomous agents. See <a href="https://www.x402.org">x402.org</a>.</p>
 
     <h2>What is Kaspa</h2>
     <p>Kaspa is a proof-of-work layer 1 whose blockDAG consensus produces blocks at sub-second cadence with native UTXO semantics. See <a href="https://kaspa.org">kaspa.org</a>.</p>
@@ -135,13 +136,13 @@ function writeHomePage() {
     <p>The claims below are engineering rationale, each specified or backed by testnet evidence. None of them is a mainnet claim.</p>
     <ul>
       <li><strong>Settlement latency close to request latency.</strong> Paying per HTTP request only works when payment confirmation is not the slow path. Kaspa's block cadence makes one-shot native payments practical at request time; the <a href="/docs/live-testnet-report/">live testnet report</a> records executed end-to-end flows.</li>
-      <li><strong>Small per-request prices, with an honest floor.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). On-chain <code>exact</code> outputs must stay above Kaspa's standard-output storage-mass floor (about 0.1 KAS), so prices below that floor use <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> vouchers, which meter small charges off-chain against one escrow deposit — the hosted gateway prices repeated requests at 500 sompi each this way.</li>
+      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). On-chain <code>exact</code> outputs must clear Kaspa's standard-output storage-mass floor (about 0.1 KAS); prices below it use <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> vouchers — the hosted gateway charges 500 sompi per request this way.</li>
       <li><strong>Direct verification, no facilitator lock-in.</strong> Kaspa is UTXO-native, so a server can verify and settle against a node it trusts: payment identity is bound to transaction ids, outpoints, and script-public-key material rather than to a hosted intermediary. A <a href="/spec/facilitator-profile/">self-hosted facilitator profile</a> exists for x402 <code>/supported</code>, <code>/verify</code>, <code>/settle</code> compatibility, but it is optional.</li>
       <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> funds a covenant-backed escrow once, signs a cumulative voucher per paid request, and touches the chain again only at claim or refund time.</li>
     </ul>
 
     <h2>The two profiles</h2>
-    <p>The binding deliberately ships two schemes with different settlement shapes instead of overloading one.</p>
+    <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated or variable-cost requests against escrow/channel state. Spec: <a href="/spec/kaspa-batch-settlement-v1/">kaspa-batch-settlement-v1</a>.</p>
@@ -150,7 +151,7 @@ function writeHomePage() {
     <h2>Start here</h2>
     <ul>
       <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
-      <li><strong>Trying the hosted testnet gateway:</strong> use the <a href="/docs/testnet-gateway/">gateway reference</a>, the <a href="/docs/demo-operations/">operations runbook</a>, and the <a href="/docs/demo-interop-checklist/">interoperability checklist</a>.</li>
+      <li><strong>Trying the hosted testnet gateway:</strong> <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> — see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>; the <a href="/docs/demo-operations/">operations runbook</a> covers how it is run.</li>
       <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
       <li><strong>Evaluating the initiative:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
@@ -327,7 +328,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact-payment headers before a hosted demo gateway exists.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. For real paid requests, use the hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a>; see the <a href="/docs/testnet-gateway/">gateway reference</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -336,7 +337,7 @@ function writeDemoPage() {
         <li>Generated or imported private keys stay in browser memory. The page does not write key material to local storage, cookies, query strings, or the server.</li>
         <li>Reset clears the in-memory key, visible fields, and RPC connection state.</li>
         <li>The only signed data that should leave the page is a transaction you intentionally broadcast through the public node network.</li>
-        <li>The apex domain hosts static files only. A hosted gateway or paid test resource belongs on a separate demo subdomain.</li>
+        <li>The apex domain hosts static files only. The hosted gateway and its paid test resources run on the separate <code>demo.kaspa-x402.org</code> subdomain.</li>
       </ul>
     </section>
 

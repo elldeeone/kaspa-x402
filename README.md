@@ -1,12 +1,20 @@
 # Kaspa x402
 
-Kaspa x402 is a proposed set of x402 v2 network bindings for native Kaspa payments.
+Proposed x402 v2 network bindings for native Kaspa payments. HTTP APIs and
+MCP tools charge native KAS per request; servers verify and settle directly
+against the Kaspa network.
 
-Status: alpha reference implementation. The current public surface targets
-`kaspa:testnet-10` testnet iteration and review. It is not mainnet-ready and
-must not be used for production funds.
+- Canonical reference (specs, schemas, vectors, docs, releases):
+  https://kaspa-x402.org
+- Hosted testnet gateway with live paid endpoints: https://demo.kaspa-x402.org
+- Browser test client: https://kaspa-x402.org/demo/
 
-The current native alpha surface targets two first-class x402 schemes:
+Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
+by the gates in [docs/mainnet-readiness.md](docs/mainnet-readiness.md), and
+reference runtimes require explicit `allowMainnet` opt-in. Package names,
+schemas, and field names may change until the first tagged spec release.
+
+The binding ships two x402 schemes:
 
 ```json
 {
@@ -29,59 +37,41 @@ The current native alpha surface targets two first-class x402 schemes:
 }
 ```
 
-Use `exact` for fixed-price one-shot purchases and `batch-settlement` for
-repeated or variable-cost micropayments backed by escrow/channel state.
+`exact` is a fixed-price one-shot native transfer. `batch-settlement` funds a
+covenant-backed escrow once and meters repeated or variable-cost requests
+with off-chain vouchers. On-chain outputs must clear Kaspa's standard-output
+storage-mass floor (about 0.1 KAS); batch-settlement vouchers price below it.
 
-This repository is an alpha standard and reference implementation workspace. It is intentionally independent of any single hosted facilitator or product implementation.
+## What's Here
 
-## Current Status
+- `spec/` — the Kaspa binding and transport profiles; start with
+  [spec/kaspa-x402-v1.md](spec/kaspa-x402-v1.md).
+- `schemas/`, `vectors/` — wire-format JSON Schemas and conformance vectors,
+  including negative vectors.
+- `packages/` — TypeScript reference packages: core helpers, direct-mode
+  client and server, covenant helpers, an optional self-hosted facilitator,
+  and a CLI.
+- `examples/` — runnable mock examples for paid HTTP, paid MCP tools,
+  facilitator settlement, and recovery.
+- `contracts/` — SilverScript escrow covenant source and fixtures.
+- `site/` — the standards site build.
+- `packages/demo-gateway/` — the private Cloudflare Worker behind the hosted
+  testnet gateway.
 
-The repository now contains the alpha reference implementation. The current
-native target surface is:
+## Verify
 
-- protocol profiles for `exact` and `batch-settlement`;
-- JSON schemas and conformance vectors for payment requirements, payloads, settlement responses, channel IDs, and vouchers;
-- TypeScript core helpers for canonical headers, validation, IDs, voucher digests, and amounts;
-- covenant helpers, escrow fixtures, transaction-v1 reference vectors, and fixture reproducibility checks for `batch-settlement`;
-- client and server direct-mode packages for `exact` and channel-backed batch payments over HTTP and MCP helper surfaces;
-- an optional self-hosted facilitator package exposing framework-neutral `/supported`, `/verify`, and `/settle` handlers over the direct-mode verifier;
-- a `kaspa-x402` CLI for conformance vector verification and offline payment/channel inspection workflows;
-- runnable mock examples for paid HTTP, paid MCP tools, self-hosted facilitator settlement, and recovery scenarios.
-
-The current remaining implementation focus is production-grade native adapters,
-release hardening, and independent review.
-
-Do not treat package names, schemas, or field names as frozen until the first tagged spec release.
-
-See [docs/public-proposal.md](docs/public-proposal.md) for the ecosystem-facing
-proposal draft, [docs/alpha-publish.md](docs/alpha-publish.md) for the npm
-alpha checklist, and [docs/versioning-policy.md](docs/versioning-policy.md) for
-the compatibility rules.
-
-## Layout
-
-```text
-spec/       Protocol profiles and Kaspa network binding
-schemas/    JSON schemas for wire objects
-vectors/    Conformance vectors
-packages/   TypeScript reference packages
-examples/   Runnable examples
-docs/       Architecture notes and roadmap
-```
-
-Start with [spec/kaspa-x402-v1.md](spec/kaspa-x402-v1.md), then read the scheme bindings and transport profiles in `spec/`.
-
-## Quick Checks
+CI runs the full check suite on every pull request; see
+[CONTRIBUTING.md](CONTRIBUTING.md). Locally:
 
 ```sh
-npm run build
+npm ci
+npm test
 npm run validate:schemas
+npm run site:build && npm run site:check
 node packages/cli/dist/index.js vectors verify
-npm run proof:offline
-npm --workspace @kaspa-x402/cli test
 ```
 
-The example scripts run in mock mode and do not require wallet secrets or node credentials:
+Mock examples run without wallet secrets or node credentials:
 
 ```sh
 node examples/paid-http-api/index.mjs
@@ -90,39 +80,14 @@ node examples/self-hosted-facilitator/index.mjs
 node examples/recovery/index.mjs
 ```
 
-The offline proof harness exercises exact replay rejection, batch settlement,
-idempotency, corrective stale-voucher handling, and tx-v1 claim/refund artifact
-construction against mock adapters:
+`npm run proof:offline` exercises exact replay rejection, batch settlement
+idempotency, corrective stale-voucher handling, and tx-v1 claim/refund
+artifacts against mock adapters. Live testnet proof is fail-closed and
+adapter-driven; see [docs/live-testnet-proof.md](docs/live-testnet-proof.md).
 
-```sh
-npm run build
-npm run proof:offline
-```
+## Packages
 
-Live testnet proof is fail-closed and adapter-driven. Start with:
-
-```sh
-npm run proof:live:check -- --config-file live-proof.env.example --write-report
-```
-
-See [docs/live-testnet-proof.md](docs/live-testnet-proof.md) for the required live configuration and artifact paths.
-
-Security posture, review closure, and mainnet caveats are documented in
-[docs/security-threat-model.md](docs/security-threat-model.md),
-[docs/review-closure-ledger.md](docs/review-closure-ledger.md), and
-[docs/mainnet-readiness.md](docs/mainnet-readiness.md). Mainnet is not implied
-ready by the draft specs, package names, vectors, or live testnet proof, and
-reference runtimes require explicit `allowMainnet` opt-in.
-
-## Package Scope
-
-The intended npm scope is:
-
-```text
-@kaspa-x402/*
-```
-
-Published alpha packages:
+Published alpha packages (install with an explicit prerelease tag):
 
 ```text
 @kaspa-x402/core
@@ -131,12 +96,17 @@ Published alpha packages:
 @kaspa-x402/server
 ```
 
-Repository-only private workspaces:
+Repository-only private workspaces: `@kaspa-x402/facilitator`,
+`@kaspa-x402/cli`, `@kaspa-x402/demo-gateway`.
 
-```text
-@kaspa-x402/facilitator
-@kaspa-x402/cli
-```
+## Security and Review
+
+See [docs/security-threat-model.md](docs/security-threat-model.md),
+[docs/review-closure-ledger.md](docs/review-closure-ledger.md), and
+[docs/mainnet-readiness.md](docs/mainnet-readiness.md). Draft specs, package
+names, vectors, and live testnet proof do not imply mainnet readiness. The
+ecosystem-facing proposal is
+[docs/public-proposal.md](docs/public-proposal.md).
 
 ## Reference Specs
 

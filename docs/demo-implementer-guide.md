@@ -44,8 +44,9 @@ Before calling the hosted gateway, an implementation should be able to:
 5. Confirm negative vectors fail for the expected reason.
 
 Amounts are decimal strings in sompi. The gateway's on-chain exact output and
-batch deposit values are deliberately above the Kaspa standard-output
-storage-mass floor.
+batch deposit values sit above the Kaspa standard-output storage-mass floor
+(about 0.1 KAS); outputs below the floor cannot be built as standard
+transactions.
 
 ## Discover Gateway Support
 

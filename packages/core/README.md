@@ -16,7 +16,7 @@ Implemented:
 - x402 v2 facilitator request, response, and supported-kind TypeScript types;
 - voucher preimage and digest helpers;
 - channel ID preimage and digest helpers;
-- Ajv-backed schema validation wrappers;
+- schema validation via pregenerated standalone validators (Ajv at build time only, safe for runtimes that forbid dynamic code generation);
 - semantic retry validation for accepted-offer matching and `payment-identifier`;
 - vector-driven tests against the repository conformance fixtures.
 

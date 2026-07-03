@@ -9,7 +9,7 @@ custodian, facilitator, mainnet service, or availability commitment.
 
 ## Base URL
 
-The intended public route is:
+The gateway is deployed at:
 
 ```text
 https://demo.kaspa-x402.org

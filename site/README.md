@@ -39,5 +39,5 @@ Cloudflare Pages configuration:
 - custom domains: `kaspa-x402.org`, `www.kaspa-x402.org`
 
 The apex site is a standards reference with a static, testnet-only browser
-client. Hosted gateway work or paid test resources belong on a separate
-subdomain.
+client. The hosted gateway and its paid test resources run on the separate
+`demo.kaspa-x402.org` subdomain (`packages/demo-gateway/`).
