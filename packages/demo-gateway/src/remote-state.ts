@@ -7,7 +7,7 @@ import type {
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
-import type { GatewayStateClient, GatewayStateMethod, GatewayStateRequest } from "./state.js";
+import type { GatewayCanaryReport, GatewayStateClient, GatewayStateMethod, GatewayStateRequest } from "./state.js";
 
 export type GatewayStateNamespace = DurableObjectNamespace;
 
@@ -80,6 +80,14 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }> {
     return this.#call("checkRateLimit", { scope, nowMs, limit, windowMs });
+  }
+
+  loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {
+    return this.#call("loadCanaryReport");
+  }
+
+  saveCanaryReport(report: GatewayCanaryReport): Promise<void> {
+    return this.#call("saveCanaryReport", { report });
   }
 
   incrementMetric(name: string, amount?: number): Promise<void> {

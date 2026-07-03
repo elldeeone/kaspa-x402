@@ -149,7 +149,8 @@ function writeHomePage() {
 
     <h2>Start here</h2>
     <ul>
-      <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/spec/kaspa-x402-v1/">core binding</a>, then the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile; install the <a href="#packages">alpha packages</a> and validate against the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Trying the hosted testnet gateway:</strong> use the <a href="/docs/testnet-gateway/">gateway reference</a>, the <a href="/docs/demo-operations/">operations runbook</a>, and the <a href="/docs/demo-interop-checklist/">interoperability checklist</a>.</li>
       <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
       <li><strong>Evaluating the initiative:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>

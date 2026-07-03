@@ -13,6 +13,9 @@
   "observability": {
     "enabled": true
   },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
+  },
   "durable_objects": {
     "bindings": [
       {
@@ -28,6 +31,7 @@
     }
   ],
   "vars": {
+    "KASPA_X402_GATEWAY_ENABLED": "true",
     "KASPA_X402_NETWORK": "kaspa:testnet-10",
     "KASPA_X402_CHAIN_API_BASE": "https://api-tn10.kaspa.org",
     "KASPA_X402_PAY_TO": "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
@@ -39,6 +43,8 @@
     "KASPA_X402_MAX_TIMEOUT_SECONDS": "60",
     "KASPA_X402_CLAIM_FEE_SOMPI": "10000",
     "KASPA_X402_RATE_LIMIT_PER_MINUTE": "60",
-    "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org"
+    "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org",
+    "KASPA_X402_SITE_BASE_URL": "https://kaspa-x402.org",
+    "KASPA_X402_GATEWAY_BASE_URL": "https://demo.kaspa-x402.org"
   }
 }

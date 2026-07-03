@@ -42,4 +42,28 @@ describe("gateway config", () => {
       minDepositSompi: "20000000",
     });
   });
+
+  it("parses the operator switch and canary base urls", () => {
+    expect(
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GATEWAY_ENABLED: "false",
+        KASPA_X402_SITE_BASE_URL: "https://kaspa-x402.org/",
+        KASPA_X402_GATEWAY_BASE_URL: "https://demo.kaspa-x402.org/",
+      }),
+    ).toMatchObject({
+      enabled: false,
+      siteBaseUrl: "https://kaspa-x402.org",
+      gatewayBaseUrl: "https://demo.kaspa-x402.org",
+    });
+  });
+
+  it("rejects invalid operator switch values", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GATEWAY_ENABLED: "maybe",
+      }),
+    ).toThrow("KASPA_X402_GATEWAY_ENABLED must be true or false");
+  });
 });

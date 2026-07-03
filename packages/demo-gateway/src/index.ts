@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { handleGatewayRequest } from "./gateway.js";
+import { handleGatewayRequest, runGatewayCanary } from "./gateway.js";
 import type { GatewayEnv } from "./config.js";
 import { dispatchGatewayState, GatewayLedger, type GatewayStateRequest, type GatewayStorage } from "./state.js";
 
@@ -26,5 +26,8 @@ export class GatewayState extends DurableObject<GatewayEnv> {
 export default {
   async fetch(request: Request, env: GatewayEnv, context: ExecutionContext): Promise<Response> {
     return handleGatewayRequest(request, env, context);
+  },
+  async scheduled(_event: ScheduledController, env: GatewayEnv, context: ExecutionContext): Promise<void> {
+    context.waitUntil(runGatewayCanary(env, "scheduled"));
   },
 };

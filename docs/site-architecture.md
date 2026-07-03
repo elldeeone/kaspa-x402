@@ -30,8 +30,8 @@ no marketing sections. Every page exists for a reason:
   schema's `$id` resolves to its route on this site.
 - `/vectors/` is the conformance fixture index, grouped by fixture directory,
   with `index.json` carrying byte counts and SHA-256 digests.
-- `/docs/` is a curated, grouped index (Proposal, Evidence, Safety, Policy,
-  Contracts) of the selected public documents.
+- `/docs/` is a curated, grouped index (Proposal, Deployment, Evidence, Safety,
+  Policy, Contracts) of the selected public documents.
 - `/demo/` is a static, testnet-only browser client for PNN connectivity checks
   and local x402 transcript rehearsal. It is not a hosted gateway.
 - `/releases/` lists the immutable versioned snapshots.
@@ -77,8 +77,9 @@ under versioned release paths.
 
 Ignored operational or planning files must not be published. This includes
 private live-run artifacts, local adapter files, review drafts, findings
-drafts, and internal planning files. `docs/alpha-publish.md` and this document
-are internal and excluded from publication.
+drafts, announcement drafts, and internal planning files.
+`docs/alpha-publish.md` and this document are internal and excluded from
+publication.
 
 ## Deployment Model
 
@@ -88,6 +89,7 @@ Pages project should use:
 - production branch: `main`;
 - build command: `npm run site:deploy:check`;
 - output directory: `site/dist`;
+- Node.js version: repository `.node-version`;
 - custom domains: `kaspa-x402.org` and `www.kaspa-x402.org`.
 
 The static output includes `_headers` for schema JSON routes and `_redirects`
@@ -107,3 +109,6 @@ its own `packages/demo-gateway/wrangler.jsonc`. It uses:
 
 The gateway package is private and is not part of the public npm release
 surface. Its Worker build must pass before the custom subdomain is advertised.
+The public docs may include the gateway reference, operations runbook,
+implementer guide, and interoperability checklist; draft announcements stay
+unpublished until explicitly approved.

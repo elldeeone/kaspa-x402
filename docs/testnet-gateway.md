@@ -24,6 +24,7 @@ the apex static site.
 | ------ | ---- | ------- |
 | `GET` | `/` | Returns a compact JSON index for the hosted gateway. |
 | `GET` | `/health` | Returns gateway configuration health and current `kaspa:testnet-10` chain evidence. |
+| `GET` | `/canary` | Returns gateway enabled state and the latest stored non-spending scheduled canary result when one has run. |
 | `GET` | `/supported` | Returns the direct-mode supported-kind list for the hosted gateway. |
 | `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
@@ -55,6 +56,10 @@ Current hosted terms:
 The exact price and batch deposit are on-chain outputs, so they must stay at or
 above the Kaspa standard-output storage-mass floor of `10000000` sompi. The
 Worker fails closed at startup if either configured value is below that floor.
+
+Operational details, rollback steps, the gateway disable switch, and manual
+paid canary procedure are covered in the
+[demo operations runbook](/docs/demo-operations/).
 
 ## Chain Adapter
 
@@ -96,6 +101,7 @@ The ledger records:
 - one open claim attempt per channel, though public claim execution is disabled;
 - lease-style request locks used by the direct-mode server;
 - per-window rate counters and coarse operational metrics.
+- the latest scheduled canary report.
 
 This state layout is a demo deployment pattern, not a production sharding
 recommendation. Production operators should pick state boundaries that match

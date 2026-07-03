@@ -31,6 +31,7 @@ try {
 
 async function smokeGateway(baseUrl) {
   const health = await getJson(`${baseUrl}/health`);
+  const canary = await getJson(`${baseUrl}/canary`);
   const supported = await getJson(`${baseUrl}/supported`);
   const exact = await fetch(`${baseUrl}/exact`);
   const exactRequired = decodePaymentRequiredHeader(exact.headers.get("PAYMENT-REQUIRED"));
@@ -41,6 +42,8 @@ async function smokeGateway(baseUrl) {
   const head = await fetch(`${baseUrl}/exact`, { method: "HEAD" });
 
   assert(health.status === 200 && health.body.ok === true, "health endpoint failed");
+  assert(health.body.enabled === true, "health did not report enabled gateway");
+  assert(canary.status === 200 && canary.body.ok === true, "canary endpoint failed");
   assert(health.body.chain?.networkName === "kaspa-testnet-10", `unexpected network ${health.body.chain?.networkName}`);
   assert(exact.status === 402, `expected exact 402, got ${exact.status}`);
   assert(batch.status === 402, `expected batch 402, got ${batch.status}`);
@@ -50,6 +53,7 @@ async function smokeGateway(baseUrl) {
   assert(batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v1", "batch offer binding changed");
   assert(unsupported.status === 402 && unsupported.body.error === "unsupported_scheme", "unsupported scheme was not rejected");
   assert(head.status === 402, `expected HEAD 402, got ${head.status}`);
+  assert(supported.body.enabled === true, "supported endpoint did not report enabled gateway");
   assert(Array.isArray(supported.body.kinds) && supported.body.kinds.length === 2, "supported kinds changed");
 
   return {

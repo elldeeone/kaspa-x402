@@ -97,6 +97,9 @@ export const PUBLIC_DOC_FILES = [
   "docs/public-proposal.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
+  "docs/demo-operations.md",
+  "docs/demo-implementer-guide.md",
+  "docs/demo-interop-checklist.md",
   ...RELEASE_DOC_FILES.slice(2),
 ];
 
@@ -142,6 +145,12 @@ export const ARTIFACT_NOTES = {
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
   "docs/testnet-gateway.md":
     "Hosted `kaspa:testnet-10` gateway for exact and batch-settlement integration tests.",
+  "docs/demo-operations.md":
+    "Operator runbook for the hosted testnet gateway: deploy, rollback, disable, canary, state, and incident notes.",
+  "docs/demo-implementer-guide.md":
+    "Third-party implementer guide for schemas, vectors, exact and batch gateway calls, and error handling.",
+  "docs/demo-interop-checklist.md":
+    "External-style checklist for whether the public demo surface is usable without repository context.",
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
@@ -165,7 +174,10 @@ export const ARTIFACT_NOTES = {
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
   { title: "Proposal", files: ["docs/public-proposal.md", "docs/adoption-examples.md"] },
-  { title: "Deployment", files: ["docs/testnet-gateway.md"] },
+  {
+    title: "Deployment",
+    files: ["docs/testnet-gateway.md", "docs/demo-operations.md", "docs/demo-implementer-guide.md", "docs/demo-interop-checklist.md"],
+  },
   {
     title: "Evidence",
     files: ["docs/live-testnet-report.md", "docs/live-testnet-proof.md", "docs/review-closure-ledger.md"],
@@ -195,6 +207,7 @@ export const PRIVATE_SITE_PATTERNS = [
   /^docs\/.*-review\.md$/,
   /^docs\/alpha-publish\.md$/,
   /^docs\/site-architecture\.md$/,
+  /^docs\/demo-announcement-draft\.md$/,
   /^\.kaspa-x402-live\//,
   /^\.kaspa-x402-consensus-target\//,
   /^node_modules\//,

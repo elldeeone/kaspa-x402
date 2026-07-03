@@ -4,6 +4,7 @@ export const MIN_STANDARD_OUTPUT_SOMPI = 10_000_000n;
 
 export interface GatewayEnv {
   GATEWAY_STATE: DurableObjectNamespace;
+  KASPA_X402_GATEWAY_ENABLED?: string;
   KASPA_X402_NETWORK?: string;
   KASPA_X402_CHAIN_API_BASE?: string;
   KASPA_X402_PAY_TO?: string;
@@ -16,9 +17,12 @@ export interface GatewayEnv {
   KASPA_X402_CLAIM_FEE_SOMPI?: string;
   KASPA_X402_RATE_LIMIT_PER_MINUTE?: string;
   KASPA_X402_CORS_ORIGIN?: string;
+  KASPA_X402_SITE_BASE_URL?: string;
+  KASPA_X402_GATEWAY_BASE_URL?: string;
 }
 
 export interface GatewayConfig {
+  enabled: boolean;
   network: NetworkId;
   chainApiBase: string;
   payTo: string;
@@ -31,6 +35,8 @@ export interface GatewayConfig {
   claimFeeSompi: SompiString;
   rateLimitPerMinute: number;
   corsOrigin: string;
+  siteBaseUrl: string;
+  gatewayBaseUrl: string;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -47,6 +53,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
   assertStandardOutputAmount(exactAmount, "KASPA_X402_EXACT_AMOUNT");
   assertStandardOutputAmount(minDepositSompi, "KASPA_X402_MIN_DEPOSIT_SOMPI");
   return {
+    enabled: bool(env.KASPA_X402_GATEWAY_ENABLED ?? "true", "KASPA_X402_GATEWAY_ENABLED"),
     network,
     chainApiBase: required(env.KASPA_X402_CHAIN_API_BASE, "KASPA_X402_CHAIN_API_BASE"),
     payTo,
@@ -59,6 +66,8 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     claimFeeSompi: sompi(env.KASPA_X402_CLAIM_FEE_SOMPI ?? "10000", "KASPA_X402_CLAIM_FEE_SOMPI"),
     rateLimitPerMinute: uint(env.KASPA_X402_RATE_LIMIT_PER_MINUTE ?? "60", "KASPA_X402_RATE_LIMIT_PER_MINUTE", 1, 600),
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
+    siteBaseUrl: baseUrl(env.KASPA_X402_SITE_BASE_URL ?? "https://kaspa-x402.org", "KASPA_X402_SITE_BASE_URL"),
+    gatewayBaseUrl: baseUrl(env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org", "KASPA_X402_GATEWAY_BASE_URL"),
   };
 }
 
@@ -79,6 +88,24 @@ function assertStandardOutputAmount(value: SompiString, name: string): void {
   if (BigInt(value) < MIN_STANDARD_OUTPUT_SOMPI) {
     throw new Error(`${name} is below Kaspa storage-mass floor ${MIN_STANDARD_OUTPUT_SOMPI}`);
   }
+}
+
+function bool(value: string, name: string): boolean {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "true" || normalized === "1") return true;
+  if (normalized === "false" || normalized === "0") return false;
+  throw new Error(`${name} must be true or false`);
+}
+
+function baseUrl(value: string, name: string): string {
+  const text = value.trim();
+  const parsed = new URL(text);
+  if (parsed.protocol !== "https:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+    throw new Error(`${name} must be an https URL`);
+  }
+  parsed.hash = "";
+  parsed.search = "";
+  return parsed.toString().replace(/\/$/, "");
 }
 
 function uint(value: string, name: string, min: number, max: number): number {

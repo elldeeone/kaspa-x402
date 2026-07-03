@@ -75,6 +75,20 @@ describe("gateway durable ledger", () => {
     await expect(ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000)).resolves.toMatchObject({ allowed: true, count: 1 });
   });
 
+  it("persists the latest canary report", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const report = {
+      checkedAt: "2026-07-03T00:00:00.000Z",
+      trigger: "scheduled" as const,
+      ok: true,
+      checks: [{ name: "exact-offer", status: "ok" as const, detail: "valid offer" }],
+    };
+
+    await ledger.saveCanaryReport(report);
+
+    await expect(ledger.loadCanaryReport()).resolves.toEqual(report);
+  });
+
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await ledger.saveChannel(channel());

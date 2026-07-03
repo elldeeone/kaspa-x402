@@ -1,4 +1,5 @@
 import {
+  decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
   KaspaX402Error,
   toX402ErrorReason,
@@ -21,11 +22,15 @@ import {
 } from "./adapters.js";
 import { readGatewayConfig, type GatewayConfig, type GatewayEnv } from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
-import { DurableGatewayLockManager, type GatewayStateClient } from "./state.js";
+import { DurableGatewayLockManager, type GatewayCanaryCheck, type GatewayCanaryReport, type GatewayStateClient } from "./state.js";
 
 type Profile = "exact" | "batch-settlement";
+type CanaryTrigger = GatewayCanaryReport["trigger"];
+type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
+const MAX_CANARY_DOC_BYTES = 64 * 1024;
+const MAX_CANARY_JSON_BYTES = 64 * 1024;
 
-export async function handleGatewayRequest(request: Request, env: GatewayEnv, context: ExecutionContext): Promise<Response> {
+export async function handleGatewayRequest(request: Request, env: GatewayEnv, context: WaitUntilContext): Promise<Response> {
   let config: GatewayConfig;
   try {
     config = readGatewayConfig(env);
@@ -40,16 +45,20 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (url.pathname === "/" && request.method === "GET") return json(indexBody(url), { headers: corsHeaders(config) });
   if (url.pathname === "/health" && request.method === "GET") return healthResponse(config, state);
   if (url.pathname === "/metrics" && request.method === "GET") return json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) });
+  if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
 
   const gateway = createGateway(config, state);
   if (url.pathname === "/supported" && request.method === "GET") {
-    return json({ ok: true, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
+    return json({ ok: true, enabled: config.enabled, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
   }
 
   const profile = routeProfile(url.pathname);
   if (!profile) return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
   if (request.method !== "GET" && request.method !== "HEAD") {
     return json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: corsHeaders(config) });
+  }
+  if (!config.enabled) {
+    return json({ ok: false, error: "gateway_disabled" }, { status: 503, headers: corsHeaders(config) });
   }
 
   const rate = await state.checkRateLimit(rateScope(request, profile), Date.now(), config.rateLimitPerMinute, 60_000);
@@ -110,6 +119,78 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   else if (result.status >= 200 && result.status < 300) context.waitUntil(state.incrementMetric(`paid_${profileMetric(profile)}`));
   else context.waitUntil(state.incrementMetric("errors_total"));
   return serverResponse(result, config, request.method === "HEAD");
+}
+
+export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger = "scheduled"): Promise<GatewayCanaryReport> {
+  const state = new RemoteGatewayState(env.GATEWAY_STATE);
+  const checks: GatewayCanaryCheck[] = [];
+  let config: GatewayConfig;
+  try {
+    config = readGatewayConfig(env);
+  } catch (error) {
+    checks.push(failedCheck("config", errorMessage(error)));
+    const report = canaryReport(trigger, checks);
+    await persistCanaryReport(state, report);
+    return report;
+  }
+
+  checks.push(
+    await checked("kaspa-rest", async () => {
+      const chain = await new KaspaRestClient(config.chainApiBase).health();
+      return { detail: "REST chain health returned testnet-10 evidence", evidence: chain };
+    }),
+  );
+  checks.push(
+    await checked("schema-url", async () => {
+      const response = await fetchWithTimeout(`${config.siteBaseUrl}/schemas/payment-required.schema.json`);
+      if (!response.ok) throw new Error(`schema returned ${response.status}`);
+      const schema = await readJsonWithLimit<{ $id?: unknown }>(response, MAX_CANARY_JSON_BYTES, "payment-required schema");
+      if (schema.$id !== "https://kaspa-x402.org/schemas/payment-required.schema.json") throw new Error("schema id mismatch");
+      return { detail: "payment-required schema resolved", evidence: { status: response.status } };
+    }),
+  );
+  checks.push(
+    await checked("release-snapshot", async () => {
+      const response = await fetchWithTimeout(`${config.siteBaseUrl}/v0.1.0-alpha.1/release.json?canary=${Date.now()}`);
+      if (!response.ok) throw new Error(`release snapshot returned ${response.status}`);
+      const release = await readJsonWithLimit<{ version?: unknown }>(response, MAX_CANARY_JSON_BYTES, "release snapshot");
+      if (release.version !== "0.1.0-alpha.1") throw new Error("release snapshot version mismatch");
+      return { detail: "immutable alpha.1 release snapshot resolved", evidence: { status: response.status } };
+    }),
+  );
+  checks.push(
+    await checked("docs-index", async () => {
+      const response = await fetchWithTimeout(`${config.siteBaseUrl}/docs/`);
+      if (!response.ok) throw new Error(`doc route returned ${response.status}`);
+      const text = await readTextUntil(response, "<h1>Docs</h1>", MAX_CANARY_DOC_BYTES);
+      if (!text.includes("<h1>Docs</h1>")) throw new Error("docs index content mismatch");
+      return { detail: "public docs index resolved", evidence: { status: response.status } };
+    }),
+  );
+  if (config.enabled) {
+    checks.push(await offerCheck(env, config, "/exact", "exact"));
+    checks.push(await offerCheck(env, config, "/batch", "batch-settlement"));
+    checks.push(await unsupportedSchemeCheck(env, config));
+  } else {
+    checks.push(skippedCheck("exact-offer", "gateway disabled by operator"));
+    checks.push(skippedCheck("batch-offer", "gateway disabled by operator"));
+    checks.push(skippedCheck("unsupported-scheme-rejection", "gateway disabled by operator"));
+  }
+  checks.push({
+    name: "paid-exact-canary",
+    status: "skipped",
+    detail: "scheduled checks do not hold spending keys; run the manual paid exact canary from an isolated funded testnet wallet",
+  });
+  checks.push({
+    name: "replay-rejection-canary",
+    status: "skipped",
+    detail: "scheduled checks do not reuse paid evidence; run the manual replay canary after a funded exact or batch payment",
+  });
+
+  const report = canaryReport(trigger, checks);
+  await persistCanaryReport(state, report);
+  await state.incrementMetric(report.ok ? "canary_ok" : "canary_failed");
+  return report;
 }
 
 function createGateway(config: GatewayConfig, state: GatewayStateClient): { server: DirectModeServer } {
@@ -211,15 +292,159 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
     return json(
       {
         ok: true,
+        enabled: config.enabled,
         gateway: "kaspa-x402-testnet",
         chain,
         metrics: await state.metrics(),
+        canary: await state.loadCanaryReport(),
       },
       { headers: corsHeaders(config) },
     );
   } catch (error) {
     return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(config) });
   }
+}
+
+async function canaryResponse(config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
+  return json(
+    {
+      ok: true,
+      enabled: config.enabled,
+      canary: await state.loadCanaryReport(),
+    },
+    { headers: corsHeaders(config) },
+  );
+}
+
+async function offerCheck(env: GatewayEnv, config: GatewayConfig, path: string, profile: Profile): Promise<GatewayCanaryCheck> {
+  return checked(`${profileMetric(profile)}-offer`, async () => {
+    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}${path}`);
+    if (response.status !== 402) throw new Error(`expected 402, got ${response.status}`);
+    const header = response.headers.get(PAYMENT_REQUIRED_HEADER);
+    if (!header) throw new Error("missing payment-required header");
+    const paymentRequired = decodePaymentRequiredHeader(header);
+    const accepted = paymentRequired.accepts.find((entry) => entry.scheme === profile);
+    if (!accepted) throw new Error(`${profile} offer not advertised`);
+    if (accepted.network !== config.network) throw new Error(`unexpected network ${accepted.network}`);
+    if (profile === "exact" && accepted.amount !== config.exactAmount) throw new Error("exact amount mismatch");
+    if (profile === "batch-settlement" && accepted.extra.minDepositSompi !== config.minDepositSompi) throw new Error("batch deposit mismatch");
+    return {
+      detail: `${profile} unpaid request returned a valid offer`,
+      evidence: { status: response.status, amount: accepted.amount, network: accepted.network },
+    };
+  });
+}
+
+async function unsupportedSchemeCheck(env: GatewayEnv, config: GatewayConfig): Promise<GatewayCanaryCheck> {
+  return checked("unsupported-scheme-rejection", async () => {
+    const header = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
+    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/exact`, { headers: { [PAYMENT_SIGNATURE_HEADER]: header } });
+    if (response.status !== 402) throw new Error(`expected 402, got ${response.status}`);
+    const body = (await response.json()) as { error?: unknown };
+    if (body.error !== "unsupported_scheme") throw new Error(`unexpected error ${String(body.error)}`);
+    return { detail: "foreign payment scheme returned unsupported_scheme", evidence: { status: response.status } };
+  });
+}
+
+async function checked(
+  name: string,
+  fn: () => Promise<{ detail: string; evidence?: Record<string, unknown> }>,
+): Promise<GatewayCanaryCheck> {
+  try {
+    const result = await fn();
+    return { name, status: "ok", ...result };
+  } catch (error) {
+    return failedCheck(name, errorMessage(error));
+  }
+}
+
+function failedCheck(name: string, detail: string): GatewayCanaryCheck {
+  return { name, status: "failed", detail };
+}
+
+function skippedCheck(name: string, detail: string): GatewayCanaryCheck {
+  return { name, status: "skipped", detail };
+}
+
+function canaryReport(trigger: CanaryTrigger, checks: GatewayCanaryCheck[]): GatewayCanaryReport {
+  return {
+    checkedAt: new Date().toISOString(),
+    trigger,
+    ok: checks.every((check) => check.status !== "failed"),
+    checks,
+  };
+}
+
+async function persistCanaryReport(state: GatewayStateClient, report: GatewayCanaryReport): Promise<void> {
+  try {
+    await state.saveCanaryReport(report);
+  } catch {
+    // A failed state write must not hide the canary result from the caller.
+  }
+}
+
+async function fetchWithTimeout(url: string): Promise<Response> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), 8_000);
+  try {
+    return await fetch(url, { signal: controller.signal, headers: { accept: "application/json, text/html;q=0.9, */*;q=0.8" } });
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function readTextUntil(response: Response, marker: string, maxBytes: number): Promise<string> {
+  const length = response.headers.get("content-length");
+  if (length && Number(length) > maxBytes) throw new Error("docs index response too large");
+  const reader = response.body?.getReader();
+  if (!reader) return "";
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) return text + decoder.decode();
+    bytes += chunk.value.byteLength;
+    if (bytes > maxBytes) throw new Error("docs index response too large");
+    text += decoder.decode(chunk.value, { stream: true });
+    if (text.includes(marker)) {
+      await reader.cancel().catch(() => undefined);
+      return text;
+    }
+  }
+}
+
+async function readJsonWithLimit<T>(response: Response, maxBytes: number, label: string): Promise<T> {
+  const length = response.headers.get("content-length");
+  if (length && Number(length) > maxBytes) throw new Error(`${label} response too large`);
+  const reader = response.body?.getReader();
+  if (!reader) throw new Error(`${label} response body is missing`);
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) {
+      text += decoder.decode();
+      break;
+    }
+    bytes += chunk.value.byteLength;
+    if (bytes > maxBytes) throw new Error(`${label} response too large`);
+    text += decoder.decode(chunk.value, { stream: true });
+  }
+  return JSON.parse(text) as T;
+}
+
+async function dispatchCanaryRequest(env: GatewayEnv, url: string, init?: RequestInit): Promise<Response> {
+  const pending: Promise<unknown>[] = [];
+  const context: WaitUntilContext = {
+    waitUntil(promise: Promise<unknown>) {
+      pending.push(Promise.resolve(promise));
+    },
+  };
+  const response = await handleGatewayRequest(new Request(url, init), env, context);
+  await Promise.allSettled(pending);
+  return response;
 }
 
 function gatewayUnsupportedPaymentResponse(
@@ -328,6 +553,7 @@ function indexBody(url: URL): unknown {
     service: "kaspa-x402-testnet-gateway",
     endpoints: {
       health: new URL("/health", url).toString(),
+      canary: new URL("/canary", url).toString(),
       supported: new URL("/supported", url).toString(),
       exact: new URL("/exact/report", url).toString(),
       batch: new URL("/batch/report", url).toString(),

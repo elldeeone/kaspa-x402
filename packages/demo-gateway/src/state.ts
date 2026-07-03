@@ -31,6 +31,22 @@ type RateRecord = {
   resetAt: number;
 };
 
+export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
+
+export interface GatewayCanaryCheck {
+  name: string;
+  status: GatewayCanaryCheckStatus;
+  detail: string;
+  evidence?: Record<string, unknown>;
+}
+
+export interface GatewayCanaryReport {
+  checkedAt: string;
+  trigger: "scheduled" | "manual";
+  ok: boolean;
+  checks: GatewayCanaryCheck[];
+}
+
 export type GatewayStateMethod =
   | "loadChannel"
   | "saveChannel"
@@ -48,6 +64,8 @@ export type GatewayStateMethod =
   | "acquireLock"
   | "releaseLock"
   | "checkRateLimit"
+  | "loadCanaryReport"
+  | "saveCanaryReport"
   | "incrementMetric"
   | "metrics";
 
@@ -198,6 +216,14 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
+  async loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {
+    return cloneOrUndefined(await this.#storage.get<GatewayCanaryReport>(canaryReportKey()));
+  }
+
+  async saveCanaryReport(report: GatewayCanaryReport): Promise<void> {
+    await this.#storage.put(canaryReportKey(), clone(report));
+  }
+
   async incrementMetric(name: string, amount = 1): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const key = metricKey(name);
@@ -243,6 +269,8 @@ export type GatewayStateClient = ServerStateStore & {
   acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;
   checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }>;
+  loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
+  saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
   metrics(): Promise<Record<string, number>>;
 };
@@ -289,6 +317,10 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
       const payload = readPayload<{ scope: string; nowMs: number; limit: number; windowMs: number }>(request);
       return ledger.checkRateLimit(payload.scope, payload.nowMs, payload.limit, payload.windowMs);
     }
+    case "loadCanaryReport":
+      return ledger.loadCanaryReport();
+    case "saveCanaryReport":
+      return ledger.saveCanaryReport(readPayload<{ report: GatewayCanaryReport }>(request).report);
     case "incrementMetric": {
       const payload = readPayload<{ name: string; amount?: number }>(request);
       return ledger.incrementMetric(payload.name, payload.amount);
@@ -375,6 +407,10 @@ function lockKey(key: string): string {
 
 function rateKey(scope: string, resetAt: number): string {
   return `rate:${scope}:${resetAt}`;
+}
+
+function canaryReportKey(): string {
+  return "canary:latest";
 }
 
 function metricKey(name: string): string {

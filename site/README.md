@@ -35,6 +35,7 @@ Cloudflare Pages configuration:
 - build command: `npm run site:deploy:check`
 - output directory: `site/dist`
 - production branch: `main`
+- Node.js version: pinned by repository `.node-version`
 - custom domains: `kaspa-x402.org`, `www.kaspa-x402.org`
 
 The apex site is a standards reference with a static, testnet-only browser
