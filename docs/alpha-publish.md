@@ -1,14 +1,14 @@
 # Alpha Publish Checklist
 
-Status: alpha packages previously published at `0.1.0-alpha.0`; current
-package manifests are prepared for `0.1.0-alpha.1`. Publishing requires npm
-authorization and must not happen accidentally from CI or an unauthenticated
-shell.
+Status: public alpha packages are published at `0.1.0-alpha.1`. Future
+publishes require npm authorization and must not happen accidentally from CI or
+an unauthenticated shell.
 
 Registry note: the first published package versions are visible on npm with
 `alpha` and `latest` dist-tags. Attempts to remove `latest` returned npm `400`
-responses, so consumers should use explicit `@alpha` installs until a stable
-version can own `latest`.
+responses, so `latest` is kept aligned with the current alpha while docs keep
+recommending explicit `@alpha` installs until a stable version can own
+`latest`.
 
 ## Package Set
 
@@ -20,7 +20,7 @@ Public alpha package set:
 - `@kaspa-x402/server@0.1.0-alpha.1`.
 
 `0.1.0-alpha.0` was the initial published alpha. `0.1.0-alpha.1` carries the
-next breaking alpha wire update.
+next breaking alpha wire update and is the current published alpha.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -66,12 +66,12 @@ entrypoints.
 
 ## Current Registry And Tarball Recheck
 
-Checked on 2026-07-02:
+Checked on 2026-07-03:
 
 - `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
-  `@kaspa-x402/server` are published only at `0.1.0-alpha.0`;
+  `@kaspa-x402/server` are published at `0.1.0-alpha.1`;
 - those packages have both `alpha` and `latest` dist-tags pointing to
-  `0.1.0-alpha.0`, so docs must keep recommending explicit `@alpha` installs;
+  `0.1.0-alpha.1`, after npm returned `400` responses when removing `latest`;
 - `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
   unpublished/private;
 - dry-run tarballs for the publishable `0.1.0-alpha.1` manifests contain only
@@ -79,8 +79,8 @@ Checked on 2026-07-02:
   `dist/index.d.ts`;
 - ignored local planning, review, and live-run artifacts are not in the dry-run
   package file lists;
-- a clean temporary project installed the four local `0.1.0-alpha.1` tarballs
-  together and imported `@kaspa-x402/core`, `@kaspa-x402/covenant`,
+- a clean temporary project installed the four npm `@alpha` packages together
+  and imported `@kaspa-x402/core`, `@kaspa-x402/covenant`,
   `@kaspa-x402/client`, and `@kaspa-x402/server` successfully;
 - `npm audit --audit-level=low` reported zero vulnerabilities.
 

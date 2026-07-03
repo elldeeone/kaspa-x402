@@ -122,13 +122,18 @@ The intended npm scope is:
 @kaspa-x402/*
 ```
 
-Reference package workspace:
+Published alpha packages:
 
 ```text
 @kaspa-x402/core
 @kaspa-x402/covenant
 @kaspa-x402/client
 @kaspa-x402/server
+```
+
+Repository-only private workspaces:
+
+```text
 @kaspa-x402/facilitator
 @kaspa-x402/cli
 ```
