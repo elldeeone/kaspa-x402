@@ -117,7 +117,7 @@ function assertBrowserResult(value) {
   assert(value.connectedStatus.startsWith("Connected to testnet-10"), `unexpected connection status: ${value.connectedStatus}`);
   assert(value.rpcNetwork === "testnet-10", `unexpected RPC network: ${value.rpcNetwork}`);
   assert(value.rpcSynced === true, "RPC endpoint is not synced");
-  assert(value.transactionStatus === "not found by getMempoolEntry", `unexpected tx status: ${value.transactionStatus}`);
+  assert(value.transactionStatus === "not in mempool (may already be accepted)", `unexpected tx status: ${value.transactionStatus}`);
   assert(
     value.blockedEndpointStatus.includes("Custom endpoints require a local preview"),
     `custom endpoint override was not blocked: ${value.blockedEndpointStatus}`,

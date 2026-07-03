@@ -42,6 +42,12 @@ function createServer() {
     }
     const file = resolveFile(url.pathname);
     if (!file || !isInsideOutput(file) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
+      const notFound = path.join(outDir, "404.html");
+      if (fs.existsSync(notFound)) {
+        response.writeHead(404, responseHeaders(new URL("/404.html", url), notFound));
+        fs.createReadStream(notFound).pipe(response);
+        return;
+      }
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });
       response.end("Not found\n");
       return;

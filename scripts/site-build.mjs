@@ -10,12 +10,14 @@ import {
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
   RELEASE_LOCK_DIR,
+  RELEASE_SNAPSHOT_DIR,
   SITE_ASSET_FILES,
   SCHEMA_FILES,
   SITE_BASE_URL,
   SITE_DIST,
   SITE_SRC,
   SPEC_FILES,
+  VENDORED_KASPA_WASM,
   VECTOR_GROUPS,
 } from "./site-config.mjs";
 
@@ -33,6 +35,7 @@ const packages = readPackages();
 const repositoryUrl = normalizeRepositoryUrl(readJson("package.json").repository?.url);
 const releaseVersion = packages.find((pkg) => pkg.name === "@kaspa-x402/core")?.version ?? "0.1.0-alpha.1";
 const releasePath = `v${releaseVersion}`;
+const releaseEntries = buildReleaseEntries();
 const commit = git(["rev-parse", "HEAD"]);
 const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
@@ -66,6 +69,7 @@ writeJson("packages.json", { generatedFrom: commit, releaseVersion, packages });
 
 writeIndexPages();
 writeReleaseSnapshot(copiedArtifacts, vectorIndex);
+copyStoredReleaseSnapshots();
 writeManifest(copiedArtifacts, vectorIndex);
 
 function writeIndexPages() {
@@ -75,6 +79,7 @@ function writeIndexPages() {
   writeDocsPage();
   writeVectorsPage();
   writeReleasesPage();
+  writeNotFoundPage();
   writeDemoPage();
   writePnnSpikeJson();
 
@@ -269,6 +274,13 @@ function writeVectorsPage() {
 }
 
 function writeReleasesPage() {
+  const rows = releaseEntries
+    .map((entry) => {
+      const path = `v${entry.version}`;
+      const hash = entry.contentSha256 ? `<code>${escapeHtml(entry.contentSha256.slice(0, 16))}</code>` : "active build";
+      return `<tr><td><code>${escapeHtml(entry.version)}</code></td><td><a href="/${path}/"><code>/${path}/</code></a></td><td><a href="/${path}/release.json"><code>release.json</code></a></td><td>${hash}</td></tr>`;
+    })
+    .join("");
   writeHtml(
     "releases/index.html",
     layout(
@@ -279,9 +291,24 @@ function writeReleasesPage() {
     <p>Immutable snapshots of the published surface, one per release. Unversioned routes on this site always track the active alpha; snapshot content is locked by hash and is not mutated after release. New releases add new snapshots.</p>
     <p>Install alpha packages with an explicit prerelease tag or exact version; <code>latest</code> dist-tags are not the recommended alpha install path.</p>
     <div class="table-wrap"><table>
-      <thead><tr><th>Version</th><th>Snapshot</th><th>Metadata</th></tr></thead>
-      <tbody><tr><td><code>${escapeHtml(releaseVersion)}</code></td><td><a href="/${releasePath}/"><code>/${releasePath}/</code></a></td><td><a href="/${releasePath}/release.json"><code>release.json</code></a></td></tr></tbody>
+      <thead><tr><th>Version</th><th>Snapshot</th><th>Metadata</th><th>Lock</th></tr></thead>
+      <tbody>${rows}</tbody>
     </table></div>
+  </main>
+      `,
+    ),
+  );
+}
+
+function writeNotFoundPage() {
+  writeHtml(
+    "404.html",
+    layout(
+      "Not Found",
+      `
+  <main>
+    <h1>Not Found</h1>
+    <p>The requested page is not published on this site. Use <a href="/releases/">releases</a> for immutable snapshots or return to the <a href="/">current alpha reference</a>.</p>
   </main>
       `,
     ),
@@ -334,6 +361,7 @@ function writeDemoPage() {
         </div>
         <label for="demo-private-key">Private key hex</label>
         <input id="demo-private-key" type="password" autocomplete="off" spellcheck="false" placeholder="64 hex characters">
+        <p class="muted">Import only throwaway testnet keys. Do not import a key that controls mainnet funds; the same private key can derive addresses on multiple Kaspa networks.</p>
         <label class="demo-check"><input id="demo-reveal-key" type="checkbox"> Show private key</label>
         <label for="demo-address">Address</label>
         <input id="demo-address" type="text" readonly spellcheck="false">
@@ -428,7 +456,7 @@ function writeDemoPage() {
       <h2 id="demo-notes">Developer Notes</h2>
       <ul>
         <li>Run locally with <code>npm run site:serve</code> and open <code>/demo/</code>. The local preview binds to the LAN; use the host IP from another device. Add <code>?allow-custom-endpoints=1&amp;endpoint=...</code> only when testing a local or private-network node endpoint.</li>
-        <li>Fund generated addresses with testnet funds only. The page does not provide a faucet.</li>
+        <li>Fund generated addresses with testnet funds only. The Kaspa testnet page lists a TN10 faucet at <a href="https://faucet-tn10.kaspanet.io/">faucet-tn10.kaspanet.io</a>; a local or private faucet is also suitable.</li>
         <li>The browser SDK is loaded from <code>/vendor/kaspa-wasm/2.0.0/kaspa-core/</code>. The browser uses public WSS endpoints directly; <code>npm run check:pnn-browser</code> verifies resolver lookup from Node. Runtime spike metadata is available at <a href="/demo/pnn-spike.json"><code>/demo/pnn-spike.json</code></a>.</li>
         <li>The published TypeScript helpers are currently Node-oriented for header encoding and hashing. This page uses browser-native header encoding until a browser-safe package build is added.</li>
         <li>Public Node Network endpoints are shared test infrastructure. Treat outages, latency, and endpoint rotation as expected development failures.</li>
@@ -448,16 +476,10 @@ function writePnnSpikeJson() {
     generatedAt: commitDate,
     network: "kaspa:testnet-10",
     sdk: {
-      package: "kaspa-wasm",
-      version: "2.0.0",
-      route: "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",
-      source: {
-        repository: "https://github.com/kaspanet/rusty-kaspa",
-        release: "https://github.com/kaspanet/rusty-kaspa/releases/tag/v2.0.0",
-        commit: "90dbf074275d60c1fe74a3491883196f110970c0",
-        packagePath: "web/kaspa-core",
-        note: "Vendored from the Rusty Kaspa v2.0.0 web/kaspa-core browser release artifacts, not from the public npm registry.",
-      },
+      package: VENDORED_KASPA_WASM.package,
+      version: VENDORED_KASPA_WASM.version,
+      route: VENDORED_KASPA_WASM.route,
+      source: VENDORED_KASPA_WASM.source,
       assets: siteAssetRecords("site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/"),
     },
     browser: {
@@ -476,10 +498,10 @@ function writePnnSpikeJson() {
     },
     worker: {
       status: "not yet suitable for the hosted gateway",
-      verifiedCapabilities: ["wrangler dry-run compiles the WASM module", "local runtime initializes the SDK", "local runtime can resolve a public endpoint"],
+      verifiedCapabilities: [],
       blockers: [
-        "local workerd did not complete outbound PNN RPC calls with this browser SDK",
-        "a gateway should use a dedicated chain adapter until Worker runtime behavior is verified with the chosen deployment target",
+        "committed validation covers the browser client only, not a Worker gateway adapter",
+        "a gateway should use a dedicated chain adapter and its own reproducible Worker test before accepting paid requests",
       ],
     },
     packageBoundary: {
@@ -584,6 +606,20 @@ function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
   writeJson(`${releasePath}/release.json`, release);
 }
 
+function copyStoredReleaseSnapshots() {
+  for (const entry of releaseEntries) {
+    const snapshotPath = `v${entry.version}`;
+    if (snapshotPath === releasePath) continue;
+    const source = path.join(root, RELEASE_SNAPSHOT_DIR, snapshotPath);
+    if (!fs.existsSync(source)) {
+      throw new Error(`release ${entry.version} is locked but missing ${RELEASE_SNAPSHOT_DIR}/${snapshotPath}`);
+    }
+    const target = path.join(outDir, snapshotPath);
+    fs.rmSync(target, { recursive: true, force: true });
+    fs.cpSync(source, target, { recursive: true });
+  }
+}
+
 function releaseMetadata(releaseLock, releaseArtifacts, releaseProvenance) {
   return {
     version: releaseVersion,
@@ -623,6 +659,12 @@ function writeManifest(copiedArtifacts, vectorIndex) {
     activeAlphaOnlyRoutes,
     releaseVersion,
     releasePath,
+    releases: releaseEntries.map((entry) => ({
+      version: entry.version,
+      path: `/v${entry.version}/`,
+      metadata: `/v${entry.version}/release.json`,
+      contentSha256: entry.contentSha256,
+    })),
     schemas: schemaFiles.map((file) => ({ path: `/${file}`, sha256: sha256File(path.join(root, file)) })),
     specs: specFiles.map((file) => ({ path: `/${htmlRoute(file)}/`, source: `/${file}` })),
     docs: docFiles.map((file) => ({ path: `/${htmlRoute(file)}/`, source: `/${file}` })),
@@ -880,24 +922,13 @@ function writeHeaders() {
   Content-Type: application/schema+json; charset=utf-8
   Cache-Control: public, max-age=300, must-revalidate
 
-/${releasePath}/schemas/*.json
-  Content-Type: application/schema+json; charset=utf-8
-  Cache-Control: public, max-age=31536000, immutable
+/demo/
+  Cache-Control: public, max-age=300, must-revalidate, no-transform
 
-/${releasePath}/
-  Cache-Control: public, max-age=31536000, immutable
+/demo/index.html
+  Cache-Control: public, max-age=300, must-revalidate, no-transform
 
-/${releasePath}/index.html
-  Cache-Control: public, max-age=31536000, immutable
-
-/${releasePath}/spec/*
-  Cache-Control: public, max-age=31536000, immutable
-
-/${releasePath}/docs/*
-  Cache-Control: public, max-age=31536000, immutable
-
-/${releasePath}/vectors/*
-  Cache-Control: public, max-age=31536000, immutable
+${releaseHeaderBlocks()}
 
 /packages.json
   Content-Type: application/json; charset=utf-8
@@ -928,19 +959,46 @@ function writeHeaders() {
 
 /vendor/kaspa-wasm/*.wasm
   Content-Type: application/wasm
-
-/${releasePath}/release.json
-  Content-Type: application/json; charset=utf-8
-  Cache-Control: public, max-age=31536000, immutable
-
-/${releasePath}/packages.json
-  Content-Type: application/json; charset=utf-8
-  Cache-Control: public, max-age=31536000, immutable
-
-/${releasePath}/vectors/index.json
-  Content-Type: application/json; charset=utf-8
 `,
   );
+}
+
+function releaseHeaderBlocks() {
+  return releaseEntries
+    .map((entry) => {
+      const path = `v${entry.version}`;
+      return `/${path}/schemas/*.json
+  Content-Type: application/schema+json; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/index.html
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/spec/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/docs/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/vectors/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/release.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/packages.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable
+
+/${path}/vectors/index.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=31536000, immutable`;
+    })
+    .join("\n\n");
 }
 
 function writeRedirects() {
@@ -1001,6 +1059,29 @@ function readReleaseLock(version) {
     ...JSON.parse(fs.readFileSync(fullPath, "utf8")),
     path: relativePath,
   };
+}
+
+function readReleaseLocks() {
+  return listFiles(RELEASE_LOCK_DIR)
+    .filter((file) => /^site\/releases\/v[^/]+\.json$/.test(file))
+    .map((file) => ({ ...readJson(file), path: file }))
+    .sort((a, b) => compareVersions(a.version, b.version));
+}
+
+function buildReleaseEntries() {
+  const entries = readReleaseLocks();
+  if (!entries.some((entry) => entry.version === releaseVersion)) {
+    entries.push({
+      version: releaseVersion,
+      contentSha256: undefined,
+      path: `${RELEASE_LOCK_DIR}/v${releaseVersion}.json`,
+    });
+  }
+  return entries.sort((a, b) => compareVersions(a.version, b.version));
+}
+
+function compareVersions(left, right) {
+  return String(left).localeCompare(String(right), "en", { numeric: true });
 }
 
 function releasePackagesMetadata() {

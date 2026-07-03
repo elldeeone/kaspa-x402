@@ -1,0 +1,10 @@
+{
+  "kind": "negative",
+  "name": "exact-transfer missing output index",
+  "schema": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
+  "value": {
+    "type": "exact-transfer",
+    "transaction": "aa"
+  },
+  "expectedError": "invalid_kaspa_x402_payload"
+}

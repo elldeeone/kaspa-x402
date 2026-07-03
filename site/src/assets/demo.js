@@ -333,8 +333,8 @@ async function checkTransactionStatus() {
     writeJson(ui.paymentOutput, { transactionId: txid, mempoolEntry: entry });
     setStatus("Transaction found in mempool.");
   } catch (error) {
-    writeJson(ui.paymentOutput, { transactionId: txid, status: "not found by getMempoolEntry", error: String(error?.message ?? error) });
-    setStatus("Transaction status lookup returned no mempool entry.");
+    writeJson(ui.paymentOutput, { transactionId: txid, status: "not in mempool (may already be accepted)", error: String(error?.message ?? error) });
+    setStatus("Transaction is not in mempool; it may already be accepted.");
   }
 }
 

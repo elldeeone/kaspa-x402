@@ -9,11 +9,13 @@ import {
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
   RELEASE_LOCK_DIR,
+  RELEASE_SNAPSHOT_DIR,
   SCHEMA_FILES,
   SITE_ASSET_FILES,
   SITE_DIST,
   SITE_SRC,
   SPEC_FILES,
+  VENDORED_KASPA_WASM,
 } from "./site-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -79,6 +81,7 @@ function checkMetadataFreshness() {
   const expectedReleaseHash = releaseContentHash(manifest.releasePath, lockedReleaseMetadata(release));
   const headersPath = path.join(outDir, "_headers");
 
+  assertFile(path.join(outDir, "404.html"), "404 page");
   if (manifest.generatedFrom !== git(["rev-parse", "HEAD"])) fail("site-manifest generatedFrom does not match HEAD");
   if (dirtyInputs.length > 0 && release.generatedFrom !== manifest.generatedFrom) fail("dirty release generatedFrom does not match site-manifest");
   if (dirtyInputs.length === 0 && "generatedFrom" in release) fail("locked release should not vary by build commit");
@@ -95,25 +98,58 @@ function checkMetadataFreshness() {
   if (JSON.stringify(versionedPackages) !== JSON.stringify(releasePackages)) {
     fail("release packages.json is stale");
   }
-  for (const route of [
-    `/${manifest.releasePath}/`,
-    `/${manifest.releasePath}/index.html`,
-    `/${manifest.releasePath}/schemas/*.json`,
-    `/${manifest.releasePath}/spec/*`,
-    `/${manifest.releasePath}/docs/*`,
-    `/${manifest.releasePath}/vectors/*`,
-  ]) {
-    assertContains(headersPath, route, `immutable release header ${route}`);
-  }
   if (JSON.stringify(manifest.dirtyInputs) !== JSON.stringify(dirtyInputs)) fail("site-manifest dirtyInputs is stale");
   if (JSON.stringify(release.dirtyInputs) !== JSON.stringify(dirtyInputs)) fail("release dirtyInputs is stale");
   if (release.contentSha256 !== expectedReleaseHash) fail("release content hash is stale");
   if (requireClean && dirtyInputs.length > 0) fail(`publishable inputs are dirty: ${dirtyInputs.join(", ")}`);
-  const releaseLock = readReleaseLock(manifest.releaseVersion);
-  if (!releaseLock && (requireClean || dirtyInputs.length === 0)) fail(`release ${manifest.releaseVersion} is missing a content lock`);
-  if (releaseLock && release.contentSha256 !== releaseLock.contentSha256) fail(`release content differs from ${releaseLock.path}`);
-  if (releaseLock && release.contentLock !== releaseLock.path) fail("release content lock path is stale");
-  checkActiveAlphaExclusions(manifest.releasePath);
+  checkReleaseSnapshots(manifest, dirtyInputs, headersPath);
+}
+
+function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
+  const releaseLocks = readReleaseLocks();
+  const expectedReleases = releaseLocks.map((entry) => ({
+    version: entry.version,
+    path: `/v${entry.version}/`,
+    metadata: `/v${entry.version}/release.json`,
+    contentSha256: entry.contentSha256,
+  }));
+  if (JSON.stringify(manifest.releases) !== JSON.stringify(expectedReleases)) fail("site-manifest release list is stale");
+
+  const currentLock = releaseLocks.find((entry) => entry.version === manifest.releaseVersion);
+  if (!currentLock && (requireClean || dirtyInputs.length === 0)) fail(`release ${manifest.releaseVersion} is missing a content lock`);
+
+  for (const lock of releaseLocks) {
+    const releasePath = `v${lock.version}`;
+    const releaseJson = path.join(outDir, releasePath, "release.json");
+    assertFile(releaseJson, `${releasePath}/release.json`);
+    if (!fs.existsSync(releaseJson)) continue;
+
+    const release = readJson(releaseJson);
+    const expectedHash = releaseContentHash(releasePath, lockedReleaseMetadata(release));
+    if (release.version !== lock.version) fail(`${releasePath}/release.json version is stale`);
+    if (release.contentSha256 !== lock.contentSha256) fail(`release content differs from ${lock.path}`);
+    if (release.contentLock !== lock.path) fail(`${releasePath}/release.json content lock path is stale`);
+    if (expectedHash !== lock.contentSha256) fail(`${releasePath} bytes differ from ${lock.path}`);
+
+    for (const route of [
+      `/${releasePath}/`,
+      `/${releasePath}/index.html`,
+      `/${releasePath}/schemas/*.json`,
+      `/${releasePath}/spec/*`,
+      `/${releasePath}/docs/*`,
+      `/${releasePath}/vectors/*`,
+      `/${releasePath}/release.json`,
+      `/${releasePath}/packages.json`,
+      `/${releasePath}/vectors/index.json`,
+    ]) {
+      assertContains(headersPath, route, `immutable release header ${route}`);
+    }
+
+    checkActiveAlphaExclusions(releasePath);
+    if (releasePath !== manifest.releasePath || dirtyInputs.length === 0) {
+      assertSameTree(path.join(root, RELEASE_SNAPSHOT_DIR, releasePath), path.join(outDir, releasePath), `${releasePath} stored snapshot`);
+    }
+  }
 }
 
 function checkUntrackedPublishableFiles() {
@@ -140,6 +176,22 @@ function checkAssetAllowlist() {
     const target = path.relative(SITE_SRC, source).replaceAll(path.sep, "/");
     assertSameBytes(path.join(root, source), path.join(outDir, target), target);
   }
+  const vendorPackageJson = readJson(path.join(root, "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/package.json"));
+  if (vendorPackageJson.name !== VENDORED_KASPA_WASM.package || vendorPackageJson.version !== VENDORED_KASPA_WASM.version) {
+    fail("vendored kaspa-wasm package metadata does not match pinned provenance");
+  }
+  for (const asset of VENDORED_KASPA_WASM.files) {
+    if (!SITE_ASSET_FILES.includes(asset.source)) fail(`vendored kaspa-wasm file is not in site asset allowlist: ${asset.source}`);
+    if (path.relative(SITE_SRC, asset.source).replaceAll(path.sep, "/") !== asset.target) {
+      fail(`vendored kaspa-wasm target mismatch: ${asset.source}`);
+    }
+    const sourcePath = path.join(root, asset.source);
+    const targetPath = path.join(outDir, asset.target);
+    if (!fs.existsSync(sourcePath)) fail(`missing vendored kaspa-wasm source: ${asset.source}`);
+    if (!fs.existsSync(targetPath)) fail(`missing vendored kaspa-wasm output: ${asset.target}`);
+    if (fs.existsSync(sourcePath) && sha256File(sourcePath) !== asset.sha256) fail(`vendored kaspa-wasm source hash drifted: ${asset.source}`);
+    if (fs.existsSync(targetPath) && sha256File(targetPath) !== asset.sha256) fail(`vendored kaspa-wasm output hash drifted: ${asset.target}`);
+  }
   for (const file of listFiles(outDir).filter((item) => {
     const relative = path.relative(outDir, item).replaceAll(path.sep, "/");
     return relative.startsWith("assets/") || relative.startsWith("vendor/");
@@ -154,6 +206,8 @@ function checkAssetAllowlist() {
   assertContains(headersPath, "/vendor/kaspa-wasm/*", "vendor cache header");
   assertContains(headersPath, "/vendor/kaspa-wasm/*.wasm", "vendor wasm header");
   assertContains(headersPath, "Content-Type: application/wasm", "wasm content type header");
+  assertContains(headersPath, "/demo/", "demo no-transform header");
+  assertContains(headersPath, "Cache-Control: public, max-age=300, must-revalidate, no-transform", "demo no-transform cache rule");
 }
 
 function checkActiveAlphaExclusions(releasePath) {
@@ -260,6 +314,28 @@ function assertSameBytes(source, target, label) {
   if (sha256File(source) !== sha256File(target)) fail(`stale copied artifact: ${label}`);
 }
 
+function assertSameTree(sourceDir, targetDir, label) {
+  if (!fs.existsSync(sourceDir)) {
+    fail(`missing ${label}: ${path.relative(root, sourceDir).replaceAll(path.sep, "/")}`);
+    return;
+  }
+  if (!fs.existsSync(targetDir)) {
+    fail(`missing ${label}: ${path.relative(outDir, targetDir).replaceAll(path.sep, "/")}`);
+    return;
+  }
+  const sourceFiles = listRelativeFiles(sourceDir);
+  const targetFiles = listRelativeFiles(targetDir);
+  if (JSON.stringify(sourceFiles) !== JSON.stringify(targetFiles)) {
+    fail(`stored release snapshot file list differs: ${label}`);
+    return;
+  }
+  for (const file of sourceFiles) {
+    if (sha256File(path.join(sourceDir, file)) !== sha256File(path.join(targetDir, file))) {
+      fail(`stored release snapshot differs: ${label}/${file}`);
+    }
+  }
+}
+
 function assertContains(file, needle, label) {
   if (!fs.existsSync(file)) {
     fail(`missing ${label}`);
@@ -323,6 +399,18 @@ function readReleaseLock(version) {
   };
 }
 
+function readReleaseLocks() {
+  return listFiles(path.join(root, RELEASE_LOCK_DIR))
+    .map((file) => path.relative(root, file).replaceAll(path.sep, "/"))
+    .filter((file) => /^site\/releases\/v[^/]+\.json$/.test(file))
+    .map((file) => ({ ...readJson(path.join(root, file)), path: file }))
+    .sort((a, b) => compareVersions(a.version, b.version));
+}
+
+function compareVersions(left, right) {
+  return String(left).localeCompare(String(right), "en", { numeric: true });
+}
+
 function siteSourceInputs() {
   return ["site/src/styles.css", ...SITE_ASSET_FILES];
 }
@@ -347,6 +435,12 @@ function listFiles(dir) {
       if (entry.isDirectory()) return listFiles(full);
       return entry.isFile() ? [full] : [];
     })
+    .sort();
+}
+
+function listRelativeFiles(dir) {
+  return listFiles(dir)
+    .map((file) => path.relative(dir, file).replaceAll(path.sep, "/"))
     .sort();
 }
 
