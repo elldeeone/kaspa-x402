@@ -771,6 +771,43 @@ describe("direct-mode client", () => {
     expect(result.settlement?.response.success).toBe(false);
   });
 
+  it("treats hybrid MCP settlement failures as terminal without retrying again", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+    const settlement: SettlementResponse = {
+      success: false,
+      errorReason: "invalid_transaction_state",
+      transaction: "",
+      network: "kaspa:testnet-10",
+    };
+    let calls = 0;
+
+    const result = await paidMcpToolCall(
+      client,
+      async (params) => {
+        calls += 1;
+        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        const challenge = { ...required, error: "invalid_transaction_state" };
+        return {
+          isError: true,
+          structuredContent: challenge,
+          content: [{ type: "text", text: JSON.stringify(challenge) }],
+          _meta: {
+            [MCP_PAYMENT_RESPONSE_META_KEY]: settlement,
+          },
+        };
+      },
+      { name: "download", arguments: { id: "hybrid-fail" } },
+    );
+
+    expect(calls).toBe(2);
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(result.result.isError).toBe(true);
+    expect(result.settlement?.chargedAmount).toBe("0");
+    expect(result.settlement?.response).toEqual(settlement);
+  });
+
   it("passes payment identifiers through paidFetch retries", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();

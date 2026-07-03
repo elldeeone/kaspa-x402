@@ -766,6 +766,7 @@ ${options.head ?? ""}
 
 function snapshotLayout(title, body) {
   const fullTitle = title === "Kaspa x402" ? title : `${title} — Kaspa x402`;
+  const content = body.trim();
   return `<!doctype html>
 <html lang="en">
 <head>
@@ -787,7 +788,7 @@ function snapshotLayout(title, body) {
       <a href="${repositoryUrl}">GitHub</a>
     </nav>
   </header>
-  ${body}
+${content}
   <footer>Alpha standards reference for the Kaspa x402 binding. This domain does not host a wallet, signer, facilitator, or payment API.</footer>
 </body>
 </html>`;

@@ -92,6 +92,11 @@ export function mcpPaymentRequiredResult(paymentRequired: PaymentRequired): McpT
   };
 }
 
+export function mcpSettlementFailureResult(paymentRequired: PaymentRequired, settlement: SettlementResponse): McpToolResult {
+  const error = settlement.errorReason ?? paymentRequired.error ?? "unexpected_settle_error";
+  return withMcpPaymentResponse(mcpPaymentRequiredResult({ ...paymentRequired, error }), settlement);
+}
+
 export function readMcpPaymentRequired(result: McpToolResult): PaymentRequiredEnvelope | undefined {
   if (result.isError !== true) return undefined;
   const structured = readPaymentRequiredCandidate(result.structuredContent);

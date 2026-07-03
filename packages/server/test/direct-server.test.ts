@@ -7,11 +7,13 @@ import {
   channelId,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
+  encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   mcpToolCallFingerprint,
   paymentIdentifierExtension as buildPaymentIdentifierExtension,
   readKaspaSettlementExtension,
   readMcpPaymentRequired,
+  readMcpPaymentResponse,
   sha256Hex,
   voucherDigest,
   type BatchPaymentRequirements,
@@ -21,6 +23,7 @@ import {
   type Hash32Hex,
   type NetworkId,
   type PaymentPayload,
+  type SettlementResponse,
 } from "@kaspa-x402/core";
 import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
@@ -218,6 +221,49 @@ describe("direct-mode server", () => {
     expect(readMcpPaymentRequired(replay)).toBeUndefined();
     expect(replay.structuredContent).toBeUndefined();
     expect(replay.content?.[0]?.text).toBe("invalid_transaction_state");
+  });
+
+  it("returns hybrid MCP settlement failures without exposing paid tool output", async () => {
+    const setup = makeServer({ amount: "100" });
+    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
+    const requestHash = mcpToolCallFingerprint({
+      toolName: "download",
+      arguments: { id: "fail" },
+      accepted: required.accepts[0] as ExactPaymentRequirements,
+    });
+    const payment = makeExactPayment(setup, { requestHash });
+    const settlement: SettlementResponse = {
+      success: false,
+      transaction: "",
+      network: "kaspa:testnet-10",
+      errorReason: "invalid_transaction_state",
+    };
+    const fakeServer = {
+      buildPaymentRequired: () => required,
+      handlePaidRequest: async () => ({
+        status: 500,
+        headers: {
+          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement),
+        },
+        body: { secret: "must not leak" },
+      }),
+    } as unknown as DirectModeServer;
+
+    const result = await handlePaidMcpToolCall(
+      fakeServer,
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+      { name: "download", arguments: { id: "fail" }, _meta: { [MCP_PAYMENT_META_KEY]: payment } },
+      async () => ({ result: { content: [{ type: "text", text: "protected output" }] } }),
+    );
+    const challenge = readMcpPaymentRequired(result);
+
+    expect(result.isError).toBe(true);
+    expect(challenge?.error).toBe("invalid_transaction_state");
+    expect(result.structuredContent).toEqual(challenge);
+    expect(result.content?.[0]?.text).toBe(JSON.stringify(result.structuredContent));
+    expect(result.content?.[0]?.text).not.toContain("protected output");
+    expect(result.content?.[0]?.text).not.toContain("must not leak");
+    expect(readMcpPaymentResponse(result)).toEqual(settlement);
   });
 
   it("accepts an exact transfer and commits replay state after handler success", async () => {

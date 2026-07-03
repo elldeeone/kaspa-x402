@@ -16,10 +16,12 @@ import {
   isDecimalSompi,
   isKaspaX402Network,
   mcpPaymentRequiredResult,
+  mcpSettlementFailureResult,
   narrowPaymentRequiredEnvelope,
   paymentIdentifierExtension,
   parseSompiString,
   readMcpPaymentRequired,
+  readMcpPaymentResponse,
   validateKaspaPaymentRequirement,
   validatePaymentIdentifierReuse,
   validatePaymentRequired,
@@ -335,6 +337,25 @@ describe("MCP helpers", () => {
     expect(narrowed.ok).toBe(true);
     if (!narrowed.ok) return;
     expect(narrowed.value.paymentRequired.accepts).toEqual([kaspaEntry]);
+  });
+
+  it("emits settlement failures as payment challenges with settlement metadata", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const settlement: SettlementResponse = {
+      success: false,
+      transaction: "",
+      network: "kaspa:testnet-10",
+      errorReason: "invalid_transaction_state",
+    };
+
+    const result = mcpSettlementFailureResult(vector.paymentRequired, settlement);
+    const expectedChallenge = { ...vector.paymentRequired, error: "invalid_transaction_state" };
+
+    expect(result.isError).toBe(true);
+    expect(result.structuredContent).toEqual(expectedChallenge);
+    expect(result.content?.[0]?.text).toBe(JSON.stringify(expectedChallenge));
+    expect(readMcpPaymentRequired(result)?.error).toBe("invalid_transaction_state");
+    expect(readMcpPaymentResponse(result)).toEqual(settlement);
   });
 });
 

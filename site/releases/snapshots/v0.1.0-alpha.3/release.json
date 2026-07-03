@@ -95,8 +95,8 @@
     {
       "source": "spec/mcp-profile.md",
       "target": "v0.1.0-alpha.3/spec/mcp-profile.md",
-      "bytes": 2708,
-      "sha256": "42f8bfc6d3560496172333627798ba8693af5efa32722aca22b05325c2ce5756"
+      "bytes": 3113,
+      "sha256": "78bbf94b8f1d992df76668a0ae8c85c8aa860bdefeae517b4c800da719bfc0eb"
     },
     {
       "source": "spec/facilitator-profile.md",
@@ -399,5 +399,5 @@
       "sha256": "5f13eb82725cbcb28e2afc308a594bbe6f1ded110b1ea337e481bd0ae18ad25d"
     }
   ],
-  "contentSha256": "ba5ca1b04abeccfc25e1c797f9e6996c770da0dcc87a92335699e4a8fa6a06eb"
+  "contentSha256": "0916ffddabc230637d452697fa680705e7c631fe1115af655a829c346e00c9ed"
 }

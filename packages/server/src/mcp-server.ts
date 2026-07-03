@@ -3,6 +3,7 @@ import {
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   mcpPaymentRequiredResult,
+  mcpSettlementFailureResult,
   mcpToolCallFingerprint,
   mcpToolResource,
   readMcpPaymentPayload,
@@ -98,15 +99,18 @@ export async function handlePaidMcpToolCall(
 }
 
 function serverResponseToMcpResult(response: ServerResponse, fallbackPaymentRequired?: PaymentRequired): McpToolResult {
-  const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
-  if (paymentRequiredHeader) {
-    return mcpPaymentRequiredResult(decodePaymentRequiredHeader(paymentRequiredHeader));
-  }
-
   const paymentResponseHeader = response.headers[PAYMENT_RESPONSE_HEADER];
   const settlement = paymentResponseHeader ? decodePaymentResponseHeader(paymentResponseHeader) : undefined;
   if (settlement && !settlement.success) {
+    const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
+    const challenge = paymentRequiredHeader ? decodePaymentRequiredHeader(paymentRequiredHeader) : fallbackPaymentRequired;
+    if (challenge) return mcpSettlementFailureResult(challenge, settlement);
     return withMcpPaymentResponse(mcpErrorResult(settlement.errorReason ?? "Settlement failed"), settlement);
+  }
+
+  const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
+  if (paymentRequiredHeader) {
+    return mcpPaymentRequiredResult(decodePaymentRequiredHeader(paymentRequiredHeader));
   }
 
   if (response.status >= 400) {
