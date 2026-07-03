@@ -62,8 +62,8 @@ reserved profile name, not a readiness claim.
 | `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
 | `amount` | yes | Decimal string in sompi. This is the exact payment amount. |
 | `asset` | yes | Must equal `"KAS"`. |
-| `payTo` | yes | Recipient Kaspa address for the selected network. |
-| `maxTimeoutSeconds` | yes | Maximum time the client may take to provide a payment payload. |
+| `payTo` | yes | Non-empty recipient Kaspa address for the selected network. |
+| `maxTimeoutSeconds` | yes | Positive maximum time, in seconds, that the client may take to provide a payment payload. |
 | `extra.binding` | yes | Must equal `"kaspa-exact-v1"`. |
 | `extra.finality` | no | One of `"mempool"`, `"accepted"`, or `"confirmed"`. If absent, servers choose local policy. |
 

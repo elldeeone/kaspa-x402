@@ -127,6 +127,9 @@ Every Kaspa x402 `PaymentRequirements` object must use:
 }
 ```
 
+`payTo` must be a non-empty string. `maxTimeoutSeconds` must be a positive
+uint32 integer.
+
 `extra.binding` identifies the concrete Kaspa binding:
 
 | Scheme | `extra.binding` |

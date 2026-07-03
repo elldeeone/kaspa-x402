@@ -1,0 +1,5 @@
+{
+  "version": "0.1.0-alpha.2",
+  "contentSha256": "014521caf90336d2721849071f9f63a7327870a5978af91a69e1d1d6833993f0",
+  "description": "Locks the immutable standards and package-metadata snapshot for this alpha version. Active-alpha routes such as the browser test client and shared assets are excluded by policy and checker."
+}

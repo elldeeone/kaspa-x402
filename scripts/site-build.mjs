@@ -37,6 +37,8 @@ const commit = git(["rev-parse", "HEAD"]);
 const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
 const sourceState = dirtyInputs.length > 0 ? "working-tree-dirty" : "git-head";
+const releaseSnapshotScope = "schemas, specs, selected docs, vectors, package metadata, and release metadata";
+const activeAlphaOnlyRoutes = ["/", "/demo/", "/assets/", "/vendor/", "/site-manifest.json", "/releases/"];
 
 if (requireClean && dirtyInputs.length > 0) {
   throw new Error(`site build requires clean publishable inputs: ${dirtyInputs.join(", ")}`);
@@ -49,6 +51,7 @@ copyStaticAssets();
 writeHeaders();
 writeRedirects();
 writeText("robots.txt", "User-agent: *\nAllow: /\n");
+writeText("favicon.ico", "");
 
 const copiedArtifacts = [
   ...copyCollection(schemaFiles, "schemas"),
@@ -72,6 +75,8 @@ function writeIndexPages() {
   writeDocsPage();
   writeVectorsPage();
   writeReleasesPage();
+  writeDemoPage();
+  writePnnSpikeJson();
 
   for (const file of specFiles) writeMarkdownDocument(file, htmlRoute(file));
   for (const file of docFiles) writeMarkdownDocument(file, htmlRoute(file));
@@ -283,6 +288,207 @@ function writeReleasesPage() {
   );
 }
 
+function writeDemoPage() {
+  writeHtml(
+    "demo/index.html",
+    layout(
+      "Browser Test Client",
+      `
+  <main>
+    <h1>Browser Test Client</h1>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact-payment headers before a hosted demo gateway exists.</p>
+
+    <section class="demo-panel" aria-labelledby="demo-safety">
+      <h2 id="demo-safety">Safety Boundary</h2>
+      <ul>
+        <li>The network is fixed to <code>kaspa:testnet-10</code>; there is no mainnet selector.</li>
+        <li>Generated or imported private keys stay in browser memory. The page does not write key material to local storage, cookies, query strings, or the server.</li>
+        <li>Reset clears the in-memory key, visible fields, and RPC connection state.</li>
+        <li>The only signed data that should leave the page is a transaction you intentionally broadcast through the public node network.</li>
+        <li>The apex domain hosts static files only. A hosted gateway or paid test resource belongs on a separate demo subdomain.</li>
+      </ul>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-runtime">
+      <h2 id="demo-runtime">Runtime Status</h2>
+      <div class="demo-actions">
+        <button type="button" id="demo-init">Load SDK</button>
+        <button type="button" id="demo-connect">Connect PNN</button>
+        <button type="button" id="demo-disconnect">Disconnect</button>
+        <button type="button" id="demo-reset">Reset</button>
+      </div>
+      <label for="demo-endpoint">Endpoint override</label>
+      <input id="demo-endpoint" type="url" inputmode="url" placeholder="leave blank to try public WSS endpoints">
+      <p class="muted">Public HTTPS pages must use the listed <code>wss://</code> endpoints. Local custom endpoints require a local preview opened with <code>?allow-custom-endpoints=1&amp;endpoint=...</code>; the field must match that local or private-network endpoint.</p>
+      <output id="demo-status" class="demo-status">Not loaded.</output>
+      <pre id="demo-rpc-output"><code>{}</code></pre>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-key">
+      <h2 id="demo-key">Testnet Key</h2>
+      <form autocomplete="off">
+        <div class="demo-actions">
+          <button type="button" id="demo-generate-key">Generate Throwaway Key</button>
+          <button type="button" id="demo-import-key">Import Key</button>
+          <button type="button" id="demo-copy-address">Copy Address</button>
+        </div>
+        <label for="demo-private-key">Private key hex</label>
+        <input id="demo-private-key" type="password" autocomplete="off" spellcheck="false" placeholder="64 hex characters">
+        <label class="demo-check"><input id="demo-reveal-key" type="checkbox"> Show private key</label>
+        <label for="demo-address">Address</label>
+        <input id="demo-address" type="text" readonly spellcheck="false">
+        <div class="demo-actions">
+          <button type="button" id="demo-load-utxos">Load UTXOs</button>
+        </div>
+        <pre id="demo-utxo-output"><code>{}</code></pre>
+      </form>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-offer">
+      <h2 id="demo-offer">x402 Offer Builder</h2>
+      <div class="demo-grid">
+        <label>Profile
+          <select id="demo-profile">
+            <option value="exact">exact</option>
+            <option value="batch-settlement">batch-settlement</option>
+          </select>
+        </label>
+        <label>Amount (sompi)
+          <input id="demo-amount" type="text" inputmode="numeric" value="1000">
+        </label>
+        <label>Timeout seconds
+          <input id="demo-timeout" type="number" min="1" max="4294967295" value="60">
+        </label>
+        <label>Finality
+          <select id="demo-finality">
+            <option value="accepted">accepted</option>
+            <option value="mempool">mempool</option>
+            <option value="confirmed">confirmed</option>
+          </select>
+        </label>
+      </div>
+      <label for="demo-resource-url">Resource URL</label>
+      <input id="demo-resource-url" type="url" value="https://example.test/paid-resource">
+      <label for="demo-description">Resource description</label>
+      <input id="demo-description" type="text" value="Test paid resource">
+      <label for="demo-pay-to">Pay-to address</label>
+      <input id="demo-pay-to" type="text" spellcheck="false" placeholder="kaspatest:...">
+      <div id="demo-batch-fields" hidden>
+        <label for="demo-server-public-key">Server public key</label>
+        <input id="demo-server-public-key" type="text" spellcheck="false" value="0000000000000000000000000000000000000000000000000000000000000000">
+        <label for="demo-min-deposit">Minimum deposit (sompi)</label>
+        <input id="demo-min-deposit" type="text" inputmode="numeric" value="1000000">
+        <label for="demo-refund-daa">Refund timeout DAA</label>
+        <input id="demo-refund-daa" type="text" inputmode="numeric" value="1000000">
+      </div>
+      <div class="demo-actions">
+        <button type="button" id="demo-build-offer">Build Offer</button>
+        <button type="button" id="demo-copy-required">Copy PAYMENT-REQUIRED</button>
+      </div>
+      <label for="demo-payment-required">PAYMENT-REQUIRED</label>
+      <textarea id="demo-payment-required" readonly rows="4"></textarea>
+      <pre id="demo-offer-output"><code>{}</code></pre>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-mock">
+      <h2 id="demo-mock">Exact Mock Flow</h2>
+      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. A real gateway must still verify and settle the transaction.</p>
+      <label for="demo-transaction">Serialized transaction hex</label>
+      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="optional for mock transcript; required for real broadcast"></textarea>
+      <div class="demo-grid">
+        <label>Payment output index
+          <input id="demo-output-index" type="number" min="0" max="4294967295" value="0">
+        </label>
+        <label>Observed transaction id
+          <input id="demo-transaction-id" type="text" spellcheck="false" placeholder="optional 64 hex characters">
+        </label>
+      </div>
+      <div class="demo-actions">
+        <button type="button" id="demo-build-payment">Build Payment Retry</button>
+        <button type="button" id="demo-copy-signature">Copy PAYMENT-SIGNATURE</button>
+        <button type="button" id="demo-check-tx">Check Tx Status</button>
+        <button type="button" id="demo-broadcast-tx">Broadcast Serialized Tx</button>
+      </div>
+      <label for="demo-payment-signature">PAYMENT-SIGNATURE</label>
+      <textarea id="demo-payment-signature" readonly rows="4"></textarea>
+      <pre id="demo-payment-output"><code>{}</code></pre>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-narrow">
+      <h2 id="demo-narrow">Offer Compatibility Debug</h2>
+      <p class="muted">Paste a PaymentRequired JSON object to see which entries are supported by this Kaspa binding and which entries a client would skip during selection.</p>
+      <textarea id="demo-narrow-input" rows="6" spellcheck="false" placeholder='{"x402Version":2,"resource":{"url":"https://example.test"},"accepts":[]}'></textarea>
+      <div class="demo-actions">
+        <button type="button" id="demo-narrow-offer">Inspect Accepts</button>
+      </div>
+      <pre id="demo-narrow-output"><code>{}</code></pre>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-notes">
+      <h2 id="demo-notes">Developer Notes</h2>
+      <ul>
+        <li>Run locally with <code>npm run site:serve</code> and open <code>/demo/</code>. The local preview binds to the LAN; use the host IP from another device. Add <code>?allow-custom-endpoints=1&amp;endpoint=...</code> only when testing a local or private-network node endpoint.</li>
+        <li>Fund generated addresses with testnet funds only. The page does not provide a faucet.</li>
+        <li>The browser SDK is loaded from <code>/vendor/kaspa-wasm/2.0.0/kaspa-core/</code>. The browser uses public WSS endpoints directly; <code>npm run check:pnn-browser</code> verifies resolver lookup from Node. Runtime spike metadata is available at <a href="/demo/pnn-spike.json"><code>/demo/pnn-spike.json</code></a>.</li>
+        <li>The published TypeScript helpers are currently Node-oriented for header encoding and hashing. This page uses browser-native header encoding until a browser-safe package build is added.</li>
+        <li>Public Node Network endpoints are shared test infrastructure. Treat outages, latency, and endpoint rotation as expected development failures.</li>
+      </ul>
+    </section>
+  </main>
+  <script type="module" src="/assets/demo.js"></script>
+      `,
+      { head: '  <link rel="stylesheet" href="/assets/demo.css">' },
+    ),
+  );
+}
+
+function writePnnSpikeJson() {
+  writeJson("demo/pnn-spike.json", {
+    generatedFrom: commit,
+    generatedAt: commitDate,
+    network: "kaspa:testnet-10",
+    sdk: {
+      package: "kaspa-wasm",
+      version: "2.0.0",
+      route: "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",
+      source: {
+        repository: "https://github.com/kaspanet/rusty-kaspa",
+        release: "https://github.com/kaspanet/rusty-kaspa/releases/tag/v2.0.0",
+        commit: "90dbf074275d60c1fe74a3491883196f110970c0",
+        packagePath: "web/kaspa-core",
+        note: "Vendored from the Rusty Kaspa v2.0.0 web/kaspa-core browser release artifacts, not from the public npm registry.",
+      },
+      assets: siteAssetRecords("site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/"),
+    },
+    browser: {
+      status: "covered by check:browser-demo",
+      connection: "Public wss endpoint list; resolver lookup covered by the Node smoke script",
+      verifiedCapabilities: [
+        "sdk initialization",
+        "throwaway testnet key generation",
+        "exact header generation",
+        "mixed-offer narrowing",
+        "node info",
+        "DAA score",
+        "transaction status lookup missing-entry path",
+      ],
+      constraints: ["testnet-only", "no implicit key persistence", "manual transaction broadcast only"],
+    },
+    worker: {
+      status: "not yet suitable for the hosted gateway",
+      verifiedCapabilities: ["wrangler dry-run compiles the WASM module", "local runtime initializes the SDK", "local runtime can resolve a public endpoint"],
+      blockers: [
+        "local workerd did not complete outbound PNN RPC calls with this browser SDK",
+        "a gateway should use a dedicated chain adapter until Worker runtime behavior is verified with the chosen deployment target",
+      ],
+    },
+    packageBoundary: {
+      browserSafeToday: ["static schemas", "browser SDK", "browser-native header encoder"],
+      needsAdapter: ["@kaspa-x402/core header helpers currently use Buffer", "@kaspa-x402/core hashing helpers currently use node:crypto"],
+    },
+  });
+}
+
 function statusLine() {
   return `<p class="muted">Status: draft alpha targeting <code>kaspa:testnet-10</code>. Mainnet use remains blocked by the documented readiness gates.</p>`;
 }
@@ -383,20 +589,23 @@ function releaseMetadata(releaseLock, releaseArtifacts, releaseProvenance) {
     version: releaseVersion,
     ...releaseProvenance,
     contentLock: releaseLock?.path,
-    unversionedRoutes: "active alpha",
+    snapshotScope: releaseSnapshotScope,
+    activeAlphaOnlyRoutes,
+    unversionedRoutes: "active alpha; not part of the immutable release snapshot",
     npmInstall: releaseNpmInstall(),
     artifacts: releaseArtifacts,
   };
 }
 
 function releaseIndexHtml(releaseArtifacts) {
-  return layout(
+  return snapshotLayout(
     `Release ${releaseVersion}`,
     `
       <main>
         <h1>Release ${escapeHtml(releaseVersion)}</h1>
         <p>Status: locked alpha snapshot for this version. Machine-readable metadata is available at <a href="/${releasePath}/release.json"><code>/${releasePath}/release.json</code></a>.</p>
-        <p>Unversioned routes follow the active alpha. Stable consumers should pin a versioned path once a stable release exists.</p>
+        <p>This snapshot locks ${escapeHtml(releaseSnapshotScope)}. The browser test client, shared site assets, vendored browser SDK files, and package index route remain active-alpha routes.</p>
+        <p>Stable consumers should pin a versioned path once a stable release exists.</p>
         ${artifactTable(releaseArtifacts)}
       </main>
     `,
@@ -410,6 +619,8 @@ function writeManifest(copiedArtifacts, vectorIndex) {
     commitDate,
     sourceState,
     dirtyInputs,
+    releaseSnapshotScope,
+    activeAlphaOnlyRoutes,
     releaseVersion,
     releasePath,
     schemas: schemaFiles.map((file) => ({ path: `/${file}`, sha256: sha256File(path.join(root, file)) })),
@@ -417,6 +628,10 @@ function writeManifest(copiedArtifacts, vectorIndex) {
     docs: docFiles.map((file) => ({ path: `/${htmlRoute(file)}/`, source: `/${file}` })),
     vectors: vectorIndex,
     packages,
+    siteAssets: [
+      artifactRecord("site/src/styles.css", "assets/styles.css"),
+      ...SITE_ASSET_FILES.map((file) => artifactRecord(file, path.relative(SITE_SRC, file).replaceAll(path.sep, "/"))),
+    ],
     artifacts: copiedArtifacts,
   });
 }
@@ -457,7 +672,44 @@ function artifactRecord(source, target) {
   };
 }
 
-function layout(title, body) {
+function siteAssetRecords(prefix) {
+  return SITE_ASSET_FILES.filter((file) => file.startsWith(prefix)).map((file) =>
+    artifactRecord(file, path.relative(SITE_SRC, file).replaceAll(path.sep, "/")),
+  );
+}
+
+function layout(title, body, options = {}) {
+  const fullTitle = title === "Kaspa x402" ? title : `${title} — Kaspa x402`;
+  return `<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>${escapeHtml(fullTitle)}</title>
+  <meta name="description" content="Proposed native Kaspa bindings for x402 payments: schemas, specs, conformance vectors, docs, and release snapshots.">
+  <link rel="stylesheet" href="/assets/styles.css">
+${options.head ?? ""}
+</head>
+<body>
+  <header>
+    <a class="site" href="/">Kaspa x402</a>
+    <nav aria-label="Primary">
+      <a href="/spec/">Spec</a>
+      <a href="/schemas/">Schemas</a>
+      <a href="/vectors/">Vectors</a>
+      <a href="/docs/">Docs</a>
+      <a href="/demo/">Demo</a>
+      <a href="/releases/">Releases</a>
+      <a href="${repositoryUrl}">GitHub</a>
+    </nav>
+  </header>
+  ${body}
+  <footer>Alpha standards reference for the Kaspa x402 binding. This domain does not host a custodial wallet, hosted signer, facilitator, or payment API.</footer>
+</body>
+</html>`;
+}
+
+function snapshotLayout(title, body) {
   const fullTitle = title === "Kaspa x402" ? title : `${title} — Kaspa x402`;
   return `<!doctype html>
 <html lang="en">
@@ -620,6 +872,9 @@ function writeHeaders() {
     `/*
   X-Content-Type-Options: nosniff
   Referrer-Policy: no-referrer
+  X-Frame-Options: DENY
+  Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), clipboard-read=(), clipboard-write=(self)
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' wss://vector-10.kaspa.green wss://electron-10.kaspa.stream wss://electron-10.kaspa.blue wss://muon-10.kaspa.blue; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
 
 /schemas/*.json
   Content-Type: application/schema+json; charset=utf-8
@@ -655,6 +910,24 @@ function writeHeaders() {
 /vectors/index.json
   Content-Type: application/json; charset=utf-8
   Cache-Control: public, max-age=300, must-revalidate
+
+/demo/pnn-spike.json
+  Content-Type: application/json; charset=utf-8
+  Cache-Control: public, max-age=300, must-revalidate
+
+/assets/*.js
+  Content-Type: text/javascript; charset=utf-8
+  Cache-Control: public, max-age=300, must-revalidate
+
+/assets/*.css
+  Content-Type: text/css; charset=utf-8
+  Cache-Control: public, max-age=300, must-revalidate
+
+/vendor/kaspa-wasm/*
+  Cache-Control: public, max-age=31536000, immutable
+
+/vendor/kaspa-wasm/*.wasm
+  Content-Type: application/wasm
 
 /${releasePath}/release.json
   Content-Type: application/json; charset=utf-8

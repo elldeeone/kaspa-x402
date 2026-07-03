@@ -70,8 +70,8 @@ reserved profile name, not a readiness claim.
 | `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
 | `amount` | yes | Decimal string in sompi. This is the maximum per-request charge. |
 | `asset` | yes | Must equal `"KAS"`. |
-| `payTo` | yes | Server payout address. This is not the client-specific escrow address. |
-| `maxTimeoutSeconds` | yes | Maximum time the client may take to provide a payment commitment. |
+| `payTo` | yes | Non-empty server payout address. This is not the client-specific escrow address. |
+| `maxTimeoutSeconds` | yes | Positive maximum time, in seconds, that the client may take to provide a payment commitment. |
 | `extra.binding` | yes | Must equal `"kaspa-escrow-v1"`. |
 | `extra.templateId` | yes | Must equal `"kaspa-x402-escrow-v1"` for this profile. |
 | `extra.serverPublicKey` | yes | Server key allowed to verify vouchers and authorize claim transactions according to the covenant rules. Refunds require the client key. |

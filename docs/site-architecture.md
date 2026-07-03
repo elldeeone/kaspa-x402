@@ -4,14 +4,17 @@ Status: alpha deployment plan for `kaspa-x402.org`. This document is internal
 and is not published on the site.
 
 `kaspa-x402.org` is the canonical standards reference for the Kaspa x402
-binding. It hosts schemas, specs, vectors, selected docs, package links, and
-release snapshots. It must not host a wallet, signer, facilitator, payment API,
-or protected paid resource on the apex domain.
+binding. It hosts schemas, specs, vectors, selected docs, package links,
+release snapshots, and a static testnet-only browser client. It must not host a
+custodial wallet, hosted signer, facilitator, payment API, or protected paid
+resource on the apex domain.
 
-Demo or gateway experiments belong on a separate subdomain such as
+Hosted demo or gateway experiments belong on a separate subdomain such as
 `demo.kaspa-x402.org` or `testnet.kaspa-x402.org`. Those services have a
 different trust model because they may connect to nodes, wallets, signers,
-funding adapters, or hosted payment endpoints.
+funding adapters, or hosted payment endpoints. A static client may live at
+`/demo/` only while private key material stays in browser memory and the apex
+site remains static.
 
 ## Design Intent
 
@@ -30,6 +33,8 @@ no marketing sections. Every page exists for a reason:
   with `index.json` carrying byte counts and SHA-256 digests.
 - `/docs/` is a curated, grouped index (Proposal, Evidence, Safety, Policy,
   Contracts) of the selected public documents.
+- `/demo/` is a static, testnet-only browser client for PNN connectivity checks
+  and local x402 transcript rehearsal. It is not a hosted gateway.
 - `/releases/` lists the immutable versioned snapshots.
 
 There is no separate packages page; the package table lives on the homepage
@@ -59,8 +64,15 @@ The apex site publishes:
 - specs and transport profiles under `/spec/`;
 - conformance vectors under `/vectors/`;
 - selected public docs under `/docs/`;
+- a static testnet browser client under `/demo/`;
 - immutable alpha snapshots under `/v0.1.0-alpha.N/`, indexed at `/releases/`;
 - package metadata and source links on the homepage and at `/packages.json`.
+
+Release snapshots lock schemas, specs, selected docs, vectors, versioned
+package metadata, and release metadata. They do not lock the interactive
+browser client, shared CSS/JS assets, or vendored browser SDK files; those are
+active-alpha site routes and `site:check` enforces that they are not copied
+under versioned release paths.
 
 Ignored operational or planning files must not be published. This includes
 private live-run artifacts, local adapter files, review drafts, findings

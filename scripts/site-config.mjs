@@ -3,7 +3,15 @@ export const SITE_DIST = "site/dist";
 export const SITE_SRC = "site/src";
 export const RELEASE_LOCK_DIR = "site/releases";
 
-export const SITE_ASSET_FILES = [];
+export const SITE_ASSET_FILES = [
+  "site/src/assets/demo.css",
+  "site/src/assets/demo.js",
+  "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/LICENSE",
+  "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.d.ts",
+  "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",
+  "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa_bg.wasm",
+  "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/package.json",
+];
 
 export const SCHEMA_FILES = [
   "schemas/payment-required.schema.json",

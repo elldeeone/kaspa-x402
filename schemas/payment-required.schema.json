@@ -86,11 +86,12 @@
           "const": "KAS"
         },
         "payTo": {
-          "type": "string"
+          "type": "string",
+          "minLength": 1
         },
         "maxTimeoutSeconds": {
           "type": "integer",
-          "minimum": 0,
+          "minimum": 1,
           "maximum": 4294967295
         },
         "extra": {

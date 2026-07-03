@@ -1,6 +1,6 @@
 # Alpha Publish Checklist
 
-Status: public alpha packages are published at `0.1.0-alpha.1`. Future
+Status: public alpha packages are published at `0.1.0-alpha.2`. Future
 publishes require npm authorization and must not happen accidentally from CI or
 an unauthenticated shell.
 
@@ -14,13 +14,14 @@ recommending explicit `@alpha` installs until a stable version can own
 
 Public alpha package set:
 
-- `@kaspa-x402/core@0.1.0-alpha.1`;
-- `@kaspa-x402/covenant@0.1.0-alpha.1`;
-- `@kaspa-x402/client@0.1.0-alpha.1`;
-- `@kaspa-x402/server@0.1.0-alpha.1`.
+- `@kaspa-x402/core`;
+- `@kaspa-x402/covenant`;
+- `@kaspa-x402/client`;
+- `@kaspa-x402/server`.
 
-`0.1.0-alpha.0` was the initial published alpha. `0.1.0-alpha.1` carries the
-next breaking alpha wire update and is the current published alpha.
+`0.1.0-alpha.0` was the initial published alpha. `0.1.0-alpha.1` carried the
+next breaking alpha wire update. `0.1.0-alpha.2` is the current published alpha
+for the browser test client and schema tightening.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -69,12 +70,13 @@ entrypoints.
 Checked on 2026-07-03:
 
 - `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
-  `@kaspa-x402/server` are published at `0.1.0-alpha.1`;
+  `@kaspa-x402/server` are published at `0.1.0-alpha.2`;
 - those packages have both `alpha` and `latest` dist-tags pointing to
-  `0.1.0-alpha.1`, after npm returned `400` responses when removing `latest`;
+  `0.1.0-alpha.2`, after npm returned `400` responses when removing `latest`
+  during the previous alpha publish;
 - `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
   unpublished/private;
-- dry-run tarballs for the publishable `0.1.0-alpha.1` manifests contain only
+- dry-run tarballs for the publishable `0.1.0-alpha.2` manifests contain only
   `LICENSE`, `README.md`, `package.json`, `dist/index.js`, and
   `dist/index.d.ts`;
 - ignored local planning, review, and live-run artifacts are not in the dry-run

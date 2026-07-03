@@ -16,6 +16,20 @@ Preview locally without Cloudflare credentials:
 npm run site:serve
 ```
 
+The preview server binds to `0.0.0.0`; open `http://<host-lan-ip>:<port>/demo/`
+from another device on the LAN if needed. Public HTTPS previews should use one
+of the listed `wss://` public node endpoints. To test a local or private-network
+node endpoint, open
+`/demo/?allow-custom-endpoints=1&endpoint=ENCODED_ENDPOINT` from the local
+preview. The endpoint field must match that query value so the preview CSP can
+stay scoped to one WebSocket origin.
+
+Check browser SDK connectivity from Node:
+
+```sh
+npm run check:pnn-browser
+```
+
 Cloudflare Pages configuration:
 
 - build command: `npm run site:deploy:check`
@@ -23,5 +37,6 @@ Cloudflare Pages configuration:
 - production branch: `main`
 - custom domains: `kaspa-x402.org`, `www.kaspa-x402.org`
 
-The apex site is a standards reference only. Test gateway work belongs on a
-separate subdomain.
+The apex site is a standards reference with a static, testnet-only browser
+client. Hosted gateway work or paid test resources belong on a separate
+subdomain.

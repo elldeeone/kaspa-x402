@@ -46,7 +46,7 @@ function createServer() {
       response.end("Not found\n");
       return;
     }
-    response.writeHead(200, responseHeaders(url.pathname, file));
+    response.writeHead(200, responseHeaders(url, file));
     fs.createReadStream(file).pipe(response);
   });
 }
@@ -71,6 +71,10 @@ function contentType(file) {
       return "text/css; charset=utf-8";
     case ".json":
       return file.endsWith(".schema.json") ? "application/schema+json; charset=utf-8" : "application/json; charset=utf-8";
+    case ".js":
+      return "text/javascript; charset=utf-8";
+    case ".wasm":
+      return "application/wasm";
     case ".md":
       return "text/markdown; charset=utf-8";
     case ".svg":
@@ -80,11 +84,40 @@ function contentType(file) {
   }
 }
 
-function responseHeaders(pathname, file) {
+function responseHeaders(url, file) {
   return {
     "Content-Type": contentType(file),
-    ...headersForPath(pathname),
+    ...localPreviewHeaders(headersForPath(url.pathname), url),
   };
+}
+
+function localPreviewHeaders(headers, url) {
+  if (headers["Content-Security-Policy"] && url.pathname.startsWith("/demo/") && url.searchParams.get("allow-custom-endpoints") === "1") {
+    const endpointSource = cspSourceForCustomEndpoint(url.searchParams.get("endpoint"));
+    if (!endpointSource) return headers;
+    headers["Content-Security-Policy"] = headers["Content-Security-Policy"].replace(
+      /connect-src [^;]+;/,
+      `connect-src 'self' ${endpointSource};`,
+    );
+  }
+  return headers;
+}
+
+function cspSourceForCustomEndpoint(value) {
+  if (!value) return undefined;
+  try {
+    const parsed = new URL(value);
+    if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") return undefined;
+    if (!isLocalEndpointHost(parsed.hostname)) return undefined;
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function isLocalEndpointHost(hostname) {
+  const clean = hostname.replace(/^\[|\]$/g, "");
+  return ["localhost", "127.0.0.1", "::1"].includes(clean) || /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(clean);
 }
 
 function matchRedirect(pathname) {

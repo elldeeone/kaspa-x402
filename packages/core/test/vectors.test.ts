@@ -22,6 +22,7 @@ import {
   readMcpPaymentRequired,
   validateKaspaPaymentRequirement,
   validatePaymentIdentifierReuse,
+  validatePaymentRequired,
   validatePaymentRetry,
   validateSchemaById,
   voucherDigest,
@@ -241,6 +242,25 @@ describe("x402 HTTP vectors", () => {
     expect(decodePaymentRequiredHeader(encodePaymentRequiredHeader(paymentRequired))).toEqual(paymentRequired);
     expect(validatePaymentRetry({ paymentRequired, paymentPayload: exact.paymentPayload }).ok).toBe(true);
     expect(validatePaymentRetry({ paymentRequired, paymentPayload: batch.paymentPayload }).ok).toBe(true);
+  });
+
+  it("rejects empty recipients and zero timeout requirements", () => {
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+
+    expectFailureCode(
+      validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", {
+        ...exact.paymentRequired,
+        accepts: [{ ...exact.paymentRequired.accepts[0]!, payTo: "" }],
+      }),
+      "invalid_kaspa_x402_payload",
+    );
+    expectFailureCode(
+      validatePaymentRequired({
+        ...exact.paymentRequired,
+        accepts: [{ ...exact.paymentRequired.accepts[0]!, maxTimeoutSeconds: 0 }],
+      }),
+      "invalid_kaspa_x402_payload",
+    );
   });
 
   it("narrows envelopes that mix Kaspa entries with entries from other schemes or networks", () => {

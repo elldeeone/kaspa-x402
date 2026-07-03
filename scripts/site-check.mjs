@@ -21,6 +21,8 @@ const outDir = path.join(root, SITE_DIST);
 const errors = [];
 const requireClean = process.argv.includes("--require-clean");
 const siteScriptFiles = ["scripts/site-build.mjs", "scripts/site-check.mjs", "scripts/site-config.mjs", "scripts/site-serve.mjs"];
+const releaseSnapshotScope = "schemas, specs, selected docs, vectors, package metadata, and release metadata";
+const activeAlphaOnlyRoutes = ["/", "/demo/", "/assets/", "/vendor/", "/site-manifest.json", "/releases/"];
 
 if (!fs.existsSync(outDir)) {
   fail("site/dist is missing; run npm run site:build first");
@@ -81,6 +83,10 @@ function checkMetadataFreshness() {
   if (dirtyInputs.length > 0 && release.generatedFrom !== manifest.generatedFrom) fail("dirty release generatedFrom does not match site-manifest");
   if (dirtyInputs.length === 0 && "generatedFrom" in release) fail("locked release should not vary by build commit");
   if (release.version !== manifest.releaseVersion) fail("release version does not match site-manifest");
+  if (manifest.releaseSnapshotScope !== releaseSnapshotScope) fail("site-manifest release snapshot scope is stale");
+  if (release.snapshotScope !== releaseSnapshotScope) fail("release snapshot scope is stale");
+  if (JSON.stringify(manifest.activeAlphaOnlyRoutes) !== JSON.stringify(activeAlphaOnlyRoutes)) fail("site-manifest active-alpha routes are stale");
+  if (JSON.stringify(release.activeAlphaOnlyRoutes) !== JSON.stringify(activeAlphaOnlyRoutes)) fail("release active-alpha routes are stale");
   if (JSON.stringify(release.npmInstall) !== JSON.stringify(releaseNpmInstall())) fail("release npm install metadata is stale");
   if (JSON.stringify(manifest.packages) !== JSON.stringify(packages)) fail("site-manifest package metadata is stale");
   if (JSON.stringify(readJson(path.join(outDir, "packages.json")).packages) !== JSON.stringify(packages)) fail("packages.json is stale");
@@ -107,6 +113,7 @@ function checkMetadataFreshness() {
   if (!releaseLock && (requireClean || dirtyInputs.length === 0)) fail(`release ${manifest.releaseVersion} is missing a content lock`);
   if (releaseLock && release.contentSha256 !== releaseLock.contentSha256) fail(`release content differs from ${releaseLock.path}`);
   if (releaseLock && release.contentLock !== releaseLock.path) fail("release content lock path is stale");
+  checkActiveAlphaExclusions(manifest.releasePath);
 }
 
 function checkUntrackedPublishableFiles() {
@@ -128,14 +135,42 @@ function checkPrivateFiles() {
 
 function checkAssetAllowlist() {
   const expectedAssets = new Set(["assets/styles.css", ...SITE_ASSET_FILES.map((file) => path.relative(SITE_SRC, file).replaceAll(path.sep, "/"))]);
-  for (const file of listFiles(path.join(outDir, "assets"))) {
+  assertSameBytes(path.join(root, "site/src/styles.css"), path.join(outDir, "assets/styles.css"), "assets/styles.css");
+  for (const source of SITE_ASSET_FILES) {
+    const target = path.relative(SITE_SRC, source).replaceAll(path.sep, "/");
+    assertSameBytes(path.join(root, source), path.join(outDir, target), target);
+  }
+  for (const file of listFiles(outDir).filter((item) => {
+    const relative = path.relative(outDir, item).replaceAll(path.sep, "/");
+    return relative.startsWith("assets/") || relative.startsWith("vendor/");
+  })) {
     const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
     if (!expectedAssets.has(relative)) fail(`unexpected generated asset: ${relative}`);
+  }
+  const headersPath = path.join(outDir, "_headers");
+  assertContains(path.join(outDir, "assets/demo.js"), "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js", "demo SDK import");
+  assertContains(headersPath, "/assets/*.js", "javascript asset header");
+  assertContains(headersPath, "/assets/*.css", "css asset header");
+  assertContains(headersPath, "/vendor/kaspa-wasm/*", "vendor cache header");
+  assertContains(headersPath, "/vendor/kaspa-wasm/*.wasm", "vendor wasm header");
+  assertContains(headersPath, "Content-Type: application/wasm", "wasm content type header");
+}
+
+function checkActiveAlphaExclusions(releasePath) {
+  for (const route of activeAlphaOnlyRoutes) {
+    if (route === "/") continue;
+    const relative = route.replace(/^\/|\/$/g, "");
+    if (!relative) continue;
+    const candidate = path.join(outDir, releasePath, relative);
+    if (fs.existsSync(candidate)) fail(`active-alpha route included in release snapshot: ${releasePath}/${relative}`);
   }
 }
 
 function checkContent() {
-  const textFiles = listFiles(outDir).filter((file) => /\.(html|md|json|txt|css|svg)$/.test(file));
+  const textFiles = listFiles(outDir).filter((file) => {
+    const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
+    return /\.(html|md|json|txt|css|svg)$/.test(file) || (relative.startsWith("assets/") && file.endsWith(".js"));
+  });
   const internalPhase = /\b(?:P[0-9]+|Phase\s+[0-9]+)\b/i;
   const privateRepoReference = /(?:\/home\/[^/\s]+\/projects\/[^\s)]+|projects\/[^\s)]+)/i;
   const privateIpv4 = /\b(?:10(?:\.\d{1,3}){3}|172\.(?:1[6-9]|2\d|3[01])(?:\.\d{1,3}){2}|192\.168(?:\.\d{1,3}){2})\b/;
@@ -329,6 +364,8 @@ function lockedReleaseMetadata(release) {
     sourceState: "locked",
     dirtyInputs: [],
     contentLock: release.contentLock,
+    snapshotScope: release.snapshotScope,
+    activeAlphaOnlyRoutes: release.activeAlphaOnlyRoutes,
     unversionedRoutes: release.unversionedRoutes,
     npmInstall: release.npmInstall,
     artifacts: release.artifacts,
