@@ -10,9 +10,9 @@
     "test": "npm --workspace @kaspa-x402/server run build && vitest run"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.1.0-alpha.2",
-    "@kaspa-x402/covenant": "0.1.0-alpha.2",
-    "@kaspa-x402/server": "0.1.0-alpha.2",
+    "@kaspa-x402/core": "0.1.0-alpha.3",
+    "@kaspa-x402/covenant": "0.1.0-alpha.3",
+    "@kaspa-x402/server": "0.1.0-alpha.3",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0"
   }

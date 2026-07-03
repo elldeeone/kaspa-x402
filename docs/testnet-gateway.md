@@ -15,17 +15,14 @@ The gateway is deployed at:
 https://demo.kaspa-x402.org
 ```
 
-The Worker is deployed as a separate Cloudflare Workers project, not as part of
-the apex static site.
-
 ## Endpoints
 
 | Method | Path | Purpose |
 | ------ | ---- | ------- |
-| `GET` | `/` | Returns a compact JSON index for the hosted gateway. |
-| `GET` | `/health` | Returns gateway configuration health and current `kaspa:testnet-10` chain evidence. |
-| `GET` | `/canary` | Returns gateway enabled state and the latest stored non-spending scheduled canary result when one has run. |
-| `GET` | `/supported` | Returns the direct-mode supported-kind list for the hosted gateway. |
+| `GET` | `/` | Returns a JSON endpoint index. |
+| `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
+| `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
+| `GET` | `/supported` | Returns the direct-mode supported-kind list. |
 | `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
@@ -70,15 +67,6 @@ The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
 - `/addresses/{address}/utxos` for accepted pay-to UTXO evidence;
 - derived escrow-address UTXOs for batch channel funding.
 
-The static browser client still uses the PNN/WASM path for wallet-side
-connectivity checks. The Worker gateway uses REST because that path is
-compatible with Cloudflare Workers and gives enough accepted-UTXO evidence for
-the hosted alpha target.
-
-Worker-side Kaspa address/script conversion and voucher signature verification
-are implemented inside the private gateway package so the deployed Worker does
-not bundle the browser SDK WASM.
-
 Failure modes are fail-closed:
 
 - if REST chain health fails, paid endpoints do not settle payments;
@@ -89,18 +77,15 @@ Failure modes are fail-closed:
 
 ## Durable State
 
-Gateway state is held in a SQLite-backed Cloudflare Durable Object. The single
-ledger object is intentional for this low-volume public test endpoint because
-the trust-domain replay scope is global for the hosted service.
-
-The ledger records:
+Gateway state is held in a SQLite-backed Cloudflare Durable Object. The ledger
+records:
 
 - exact transaction replay reservations;
 - payment-identifier response cache entries;
 - batch channel state and settlement commitments;
 - one open claim attempt per channel, though public claim execution is disabled;
 - lease-style request locks used by the direct-mode server;
-- per-window rate counters and coarse operational metrics.
+- per-window rate counters and coarse operational metrics;
 - the latest scheduled canary report.
 
 This state layout is a demo deployment pattern, not a production sharding
@@ -129,17 +114,14 @@ settled.
 
 ## Testnet Funding
 
-The gateway never asks for mainnet funds. Testers need their own
-`kaspa:testnet-10` wallet or SDK flow and can use the public testnet faucet:
+Testers need their own `kaspa:testnet-10` wallet or SDK flow and can use the
+public testnet faucet:
 
 ```text
 https://faucet-tn10.kaspanet.io/
 ```
 
 ## Exact Payment Evidence
-
-The hosted exact flow has been exercised against the deployed Worker gateway on
-`kaspa:testnet-10`.
 
 Run evidence from 2026-07-03:
 
@@ -154,9 +136,6 @@ Run evidence from 2026-07-03:
 - same transaction against a different resource: HTTP `409`.
 
 ## Batch Payment Evidence
-
-The hosted batch flow has been exercised against the deployed Worker gateway on
-`kaspa:testnet-10`.
 
 Run evidence from 2026-07-03:
 

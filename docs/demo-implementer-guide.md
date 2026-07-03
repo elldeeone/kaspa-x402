@@ -3,10 +3,6 @@
 Status: alpha, testnet-only guide for implementers testing against the hosted
 gateway.
 
-Use this guide if you want to build a client, server, or interoperability
-tester that speaks the current Kaspa x402 surface without relying on local
-mock examples.
-
 ## Start With The Artifacts
 
 Canonical site:
@@ -29,8 +25,8 @@ Install the alpha packages explicitly:
 npm install @kaspa-x402/core@alpha @kaspa-x402/client@alpha
 ```
 
-The public npm release includes core schema/header helpers and client helpers.
-The hosted gateway package is private and is not part of the npm surface.
+The public npm release includes core schema/header helpers and client
+helpers; the hosted gateway package is not published.
 
 ## Validate Schemas And Vectors
 
@@ -153,5 +149,3 @@ When reporting an interoperability issue, include:
 - channel id, active outpoint, and voucher amount for batch flows.
 
 Do not post private keys, wallet seeds, or reusable unpaid payment headers.
-The hosted gateway is an alpha testnet target and should not be described as a
-mainnet service.

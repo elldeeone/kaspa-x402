@@ -121,12 +121,12 @@ The canary checks:
 - unpaid batch offer shape and deposit floor;
 - unsupported foreign payment scheme rejection.
 
-The scheduled canary intentionally skips paid exact and replay checks because
-the Worker does not hold spending keys. Those checks must be run manually from
+The scheduled canary skips paid exact and replay checks because the Worker
+does not hold spending keys. Those checks must be run manually from
 an isolated funded testnet wallet so canary failures cannot spend unbounded
 funds.
 
-Read the gateway enabled state and latest stored canary result when one has run:
+Read the enabled state and latest canary report:
 
 ```sh
 curl -fsS https://demo.kaspa-x402.org/canary
@@ -158,10 +158,9 @@ Record transaction ids, output indexes, Worker version, response status, and
 
 ## Durable State Policy
 
-The hosted gateway uses one SQLite-backed Durable Object for this low-volume
-testnet trust domain. It stores exact replay records, payment identifiers,
-batch channels, settlement commitments, locks, rate counters, metrics, and the
-latest canary report.
+The hosted gateway uses one SQLite-backed Durable Object. It stores exact
+replay records, payment identifiers, batch channels, settlement commitments,
+locks, rate counters, metrics, and the latest canary report.
 
 Policy for the public alpha:
 
@@ -205,5 +204,4 @@ Paid evidence affected:
 Follow-up:
 ```
 
-Keep incident notes factual and testnet-scoped. Do not describe the hosted demo
-as a mainnet service.
+Keep incident notes factual and testnet-scoped.

@@ -153,7 +153,7 @@ function writeHomePage() {
       <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
       <li><strong>Trying the hosted testnet gateway:</strong> <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> — see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>; the <a href="/docs/demo-operations/">operations runbook</a> covers how it is run.</li>
       <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
-      <li><strong>Evaluating the initiative:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
+      <li><strong>Evaluating the proposal:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
 
     <h2 id="packages">Packages</h2>
@@ -221,7 +221,7 @@ function writeDocsPage() {
       `
   <main>
     <h1>Docs</h1>
-    <p>Selected public documents, grouped by what they are for. Internal planning documents are not published.</p>
+    <p>Selected public documents, grouped by what they are for.</p>
     ${statusLine()}
     ${sections}
   </main>
@@ -293,7 +293,7 @@ function writeReleasesPage() {
       `
   <main>
     <h1>Releases</h1>
-    <p>Immutable snapshots of the published surface, one per release. Unversioned routes on this site always track the active alpha; snapshot content is locked by hash and is not mutated after release. New releases add new snapshots.</p>
+    <p>Immutable snapshots of the published surface, one per release. Unversioned routes track the active alpha; snapshot content is hash-locked.</p>
     <p>Install alpha packages with an explicit prerelease tag or exact version; <code>latest</code> dist-tags are not the recommended alpha install path.</p>
     <div class="table-wrap"><table>
       <thead><tr><th>Version</th><th>Snapshot</th><th>Metadata</th><th>Lock</th></tr></thead>

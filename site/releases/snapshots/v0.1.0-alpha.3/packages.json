@@ -1,0 +1,45 @@
+{
+  "releaseVersion": "0.1.0-alpha.3",
+  "packages": [
+    {
+      "name": "@kaspa-x402/cli",
+      "version": "0.0.0",
+      "private": true,
+      "path": "packages/cli"
+    },
+    {
+      "name": "@kaspa-x402/client",
+      "version": "0.1.0-alpha.3",
+      "private": false,
+      "publishTag": "alpha",
+      "path": "packages/client"
+    },
+    {
+      "name": "@kaspa-x402/core",
+      "version": "0.1.0-alpha.3",
+      "private": false,
+      "publishTag": "alpha",
+      "path": "packages/core"
+    },
+    {
+      "name": "@kaspa-x402/covenant",
+      "version": "0.1.0-alpha.3",
+      "private": false,
+      "publishTag": "alpha",
+      "path": "packages/covenant"
+    },
+    {
+      "name": "@kaspa-x402/facilitator",
+      "version": "0.0.0",
+      "private": true,
+      "path": "packages/facilitator"
+    },
+    {
+      "name": "@kaspa-x402/server",
+      "version": "0.1.0-alpha.3",
+      "private": false,
+      "publishTag": "alpha",
+      "path": "packages/server"
+    }
+  ]
+}
