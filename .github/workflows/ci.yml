@@ -1,0 +1,36 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - name: Install dependencies
+        run: npm ci
+      - name: Workspace tests
+        run: npm test
+      - name: Schema and vector validation
+        run: npm run validate:schemas
+      - name: Site build
+        run: npm run site:build
+      - name: Site checks
+        run: npm run site:check
+      - name: Gateway Worker dry-run build
+        run: npm --workspace @kaspa-x402/demo-gateway run build
+      - name: Public package pack dry-run
+        run: npm run pack:public:dry-run
+      - name: Whitespace and diff checks
+        run: npm run check:diff

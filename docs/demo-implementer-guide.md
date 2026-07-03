@@ -82,7 +82,7 @@ native Kaspa testnet transaction that pays exactly the advertised amount to the
 advertised `payTo` address. The retry must send:
 
 ```text
-PAYMENT-SIGNATURE: <base64url x402 PaymentPayload>
+PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>
 ```
 
 Successful retry result:

@@ -40,7 +40,8 @@ Known limits:
 - no hosted facilitator in the public alpha;
 - no claim broadcasting in the hosted gateway;
 - paid canaries remain manual from isolated testnet wallets;
-- SilverScript and mainnet readiness remain documented gates.
+- covenant source reproducibility (the SilverScript escrow contract source
+  behind `batch-settlement`) and mainnet readiness remain documented gates.
 
 Suggested call to action: review the schemas, run the vectors, try the hosted
 testnet gateway, and report interoperability issues with decoded headers and

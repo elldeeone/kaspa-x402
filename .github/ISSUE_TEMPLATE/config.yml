@@ -1,0 +1,8 @@
+blank_issues_enabled: true
+contact_links:
+  - name: Standards site
+    url: https://kaspa-x402.org
+    about: Schemas, specs, vectors, docs, and release snapshots.
+  - name: Hosted testnet gateway reference
+    url: https://kaspa-x402.org/docs/testnet-gateway/
+    about: Endpoint contract and evidence rules for demo.kaspa-x402.org.
