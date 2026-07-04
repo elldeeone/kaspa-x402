@@ -137,26 +137,15 @@ Run evidence from 2026-07-03:
 
 ## Batch Payment Evidence
 
-Run evidence from 2026-07-03:
+Current alpha.4 batch evidence is pending. The previous 2026-07-03 batch run
+used personal-message voucher signatures, which the covenant claim path cannot
+accept. That run is no longer valid evidence for claimable batch vouchers.
 
-- Worker version: `1c43423f-d4fe-4df7-8797-c2466d308622`;
-- deposit amount: `20000000` sompi;
-- per-request voucher charge: `500` sompi;
-- deposit transaction id:
-  `0d5f9a9ba94d9be227f115e059b600167be34eda0fbc63f372b9a1351f18991d`;
-- deposit output index: `0`;
-- channel id:
-  `25d6a5257f056f94ce6e76ed5c4314418aa5337108ae8b1cf57f30465e4c41ac`;
-- deposit-voucher paid retry: HTTP `200` with
-  `PAYMENT-RESPONSE.success: true`, commitment
-  `95b482fd26e09cf1f91acf9291b517f025cb3c46e61b6ce61184b3e0d6a67de0`,
-  charged amount `500`, and channel state showing signed max claimable `500`;
-- identical deposit-voucher retry before a later voucher: HTTP `200` from the
-  durable commitment record with the same commitment id;
-- voucher-only paid retry on the same channel: HTTP `200` with
-  `PAYMENT-RESPONSE.success: true`, commitment
-  `5239494fc08ab80dfa8e8396626caedcb2c32d5dfe89a609fc7e5164ed54c86c`,
-  charged amount `500`, and channel state showing signed max claimable `1000`;
-- stale replay of the earlier deposit-voucher after the later voucher: HTTP
-  `402`, preserving corrective stale-voucher behavior;
-- `/health` metrics after the run showed `paid_batch: 5`.
+Before recording replacement evidence:
+
+- deploy the alpha.4 gateway with raw-digest voucher verification;
+- reset hosted Durable Object state under the alpha state policy;
+- open a fresh funded batch channel with a raw-digest `deposit-voucher`;
+- reuse the channel with a raw-digest voucher-only payment;
+- replay the stale deposit voucher after the later voucher and confirm
+  corrective HTTP `402`.

@@ -1,0 +1,20 @@
+{
+  "kind": "negative",
+  "name": "deposit-success-with-amount",
+  "description": "Deposit-voucher success must include channel state with the funding, commitment, and charge metadata.",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "expectedError": "invalid_kaspa_settlement_response",
+  "value": {
+    "success": true,
+    "transaction": "7777777777777777777777777777777777777777777777777777777777777777",
+    "network": "kaspa:testnet-10",
+    "amount": "700000",
+    "extensions": {
+      "kaspa": {
+        "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "fundingAmount": "90000000",
+        "chargedAmount": "700000"
+      }
+    }
+  }
+}

@@ -172,6 +172,19 @@ Policy for the public alpha:
 - production operators should design their own backup and state-partitioning
   policy before using this code outside the hosted demo.
 
+Alpha.4 voucher-signature reset:
+
+- `0.1.0-alpha.4` changes hosted voucher verification to the covenant-enforced
+  raw-digest Schnorr signature scheme. Channels opened before that deployment
+  used the rejected personal-message scheme and must be treated as invalid.
+- Before deploying the alpha.4 gateway, disable the gateway with
+  `KASPA_X402_GATEWAY_ENABLED=false`.
+- Reset the hosted Durable Object state under the alpha state policy.
+- Record an incident note that existing batch channel evidence was invalidated
+  by the voucher-signature scheme fix.
+- Deploy the alpha.4 gateway, re-enable it, and rerun manual paid exact and
+  batch checks before advertising the endpoint.
+
 ## Rotate Addresses And Keys
 
 Use this when a testnet address is too noisy, a test key is suspected exposed,

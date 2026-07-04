@@ -602,6 +602,9 @@ function writeOutput(writer: ByteWriter, output: TxV1ReferenceOutput, version: n
 }
 
 function writeScriptPublicKey(writer: ByteWriter, scriptPublicKey: ScriptPublicKey): void {
+  // Consensus hash preimages encode the version little-endian (rusty-kaspa
+  // hashing/tx.rs and hashing/sighash.rs), unlike the big-endian serialized
+  // interchange form that matches SpkEncoding::to_bytes.
   writer.u16(scriptPublicKey.version).varBytes(scriptPublicKey.script);
 }
 
@@ -741,7 +744,7 @@ function parseSerializedScriptPublicKey(serialized: string, label: string): Scri
     throw new Error(`${label} must contain a uint16 version and script bytes`);
   }
   return {
-    version: bytes[0] | ((bytes[1] ?? 0) << 8),
+    version: (bytes[0] << 8) | bytes[1],
     script: bytesToHex(bytes.subarray(2)),
   };
 }
@@ -751,7 +754,7 @@ function normalizeSerializedScriptPublicKey(serialized: string, label: string): 
   if (parsed.version < 0 || parsed.version > U16_MAX) {
     throw new Error(`${label} version must fit in uint16`);
   }
-  return bytesToHex(concatBytes([u16Le(parsed.version), hexToBytes(parsed.script, undefined, `${label}.script`)]));
+  return bytesToHex(concatBytes([u16Be(parsed.version), hexToBytes(parsed.script, undefined, `${label}.script`)]));
 }
 
 function normalizeHash32(hex: string, label: string): string {
@@ -851,6 +854,10 @@ function pushDataHex(hex: string): string {
 
 function u16Le(value: number): Uint8Array {
   return Uint8Array.of(value & 0xff, (value >>> 8) & 0xff);
+}
+
+function u16Be(value: number): Uint8Array {
+  return Uint8Array.of((value >>> 8) & 0xff, value & 0xff);
 }
 
 function u32Le(value: number): Uint8Array {

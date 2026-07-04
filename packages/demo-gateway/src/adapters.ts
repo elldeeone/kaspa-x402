@@ -11,7 +11,7 @@ import type {
   VoucherVerifier,
 } from "@kaspa-x402/server";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
-import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaPersonalMessage } from "./kaspa-native.js";
+import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
 
 type FetchLike = typeof fetch;
 
@@ -113,8 +113,8 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
 
 export class NativeVoucherVerifier implements VoucherVerifier {
   verifyVoucher(request: VoucherVerificationRequest): boolean {
-    return verifyKaspaPersonalMessage({
-      message: request.digest,
+    return verifyKaspaSchnorrDigest({
+      digest: request.digest,
       signature: request.voucher.signature,
       publicKey: request.clientPublicKey,
     });

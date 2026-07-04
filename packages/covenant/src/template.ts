@@ -129,7 +129,7 @@ export function serializedScriptPublicKey(scriptPublicKey: ScriptPublicKey): str
     throw new Error("script public key version must fit in uint16");
   }
 
-  return bytesToHex(concatBytes([Uint8Array.of(version & 0xff, (version >>> 8) & 0xff), hexToBytes(scriptPublicKey.script, undefined, "script")]));
+  return bytesToHex(concatBytes([Uint8Array.of((version >>> 8) & 0xff, version & 0xff), hexToBytes(scriptPublicKey.script, undefined, "script")]));
 }
 
 export function escrowScriptPubKeyHash(paramsOrScriptPublicKey: EscrowTemplateParams | ScriptPublicKey): string {
@@ -277,9 +277,9 @@ function normalizeHex(hex: string, label: string): string {
 function serializedScriptPublicKeyBytes(hex: string, label: string): Uint8Array {
   const bytes = hexToBytes(hex, undefined, label);
   if (bytes.byteLength < 3) {
-    throw new Error(`${label} must be serialized as uint16_le version followed by script bytes`);
+    throw new Error(`${label} must be serialized as uint16_be version followed by script bytes`);
   }
-  const version = bytes[0] | ((bytes[1] ?? 0) << 8);
+  const version = (bytes[0] << 8) | bytes[1];
   if (version !== 0) {
     throw new Error(`${label} version must be 0 for kaspa-x402 v1`);
   }

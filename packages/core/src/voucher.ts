@@ -45,11 +45,11 @@ function serializedScriptPublicKeyBytes(value: string): Uint8Array {
   if (bytes.byteLength < 3) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
-      "activeScriptPublicKey must be serialized as uint16_le version followed by script bytes",
+      "activeScriptPublicKey must be serialized as uint16_be version followed by script bytes",
     );
   }
 
-  const version = bytes[0] | ((bytes[1] ?? 0) << 8);
+  const version = (bytes[0] << 8) | bytes[1];
   if (version !== 0) {
     throw new KaspaX402Error("invalid_kaspa_x402_binding", "activeScriptPublicKey version must be 0 for kaspa-x402 v1");
   }

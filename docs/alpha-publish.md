@@ -1,8 +1,9 @@
 # Alpha Publish Checklist
 
-Status: public alpha packages are published at `0.1.0-alpha.3`. Future
-publishes require npm authorization and must not happen accidentally from CI or
-an unauthenticated shell.
+Status: `0.1.0-alpha.4` publish checklist. Public alpha packages are currently
+published at `0.1.0-alpha.3` until the reviewed alpha.4 release is committed
+and published. Publishes require npm authorization and must not happen
+accidentally from CI or an unauthenticated shell.
 
 Registry note: the first published package versions are visible on npm with
 `alpha` and `latest` dist-tags. Attempts to remove `latest` returned npm `400`
@@ -21,8 +22,9 @@ Public alpha package set:
 
 `0.1.0-alpha.0` was the initial published alpha. `0.1.0-alpha.1` carried the
 next breaking alpha wire update. `0.1.0-alpha.2` carried the browser test client
-and schema tightening. `0.1.0-alpha.3` is the current published alpha for the
-MCP settlement-failure hybrid shape.
+and schema tightening. `0.1.0-alpha.3` carried the MCP settlement-failure hybrid
+shape. `0.1.0-alpha.4` carries the raw-digest voucher signature cutover and the
+script-public-key endianness erratum.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -66,9 +68,9 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
-## Current Registry And Tarball Recheck
+## Pre-Alpha.4 Registry And Tarball Recheck
 
-Checked on 2026-07-03:
+Checked before alpha.4:
 
 - `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
   `@kaspa-x402/server` are published at `0.1.0-alpha.3`;
@@ -77,7 +79,7 @@ Checked on 2026-07-03:
   during the previous alpha publish;
 - `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
   unpublished/private;
-- dry-run tarballs for the publishable `0.1.0-alpha.3` manifests contain only
+- dry-run tarballs for the publishable alpha manifests should contain only
   `LICENSE`, `README.md`, `package.json`, `dist/index.js`, and
   `dist/index.d.ts`;
 - ignored local planning, review, and live-run artifacts are not in the dry-run

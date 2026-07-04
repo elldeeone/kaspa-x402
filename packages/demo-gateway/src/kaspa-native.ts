@@ -1,6 +1,5 @@
 import { bytesToHex, hexToBytes, KaspaX402Error, type NetworkId } from "@kaspa-x402/core";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { blake2b } from "@noble/hashes/blake2.js";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
 
 const CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
@@ -21,8 +20,6 @@ const OP_EQUAL = 0x87;
 const OP_BLAKE2B = 0xaa;
 const OP_CHECK_SIG_ECDSA = 0xab;
 const OP_CHECK_SIG = 0xac;
-
-const PERSONAL_MESSAGE_KEY = new TextEncoder().encode("PersonalMessageSigningHash");
 
 export function scriptPublicKeyForAddress(address: string, network: NetworkId): string {
   const decoded = decodeAddress(address);
@@ -58,18 +55,15 @@ export function encodeScriptAddress(input: DeriveEscrowAddressInput): string {
   return encodeAddress(prefixForNetwork(input.network), ADDRESS_VERSION_SCRIPT_HASH, payload);
 }
 
-export function verifyKaspaPersonalMessage(input: { message: string; signature: string; publicKey: string }): boolean {
+export function verifyKaspaSchnorrDigest(input: { digest: string; signature: string; publicKey: string }): boolean {
   try {
     const signature = hexToBytes(input.signature, { expectedLength: 64, errorCode: "invalid_kaspa_signature", label: "voucher.signature" });
+    const digest = hexToBytes(input.digest, { expectedLength: 32, errorCode: "invalid_kaspa_x402_payload", label: "voucher.digest" });
     const publicKey = hexToBytes(input.publicKey, { expectedLength: 32, errorCode: "invalid_kaspa_public_key", label: "clientPublicKey" });
-    return schnorr.verify(signature, personalMessageHash(input.message), publicKey);
+    return schnorr.verify(signature, digest, publicKey);
   } catch {
     return false;
   }
-}
-
-export function personalMessageHash(message: string): Uint8Array {
-  return blake2b(new TextEncoder().encode(message), { dkLen: 32, key: PERSONAL_MESSAGE_KEY });
 }
 
 function decodeAddress(address: string): { prefix: string; version: number; payload: Uint8Array } {
@@ -114,13 +108,13 @@ function parseSerializedScriptPublicKey(serialized: string): { version: number; 
   const bytes = hexToBytes(serialized, { errorCode: "invalid_kaspa_x402_binding", label: "serializedScriptPublicKey" });
   if (bytes.byteLength < 2) throw new KaspaX402Error("invalid_kaspa_x402_binding", "serialized script public key is too short");
   return {
-    version: bytes[0] | (bytes[1] << 8),
+    version: (bytes[0] << 8) | bytes[1],
     script: bytes.slice(2),
   };
 }
 
 function serializeScriptPublicKey(script: Uint8Array): string {
-  return bytesToHex(Uint8Array.of(SCRIPT_PUBLIC_KEY_VERSION & 0xff, (SCRIPT_PUBLIC_KEY_VERSION >>> 8) & 0xff, ...script));
+  return bytesToHex(Uint8Array.of((SCRIPT_PUBLIC_KEY_VERSION >>> 8) & 0xff, SCRIPT_PUBLIC_KEY_VERSION & 0xff, ...script));
 }
 
 function prefixForNetwork(network: NetworkId): string {

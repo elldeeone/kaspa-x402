@@ -1,7 +1,8 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { blake2b } from "@noble/hashes/blake2.js";
 import { KaspaRestClient, NativeAddressCodec, NativeVoucherVerifier, RestKaspaChainProvider, ScriptAddressBook } from "../src/adapters.js";
-import { encodeScriptAddress, personalMessageHash, scriptPublicKeyForAddress } from "../src/kaspa-native.js";
+import { encodeScriptAddress, scriptPublicKeyForAddress } from "../src/kaspa-native.js";
 
 const originalFetch = globalThis.fetch;
 
@@ -159,7 +160,7 @@ describe("NativeAddressCodec", () => {
 });
 
 describe("NativeVoucherVerifier", () => {
-  it("verifies Kaspa personal-message Schnorr signatures", () => {
+  it("verifies raw digest Schnorr voucher signatures", () => {
     const secretKey = Uint8Array.from([
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -168,7 +169,7 @@ describe("NativeVoucherVerifier", () => {
     ]);
     const publicKey = Buffer.from(schnorr.getPublicKey(secretKey)).toString("hex");
     const digest = "21".repeat(32);
-    const signature = Buffer.from(schnorr.sign(personalMessageHash(digest), secretKey, new Uint8Array(32))).toString("hex");
+    const signature = Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), secretKey, new Uint8Array(32))).toString("hex");
 
     expect(
       new NativeVoucherVerifier().verifyVoucher({
@@ -184,6 +185,32 @@ describe("NativeVoucherVerifier", () => {
         channelId: "11".repeat(32),
         clientPublicKey: publicKey,
         digest: "22".repeat(32),
+        preimage: "22".repeat(32),
+        voucher: { amount: "100", signature },
+      }),
+    ).toBe(false);
+  });
+
+  it("rejects the old personal-message voucher signature scheme", () => {
+    const secretKey = Uint8Array.from([
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
+      0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x04,
+    ]);
+    const publicKey = Buffer.from(schnorr.getPublicKey(secretKey)).toString("hex");
+    const digest = "21".repeat(32);
+    const oldSchemeHash = blake2b(new TextEncoder().encode(digest), {
+      dkLen: 32,
+      key: new TextEncoder().encode("PersonalMessageSigningHash"),
+    });
+    const signature = Buffer.from(schnorr.sign(oldSchemeHash, secretKey, new Uint8Array(32))).toString("hex");
+
+    expect(
+      new NativeVoucherVerifier().verifyVoucher({
+        channelId: "11".repeat(32),
+        clientPublicKey: publicKey,
+        digest,
         preimage: "22".repeat(32),
         voucher: { amount: "100", signature },
       }),

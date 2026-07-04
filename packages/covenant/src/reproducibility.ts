@@ -146,7 +146,7 @@ function parseSerializedScriptPublicKey(serialized: string): ScriptPublicKey {
     throw new Error("scriptPublicKey must contain a uint16 version and script bytes");
   }
   return {
-    version: bytes[0] | ((bytes[1] ?? 0) << 8),
+    version: (bytes[0] << 8) | bytes[1],
     script: bytesToHex(bytes.subarray(2)),
   };
 }
