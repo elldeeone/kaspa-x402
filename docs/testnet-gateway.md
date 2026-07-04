@@ -121,6 +121,31 @@ public testnet faucet:
 https://faucet-tn10.kaspanet.io/
 ```
 
+## Alpha.4 Incident Note
+
+Date: 2026-07-04.
+
+The alpha.4 gateway cutover fixes hosted voucher verification to match the
+covenant-enforced raw-digest Schnorr signature scheme. Batch channels opened
+before the cutover used the rejected personal-message voucher scheme and are
+invalidated as claimability evidence.
+
+Operator actions:
+
+- disabled the gateway before the reset with Worker version
+  `883d52dc-8850-4dfe-81a6-a3166d07cd39`;
+- reset the hosted Durable Object state under the public alpha state policy
+  with temporary reset Worker version
+  `da843e69-6837-4311-8430-35710c9b7f79`;
+- redeployed the reviewed alpha.4 Worker and re-enabled the gateway at Worker
+  version `fadaa70b-38c7-4b69-9001-ad3c5397bf7f`;
+- confirmed `/health`, `/canary`, and unpaid exact and batch `402` offers after
+  re-enable.
+
+Paid evidence affected: the previous 2026-07-03 batch evidence is superseded
+and must not be used as voucher-claimability evidence. The exact-payment
+evidence remains unaffected by the voucher-signature issue.
+
 ## Exact Payment Evidence
 
 Run evidence from 2026-07-03:
@@ -137,15 +162,55 @@ Run evidence from 2026-07-03:
 
 ## Batch Payment Evidence
 
-Current alpha.4 batch evidence is pending. The previous 2026-07-03 batch run
-used personal-message voucher signatures, which the covenant claim path cannot
-accept. That run is no longer valid evidence for claimable batch vouchers.
+Run evidence from 2026-07-04, after the alpha.4 Durable Object reset:
 
-Before recording replacement evidence:
+- Worker version: `fadaa70b-38c7-4b69-9001-ad3c5397bf7f`;
+- client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
+  node with UTXO index;
+- virtual DAA score at run start: `508252237`;
+- channel id:
+  `7e1414f563e5fadbe9682777df4cd687d9fa2d1e3b6c67c29e2ff4440ec99b35`;
+- funding transaction id:
+  `e7183f919674607ed76eed0f821daa3c20bd0a0ddb58c2bf49cc697e547de23a`;
+- funding outpoint index: `0`;
+- funding amount: `20000000` sompi.
 
-- deploy the alpha.4 gateway with raw-digest voucher verification;
-- reset hosted Durable Object state under the alpha state policy;
-- open a fresh funded batch channel with a raw-digest `deposit-voucher`;
-- reuse the channel with a raw-digest voucher-only payment;
-- replay the stale deposit voucher after the later voucher and confirm
-  corrective HTTP `402`.
+Deposit-voucher request:
+
+- request result: HTTP `200`;
+- opened channel: `true`;
+- voucher amount: `500` sompi;
+- charged amount: `500` sompi;
+- charged cumulative amount: `500` sompi;
+- signed max claimable: `500` sompi;
+- settlement commitment:
+  `a6314079499ad339743d12d2ca92a4d562501a7d56ec19f9ef2b94decafb19e8`.
+
+Voucher-only reuse:
+
+- request result: HTTP `200`;
+- opened channel: `false`;
+- voucher amount: `1000` sompi;
+- charged amount: `500` sompi;
+- charged cumulative amount: `1000` sompi;
+- signed max claimable: `1000` sompi;
+- settlement commitment:
+  `21b0f6f221f322825a4a057ab2c5c5bf8b1d477339729be5afbf82557128d121`.
+
+Stale deposit-voucher replay after the later voucher:
+
+- request result: corrective HTTP `402`;
+- error: `invalid_payment_requirements`;
+- corrective channel id:
+  `7e1414f563e5fadbe9682777df4cd687d9fa2d1e3b6c67c29e2ff4440ec99b35`;
+- corrective charged cumulative amount: `1000` sompi;
+- corrective signed max claimable: `1000` sompi.
+
+Same-cutover exact survival check:
+
+- request result: HTTP `200`;
+- exact transaction id:
+  `5b77536d07cdd35345ead4856e173de4c8678cc60e9abc6d9ab627056a724752`;
+- payment output index: `0`;
+- charged amount: `20000000` sompi;
+- finality: `accepted`.
