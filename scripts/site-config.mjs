@@ -49,6 +49,7 @@ export const VENDORED_KASPA_WASM = {
 export const SITE_ASSET_FILES = [
   "site/src/assets/demo.css",
   "site/src/assets/demo.js",
+  "site/src/assets/og.png",
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/LICENSE",
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.d.ts",
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",

@@ -1,0 +1,49 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<style>
+  :root {
+    --ink: #111111;
+    --line: #cccccc;
+    --panel: #f4f4f4;
+  }
+  * { box-sizing: border-box; margin: 0; padding: 0; }
+  html, body { width: 1200px; height: 630px; }
+  body {
+    display: flex;
+    flex-direction: column;
+    justify-content: center;
+    gap: 44px;
+    padding: 0 84px;
+    background: #ffffff;
+    color: var(--ink);
+    font-family: "Ubuntu Sans", "DejaVu Sans", sans-serif;
+  }
+  h1 {
+    font-size: 104px;
+    font-weight: 700;
+    line-height: 1.1;
+    letter-spacing: -1px;
+  }
+  p {
+    font-size: 40px;
+    line-height: 1.45;
+    max-width: 1000px;
+  }
+  pre {
+    align-self: flex-start;
+    padding: 24px 34px;
+    border: 2px solid var(--line);
+    background: var(--panel);
+    font-family: "Ubuntu Sans Mono", "DejaVu Sans Mono", monospace;
+    font-size: 36px;
+  }
+</style>
+</head>
+<body>
+  <h1>Kaspa x402</h1>
+  <p>A proposed native Kaspa binding for x402, the HTTP&nbsp;402 payment protocol. Native KAS per request, verified and settled against the Kaspa network.</p>
+  <pre>HTTP/1.1 402 Payment Required</pre>
+</body>
+</html>

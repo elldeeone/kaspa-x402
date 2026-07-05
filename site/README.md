@@ -24,6 +24,14 @@ node endpoint, open
 preview. The endpoint field must match that query value so the preview CSP can
 stay scoped to one WebSocket origin.
 
+Regenerate the social preview image (`site/src/assets/og.png`, referenced by
+the `og:image` meta tag) after editing its source `site/og-image.html`:
+
+```sh
+google-chrome --headless --disable-gpu --window-size=1200,630 \
+  --screenshot=site/src/assets/og.png site/og-image.html
+```
+
 Check browser SDK connectivity from Node:
 
 ```sh

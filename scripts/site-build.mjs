@@ -742,6 +742,11 @@ function layout(title, body, options = {}) {
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(fullTitle)}</title>
   <meta name="description" content="Proposed native Kaspa bindings for x402 payments: schemas, specs, conformance vectors, docs, and release snapshots.">
+  <meta property="og:type" content="website">
+  <meta property="og:title" content="${escapeHtml(fullTitle)}">
+  <meta property="og:description" content="Proposed native Kaspa bindings for x402 payments: schemas, specs, conformance vectors, docs, and release snapshots.">
+  <meta property="og:image" content="${SITE_BASE_URL}/assets/og.png">
+  <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="/assets/styles.css">
 ${options.head ?? ""}
 </head>
@@ -966,6 +971,10 @@ ${releaseHeaderBlocks()}
 
 /assets/*.css
   Content-Type: text/css; charset=utf-8
+  Cache-Control: public, max-age=300, must-revalidate
+
+/assets/*.png
+  Content-Type: image/png
   Cache-Control: public, max-age=300, must-revalidate
 
 /vendor/kaspa-wasm/*
