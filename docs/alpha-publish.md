@@ -1,7 +1,7 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.4` publish checklist. Public alpha packages are currently
-published at `0.1.0-alpha.3` until the reviewed alpha.4 release is committed
+Status: `0.1.0-alpha.5` publish checklist. Public alpha packages are currently
+published at `0.1.0-alpha.4` until the reviewed alpha.5 release is committed
 and published. Publishes require npm authorization and must not happen
 accidentally from CI or an unauthenticated shell.
 
@@ -24,7 +24,10 @@ Public alpha package set:
 next breaking alpha wire update. `0.1.0-alpha.2` carried the browser test client
 and schema tightening. `0.1.0-alpha.3` carried the MCP settlement-failure hybrid
 shape. `0.1.0-alpha.4` carries the raw-digest voucher signature cutover and the
-script-public-key endianness erratum.
+script-public-key endianness erratum. `0.1.0-alpha.5` carries the exact-payment
+evidence cutover: `exact-transfer` payloads require `transactionId` plus
+`paymentOutputIndex`; serialized `transaction` evidence is not part of the
+alpha.5 exact wire shape.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -42,7 +45,12 @@ npm install
 npm run build
 npm test
 npm run validate:schemas
+npm run site:build
+npm run site:check
+npm run check:browser-demo
+npm run check:demo-gateway
 npm run proof:offline
+npm run check:covenant-fixtures
 npm --workspace @kaspa-x402/core pack --dry-run --json
 npm --workspace @kaspa-x402/covenant pack --dry-run --json
 npm --workspace @kaspa-x402/client pack --dry-run --json
@@ -68,14 +76,14 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
-## Pre-Alpha.4 Registry And Tarball Recheck
+## Pre-Alpha.5 Registry And Tarball Recheck
 
-Checked before alpha.4:
+Checked before alpha.5 on 2026-07-06:
 
 - `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
-  `@kaspa-x402/server` are published at `0.1.0-alpha.3`;
+  `@kaspa-x402/server` are published at `0.1.0-alpha.4`;
 - those packages have both `alpha` and `latest` dist-tags pointing to
-  `0.1.0-alpha.3`, after npm returned `400` responses when removing `latest`
+  `0.1.0-alpha.4`, after npm returned `400` responses when removing `latest`
   during the previous alpha publish;
 - `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
   unpublished/private;
@@ -92,6 +100,40 @@ Checked before alpha.4:
 - `npm audit --omit=dev --audit-level=low` reported zero production
   vulnerabilities. A full dev-tree audit currently reports transitive
   development-tooling advisories through `wrangler`/`miniflare`.
+
+## Hosted Evidence Gate
+
+Before advertising alpha.5 hosted evidence:
+
+1. Deploy the reviewed static site so `/demo/`, schemas, vectors, and the
+   alpha.5 release snapshot all expose the `transactionId` plus
+   `paymentOutputIndex` exact shape.
+2. Deploy the reviewed `demo.kaspa-x402.org` Worker.
+3. Smoke the public gateway with both exact payload shapes: legacy
+   `payload.transaction` must be rejected, and `payload.transactionId` plus
+   `payload.paymentOutputIndex` must reach the exact verifier path.
+4. Confirm the funded TN10 live proof report remains current for the release
+   candidate:
+
+```sh
+npm run proof:live:check -- --live --write-report
+```
+
+The alpha.5 full live harness passed on 2026-07-06 and is summarized in
+`docs/live-testnet-report.md`. The reference adapter for rerunning that proof is
+`scripts/live-adapter-reference.mjs`; supply RPC, wallet, and Kaspa WASM SDK
+paths through environment or `live-proof.env.example`. Hosted alpha.5 evidence
+is still pending until the static site and Worker are redeployed and smoked.
+
+The full release-live gate is:
+
+```sh
+npm run validate:release:live
+```
+
+If hosted redeploy, live configuration, or testnet funds are unavailable, do not
+present the alpha.5 hosted gateway as freshly proven. Keep the hosted evidence
+status pending instead.
 
 ## Publish Boundary
 
@@ -137,4 +179,6 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
+- alpha.5 exact payloads use `transactionId` plus `paymentOutputIndex`, not
+  serialized `transaction` evidence;
 - live proof evidence is testnet-only.

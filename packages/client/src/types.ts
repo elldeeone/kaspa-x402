@@ -66,11 +66,10 @@ export interface ExactPaymentRequest {
 }
 
 export interface ExactPaymentResult {
-  transaction: ByteHex;
-  transactionId?: Hash32Hex;
+  transactionId: Hash32Hex;
   paymentOutputIndex: number;
   payerAddress?: string;
-  finality?: "broadcast" | "mempool" | "accepted" | "confirmed";
+  finality: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
 }
 

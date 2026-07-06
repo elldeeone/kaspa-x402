@@ -33,7 +33,6 @@ const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
-const EXACT_TX = "aa".repeat(96);
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
@@ -723,7 +722,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
     exactTransactionVerifier: {
       verifyExactPayment(request) {
         return {
-          transactionId: request.transactionId ?? EXACT_TX_ID,
+          transactionId: request.transactionId,
           paymentOutput: {
             amount: request.amount,
             scriptPublicKey: request.payToScriptPublicKey,
@@ -753,7 +752,6 @@ function makeExactPayment(server: DirectModeServer): PaymentPayload {
     payload: {
       type: "exact-transfer",
       payerAddress: "kaspatest:refund",
-      transaction: EXACT_TX,
       transactionId: EXACT_TX_ID,
       paymentOutputIndex: 1,
       requestHash: REQUEST_HASH,

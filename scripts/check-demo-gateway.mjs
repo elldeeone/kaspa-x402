@@ -37,6 +37,8 @@ async function smokeGateway(baseUrl) {
   const exactRequired = decodePaymentRequiredHeader(exact.headers.get("PAYMENT-REQUIRED"));
   const batch = await fetch(`${baseUrl}/batch`);
   const batchRequired = decodePaymentRequiredHeader(batch.headers.get("PAYMENT-REQUIRED"));
+  const legacyExact = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": paymentHeader(legacyExactPayload(exactRequired.accepts[0])) } });
+  const newExact = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": paymentHeader(transactionIdExactPayload(exactRequired.accepts[0])) } });
   const unsupportedHeader = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
   const unsupported = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": unsupportedHeader } });
   const head = await fetch(`${baseUrl}/exact`, { method: "HEAD" });
@@ -51,6 +53,8 @@ async function smokeGateway(baseUrl) {
   assert(exactRequired.accepts[0]?.amount === "20000000", "exact offer amount changed");
   assert(batchRequired.accepts[0]?.scheme === "batch-settlement", "batch offer did not advertise batch-settlement");
   assert(batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v1", "batch offer binding changed");
+  assert(legacyExact.status === 402, `legacy exact transaction payload was not rejected: ${legacyExact.status}`);
+  assert(newExact.status === 402 && newExact.body.error === "invalid_transaction_state", "transactionId exact evidence did not reach verifier path");
   assert(unsupported.status === 402 && unsupported.body.error === "unsupported_scheme", "unsupported scheme was not rejected");
   assert(head.status === 402, `expected HEAD 402, got ${head.status}`);
   assert(supported.body.enabled === true, "supported endpoint did not report enabled gateway");
@@ -66,12 +70,42 @@ async function smokeGateway(baseUrl) {
     exact: {
       scheme: exactRequired.accepts[0].scheme,
       amount: exactRequired.accepts[0].amount,
+      legacyTransactionRejected: legacyExact.status,
+      transactionIdEvidenceRejectedAfterVerifier: newExact.body.error,
     },
     batch: {
       scheme: batchRequired.accepts[0].scheme,
       amount: batchRequired.accepts[0].amount,
     },
     unsupported: unsupported.body.error,
+  };
+}
+
+function paymentHeader(payload) {
+  return btoa(JSON.stringify(payload));
+}
+
+function legacyExactPayload(accepted) {
+  return {
+    x402Version: 2,
+    accepted,
+    payload: {
+      type: "exact-transfer",
+      transaction: "77".repeat(32),
+      paymentOutputIndex: 0,
+    },
+  };
+}
+
+function transactionIdExactPayload(accepted) {
+  return {
+    x402Version: 2,
+    accepted,
+    payload: {
+      type: "exact-transfer",
+      transactionId: "77".repeat(32),
+      paymentOutputIndex: 0,
+    },
   };
 }
 

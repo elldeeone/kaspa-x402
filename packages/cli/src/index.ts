@@ -159,7 +159,7 @@ function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
     network: paymentPayload.accepted.network,
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
-    transactionId: paymentPayload.payload.transactionId ?? null,
+    transactionId: paymentPayload.payload.transactionId,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
   };
 }
@@ -175,7 +175,7 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
     payerAddress: paymentPayload.payload.payerAddress ?? null,
-    transactionId: paymentPayload.payload.transactionId ?? null,
+    transactionId: paymentPayload.payload.transactionId,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
     requestHash: paymentPayload.payload.requestHash ?? null,
   };

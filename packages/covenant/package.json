@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/covenant",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "description": "Alpha escrow covenant helpers for Kaspa x402.",
   "license": "MIT",
   "type": "module",

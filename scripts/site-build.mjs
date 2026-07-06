@@ -426,21 +426,21 @@ function writeDemoPage() {
     <section class="demo-panel" aria-labelledby="demo-mock">
       <h2 id="demo-mock">Exact Mock Flow</h2>
       <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. A real gateway must still verify and settle the transaction.</p>
-      <label for="demo-transaction">Serialized transaction hex</label>
-      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="optional for mock transcript; required for real broadcast"></textarea>
+      <label for="demo-transaction">Transaction JSON for optional broadcast</label>
+      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; not included in the x402 payload"></textarea>
       <div class="demo-grid">
         <label>Payment output index
           <input id="demo-output-index" type="number" min="0" max="4294967295" value="0">
         </label>
         <label>Observed transaction id
-          <input id="demo-transaction-id" type="text" spellcheck="false" placeholder="optional 64 hex characters">
+          <input id="demo-transaction-id" type="text" spellcheck="false" placeholder="required 64 hex characters">
         </label>
       </div>
       <div class="demo-actions">
         <button type="button" id="demo-build-payment">Build Payment Retry</button>
         <button type="button" id="demo-copy-signature">Copy PAYMENT-SIGNATURE</button>
         <button type="button" id="demo-check-tx">Check Tx Status</button>
-        <button type="button" id="demo-broadcast-tx">Broadcast Serialized Tx</button>
+        <button type="button" id="demo-broadcast-tx">Broadcast Transaction JSON</button>
       </div>
       <label for="demo-payment-signature">PAYMENT-SIGNATURE</label>
       <textarea id="demo-payment-signature" readonly rows="4"></textarea>

@@ -144,7 +144,8 @@ Minimum manual paid checks:
 
 1. Request `GET /exact` and confirm HTTP `402`.
 2. Pay the advertised exact amount to the advertised `payTo` address.
-3. Retry with `PAYMENT-SIGNATURE` and confirm HTTP `200`.
+3. Retry with `PAYMENT-SIGNATURE` carrying `payload.transactionId` and
+   `payload.paymentOutputIndex`, and confirm HTTP `200`.
 4. Retry the identical paid request and confirm idempotent HTTP `200`.
 5. Present the same exact transaction to a different resource and confirm
    conflict rejection.
@@ -155,6 +156,9 @@ Minimum manual paid checks:
 
 Record transaction ids, output indexes, Worker version, response status, and
 `PAYMENT-RESPONSE` summaries in the operator notes.
+
+For alpha.5 and later, also confirm that a legacy exact retry containing
+`payload.transaction` is rejected and does not return protected content.
 
 ## Durable State Policy
 
@@ -184,6 +188,18 @@ Alpha.4 voucher-signature reset:
   by the voucher-signature scheme fix.
 - Deploy the alpha.4 gateway, re-enable it, and rerun manual paid exact and
   batch checks before advertising the endpoint.
+
+Alpha.5 exact-evidence cutover:
+
+- `0.1.0-alpha.5` changes exact retry evidence to required
+  `transactionId` plus `paymentOutputIndex`.
+- Deploy the static site and Worker from the same reviewed source state.
+- Do not reset Durable Object state solely for this wire cutover; exact replay
+  records are already keyed by transaction id.
+- Before advertising alpha.5 hosted evidence, confirm the legacy
+  `payload.transaction` shape is rejected, confirm the new evidence shape
+  reaches the exact verifier, and run the funded TN10 live proof with
+  `npm run proof:live:check -- --live --write-report`.
 
 ## Rotate Addresses And Keys
 

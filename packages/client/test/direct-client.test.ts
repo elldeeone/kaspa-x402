@@ -34,6 +34,7 @@ import {
   type ChannelKey,
   type DirectModeChannel,
   type EscrowDepositRequest,
+  type ExactPaymentResult,
   type FeeEstimateRequest,
   type FetchLike,
   type FundingProvider,
@@ -53,7 +54,6 @@ const COMMITMENT = "44".repeat(32);
 const FUNDING_TX = "55".repeat(32);
 const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
-const EXACT_TX = "aa".repeat(96);
 
 describe("direct-mode client", () => {
   it("opens a deposit-voucher channel for the first paid request", async () => {
@@ -170,11 +170,38 @@ describe("direct-mode client", () => {
     ]);
     expect(payment.paymentPayload.payload).toMatchObject({
       type: "exact-transfer",
-      transaction: EXACT_TX,
       transactionId: EXACT_TX_ID,
       paymentOutputIndex: 1,
       requestHash: "99".repeat(32),
     });
+  });
+
+  it("rejects exact adapters that return broadcast-only finality", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactFinality = "broadcast" as never;
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow("observable finality");
+
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("rejects exact adapters below the advertised finality", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactFinality = "accepted";
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", finality: "confirmed" })), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow("required finality");
+
+    expect(provider.exactPayments).toHaveLength(1);
   });
 
   it("falls back to batch settlement on mixed offers when exact funding is unavailable", async () => {
@@ -259,6 +286,7 @@ describe("direct-mode client", () => {
 
   it("rejects exact settlement below the advertised finality", async () => {
     const provider = new FakeFundingProvider();
+    provider.exactFinality = "confirmed";
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", finality: "confirmed" })), {
       url: "https://api.example.test/file",
@@ -1184,6 +1212,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly utxos: FundingProviderUtxo[] = [];
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" = "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
+  exactFinality: ExactPaymentResult["finality"] = "accepted";
   daa = "1000";
 
   constructor(sourceKind: FundingSourceKind = "hot-wallet", networkId: NetworkId = "kaspa:testnet-10") {
@@ -1231,11 +1260,10 @@ class FakeFundingProvider implements FundingProvider {
       ...(request.requestHash ? { requestHash: request.requestHash } : {}),
     });
     return {
-      transaction: EXACT_TX,
       transactionId: EXACT_TX_ID,
       paymentOutputIndex: 1,
       payerAddress: "kaspatest:refund",
-      finality: "accepted" as const,
+      finality: this.exactFinality,
       fundingSource: this.sourceKind,
     };
   }

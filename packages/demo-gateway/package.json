@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/demo-gateway",
-  "version": "0.1.0-alpha.4",
+  "version": "0.1.0-alpha.5",
   "private": true,
   "description": "Private Cloudflare Worker for the Kaspa x402 testnet gateway.",
   "license": "MIT",
@@ -10,9 +10,9 @@
     "test": "npm --workspace @kaspa-x402/server run build && vitest run"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.1.0-alpha.4",
-    "@kaspa-x402/covenant": "0.1.0-alpha.4",
-    "@kaspa-x402/server": "0.1.0-alpha.4",
+    "@kaspa-x402/core": "0.1.0-alpha.5",
+    "@kaspa-x402/covenant": "0.1.0-alpha.5",
+    "@kaspa-x402/server": "0.1.0-alpha.5",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0"
   }

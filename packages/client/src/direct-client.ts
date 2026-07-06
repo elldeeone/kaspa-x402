@@ -414,12 +414,19 @@ export class DirectModeClient {
     if (!Number.isInteger(exact.paymentOutputIndex) || exact.paymentOutputIndex < 0) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment output index is invalid");
     }
+    if (!/^[0-9a-fA-F]{64}$/.test(exact.transactionId)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment transaction id is invalid");
+    }
+    const finality = readExactPaymentFinality(exact.finality);
+    const requiredFinality = readExactFinality(accepted.extra.finality);
+    if (requiredFinality && !exactFinalityMeets(finality, requiredFinality)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter returned payment below required finality");
+    }
     const identity = exact.payerAddress ? undefined : await this.#options.fundingProvider.getPublicIdentity();
     const paymentPayload = buildPaymentPayload(paymentRequired, accepted, context, {
       type: "exact-transfer",
       payerAddress: exact.payerAddress ?? identity?.address,
-      transaction: exact.transaction,
-      ...(exact.transactionId ? { transactionId: exact.transactionId } : {}),
+      transactionId: exact.transactionId,
       paymentOutputIndex: exact.paymentOutputIndex,
       ...(context.requestHash ? { requestHash: context.requestHash } : {}),
     });
@@ -614,7 +621,7 @@ function applyExactSettlement(payment: CreatePaymentResult, response: Settlement
   if (!/^[0-9a-fA-F]{64}$/.test(response.transaction)) {
     throw new KaspaX402Error("invalid_kaspa_transaction", "successful exact settlement must include a transaction id");
   }
-  if (payload.transactionId && response.transaction.toLowerCase() !== payload.transactionId.toLowerCase()) {
+  if (response.transaction.toLowerCase() !== payload.transactionId.toLowerCase()) {
     throw new KaspaX402Error("invalid_kaspa_transaction", "settlement transaction id does not match exact payment payload");
   }
   if (response.amount !== accepted.amount) {
@@ -655,6 +662,14 @@ function readExactFinality(value: unknown): "mempool" | "accepted" | "confirmed"
   if (value === undefined) return undefined;
   if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
   throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement finality is invalid");
+}
+
+function readExactPaymentFinality(value: unknown): "mempool" | "accepted" | "confirmed" {
+  if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
+  if (value === "broadcast") {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter must wait for observable finality");
+  }
+  throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter must return observable finality");
 }
 
 function paymentIdentifierExtensions(paymentRequired: CreatePaymentResult["paymentRequired"], context: PaymentRequestContext): PaymentPayload["extensions"] {

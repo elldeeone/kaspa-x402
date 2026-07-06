@@ -21,6 +21,7 @@ const config = {
 
 const requiredFlows = [
   "exact payment and replay rejection",
+  "exact alpha.5 transactionId evidence and legacy transaction rejection",
   "batch deposit-voucher settlement",
   "batch voucher-only settlement",
   "batch claim transaction construction and broadcast",
@@ -161,6 +162,15 @@ function validateLiveProofResult(result, flows) {
   require(isIndex(result.exact?.outputIndex), "exact.outputIndex", "must be a non-negative integer");
   require(isPositiveSompi(result.exact?.amount), "exact.amount", "must be a positive sompi string");
   require(isFinal(result.exact?.finality), "exact.finality", "must be accepted or confirmed");
+  require(result.exact?.payloadEvidence?.type === "transactionId-output-index", "exact.payloadEvidence.type", "must be transactionId-output-index");
+  if (isHash32(result.exact?.txid)) {
+    require(result.exact?.payloadEvidence?.transactionId?.toLowerCase() === result.exact.txid.toLowerCase(), "exact.payloadEvidence.transactionId", "must match exact txid");
+  }
+  if (isIndex(result.exact?.outputIndex)) {
+    require(result.exact?.payloadEvidence?.paymentOutputIndex === result.exact.outputIndex, "exact.payloadEvidence.paymentOutputIndex", "must match exact outputIndex");
+  }
+  require(result.exact?.legacyTransactionPayloadRejected?.rejected === true, "exact.legacyTransactionPayloadRejected.rejected", "must be true");
+  require(result.exact?.legacyTransactionPayloadRejected?.status === 402, "exact.legacyTransactionPayloadRejected.status", "must be 402");
   require(result.exact?.replay?.status === 409, "exact.replay.status", "must be 409");
   require(result.exact?.replay?.error === "invalid_transaction_state", "exact.replay.error", "must be invalid_transaction_state");
 

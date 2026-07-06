@@ -161,7 +161,7 @@ function mcpPaymentIdentity(paymentPayload: PaymentPayload): JsonRecord {
     case "exact-transfer":
       return {
         scheme: paymentPayload.accepted.scheme,
-        ...(payload.transactionId ? { transactionId: payload.transactionId } : { transactionHash: sha256Hex(payload.transaction) }),
+        transactionId: payload.transactionId,
         paymentOutputIndex: payload.paymentOutputIndex,
       };
     case "deposit-voucher":

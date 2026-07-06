@@ -7,6 +7,14 @@ The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
+Deployment status on 2026-07-06: the source tree is being prepared for
+`0.1.0-alpha.5`, whose exact payload evidence is `transactionId` plus
+`paymentOutputIndex`. The hosted evidence below is historical alpha.4-era
+gateway evidence until the static site and Worker are redeployed. The separate
+private TN10 full live harness was rerun for alpha.5 on 2026-07-06 and is
+recorded in `docs/live-testnet-report.md`; it does not by itself prove the
+hosted Worker deployment.
+
 ## Base URL
 
 The gateway is deployed at:
@@ -70,8 +78,9 @@ The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
 Failure modes are fail-closed:
 
 - if REST chain health fails, paid endpoints do not settle payments;
-- exact payments must include a transaction id and the selected output must be
-  present at the advertised pay-to address;
+- exact payments must include `payload.transactionId` and
+  `payload.paymentOutputIndex`; the selected output must be present at the
+  advertised pay-to address;
 - batch deposits and vouchers must reference an accepted active escrow UTXO;
 - claim broadcasting is disabled on the hosted gateway.
 
@@ -112,6 +121,11 @@ domain. Send it only over TLS to the intended gateway, and do not publish or log
 unused payment headers or transaction material before the paid retry has been
 settled.
 
+For alpha.5 exact payments, the header payload carries the observed
+`transactionId` and selected `paymentOutputIndex`. A serialized `transaction`
+field is legacy alpha evidence and must not be accepted as exact-payment
+evidence after the alpha.5 gateway deployment.
+
 ## Testnet Funding
 
 Testers need their own `kaspa:testnet-10` wallet or SDK flow and can use the
@@ -145,6 +159,26 @@ Operator actions:
 Paid evidence affected: the previous 2026-07-03 batch evidence is superseded
 and must not be used as voucher-claimability evidence. The exact-payment
 evidence remains unaffected by the voucher-signature issue.
+
+## Alpha.5 Evidence Status
+
+Status: pending hosted redeploy. The private TN10 full live harness rerun is
+complete.
+
+The alpha.5 source tree changes exact evidence from serialized `transaction`
+hex to required `transactionId` plus `paymentOutputIndex`. Before this gateway
+is advertised as alpha.5 evidence, operators must:
+
+- deploy the alpha.5 static site and browser demo;
+- deploy the alpha.5 Worker at `demo.kaspa-x402.org`;
+- confirm a legacy exact payload containing `payload.transaction` is rejected;
+- confirm an exact payload containing `payload.transactionId` and
+  `payload.paymentOutputIndex` reaches the verifier path;
+- keep the alpha.5 full live harness evidence in
+  `docs/live-testnet-report.md` current for the release candidate.
+
+Until the hosted deployment steps complete, the evidence below remains useful
+historical testnet evidence, not fresh alpha.5 hosted evidence.
 
 ## Exact Payment Evidence
 

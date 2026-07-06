@@ -76,7 +76,9 @@ Expected result:
 
 Decode the `PAYMENT-REQUIRED` header and select the `exact` offer. Build a
 native Kaspa testnet transaction that pays exactly the advertised amount to the
-advertised `payTo` address. The retry must send:
+advertised `payTo` address, broadcast it with your wallet or SDK, and retry
+with a `PaymentPayload` whose exact payload contains the observed
+`transactionId` and `paymentOutputIndex`. The retry must send:
 
 ```text
 PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>

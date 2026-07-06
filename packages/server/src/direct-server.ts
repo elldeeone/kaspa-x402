@@ -312,7 +312,9 @@ export class DirectModeServer {
         return this.#commitBatchResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
       };
 
-      return verified.scheme === "exact" ? lockManager.runExclusive(exactPaymentScopeId(verified.transactionId), runVerified) : runVerified();
+      if (verified.scheme !== "exact") return runVerified();
+      const verifiedLockKey = exactPaymentScopeId(verified.transactionId);
+      return verifiedLockKey === paymentLockKey ? runVerified() : lockManager.runExclusive(verifiedLockKey, runVerified);
     });
 
     return paymentIdentifier ? lockManager.runExclusive(idempotencyLockKey(paymentIdentifier), run) : run();
@@ -577,7 +579,6 @@ export class DirectModeServer {
     const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
     const verification = await this.#config.exactTransactionVerifier.verifyExactPayment({
       network: accepted.network,
-      transaction: payload.transaction,
       transactionId: payload.transactionId,
       paymentOutputIndex: payload.paymentOutputIndex,
       amount: accepted.amount,
@@ -592,8 +593,8 @@ export class DirectModeServer {
     if (!isExactFinality(verification.finality)) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact verifier returned an invalid finality");
     }
-    if (payload.transactionId && verification.transactionId.toLowerCase() !== payload.transactionId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction id does not match payload hint");
+    if (verification.transactionId.toLowerCase() !== payload.transactionId.toLowerCase()) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction id does not match payload evidence");
     }
     if (verification.paymentOutput.amount !== accepted.amount) {
       throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment output amount does not match accepted amount");
@@ -1037,7 +1038,7 @@ export class DirectModeServer {
   }
 
   async #assertExactPayloadHintNotReplayed(paymentPayload: PaymentPayload, fingerprint: Hash32Hex): Promise<void> {
-    if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer" || !paymentPayload.payload.transactionId) return;
+    if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer") return;
     const record = await this.#config.store.loadExactPayment(paymentPayload.payload.transactionId);
     if (!record) return;
     if (record.requestFingerprint === fingerprint && record.paymentOutputIndex === paymentPayload.payload.paymentOutputIndex) return;
@@ -1412,16 +1413,10 @@ function safePaymentLockKey(paymentPayload: PaymentPayload): Hash32Hex | undefin
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type !== "exact-transfer" || typeof payload.transaction !== "string" || typeof payload.paymentOutputIndex !== "number") {
+  if (payload.type !== "exact-transfer" || typeof payload.transactionId !== "string" || typeof payload.paymentOutputIndex !== "number") {
     return undefined;
   }
-  return sha256Hex(
-    stableStringify({
-      scope: "kaspa:x402:exact-transaction-lock:v1",
-      transactionId: typeof payload.transactionId === "string" ? payload.transactionId.toLowerCase() : null,
-      transaction: typeof payload.transactionId === "string" ? null : payload.transaction.toLowerCase(),
-    }),
-  );
+  return exactPaymentScopeId(payload.transactionId);
 }
 
 function exactPaymentScopeId(transactionId: Hash32Hex): Hash32Hex {

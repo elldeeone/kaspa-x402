@@ -168,7 +168,7 @@ async function runExactProof() {
     error: replay.body.error,
   });
 
-  const stored = await serverStore.loadExactPayment(payment.transactionId, payment.paymentOutputIndex);
+  const stored = await serverStore.loadExactPayment(payment.transactionId);
   assert.equal(stored?.amount, "100000");
 
   return {

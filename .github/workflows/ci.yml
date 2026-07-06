@@ -24,6 +24,10 @@ jobs:
         run: npm test
       - name: Schema and vector validation
         run: npm run validate:schemas
+      - name: Offline proof
+        run: npm run proof:offline
+      - name: Covenant fixture checks
+        run: npm run check:covenant-fixtures
       - name: Site build
         run: npm run site:build
       - name: Site checks

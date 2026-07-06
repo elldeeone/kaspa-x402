@@ -165,6 +165,7 @@ function demoExerciseExpression() {
   byId('demo-reveal-key').click();
   await click('demo-build-offer', 250);
   const required = await waitFor(() => byId('demo-payment-required').value, 'payment required');
+  byId('demo-transaction-id').value = '0'.repeat(64);
   await click('demo-build-payment', 250);
   const signature = await waitFor(() => byId('demo-payment-signature').value, 'payment signature');
   const exact = JSON.parse(atob(required));
@@ -182,7 +183,6 @@ function demoExerciseExpression() {
   await click('demo-connect', 100);
   const connectedStatus = await waitFor(() => byId('demo-status').value.startsWith('Connected to') && byId('demo-status').value, 'pnn connect', demoConnectTimeoutMs);
   const rpc = JSON.parse(byId('demo-rpc-output').textContent);
-  byId('demo-transaction-id').value = '0'.repeat(64);
   await click('demo-check-tx', 500);
   await waitFor(() => byId('demo-payment-output').textContent.includes('transactionId'), 'transaction status lookup');
   const transactionStatus = JSON.parse(byId('demo-payment-output').textContent).status;

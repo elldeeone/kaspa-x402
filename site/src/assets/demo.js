@@ -281,36 +281,25 @@ function buildPaymentRetry() {
   if (accepted.scheme !== "exact") {
     throw new Error("The mock retry builder is only for exact offers.");
   }
-  const transaction = ui.transaction.value.trim() || "00";
-  if (!/^[0-9a-fA-F]+$/.test(transaction) || transaction.length % 2 !== 0) {
-    throw new Error("Serialized transaction must be even-length hex.");
-  }
+  const transactionId = normalizedTxId(requiredText(ui.transactionId.value, "transaction id"));
   const paymentPayload = {
     x402Version: 2,
     accepted,
     payload: {
       type: "exact-transfer",
-      transaction,
+      transactionId,
       paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
       payerAddress: ui.address.value.trim() || undefined,
     },
   };
   pruneUndefined(paymentPayload.payload);
-  const transactionId = normalizedTxId(ui.transactionId.value.trim());
-  const settlement = transactionId
-    ? {
-        success: true,
-        transaction: transactionId,
-        network: NETWORK,
-        payer: ui.address.value.trim() || undefined,
-        amount: accepted.amount,
-      }
-    : {
-        success: false,
-        transaction: "",
-        network: accepted.network,
-        errorReason: "invalid_transaction_state",
-      };
+  const settlement = {
+    success: true,
+    transaction: transactionId,
+    network: NETWORK,
+    payer: ui.address.value.trim() || undefined,
+    amount: accepted.amount,
+  };
   pruneUndefined(settlement);
   state.paymentPayload = paymentPayload;
   ui.paymentSignatureHeader.value = encodeHeader(paymentPayload);
@@ -339,13 +328,13 @@ async function checkTransactionStatus() {
 }
 
 async function broadcastTransaction() {
-  const txHexOrJson = requiredText(ui.transaction.value, "serialized transaction");
+  const txHexOrJson = requiredText(ui.transaction.value, "transaction JSON");
   const rpc = await ensureRpc();
   let transaction;
   if (txHexOrJson.trim().startsWith("{")) {
     transaction = Transaction.deserializeFromSafeJSON(txHexOrJson);
   } else if (/^[0-9a-fA-F]+$/.test(txHexOrJson.trim())) {
-    throw new Error("Broadcast requires a safe JSON transaction object from the SDK. Raw hex can be used in x402 payloads, but the browser SDK submit API requires a Transaction object.");
+    throw new Error("Broadcast requires a safe JSON transaction object from the SDK. Exact x402 payloads use transaction id plus output index evidence, not raw transaction hex.");
   } else {
     throw new Error("Broadcast input must be a safe JSON transaction object.");
   }

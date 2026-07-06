@@ -126,7 +126,6 @@ function exactFundingProvider(): FundingProvider {
     },
     async payExact() {
       return {
-        transaction: "aa".repeat(96),
         transactionId: "77".repeat(32),
         paymentOutputIndex: 0,
         payerAddress: "kaspatest:refund",

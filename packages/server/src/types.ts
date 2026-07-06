@@ -74,8 +74,7 @@ export interface ExactTransactionOutput {
 
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
-  transaction: ByteHex;
-  transactionId?: Hash32Hex;
+  transactionId: Hash32Hex;
   paymentOutputIndex: number;
   amount: SompiString;
   payTo: string;

@@ -116,8 +116,7 @@ export interface ChannelState extends JsonRecord {
 export interface ExactTransferPayload extends JsonRecord {
   type: "exact-transfer";
   payerAddress?: string;
-  transaction: ByteHex;
-  transactionId?: Hash32Hex;
+  transactionId: Hash32Hex;
   paymentOutputIndex: number;
   requestHash?: Hash32Hex;
 }
