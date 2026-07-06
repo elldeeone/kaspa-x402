@@ -103,16 +103,17 @@ Checked before alpha.5 on 2026-07-06:
 
 ## Hosted Evidence Gate
 
-Before advertising alpha.5 hosted evidence:
+Checked for alpha.5 on 2026-07-06:
 
-1. Deploy the reviewed static site so `/demo/`, schemas, vectors, and the
+1. Deployed the reviewed static site so `/demo/`, schemas, vectors, and the
    alpha.5 release snapshot all expose the `transactionId` plus
    `paymentOutputIndex` exact shape.
-2. Deploy the reviewed `demo.kaspa-x402.org` Worker.
-3. Smoke the public gateway with both exact payload shapes: legacy
-   `payload.transaction` must be rejected, and `payload.transactionId` plus
-   `payload.paymentOutputIndex` must reach the exact verifier path.
-4. Confirm the funded TN10 live proof report remains current for the release
+2. Deployed the reviewed `demo.kaspa-x402.org` Worker at version
+   `470c7bc1-125b-49df-b046-a309b0257e67`.
+3. Smoked the public gateway with both exact payload shapes: legacy
+   `payload.transaction` was rejected, and `payload.transactionId` plus
+   `payload.paymentOutputIndex` reached the exact verifier path.
+4. Confirmed the funded TN10 live proof report remains current for the release
    candidate:
 
 ```sh
@@ -123,7 +124,7 @@ The alpha.5 full live harness passed on 2026-07-06 and is summarized in
 `docs/live-testnet-report.md`. The reference adapter for rerunning that proof is
 `scripts/live-adapter-reference.mjs`; supply RPC, wallet, and Kaspa WASM SDK
 paths through environment or `live-proof.env.example`. Hosted alpha.5 evidence
-is still pending until the static site and Worker are redeployed and smoked.
+passed on 2026-07-06 and is summarized in `docs/testnet-gateway.md`.
 
 The full release-live gate is:
 
@@ -131,9 +132,9 @@ The full release-live gate is:
 npm run validate:release:live
 ```
 
-If hosted redeploy, live configuration, or testnet funds are unavailable, do not
-present the alpha.5 hosted gateway as freshly proven. Keep the hosted evidence
-status pending instead.
+If hosted redeploy, live configuration, or testnet funds are unavailable for a
+future release candidate, do not present that hosted gateway as freshly proven.
+Keep the hosted evidence status pending instead.
 
 ## Publish Boundary
 

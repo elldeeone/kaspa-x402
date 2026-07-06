@@ -7,13 +7,11 @@ The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
-Deployment status on 2026-07-06: the source tree is being prepared for
-`0.1.0-alpha.5`, whose exact payload evidence is `transactionId` plus
-`paymentOutputIndex`. The hosted evidence below is historical alpha.4-era
-gateway evidence until the static site and Worker are redeployed. The separate
-private TN10 full live harness was rerun for alpha.5 on 2026-07-06 and is
-recorded in `docs/live-testnet-report.md`; it does not by itself prove the
-hosted Worker deployment.
+Deployment status on 2026-07-06: `0.1.0-alpha.5` is deployed on the static
+site and the hosted Worker. Exact payload evidence is `transactionId` plus
+`paymentOutputIndex`; legacy serialized `transaction` evidence is rejected.
+The separate private TN10 full live harness was rerun for alpha.5 on
+2026-07-06 and is recorded in `docs/live-testnet-report.md`.
 
 ## Base URL
 
@@ -162,27 +160,71 @@ evidence remains unaffected by the voucher-signature issue.
 
 ## Alpha.5 Evidence Status
 
-Status: pending hosted redeploy. The private TN10 full live harness rerun is
-complete.
+Status: complete for the 2026-07-06 hosted alpha.5 redeploy.
 
 The alpha.5 source tree changes exact evidence from serialized `transaction`
-hex to required `transactionId` plus `paymentOutputIndex`. Before this gateway
-is advertised as alpha.5 evidence, operators must:
+hex to required `transactionId` plus `paymentOutputIndex`. The hosted
+deployment checks completed on 2026-07-06:
 
-- deploy the alpha.5 static site and browser demo;
-- deploy the alpha.5 Worker at `demo.kaspa-x402.org`;
-- confirm a legacy exact payload containing `payload.transaction` is rejected;
-- confirm an exact payload containing `payload.transactionId` and
-  `payload.paymentOutputIndex` reaches the verifier path;
-- keep the alpha.5 full live harness evidence in
-  `docs/live-testnet-report.md` current for the release candidate.
+- static site commit: `27a6c6d52211`;
+- release snapshot: `v0.1.0-alpha.5`, content hash
+  `d3e06eab6b03ab8d5e45b94dac69a46d8db94d2b7fa0867702fecc64b699fcf8`;
+- Worker version:
+  `470c7bc1-125b-49df-b046-a309b0257e67`;
+- public smoke result: `/health`, `/supported`, unpaid `/exact`, and unpaid
+  `/batch` passed;
+- legacy exact payload containing `payload.transaction`: HTTP `402`;
+- exact payload containing `payload.transactionId` and
+  `payload.paymentOutputIndex`: reached verifier path and returned HTTP `402`
+  with `invalid_transaction_state` for intentionally fake txid evidence;
+- paid hosted TN10 E2E result: exact, deposit-voucher, voucher-only, and stale
+  replay checks passed.
 
-Until the hosted deployment steps complete, the evidence below remains useful
-historical testnet evidence, not fresh alpha.5 hosted evidence.
+## Alpha.5 Hosted Payment Evidence
+
+Run evidence from 2026-07-06:
+
+- Worker version:
+  `470c7bc1-125b-49df-b046-a309b0257e67`;
+- client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
+  node with UTXO index;
+- virtual DAA score at run start: `509610876`;
+- channel id:
+  `cdce2e14f1c3d2f562582d0df6e90951a790b035775f45e78f33d4ebbe2c7d7d`.
+
+Exact request:
+
+- request result: HTTP `200`;
+- exact transaction id:
+  `f72c6721e22331ac7ada90664d82b02929ac26098239d220cd65a14300664bc7`;
+- payment output index: `0`;
+- charged amount: `20000000` sompi;
+- finality: `accepted`.
+
+Deposit-voucher request:
+
+- request result: HTTP `200`;
+- opened channel: `true`;
+- settlement transaction:
+  `f4d556767dbaa6c32b6c66913c6ee6245a9ea23578bf5890a9c378b53d9e6aa7`.
+
+Voucher-only reuse:
+
+- request result: HTTP `200`;
+- opened channel: `false`;
+- settlement transaction:
+  `d44722c9f3c1abe19f9cf427eb8b199eccd72e0317ceb6bfe6b9654709146efe`.
+
+Stale deposit-voucher replay after the later voucher:
+
+- request result: corrective HTTP `402`;
+- error: `invalid_payment_requirements`;
+- corrective channel id:
+  `cdce2e14f1c3d2f562582d0df6e90951a790b035775f45e78f33d4ebbe2c7d7d`.
 
 ## Exact Payment Evidence
 
-Run evidence from 2026-07-03:
+Historical run evidence from 2026-07-03:
 
 - Worker version: `0362da19-c131-45bf-974b-50fad57ad6a8`;
 - payment amount: `20000000` sompi;
@@ -196,7 +238,8 @@ Run evidence from 2026-07-03:
 
 ## Batch Payment Evidence
 
-Run evidence from 2026-07-04, after the alpha.4 Durable Object reset:
+Historical run evidence from 2026-07-04, after the alpha.4 Durable Object
+reset:
 
 - Worker version: `fadaa70b-38c7-4b69-9001-ad3c5397bf7f`;
 - client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
