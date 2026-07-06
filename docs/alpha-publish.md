@@ -1,15 +1,12 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.5` publish checklist. Public alpha packages are currently
-published at `0.1.0-alpha.4` until the reviewed alpha.5 release is committed
-and published. Publishes require npm authorization and must not happen
-accidentally from CI or an unauthenticated shell.
+Status: `0.1.0-alpha.5` published on 2026-07-06. Publishes require npm
+authorization and must not happen accidentally from CI or an unauthenticated
+shell.
 
-Registry note: the first published package versions are visible on npm with
-`alpha` and `latest` dist-tags. Attempts to remove `latest` returned npm `400`
-responses, so `latest` is kept aligned with the current alpha while docs keep
-recommending explicit `@alpha` installs until a stable version can own
-`latest`.
+Registry note: the `alpha` dist-tag is the supported prerelease install path.
+The `latest` dist-tag is not advertised for alpha releases and may lag until a
+stable version can own `latest`.
 
 ## Package Set
 
@@ -76,15 +73,15 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
-## Pre-Alpha.5 Registry And Tarball Recheck
+## Alpha.5 Registry And Tarball Recheck
 
-Checked before alpha.5 on 2026-07-06:
+Checked for alpha.5 on 2026-07-06:
 
 - `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
-  `@kaspa-x402/server` are published at `0.1.0-alpha.4`;
-- those packages have both `alpha` and `latest` dist-tags pointing to
-  `0.1.0-alpha.4`, after npm returned `400` responses when removing `latest`
-  during the previous alpha publish;
+  `@kaspa-x402/server` are published at `0.1.0-alpha.5`;
+- those packages have `alpha` dist-tags pointing to `0.1.0-alpha.5`;
+- `latest` remains at `0.1.0-alpha.4` and is not the recommended alpha install
+  path;
 - `@kaspa-x402/facilitator` and `@kaspa-x402/cli` return npm `404` and remain
   unpublished/private;
 - dry-run tarballs for the publishable alpha manifests should contain only
