@@ -3,6 +3,7 @@ import type {
   BatchCommitmentRecord,
   ChannelLockManager,
   ClaimAttemptRecord,
+  ExactReservationRecord,
   ExactPaymentRecord,
   ExactSettlementCommit,
   PaymentIdentifierRecord,
@@ -15,6 +16,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
+  readonly #exactReservations = new Map<Hash32Hex, ExactReservationRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
@@ -97,6 +99,34 @@ export class MemoryServerChannelStore implements ServerStateStore {
       this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
     }
     this.#exactPayments.set(key, payment);
+  }
+
+  async saveExactReservation(record: ExactReservationRecord): Promise<void> {
+    const existing = this.#exactReservations.get(record.reservationId);
+    if (existing && existing.status !== "reserved") {
+      throw new Error("exact reservation was already consumed");
+    }
+    if (existing && stableJson(exactReservationTerms(existing)) !== stableJson(exactReservationTerms(record))) {
+      throw new Error("exact reservation id is already reserved for different terms");
+    }
+    this.#exactReservations.set(record.reservationId, clone(record));
+  }
+
+  async loadExactReservation(reservationId: Hash32Hex): Promise<ExactReservationRecord | undefined> {
+    const record = this.#exactReservations.get(reservationId);
+    return record ? clone(record) : undefined;
+  }
+
+  async consumeExactReservation(reservationId: Hash32Hex, transactionId: Hash32Hex): Promise<void> {
+    const current = this.#exactReservations.get(reservationId);
+    if (!current) {
+      throw new Error("exact reservation was not found");
+    }
+    if (current.status === "consumed") {
+      if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) return;
+      throw new Error("exact reservation was already consumed by a different transaction");
+    }
+    this.#exactReservations.set(reservationId, { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
   }
 
   #assertPaymentIdentifierAvailable(paymentIdentifier: PaymentIdentifierRecord): void {
@@ -192,6 +222,21 @@ function clone<T>(value: T): T {
 
 function exactPaymentKey(transactionId: Hash32Hex): string {
   return transactionId.toLowerCase();
+}
+
+function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
+  const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
+  return terms;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
 }
 
 function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {

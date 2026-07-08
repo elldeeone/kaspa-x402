@@ -10,7 +10,6 @@ import {
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
 import { DirectModeClient } from "./direct-client.js";
-import { parsePaymentRequiredHeaderValue } from "./payment-required.js";
 import type { ApplySettlementResult, CreatePaymentResult } from "./types.js";
 
 export type McpToolCaller = (params: McpToolCallParams) => Promise<McpToolResult> | McpToolResult;
@@ -41,10 +40,7 @@ export async function paidMcpToolCall(
   const maxPaymentRetries = options.maxPaymentRetries ?? 2;
   for (let attempt = 0; attempt <= maxPaymentRetries; attempt += 1) {
     const header = encodePaymentRequiredEnvelopeHeader(paymentRequired);
-    const parsed = parsePaymentRequiredHeaderValue(header, {
-      supportedNetworks: client.supportedNetworks(),
-      supportedSchemes: client.supportedSchemes(),
-    });
+    const parsed = client.selectPaymentRequirement(header);
     const requestHash =
       options.requestHash ??
       mcpToolCallFingerprint({

@@ -108,7 +108,20 @@ function makeExactRequired(): PaymentRequired {
         asset: "KAS",
         payTo: "kaspatest:payout",
         maxTimeoutSeconds: 60,
-        extra: { binding: "kaspa-exact-v1" },
+        extra: {
+          binding: "kaspa-exact-v1",
+          finality: "accepted",
+          templateId: "kaspa-x402-kip10-additive-v1",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          borrowOutpoint: { txid: "44".repeat(32), index: 2 },
+          borrowAmount: "1000",
+          borrowScriptPublicKey: "0000" + "ab".repeat(34),
+          borrowRedeemScript: "51",
+          additiveThresholdSompi: "100",
+          paymentOutputIndex: 0,
+          reservationId: "88".repeat(32),
+          reservationExpiresAt: "2099-01-01T00:00:00.000Z",
+        },
       },
     ],
   };
@@ -124,12 +137,13 @@ function exactFundingProvider(): FundingProvider {
     async fundEscrowDeposit() {
       throw new Error("not used");
     },
-    async payExact() {
+    async payExactTransaction(request) {
       return {
+        transaction: "{\"transaction\":\"signed-kip10-exact\"}",
+        transactionEncoding: request.reservation.transactionEncoding,
         transactionId: "77".repeat(32),
-        paymentOutputIndex: 0,
+        paymentOutputIndex: request.reservation.paymentOutputIndex,
         payerAddress: "kaspatest:refund",
-        finality: "accepted",
       };
     },
     async getUtxos() {

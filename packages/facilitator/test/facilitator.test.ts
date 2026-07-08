@@ -22,6 +22,7 @@ import {
   type AddressCodec,
   type ChainUtxo,
   type DirectModeServerConfig,
+  type ExactBorrowReservation,
   type ServerChainProvider,
   type ServerChannelRecord,
   type SettlementFinality,
@@ -33,6 +34,8 @@ const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
+const EXACT_RESERVATION_ID = "88".repeat(32);
+const EXACT_TRANSACTION_ARTIFACT = "{\"transaction\":\"signed-kip10-exact\"}";
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
@@ -99,6 +102,27 @@ describe("direct-mode facilitator", () => {
       isValid: true,
       payer: direct.payer,
       extra: direct.extra,
+    });
+  });
+
+  it("honors embedded request hashes for exact-transaction facilitator requests", async () => {
+    const { facilitator, server, store } = makeFacilitator();
+    const paymentPayload = await makeExactTransactionPayment(server, store);
+    const paymentRequirements = paymentPayload.accepted;
+
+    const verify = await facilitator.verify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
+    const settlement = await facilitator.settle({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
+
+    expect(verify).toMatchObject({
+      isValid: true,
+      payer: "kaspatest:refund",
+    });
+    expect(settlement).toMatchObject({
+      success: true,
+      transaction: EXACT_TX_ID,
+      network: "kaspa:testnet-10",
+      amount: "100",
+      payer: "kaspatest:refund",
     });
   });
 
@@ -579,9 +603,10 @@ describe("direct-mode facilitator", () => {
     expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
   });
 
-  it("checks exact replay before invoking the exact verifier when transaction id is present", async () => {
+  it("checks exact replay after deriving the exact-transaction id", async () => {
     const initial = makeFacilitator();
     const paymentPayload = makeExactPayment(initial.server);
+    if (paymentPayload.payload.type === "exact-transaction") delete paymentPayload.payload.requestHash;
     const settlement = await initial.facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
@@ -589,9 +614,15 @@ describe("direct-mode facilitator", () => {
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
     });
-    const verifier = vi.fn(() => {
-      throw new Error("verifier should not be called");
-    });
+    const verifier = vi.fn((request) => ({
+      transactionId: EXACT_TX_ID,
+      paymentOutput: {
+        amount: request.amount,
+        scriptPublicKey: request.payToScriptPublicKey,
+      },
+      finality: "accepted" as const,
+      payerAddress: "kaspatest:refund",
+    }));
     const replaySetup = makeFacilitator({
       store: initial.store,
       exactTransactionVerifier: {
@@ -609,7 +640,7 @@ describe("direct-mode facilitator", () => {
 
     expect(settlement.success).toBe(true);
     expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
-    expect(verifier).not.toHaveBeenCalled();
+    expect(verifier).toHaveBeenCalledTimes(1);
   });
 
   it("rejects malformed top-level request hashes at the HTTP adapter boundary", async () => {
@@ -722,7 +753,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
     exactTransactionVerifier: {
       verifyExactPayment(request) {
         return {
-          transactionId: request.transactionId,
+          transactionId: EXACT_TX_ID,
           paymentOutput: {
             amount: request.amount,
             scriptPublicKey: request.payToScriptPublicKey,
@@ -732,9 +763,21 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
         };
       },
     },
+    exactReservationProvider: {
+      reserveExactPayment(request) {
+        return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
+      },
+    },
     ...overrides,
   });
   (server as unknown as { __testChain?: FakeChainProvider }).__testChain = chain;
+  if (!overrides.store) {
+    void store.saveExactReservation({
+      ...exactReservation(),
+      status: "reserved",
+      reservedAt: "2026-07-07T00:00:00.000Z",
+    });
+  }
   return {
     server,
     facilitator: new DirectModeFacilitator({ server, allowMainnet: facilitatorOptions.allowMainnet }),
@@ -743,19 +786,60 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
   };
 }
 
-function makeExactPayment(server: DirectModeServer): PaymentPayload {
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
+async function makeExactTransactionPayment(server: DirectModeServer, store: MemoryServerChannelStore): Promise<PaymentPayload> {
+  const reservation = exactReservation();
+  await store.saveExactReservation({
+    ...reservation,
+    status: "reserved",
+    reservedAt: "2026-07-07T00:00:00.000Z",
+  });
+  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", exactReservation: reservation });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
   return {
     x402Version: X402_VERSION,
     accepted,
     payload: {
-      type: "exact-transfer",
+      type: "exact-transaction",
       payerAddress: "kaspatest:refund",
-      transactionId: EXACT_TX_ID,
-      paymentOutputIndex: 1,
+      transaction: EXACT_TRANSACTION_ARTIFACT,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: reservation.paymentOutputIndex,
       requestHash: REQUEST_HASH,
     },
+  };
+}
+
+function makeExactPayment(server: DirectModeServer): PaymentPayload {
+  const reservation = exactReservation();
+  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", exactReservation: reservation });
+  const accepted = required.accepts[0] as ExactPaymentRequirements;
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "exact-transaction",
+      payerAddress: "kaspatest:refund",
+      transaction: EXACT_TRANSACTION_ARTIFACT,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: reservation.paymentOutputIndex,
+      requestHash: REQUEST_HASH,
+    },
+  };
+}
+
+function exactReservation(overrides: Partial<ExactBorrowReservation> = {}): ExactBorrowReservation {
+  return {
+    reservationId: EXACT_RESERVATION_ID,
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: { txid: FUNDING_TX, index: 2 },
+    borrowAmount: "1000",
+    borrowScriptPublicKey: new FakeAddressCodec().scriptPublicKeyForAddress("kaspatest:payout", "kaspa:testnet-10"),
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "100",
+    paymentOutputIndex: 0,
+    expiresAt: "2099-01-01T00:00:00.000Z",
+    ...overrides,
   };
 }
 

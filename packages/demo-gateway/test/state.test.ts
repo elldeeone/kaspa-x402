@@ -3,6 +3,7 @@ import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
   ExactPaymentRecord,
+  ExactReservationRecord,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   SettlementCommit,
@@ -16,6 +17,7 @@ const PAYLOAD = "44".repeat(32);
 const TX = "55".repeat(32);
 const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
+const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
 
 describe("gateway durable ledger", () => {
@@ -44,6 +46,29 @@ describe("gateway durable ledger", () => {
       }),
     ).rejects.toThrow("payment identifier");
     await expect(ledger.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
+  });
+
+  it("stores and consumes exact KIP-10 reservations idempotently", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const first = exactReservation();
+    await ledger.saveExactReservation(first);
+    await ledger.saveExactReservation(first);
+    await ledger.saveExactReservation(exactReservation({ reservedAt: "2026-07-07T00:01:00.000Z" }));
+
+    await expect(ledger.loadExactReservation(TX)).resolves.toMatchObject({
+      reservationId: TX,
+      status: "reserved",
+      borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    });
+    await expect(ledger.saveExactReservation(exactReservation({ borrowAmount: "200" }))).rejects.toThrow("different terms");
+    await ledger.consumeExactReservation(TX, OTHER_TX);
+    await ledger.consumeExactReservation(TX, OTHER_TX);
+    await expect(ledger.loadExactReservation(TX)).resolves.toMatchObject({
+      status: "consumed",
+      transactionId: OTHER_TX,
+    });
+    await expect(ledger.consumeExactReservation(TX, "aa".repeat(32))).rejects.toThrow("different transaction");
+    await expect(ledger.saveExactReservation(first)).rejects.toThrow("already consumed");
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
@@ -204,6 +229,23 @@ function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPayment
     finality: "accepted",
     settlement: { success: true, transaction: TX, network: "kaspa:testnet-10", amount: "100" },
     response: { status: 200, headers: {}, body: "ok" },
+    ...overrides,
+  };
+}
+
+function exactReservation(overrides: Partial<ExactReservationRecord> = {}): ExactReservationRecord {
+  return {
+    reservationId: TX,
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    borrowAmount: "100",
+    borrowScriptPublicKey: SCRIPT,
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "100",
+    paymentOutputIndex: 0,
+    status: "reserved",
+    reservedAt: "2026-07-07T00:00:00.000Z",
     ...overrides,
   };
 }

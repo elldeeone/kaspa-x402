@@ -1,4 +1,4 @@
-import { KaspaX402Error, type FundingOutpoint, type Hash32Hex, type NetworkId, type SompiString } from "@kaspa-x402/core";
+import { KaspaX402Error, type FundingOutpoint, type NetworkId, type SompiString } from "@kaspa-x402/core";
 import type {
   AddressCodec,
   ChainUtxo,
@@ -91,23 +91,9 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
     assertTestnet(request.network);
-    if (!request.transactionId) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact gateway payments must include transactionId evidence");
-    }
-    const utxos = await this.#client.getUtxosForAddress(request.payTo);
-    const match = utxos.find((utxo) => sameOutpoint(utxo.outpoint, { txid: request.transactionId as Hash32Hex, index: request.paymentOutputIndex }));
-    if (!match) {
-      throw new KaspaX402Error("invalid_kaspa_outpoint", "exact payment output was not found at payTo address");
-    }
-    return {
-      transactionId: request.transactionId.toLowerCase(),
-      paymentOutput: {
-        amount: match.amount,
-        scriptPublicKey: match.scriptPublicKey,
-        address: request.payTo,
-      },
-      finality: "accepted",
-    };
+    void this.#client;
+    void request;
+    throw new KaspaX402Error("invalid_kaspa_transaction", "hosted gateway exact requires a KIP-10 reservation provider before it can verify transaction artifacts");
   }
 }
 

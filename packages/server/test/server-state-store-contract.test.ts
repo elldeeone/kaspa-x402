@@ -6,6 +6,7 @@ import {
   type BatchCommitmentRecord,
   type ClaimAttemptRecord,
   type ExactPaymentRecord,
+  type ExactReservationRecord,
   type ExactSettlementCommit,
   type PaymentIdentifierRecord,
   type ServerChannelRecord,
@@ -21,6 +22,7 @@ const PAYLOAD = "44".repeat(32);
 const TX = "55".repeat(32);
 const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
+const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
 
 type StoreFactory = {
@@ -83,6 +85,36 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(store.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
   });
 
+  it("stores and consumes exact KIP-10 reservations idempotently", async () => {
+    const store = await factory.create();
+    const first = exactReservation();
+    await store.saveExactReservation(first);
+    await store.saveExactReservation(first);
+    await store.saveExactReservation(exactReservation({ reservedAt: "2026-07-07T00:01:00.000Z" }));
+
+    await expect(store.loadExactReservation(TX)).resolves.toMatchObject({
+      reservationId: TX,
+      status: "reserved",
+      borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    });
+    if (store instanceof DurableMockServerChannelStore) {
+      await expect((await store.restart()).loadExactReservation(TX)).resolves.toMatchObject({
+        reservationId: TX,
+        status: "reserved",
+      });
+    }
+
+    await expect(store.saveExactReservation(exactReservation({ borrowAmount: "200" }))).rejects.toThrow("different terms");
+    await store.consumeExactReservation(TX, OTHER_TX);
+    await store.consumeExactReservation(TX, OTHER_TX);
+    await expect(store.loadExactReservation(TX)).resolves.toMatchObject({
+      status: "consumed",
+      transactionId: OTHER_TX,
+    });
+    await expect(store.consumeExactReservation(TX, "aa".repeat(32))).rejects.toThrow("different transaction");
+    await expect(store.saveExactReservation(first)).rejects.toThrow("already consumed");
+  });
+
   it("applies batch settlement only when the channel snapshot still matches", async () => {
     const store = await factory.create([channel()]);
     const staleCommit = settlementCommit(channel(), { chargedCumulativeAmount: "100" });
@@ -126,6 +158,8 @@ type DurableMockOperation =
   | { type: "retireChannel"; channelId: string; reason?: string }
   | { type: "commitSettlement"; record: SettlementCommit }
   | { type: "commitExactPayment"; record: ExactSettlementCommit }
+  | { type: "saveExactReservation"; record: ExactReservationRecord }
+  | { type: "consumeExactReservation"; reservationId: string; transactionId: string }
   | { type: "saveClaimAttempt"; record: ClaimAttemptRecord }
   | { type: "applyClaimAttempt"; channel: ServerChannelRecord; attempt: ClaimAttemptRecord }
   | { type: "abandonClaimAttempt"; attemptId: string; reason?: string };
@@ -179,6 +213,16 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     await this.#write({ type: "commitExactPayment", record }, () => super.commitExactPayment(record));
   }
 
+  async saveExactReservation(record: ExactReservationRecord): Promise<void> {
+    await this.#write({ type: "saveExactReservation", record }, () => super.saveExactReservation(record));
+  }
+
+  async consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
+    await this.#write({ type: "consumeExactReservation", reservationId, transactionId }, () =>
+      super.consumeExactReservation(reservationId, transactionId),
+    );
+  }
+
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#write({ type: "saveClaimAttempt", record }, () => super.saveClaimAttempt(record));
   }
@@ -209,6 +253,12 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
         return;
       case "commitExactPayment":
         await super.commitExactPayment(operation.record);
+        return;
+      case "saveExactReservation":
+        await super.saveExactReservation(operation.record);
+        return;
+      case "consumeExactReservation":
+        await super.consumeExactReservation(operation.reservationId, operation.transactionId);
         return;
       case "saveClaimAttempt":
         await super.saveClaimAttempt(operation.record);
@@ -245,6 +295,23 @@ function channel(overrides: Partial<ServerChannelRecord> = {}): ServerChannelRec
     claimedCumulativeAmount: "0",
     signedMaxClaimable: "0",
     status: "active",
+    ...overrides,
+  };
+}
+
+function exactReservation(overrides: Partial<ExactReservationRecord> = {}): ExactReservationRecord {
+  return {
+    reservationId: TX,
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    borrowAmount: "100",
+    borrowScriptPublicKey: SCRIPT,
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "100",
+    paymentOutputIndex: 0,
+    status: "reserved",
+    reservedAt: "2026-07-07T00:00:00.000Z",
     ...overrides,
   };
 }

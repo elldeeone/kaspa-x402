@@ -60,6 +60,9 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (!config.enabled) {
     return json({ ok: false, error: "gateway_disabled" }, { status: 503, headers: corsHeaders(config) });
   }
+  if (profile === "exact" && !gateway.server.supportedKinds().some((kind) => kind.scheme === "exact")) {
+    return json({ ok: false, error: "exact_unavailable" }, { status: 503, headers: corsHeaders(config) });
+  }
 
   const rate = await state.checkRateLimit(rateScope(request, profile), Date.now(), config.rateLimitPerMinute, 60_000);
   if (!rate.allowed) {
@@ -168,7 +171,11 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
     }),
   );
   if (config.enabled) {
-    checks.push(await offerCheck(env, config, "/exact", "exact"));
+    if (createGateway(config, state).server.supportedKinds().some((kind) => kind.scheme === "exact")) {
+      checks.push(await offerCheck(env, config, "/exact", "exact"));
+    } else {
+      checks.push(skippedCheck("exact-offer", "hosted gateway has no KIP-10 reservation provider"));
+    }
     checks.push(await offerCheck(env, config, "/batch", "batch-settlement"));
     checks.push(await unsupportedSchemeCheck(env, config));
   } else {
@@ -268,6 +275,18 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.commitExactPayment(record);
   }
 
+  saveExactReservation(record: Parameters<ServerStateStore["saveExactReservation"]>[0]) {
+    return this.#inner.saveExactReservation(record);
+  }
+
+  loadExactReservation(reservationId: string) {
+    return this.#inner.loadExactReservation(reservationId);
+  }
+
+  consumeExactReservation(reservationId: string, transactionId: string) {
+    return this.#inner.consumeExactReservation(reservationId, transactionId);
+  }
+
   loadOpenClaimAttempt(channelId: string) {
     return this.#inner.loadOpenClaimAttempt(channelId);
   }
@@ -338,7 +357,7 @@ async function offerCheck(env: GatewayEnv, config: GatewayConfig, path: string, 
 async function unsupportedSchemeCheck(env: GatewayEnv, config: GatewayConfig): Promise<GatewayCanaryCheck> {
   return checked("unsupported-scheme-rejection", async () => {
     const header = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
-    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/exact`, { headers: { [PAYMENT_SIGNATURE_HEADER]: header } });
+    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/batch`, { headers: { [PAYMENT_SIGNATURE_HEADER]: header } });
     if (response.status !== 402) throw new Error(`expected 402, got ${response.status}`);
     const body = (await response.json()) as { error?: unknown };
     if (body.error !== "unsupported_scheme") throw new Error(`unexpected error ${String(body.error)}`);

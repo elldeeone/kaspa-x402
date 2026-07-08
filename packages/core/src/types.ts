@@ -9,6 +9,8 @@ export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
 export type KaspaBinding = "kaspa-exact-v1" | "kaspa-escrow-v1";
+export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
+export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -31,6 +33,16 @@ export interface BasePaymentRequirements<TScheme extends PaymentScheme, TExtra e
 export interface ExactRequirementsExtra extends JsonRecord {
   binding: "kaspa-exact-v1";
   finality?: "mempool" | "accepted" | "confirmed";
+  templateId?: ExactAdditiveTemplateId;
+  transactionEncoding?: ExactTransactionEncoding;
+  borrowOutpoint?: FundingOutpoint;
+  borrowAmount?: SompiString;
+  borrowScriptPublicKey?: ByteHex;
+  borrowRedeemScript?: ByteHex;
+  additiveThresholdSompi?: SompiString;
+  paymentOutputIndex?: number;
+  reservationId?: Hash32Hex;
+  reservationExpiresAt?: string;
   assetKind?: "native";
   assetDecimals?: 8;
 }
@@ -113,10 +125,11 @@ export interface ChannelState extends JsonRecord {
   signedMaxClaimable: SompiString;
 }
 
-export interface ExactTransferPayload extends JsonRecord {
-  type: "exact-transfer";
+export interface ExactTransactionPayload extends JsonRecord {
+  type: "exact-transaction";
   payerAddress?: string;
-  transactionId: Hash32Hex;
+  transaction: string;
+  transactionEncoding: ExactTransactionEncoding;
   paymentOutputIndex: number;
   requestHash?: Hash32Hex;
 }
@@ -162,7 +175,7 @@ export interface RefundPayload extends JsonRecord {
 }
 
 export type KaspaPaymentPayload =
-  | ExactTransferPayload
+  | ExactTransactionPayload
   | DepositVoucherPayload
   | VoucherPayload
   | ClaimPayload
@@ -175,6 +188,10 @@ export interface SettlementResponseExtra extends JsonRecord {
   paymentOutputIndex?: number;
   finality?: "mempool" | "accepted" | "confirmed";
   requestHash?: Hash32Hex;
+  transactionEncoding?: ExactTransactionEncoding;
+  templateId?: ExactAdditiveTemplateId;
+  reservationId?: Hash32Hex;
+  borrowOutpoint?: FundingOutpoint;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;

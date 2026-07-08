@@ -47,6 +47,11 @@ export interface VoucherPreimageInput {
   amount: bigint | number | string;
 }
 
+export interface Kip10AdditiveTemplateParams {
+  ownerPublicKey: string;
+  amount: bigint | number | string;
+}
+
 export interface ClaimOutputPlan {
   inputAmount: bigint | number | string;
   voucherAmount: bigint | number | string;
@@ -67,6 +72,8 @@ export interface RefundOutputPlan {
 export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v1";
 export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v1";
 export const ESCROW_VOUCHER_DOMAIN_TAG = "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12";
+export const KIP10_ADDITIVE_TEMPLATE_ID = "kaspa-x402-kip10-additive-v1";
+export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
 
 export const CLAIM_SCRIPT_UNITS_ESTIMATE = 200_544;
 export const REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
@@ -117,6 +124,28 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
       hexToBytes(SEG_7, undefined, "SEG_7"),
     ]),
   );
+}
+
+export function buildKip10AdditiveRedeemScript(params: Kip10AdditiveTemplateParams): string {
+  const owner = hexToBytes(params.ownerPublicKey, 32, "ownerPublicKey");
+  const amount = normalizeScriptInt64(params.amount, "amount");
+  return bytesToHex(
+    concatBytes([
+      Uint8Array.of(0x63),
+      pushData(owner),
+      Uint8Array.of(0xac, 0x67, 0xb9, 0xbf, 0xb9, 0xc3, 0x88, 0xb9, 0xc2),
+      pushScriptNumber(amount),
+      Uint8Array.of(0x94, 0xb9, 0xbe, 0xa2, 0x68),
+    ]),
+  );
+}
+
+export function kip10AdditiveScriptPublicKey(params: Kip10AdditiveTemplateParams): ScriptPublicKey {
+  return payToScriptHashScript(buildKip10AdditiveRedeemScript(params));
+}
+
+export function buildKip10AdditiveBorrowArgs(): string {
+  return "00";
 }
 
 export function escrowScriptPublicKey(params: EscrowTemplateParams): ScriptPublicKey {
@@ -321,6 +350,14 @@ function normalizeUint64(value: bigint | number | string, label: string): bigint
         : stringToUint64(value, label);
   if (normalized < 0n || normalized > U64_MAX) {
     throw new Error(`${label} must fit in uint64`);
+  }
+  return normalized;
+}
+
+function normalizeScriptInt64(value: bigint | number | string, label: string): bigint {
+  const normalized = normalizeUint64(value, label);
+  if (normalized > 0x7fff_ffff_ffff_ffffn) {
+    throw new Error(`${label} must fit in signed 64-bit script number`);
   }
   return normalized;
 }

@@ -1,5 +1,6 @@
 import { handleFacilitatorRequest } from "@kaspa-x402/facilitator";
-import { createMockDirectModeEnvironment, mockRequestHash, paymentRequiredFor, X402_VERSION } from "../lib/mock-direct-mode.mjs";
+import { PAYMENT_REQUIRED_HEADER } from "@kaspa-x402/server";
+import { createMockDirectModeEnvironment, mockRequestHash, X402_VERSION } from "../lib/mock-direct-mode.mjs";
 
 const { client, facilitator, server } = createMockDirectModeEnvironment();
 
@@ -13,12 +14,23 @@ const requestHash = mockRequestHash({
   url: resource.url,
   body: null,
 });
-const payment = await client.createPayment(
-  paymentRequiredFor(server, {
+const unpaid = await server.handlePaidRequest(
+  {
+    method: "GET",
+    url: resource.url,
     resource,
-    amount: "100000",
-    scheme: "exact",
-  }),
+    paymentAmount: "100000",
+    paymentScheme: "exact",
+    requestHash,
+    headers: {},
+  },
+  async () => ({ status: 500 }),
+);
+const paymentRequired = unpaid.headers[PAYMENT_REQUIRED_HEADER];
+if (!paymentRequired) throw new Error("server did not return PAYMENT-REQUIRED");
+
+const payment = await client.createPayment(
+  paymentRequired,
   {
     url: resource.url,
     requestHash,

@@ -15,12 +15,15 @@ import {
   buildBatchRefundTxV1Artifact,
   buildClaimArgs,
   buildEscrowRedeemScript,
+  buildKip10AdditiveBorrowArgs,
+  buildKip10AdditiveRedeemScript,
   buildRefundArgs,
   checkEscrowFixtureReproducibility,
   computeBudgetForScriptUnits,
   deriveEscrowAddress,
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
+  kip10AdditiveScriptPublicKey,
   scriptUnitAllowance,
   serializedScriptPublicKey,
   validateClaimOutputPlan,
@@ -252,6 +255,20 @@ describe("escrow covenant template", () => {
         expectedContinuationScriptPublicKey: script,
       }),
     ).toThrow("continuation script public key must match");
+  });
+
+  it("builds the KIP-10 additive exact script from native opcode bytes", () => {
+    const ownerPublicKey = "11".repeat(32);
+    const redeemScript = buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "100" });
+    expect(redeemScript).toBe(`6320${ownerPublicKey}ac67b9bfb9c388b9c2016494b9bea268`);
+    expect(buildKip10AdditiveBorrowArgs()).toBe("00");
+
+    const scriptPublicKey = kip10AdditiveScriptPublicKey({ ownerPublicKey, amount: "100" });
+    expect(scriptPublicKey.version).toBe(0);
+    expect(scriptPublicKey.script).toMatch(/^aa20[0-9a-f]{64}87$/);
+    expect(() => buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "9223372036854775808" })).toThrow(
+      "signed 64-bit script number",
+    );
   });
 
   it("validates offline refund output invariants", () => {

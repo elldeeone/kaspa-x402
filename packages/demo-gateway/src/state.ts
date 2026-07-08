@@ -3,6 +3,7 @@ import type {
   ChannelLockManager,
   ClaimAttemptRecord,
   ExactPaymentRecord,
+  ExactReservationRecord,
   ExactSettlementCommit,
   PaymentIdentifierRecord,
   ServerChannelRecord,
@@ -55,6 +56,9 @@ export type GatewayStateMethod =
   | "loadCommitment"
   | "loadPaymentIdentifier"
   | "loadExactPayment"
+  | "saveExactReservation"
+  | "loadExactReservation"
+  | "consumeExactReservation"
   | "commitSettlement"
   | "commitExactPayment"
   | "loadOpenClaimAttempt"
@@ -143,6 +147,35 @@ export class GatewayLedger implements ServerStateStore {
       if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
       if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
       await txn.put(exactPaymentKey(payment.transactionId), payment);
+    });
+  }
+
+  async saveExactReservation(record: ExactReservationRecord): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<ExactReservationRecord>(exactReservationKey(record.reservationId));
+      if (existing && existing.status !== "reserved") {
+        throw new Error("exact reservation was already consumed");
+      }
+      if (existing && stableJson(exactReservationTerms(existing)) !== stableJson(exactReservationTerms(record))) {
+        throw new Error("exact reservation id is already reserved for different terms");
+      }
+      await txn.put(exactReservationKey(record.reservationId), clone(record));
+    });
+  }
+
+  async loadExactReservation(reservationId: string): Promise<ExactReservationRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<ExactReservationRecord>(exactReservationKey(reservationId)));
+  }
+
+  async consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<ExactReservationRecord>(exactReservationKey(reservationId));
+      if (!current) throw new Error("exact reservation was not found");
+      if (current.status === "consumed") {
+        if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) return;
+        throw new Error("exact reservation was already consumed by a different transaction");
+      }
+      await txn.put(exactReservationKey(reservationId), { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
     });
   }
 
@@ -291,6 +324,14 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
       return ledger.loadPaymentIdentifier(readPayload<{ id: string }>(request).id);
     case "loadExactPayment":
       return ledger.loadExactPayment(readPayload<{ transactionId: string }>(request).transactionId);
+    case "saveExactReservation":
+      return ledger.saveExactReservation(readPayload<{ record: ExactReservationRecord }>(request).record);
+    case "loadExactReservation":
+      return ledger.loadExactReservation(readPayload<{ reservationId: string }>(request).reservationId);
+    case "consumeExactReservation": {
+      const payload = readPayload<{ reservationId: string; transactionId: string }>(request);
+      return ledger.consumeExactReservation(payload.reservationId, payload.transactionId);
+    }
     case "commitSettlement":
       return ledger.commitSettlement(readPayload<{ record: SettlementCommit }>(request).record);
     case "commitExactPayment":
@@ -389,6 +430,10 @@ function exactPaymentKey(transactionId: string): string {
   return `exact:${transactionId.toLowerCase()}`;
 }
 
+function exactReservationKey(reservationId: string): string {
+  return `exact-reservation:${reservationId.toLowerCase()}`;
+}
+
 function paymentIdentifierKey(id: string): string {
   return `payment-identifier:${id}`;
 }
@@ -423,4 +468,19 @@ function clone<T>(value: T): T {
 
 function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : clone(value);
+}
+
+function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
+  const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
+  return terms;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+    .join(",")}}`;
 }

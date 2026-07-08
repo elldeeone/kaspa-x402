@@ -29,7 +29,7 @@ import {
   type ChannelConfig,
   type DepositVoucherPayload,
   type ExactPaymentRequirements,
-  type ExactTransferPayload,
+  type ExactTransactionPayload,
   type FundingOutpoint,
   type Hash32Hex,
   type PaymentPayload,
@@ -61,6 +61,7 @@ import {
   type DirectPaymentVerificationOptions,
   type DirectModeServerConfig,
   type ExactPaymentRecord,
+  type ExactBorrowReservation,
   type HandlerContext,
   type PaidRequest,
   type PaymentIdentifierRecord,
@@ -99,6 +100,10 @@ type PendingExactSettlement = {
   payment: Omit<ExactPaymentRecord, "response">;
 };
 
+type VerifiedExactReservation = ExactBorrowReservation & {
+  consumedTransactionId?: Hash32Hex;
+};
+
 export class DirectModeServer {
   readonly #config: ResolvedServerConfig;
 
@@ -128,15 +133,48 @@ export class DirectModeServer {
   }
 
   async #paymentRequiredResponse(options: BuildPaymentRequiredOptions, status = 402): Promise<ServerResponse> {
+    let paymentRequired: PaymentRequired;
+    try {
+      paymentRequired = await this.#buildRuntimePaymentRequired(options);
+    } catch (error) {
+      return {
+        status: 503,
+        headers: {},
+        body: {
+          error: error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "gateway_error",
+        },
+      };
+    }
     return {
       status,
       headers: {
-        [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(await this.#buildRuntimePaymentRequired(options)),
+        [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(paymentRequired),
       },
     };
   }
 
   async #buildRuntimePaymentRequired(options: BuildPaymentRequiredOptions): Promise<PaymentRequired> {
+    if (paymentRequirementSchemes(options).includes("exact") && !options.exactReservation && !this.#config.exactReservationProvider) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements require KIP-10 reservation terms");
+    }
+    if (this.#config.exactReservationProvider && paymentRequirementSchemes(options).includes("exact") && !options.exactReservation) {
+      const amount = options.amount ?? this.#config.amount;
+      const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(this.#config.payTo, this.#config.network);
+      const exactReservation = await this.#config.exactReservationProvider.reserveExactPayment({
+        network: this.#config.network,
+        amount,
+        payTo: this.#config.payTo,
+        payToScriptPublicKey,
+        maxTimeoutSeconds: this.#config.maxTimeoutSeconds,
+        resource: options.resource,
+      });
+      await this.#config.store.saveExactReservation({
+        ...exactReservation,
+        status: "reserved",
+        reservedAt: new Date().toISOString(),
+      });
+      return makePaymentRequired(this.#config, { ...options, exactReservation });
+    }
     return makePaymentRequired(this.#config, options);
   }
 
@@ -146,7 +184,7 @@ export class DirectModeServer {
 
   supportedKinds(): SupportedKind[] {
     const kinds: SupportedKind[] = [];
-    if (this.#config.exactTransactionVerifier) {
+    if (this.#config.exactTransactionVerifier && this.#config.exactReservationProvider) {
       kinds.push({
         x402Version: X402_VERSION,
         scheme: "exact",
@@ -154,6 +192,12 @@ export class DirectModeServer {
         extra: {
           asset: this.#config.asset,
           binding: "kaspa-exact-v1",
+          ...(this.#config.exactReservationProvider
+            ? {
+                templateId: "kaspa-x402-kip10-additive-v1",
+                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+              }
+            : {}),
           modes: ["verify", "settle"],
         },
       });
@@ -179,7 +223,6 @@ export class DirectModeServer {
     const paymentPayload = validatedPaymentPayload(options.paymentPayload);
     const paymentRequired = validatedPaymentRequired(this.#facilitatorPaymentRequired(resource, options.paymentRequirements));
     const requestFingerprint = facilitatorRequestFingerprint({ ...options, paymentPayload, paymentRequirements: paymentRequired.accepts[0], resource });
-    await this.#assertExactPayloadHintNotReplayed(paymentPayload, requestFingerprint);
     const payment = await this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
     await this.#assertVerifyNotReplayed(payment, requestFingerprint, paymentPayload);
     return {
@@ -275,6 +318,11 @@ export class DirectModeServer {
         if (verified.scheme === "exact") {
           const replay = await this.#checkExactReplay(verified, fingerprint);
           if (replay) return replay;
+          try {
+            verified = await this.#settleExactIfNeeded(verified);
+          } catch (error) {
+            return this.#settlementCorrectiveResponse(resource, verified, error, paymentAmount, requestedScheme);
+          }
         }
         let handlerResult: ProtectedHandlerResult;
         try {
@@ -537,12 +585,12 @@ export class DirectModeServer {
 
     if (paymentPayload.accepted.scheme === "exact") {
       const payload = paymentPayload.payload;
-      if (payload.type !== "exact-transfer") {
+      if (payload.type !== "exact-transaction") {
         throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "unsupported exact payment payload type");
       }
       return this.#verifyExactPayment(
         paymentRequired,
-        paymentPayload as PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransferPayload },
+        paymentPayload as PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload },
         requestFingerprint,
       );
     }
@@ -564,7 +612,7 @@ export class DirectModeServer {
 
   async #verifyExactPayment(
     paymentRequired: ReturnType<typeof makePaymentRequired>,
-    paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransferPayload },
+    paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload },
     requestFingerprint: Hash32Hex,
   ): Promise<VerifiedExactPayment> {
     const accepted = paymentPayload.accepted;
@@ -577,36 +625,33 @@ export class DirectModeServer {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction verifier is required");
     }
     const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
+    const reservation = await this.#verifiedExactReservation(accepted, payload);
     const verification = await this.#config.exactTransactionVerifier.verifyExactPayment({
       network: accepted.network,
-      transactionId: payload.transactionId,
+      transaction: payload.transaction,
+      transactionEncoding: payload.transactionEncoding,
       paymentOutputIndex: payload.paymentOutputIndex,
       amount: accepted.amount,
       payTo: accepted.payTo,
       payToScriptPublicKey,
       requiredFinality: this.#config.acceptedFinality,
       requestHash: requestFingerprint,
+      ...(reservation ? { reservation } : {}),
     });
     if (!/^[0-9a-fA-F]{64}$/.test(verification.transactionId)) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact verifier returned an invalid transaction id");
     }
-    if (!isExactFinality(verification.finality)) {
+    if (verification.finality !== undefined && !isExactFinality(verification.finality)) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact verifier returned an invalid finality");
     }
-    if (verification.transactionId.toLowerCase() !== payload.transactionId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction id does not match payload evidence");
+    if (reservation?.consumedTransactionId && reservation.consumedTransactionId.toLowerCase() !== verification.transactionId.toLowerCase()) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation was already consumed by a different transaction");
     }
     if (verification.paymentOutput.amount !== accepted.amount) {
       throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment output amount does not match accepted amount");
     }
     if (verification.paymentOutput.scriptPublicKey.toLowerCase() !== payToScriptPublicKey.toLowerCase()) {
       throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact payment output script does not match payTo");
-    }
-    if (!exactFinalityMeets(verification.finality, this.#config.acceptedFinality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment has not reached required finality");
-    }
-    if (accepted.extra.finality && !exactFinalityMeets(verification.finality, accepted.extra.finality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment has not reached advertised finality");
     }
     return {
       scheme: "exact",
@@ -615,8 +660,45 @@ export class DirectModeServer {
       accepted,
       transactionId: verification.transactionId,
       paymentOutputIndex: payload.paymentOutputIndex,
+      transaction: payload.transaction,
+      transactionEncoding: payload.transactionEncoding,
+      reservation,
       payerAddress: verification.payerAddress ?? payload.payerAddress,
-      finality: verification.finality,
+      finality: verification.finality ?? "mempool",
+      ...(verification.finality ? { observedFinality: verification.finality } : {}),
+    };
+  }
+
+  async #verifiedExactReservation(
+    accepted: ExactPaymentRequirements,
+    payload: ExactTransactionPayload,
+  ): Promise<VerifiedExactReservation> {
+    const reservation = exactReservationFromAccepted(accepted);
+    if (!reservation) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact transaction requires reserved KIP-10 outpoint terms");
+    }
+    if (payload.transactionEncoding !== reservation.transactionEncoding) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction encoding does not match reserved terms");
+    }
+    if (payload.paymentOutputIndex !== reservation.paymentOutputIndex) {
+      throw new KaspaX402Error("invalid_kaspa_outpoint", "exact payment output index does not match reserved terms");
+    }
+    const stored = await this.#config.store.loadExactReservation(reservation.reservationId);
+    if (!stored) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation is not available");
+    }
+    if (!sameExactReservation(stored, reservation)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation does not match accepted terms");
+    }
+    if (stored.status === "consumed" && !stored.transactionId) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation is consumed without transaction evidence");
+    }
+    if (stored.status !== "consumed" && reservation.expiresAt && Date.parse(reservation.expiresAt) <= Date.now()) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation has expired");
+    }
+    return {
+      ...reservation,
+      ...(stored.status === "consumed" && stored.transactionId ? { consumedTransactionId: stored.transactionId } : {}),
     };
   }
 
@@ -854,7 +936,7 @@ export class DirectModeServer {
                 paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
                 response,
                 settlement: pending.settlement,
-                paymentScopeId: exactPaymentScopeId(verified.transactionId),
+                paymentScopeId: safePaymentScopeIdHint(verified.paymentPayload) ?? exactPaymentScopeId(verified.transactionId),
                 transactionId: verified.transactionId,
                 paymentOutputIndex: verified.paymentOutputIndex,
               },
@@ -880,6 +962,41 @@ export class DirectModeServer {
     };
     validateChannelAccounting(channel);
     await this.#config.store.saveChannel(channel);
+  }
+
+  async #settleExactIfNeeded(verified: VerifiedExactPayment): Promise<VerifiedExactPayment> {
+    if (!verified.transaction) return verified;
+    const consumedTransactionId = (verified.reservation as VerifiedExactReservation | undefined)?.consumedTransactionId;
+    if (consumedTransactionId?.toLowerCase() === verified.transactionId.toLowerCase()) {
+      return { ...verified, finality: this.#config.acceptedFinality };
+    }
+    if (
+      verified.observedFinality &&
+      exactFinalityMeets(verified.observedFinality, this.#config.acceptedFinality) &&
+      (!verified.accepted.extra.finality || exactFinalityMeets(verified.observedFinality, verified.accepted.extra.finality))
+    ) {
+      if (verified.reservation) {
+        await this.#config.store.consumeExactReservation(verified.reservation.reservationId, verified.transactionId);
+      }
+      return { ...verified, finality: verified.observedFinality };
+    }
+    const broadcast = await this.#config.chainProvider.sendTransaction(verified.transaction);
+    if (broadcast.transactionId.toLowerCase() !== verified.transactionId.toLowerCase()) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "broadcast transaction id does not match exact verifier");
+    }
+    if (!isExactFinality(broadcast.finality)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach observable finality");
+    }
+    if (!exactFinalityMeets(broadcast.finality, this.#config.acceptedFinality)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach required finality");
+    }
+    if (verified.accepted.extra.finality && !exactFinalityMeets(broadcast.finality, verified.accepted.extra.finality)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach advertised finality");
+    }
+    if (verified.reservation) {
+      await this.#config.store.consumeExactReservation(verified.reservation.reservationId, broadcast.transactionId);
+    }
+    return { ...verified, transactionId: broadcast.transactionId, finality: broadcast.finality };
   }
 
   #buildSuccessfulSettlement(
@@ -951,6 +1068,14 @@ export class DirectModeServer {
         paymentOutputIndex: verified.paymentOutputIndex,
         finality: verified.finality,
         requestHash: fingerprint,
+        ...(verified.transactionEncoding ? { transactionEncoding: verified.transactionEncoding } : {}),
+        ...(verified.reservation
+          ? {
+              templateId: verified.reservation.templateId,
+              reservationId: verified.reservation.reservationId,
+              borrowOutpoint: verified.reservation.borrowOutpoint,
+            }
+          : {}),
       }),
     };
     return {
@@ -1037,12 +1162,33 @@ export class DirectModeServer {
     }
   }
 
-  async #assertExactPayloadHintNotReplayed(paymentPayload: PaymentPayload, fingerprint: Hash32Hex): Promise<void> {
-    if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer") return;
-    const record = await this.#config.store.loadExactPayment(paymentPayload.payload.transactionId);
-    if (!record) return;
-    if (record.requestFingerprint === fingerprint && record.paymentOutputIndex === paymentPayload.payload.paymentOutputIndex) return;
-    throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
+  async #settlementCorrectiveResponse(
+    resource: ResourceInfo,
+    verified: VerifiedPayment,
+    error: unknown,
+    paymentAmount?: SompiString,
+    requestedScheme?: "exact" | "batch-settlement",
+  ): Promise<ServerResponse> {
+    if (verified.scheme === "exact" && verified.paymentPayload.payload.type === "exact-transaction") {
+      const errorReason = error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "invalid_payload";
+      const paymentRequired: PaymentRequired = {
+        x402Version: X402_VERSION,
+        resource,
+        accepts: [verified.accepted],
+        error: errorReason,
+        ...requiredPaymentIdentifierExtensions(this.#config),
+      };
+      return {
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(paymentRequired),
+        },
+        body: {
+          error: errorReason,
+        },
+      };
+    }
+    return this.#correctiveResponse(resource, verified.paymentPayload, error, paymentAmount, requestedScheme);
   }
 
   async #correctiveResponse(
@@ -1057,14 +1203,18 @@ export class DirectModeServer {
     const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
     const scheme = paymentPayload.accepted.scheme === "exact" ? paymentPayload.accepted.scheme : requestedScheme;
+    const exactReservation = paymentPayload.accepted.scheme === "exact" ? exactReservationFromAccepted(paymentPayload.accepted) : undefined;
+    const reusableExactReservation = exactReservation && !shouldRefreshExactReservation(error) ? exactReservation : undefined;
+    const paymentRequired = await this.#paymentRequiredResponse({
+      resource,
+      amount: paymentAmount,
+      scheme,
+      error: errorReason,
+      ...(reusableExactReservation ? { exactReservation: reusableExactReservation } : {}),
+      ...(activeChannel ? { channel: activeChannel, voucherState: latestVoucher(activeChannel) } : {}),
+    });
     return {
-      ...this.paymentRequiredResponse({
-        resource,
-        amount: paymentAmount,
-        scheme,
-        error: errorReason,
-        ...(activeChannel ? { channel: activeChannel, voucherState: latestVoucher(activeChannel) } : {}),
-      }),
+      ...paymentRequired,
       body: {
         error: errorReason,
       },
@@ -1086,7 +1236,15 @@ export class DirectModeServer {
     const payloadChannelId = safePaymentChannelId(paymentPayload);
     const accepted = paymentPayload.accepted;
     if (accepted.scheme === "exact") {
-      return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "exact" });
+      if (exactRequirementMatchesRoute(this.#config, accepted, paymentAmount)) {
+        return {
+          x402Version: X402_VERSION,
+          resource,
+          accepts: [accepted],
+          ...requiredPaymentIdentifierExtensions(this.#config),
+        };
+      }
+      return this.#buildRuntimePaymentRequired({ resource, amount: paymentAmount, scheme: "exact" });
     }
     if (accepted.scheme !== "batch-settlement" || !payloadChannelId) {
       return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: requestedScheme });
@@ -1131,6 +1289,9 @@ function makeAcceptedRequirement(
   scheme: "exact" | "batch-settlement",
 ): ExactPaymentRequirements | BatchPaymentRequirements {
   if (scheme === "exact") {
+    if (!options.exactReservation) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements require KIP-10 reservation terms");
+    }
     return {
       scheme: "exact",
       network: config.network,
@@ -1141,6 +1302,20 @@ function makeAcceptedRequirement(
       extra: {
         binding: "kaspa-exact-v1",
         finality: config.acceptedFinality,
+        ...(options.exactReservation
+          ? {
+              templateId: options.exactReservation.templateId,
+              transactionEncoding: options.exactReservation.transactionEncoding,
+              borrowOutpoint: options.exactReservation.borrowOutpoint,
+              borrowAmount: options.exactReservation.borrowAmount,
+              borrowScriptPublicKey: options.exactReservation.borrowScriptPublicKey,
+              borrowRedeemScript: options.exactReservation.borrowRedeemScript,
+              additiveThresholdSompi: options.exactReservation.additiveThresholdSompi,
+              paymentOutputIndex: options.exactReservation.paymentOutputIndex,
+              reservationId: options.exactReservation.reservationId,
+              ...(options.exactReservation.expiresAt ? { reservationExpiresAt: options.exactReservation.expiresAt } : {}),
+            }
+          : {}),
       },
     };
   }
@@ -1204,7 +1379,7 @@ function facilitatorResource(): ResourceInfo {
 function facilitatorRequestFingerprint(options: DirectPaymentVerificationOptions): Hash32Hex {
   if (options.requestHash !== undefined) return normalizedFacilitatorRequestHash(options.requestHash);
   const payload = options.paymentPayload.payload;
-  if (payload.type === "exact-transfer" && payload.requestHash) return payload.requestHash.toLowerCase();
+  if (payload.type === "exact-transaction" && payload.requestHash) return payload.requestHash.toLowerCase();
   return sha256Hex(
     stableStringify({
       scope: "kaspa:x402:facilitator-request:v1",
@@ -1312,6 +1487,76 @@ function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPayment
   parseSompiString(accepted.amount);
 }
 
+function exactRequirementMatchesRoute(config: ResolvedServerConfig, accepted: ExactPaymentRequirements, paymentAmount?: SompiString): boolean {
+  return (
+    accepted.network === config.network &&
+    accepted.asset === "KAS" &&
+    accepted.payTo === config.payTo &&
+    accepted.amount === (paymentAmount ?? config.amount) &&
+    accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
+    accepted.extra.binding === "kaspa-exact-v1" &&
+    accepted.extra.finality === config.acceptedFinality
+  );
+}
+
+function exactReservationFromAccepted(accepted: ExactPaymentRequirements): ExactBorrowReservation | undefined {
+  const extra = accepted.extra;
+  if (
+    extra.templateId !== "kaspa-x402-kip10-additive-v1" ||
+      extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
+      !extra.borrowOutpoint ||
+      typeof extra.borrowAmount !== "string" ||
+      typeof extra.borrowScriptPublicKey !== "string" ||
+      typeof extra.borrowRedeemScript !== "string" ||
+      typeof extra.additiveThresholdSompi !== "string" ||
+      typeof extra.paymentOutputIndex !== "number" ||
+      typeof extra.reservationId !== "string"
+  ) {
+    return undefined;
+  }
+  parseSompiString(extra.borrowAmount);
+  parseSompiString(extra.additiveThresholdSompi);
+  return {
+    reservationId: extra.reservationId,
+    templateId: extra.templateId,
+    transactionEncoding: extra.transactionEncoding,
+    borrowOutpoint: extra.borrowOutpoint,
+    borrowAmount: extra.borrowAmount,
+    borrowScriptPublicKey: extra.borrowScriptPublicKey,
+    borrowRedeemScript: extra.borrowRedeemScript,
+    additiveThresholdSompi: extra.additiveThresholdSompi,
+    paymentOutputIndex: extra.paymentOutputIndex,
+    ...(typeof extra.reservationExpiresAt === "string" ? { expiresAt: extra.reservationExpiresAt } : {}),
+  };
+}
+
+function shouldRefreshExactReservation(error: unknown): boolean {
+  if (!(error instanceof KaspaX402Error)) return false;
+  return (
+    error.message === "exact reservation is not available" ||
+    error.message === "exact reservation does not match accepted terms" ||
+    error.message === "exact reservation is consumed without transaction evidence" ||
+    error.message === "exact reservation has expired" ||
+    error.message === "exact reservation was already consumed by a different transaction"
+  );
+}
+
+function sameExactReservation(current: ExactBorrowReservation, expected: ExactBorrowReservation): boolean {
+  return (
+    current.reservationId.toLowerCase() === expected.reservationId.toLowerCase() &&
+    current.templateId === expected.templateId &&
+    current.transactionEncoding === expected.transactionEncoding &&
+    current.borrowOutpoint.txid.toLowerCase() === expected.borrowOutpoint.txid.toLowerCase() &&
+    current.borrowOutpoint.index === expected.borrowOutpoint.index &&
+    current.borrowAmount === expected.borrowAmount &&
+    current.borrowScriptPublicKey.toLowerCase() === expected.borrowScriptPublicKey.toLowerCase() &&
+    current.borrowRedeemScript.toLowerCase() === expected.borrowRedeemScript.toLowerCase() &&
+    current.additiveThresholdSompi === expected.additiveThresholdSompi &&
+    current.paymentOutputIndex === expected.paymentOutputIndex &&
+    current.expiresAt === expected.expiresAt
+  );
+}
+
 function validateChannelTerms(config: ResolvedServerConfig, accepted: BatchPaymentRequirements, channelConfig: ChannelConfig): void {
   if (accepted.network !== config.network || channelConfig.network !== config.network) {
     throw new KaspaX402Error("invalid_kaspa_x402_network", "payment network does not match server config");
@@ -1403,8 +1648,8 @@ function safePaymentScopeIdHint(paymentPayload: PaymentPayload): Hash32Hex | und
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type === "exact-transfer" && typeof payload.transactionId === "string" && typeof payload.paymentOutputIndex === "number") {
-    return exactPaymentScopeId(payload.transactionId);
+  if (payload.type === "exact-transaction" && typeof payload.transaction === "string" && typeof payload.paymentOutputIndex === "number") {
+    return exactTransactionArtifactScopeId(payload.transaction);
   }
   return undefined;
 }
@@ -1413,10 +1658,10 @@ function safePaymentLockKey(paymentPayload: PaymentPayload): Hash32Hex | undefin
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type !== "exact-transfer" || typeof payload.transactionId !== "string" || typeof payload.paymentOutputIndex !== "number") {
-    return undefined;
+  if (payload.type === "exact-transaction" && typeof payload.transaction === "string" && typeof payload.paymentOutputIndex === "number") {
+    return exactTransactionArtifactScopeId(payload.transaction);
   }
-  return exactPaymentScopeId(payload.transactionId);
+  return undefined;
 }
 
 function exactPaymentScopeId(transactionId: Hash32Hex): Hash32Hex {
@@ -1424,6 +1669,15 @@ function exactPaymentScopeId(transactionId: Hash32Hex): Hash32Hex {
     stableStringify({
       scope: "kaspa:x402:exact-payment-transaction:v1",
       transactionId: transactionId.toLowerCase(),
+    }),
+  );
+}
+
+function exactTransactionArtifactScopeId(transaction: string): Hash32Hex {
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:exact-payment-transaction-artifact:v1",
+      transactionHash: sha256Hex(transaction),
     }),
   );
 }

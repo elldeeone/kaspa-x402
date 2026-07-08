@@ -233,7 +233,7 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("accepts mixed exact and batch-settlement offers in one envelope", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const batch = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const paymentRequired: PaymentRequired = {
       ...exact.paymentRequired,
@@ -247,7 +247,7 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("rejects empty recipients and zero timeout requirements", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
 
     expectFailureCode(
       validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", {
@@ -266,7 +266,7 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("narrows envelopes that mix Kaspa entries with entries from other schemes or networks", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const kaspaEntry = exact.paymentRequired.accepts[0]!;
     const envelope = {
       ...exact.paymentRequired,
@@ -285,7 +285,7 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("rejects envelopes without any Kaspa entry instead of narrowing to an empty offer", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const envelope = {
       ...exact.paymentRequired,
       accepts: [foreignEvmEntry(), foreignUptoEntry()],
@@ -298,7 +298,7 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("keeps single Kaspa requirement validation strict for narrowed entries", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     expect(validateKaspaPaymentRequirement(exact.paymentRequired.accepts[0]).ok).toBe(true);
     expect(validateKaspaPaymentRequirement(foreignEvmEntry()).ok).toBe(false);
     expect(validateKaspaPaymentRequirement(foreignUptoEntry()).ok).toBe(false);
@@ -307,7 +307,7 @@ describe("x402 HTTP vectors", () => {
 
 describe("MCP helpers", () => {
   it("only parses payment requirements from error tool results", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const challenge = mcpPaymentRequiredResult(vector.paymentRequired);
 
     expect(challenge.structuredContent).toEqual(vector.paymentRequired);
@@ -318,7 +318,7 @@ describe("MCP helpers", () => {
   });
 
   it("reads mixed challenges from upstream servers without rejecting the envelope", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const kaspaEntry = vector.paymentRequired.accepts[0]!;
     const mixed = {
       ...vector.paymentRequired,
@@ -340,7 +340,7 @@ describe("MCP helpers", () => {
   });
 
   it("emits settlement failures as payment challenges with settlement metadata", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transfer.json");
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
     const settlement: SettlementResponse = {
       success: false,
       transaction: "",

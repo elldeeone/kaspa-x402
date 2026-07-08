@@ -2,6 +2,7 @@ import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
   ExactPaymentRecord,
+  ExactReservationRecord,
   ExactSettlementCommit,
   PaymentIdentifierRecord,
   ServerChannelRecord,
@@ -52,6 +53,18 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   commitExactPayment(record: ExactSettlementCommit): Promise<void> {
     return this.#call("commitExactPayment", { record });
+  }
+
+  saveExactReservation(record: ExactReservationRecord): Promise<void> {
+    return this.#call("saveExactReservation", { record });
+  }
+
+  loadExactReservation(reservationId: string): Promise<ExactReservationRecord | undefined> {
+    return this.#call("loadExactReservation", { reservationId });
+  }
+
+  consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
+    return this.#call("consumeExactReservation", { reservationId, transactionId });
   }
 
   loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {

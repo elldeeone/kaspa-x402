@@ -1,9 +1,10 @@
 {
   "kind": "negative",
-  "name": "exact-transfer missing transaction id",
+  "name": "exact-transaction missing transaction artifact",
   "schema": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
   "value": {
-    "type": "exact-transfer",
+    "type": "exact-transaction",
+    "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "paymentOutputIndex": 0
   },
   "expectedError": "invalid_kaspa_x402_payload"

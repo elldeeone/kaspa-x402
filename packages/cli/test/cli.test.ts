@@ -30,7 +30,7 @@ describe("kaspa-x402 CLI", () => {
   });
 
   it("inspects and verifies exact payloads", () => {
-    const fixture = readJson("vectors/x402-http/exact-transfer.json") as {
+    const fixture = readJson("vectors/x402-http/exact-transaction.json") as {
       paymentRequired: unknown;
       paymentPayload: unknown;
     };

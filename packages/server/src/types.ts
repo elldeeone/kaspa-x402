@@ -5,7 +5,9 @@ import type {
   ClaimPolicy,
   ChannelState,
   ExactPaymentRequirements,
-  ExactTransferPayload,
+  ExactTransactionEncoding,
+  ExactAdditiveTemplateId,
+  ExactTransactionPayload,
   FundingOutpoint,
   Hash32Hex,
   NetworkId,
@@ -74,24 +76,52 @@ export interface ExactTransactionOutput {
 
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
-  transactionId: Hash32Hex;
+  transaction: PreparedTransaction;
+  transactionEncoding: ExactTransactionEncoding;
   paymentOutputIndex: number;
   amount: SompiString;
   payTo: string;
   payToScriptPublicKey: ByteHex;
   requiredFinality: "accepted" | "confirmed";
   requestHash?: Hash32Hex;
+  reservation?: ExactBorrowReservation;
 }
 
 export interface ExactTransactionVerification {
   transactionId: Hash32Hex;
   paymentOutput: ExactTransactionOutput;
-  finality: "mempool" | "accepted" | "confirmed";
+  finality?: "mempool" | "accepted" | "confirmed";
   payerAddress?: string;
 }
 
 export interface ExactTransactionVerifier {
   verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> | ExactTransactionVerification;
+}
+
+export interface ExactBorrowReservation {
+  reservationId: Hash32Hex;
+  templateId: ExactAdditiveTemplateId;
+  transactionEncoding: ExactTransactionEncoding;
+  borrowOutpoint: FundingOutpoint;
+  borrowAmount: SompiString;
+  borrowScriptPublicKey: ByteHex;
+  borrowRedeemScript: ByteHex;
+  additiveThresholdSompi: SompiString;
+  paymentOutputIndex: number;
+  expiresAt?: string;
+}
+
+export interface ExactBorrowReservationRequest {
+  network: NetworkId;
+  amount: SompiString;
+  payTo: string;
+  payToScriptPublicKey: ByteHex;
+  maxTimeoutSeconds: number;
+  resource: ResourceInfo;
+}
+
+export interface ExactBorrowReservationProvider {
+  reserveExactPayment(request: ExactBorrowReservationRequest): Promise<ExactBorrowReservation> | ExactBorrowReservation;
 }
 
 export interface TopUpVerificationRequest {
@@ -177,6 +207,14 @@ export interface ExactPaymentRecord {
   response: ServerResponse;
 }
 
+export type ExactReservationStatus = "reserved" | "consumed";
+
+export interface ExactReservationRecord extends ExactBorrowReservation {
+  status: ExactReservationStatus;
+  reservedAt: string;
+  transactionId?: Hash32Hex;
+}
+
 export interface SettlementCommit {
   channel: ServerChannelRecord;
   commitment: BatchCommitmentRecord;
@@ -218,6 +256,9 @@ export interface ExactPaymentStore {
    * payment-identifier writes must fail without partial writes.
    */
   commitExactPayment(record: ExactSettlementCommit): Promise<void>;
+  saveExactReservation(record: ExactReservationRecord): Promise<void>;
+  loadExactReservation(reservationId: Hash32Hex): Promise<ExactReservationRecord | undefined>;
+  consumeExactReservation(reservationId: Hash32Hex, transactionId: Hash32Hex): Promise<void>;
 }
 
 export type ClaimAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
@@ -317,6 +358,7 @@ export interface DirectModeServerConfig {
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  exactReservationProvider?: ExactBorrowReservationProvider;
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
@@ -333,6 +375,7 @@ export interface BuildPaymentRequiredOptions {
   schemes?: readonly ("exact" | "batch-settlement")[];
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
+  exactReservation?: ExactBorrowReservation;
   error?: string;
 }
 
@@ -393,12 +436,16 @@ export interface VerifiedBatchPayment {
 export interface VerifiedExactPayment {
   scheme: "exact";
   paymentRequired: PaymentRequired;
-  paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransferPayload };
+  paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload };
   accepted: ExactPaymentRequirements;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
+  transaction?: PreparedTransaction;
+  transactionEncoding?: ExactTransactionEncoding;
+  reservation?: ExactBorrowReservation;
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
+  observedFinality?: "mempool" | "accepted" | "confirmed";
 }
 
 export type VerifiedPayment = VerifiedBatchPayment | VerifiedExactPayment;

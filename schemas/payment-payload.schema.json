@@ -38,10 +38,55 @@
           "payload": {
             "properties": {
               "type": {
-                "const": "exact-transfer"
+                "const": "exact-transaction"
               }
             },
             "required": ["type"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "exact"
+              }
+            },
+            "required": ["scheme"]
+          },
+          "payload": {
+            "properties": {
+              "type": {
+                "const": "exact-transaction"
+              }
+            },
+            "required": ["type"]
+          }
+        },
+        "required": ["accepted", "payload"]
+      },
+      "then": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "extra": {
+                "required": [
+                  "templateId",
+                  "transactionEncoding",
+                  "borrowOutpoint",
+                  "borrowAmount",
+                  "borrowScriptPublicKey",
+                  "borrowRedeemScript",
+                  "additiveThresholdSompi",
+                  "paymentOutputIndex",
+                  "reservationId"
+                ]
+              }
+            },
+            "required": ["extra"]
           }
         }
       }

@@ -158,10 +158,11 @@ function readPaymentRequiredCandidate(value: unknown): PaymentRequiredEnvelope |
 function mcpPaymentIdentity(paymentPayload: PaymentPayload): JsonRecord {
   const payload = paymentPayload.payload;
   switch (payload.type) {
-    case "exact-transfer":
+    case "exact-transaction":
       return {
         scheme: paymentPayload.accepted.scheme,
-        transactionId: payload.transactionId,
+        transactionArtifactHash: sha256Hex(payload.transaction),
+        transactionEncoding: payload.transactionEncoding,
         paymentOutputIndex: payload.paymentOutputIndex,
       };
     case "deposit-voucher":

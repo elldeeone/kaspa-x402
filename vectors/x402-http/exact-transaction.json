@@ -1,0 +1,105 @@
+{
+  "kind": "x402-http",
+  "description": "HTTP header vector for a KIP-10 exact transaction artifact.",
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.test/file",
+      "description": "Fixed price download",
+      "mimeType": "application/octet-stream"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "250",
+        "asset": "KAS",
+        "payTo": "kaspatest:payout",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v1",
+          "finality": "accepted",
+          "templateId": "kaspa-x402-kip10-additive-v1",
+          "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+          "borrowOutpoint": {
+            "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+            "index": 2
+          },
+          "borrowAmount": "1000",
+          "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+          "borrowRedeemScript": "51",
+          "additiveThresholdSompi": "100",
+          "paymentOutputIndex": 0,
+          "reservationId": "8888888888888888888888888888888888888888888888888888888888888888",
+          "reservationExpiresAt": "2099-01-01T00:00:00.000Z",
+          "assetKind": "native",
+          "assetDecimals": 8
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "250",
+      "asset": "KAS",
+      "payTo": "kaspatest:payout",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v1",
+        "finality": "accepted",
+        "templateId": "kaspa-x402-kip10-additive-v1",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "borrowOutpoint": {
+          "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+          "index": 2
+        },
+        "borrowAmount": "1000",
+        "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+        "borrowRedeemScript": "51",
+        "additiveThresholdSompi": "100",
+        "paymentOutputIndex": 0,
+        "reservationId": "8888888888888888888888888888888888888888888888888888888888888888",
+        "reservationExpiresAt": "2099-01-01T00:00:00.000Z",
+        "assetKind": "native",
+        "assetDecimals": 8
+      }
+    },
+    "payload": {
+      "type": "exact-transaction",
+      "payerAddress": "kaspatest:refund",
+      "transaction": "{\"transaction\":\"signed-kip10-exact\"}",
+      "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+      "paymentOutputIndex": 0,
+      "requestHash": "9999999999999999999999999999999999999999999999999999999999999999"
+    }
+  },
+  "settlementResponse": {
+    "success": true,
+    "transaction": "7777777777777777777777777777777777777777777777777777777777777777",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:refund",
+    "amount": "250",
+    "extensions": {
+      "kaspa": {
+        "paymentOutputIndex": 0,
+        "finality": "accepted",
+        "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "templateId": "kaspa-x402-kip10-additive-v1",
+        "reservationId": "8888888888888888888888888888888888888888888888888888888888888888",
+        "borrowOutpoint": {
+          "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+          "index": 2
+        }
+      }
+    }
+  },
+  "headers": {
+    "paymentRequired": "eyJhY2NlcHRzIjpbeyJhbW91bnQiOiIyNTAiLCJhc3NldCI6IktBUyIsImV4dHJhIjp7ImFkZGl0aXZlVGhyZXNob2xkU29tcGkiOiIxMDAiLCJhc3NldERlY2ltYWxzIjo4LCJhc3NldEtpbmQiOiJuYXRpdmUiLCJiaW5kaW5nIjoia2FzcGEtZXhhY3QtdjEiLCJib3Jyb3dBbW91bnQiOiIxMDAwIiwiYm9ycm93T3V0cG9pbnQiOnsiaW5kZXgiOjIsInR4aWQiOiI1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1In0sImJvcnJvd1JlZGVlbVNjcmlwdCI6IjUxIiwiYm9ycm93U2NyaXB0UHVibGljS2V5IjoiMDAwMGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInBheW1lbnRPdXRwdXRJbmRleCI6MCwicmVzZXJ2YXRpb25FeHBpcmVzQXQiOiIyMDk5LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJyZXNlcnZhdGlvbklkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWtpcDEwLWFkZGl0aXZlLXYxIiwidHJhbnNhY3Rpb25FbmNvZGluZyI6Imthc3BhLXNkay1zYWZlLWpzb24tdjIuMC4wIn0sIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwibmV0d29yayI6Imthc3BhOnRlc3RuZXQtMTAiLCJwYXlUbyI6Imthc3BhdGVzdDpwYXlvdXQiLCJzY2hlbWUiOiJleGFjdCJ9XSwicmVzb3VyY2UiOnsiZGVzY3JpcHRpb24iOiJGaXhlZCBwcmljZSBkb3dubG9hZCIsIm1pbWVUeXBlIjoiYXBwbGljYXRpb24vb2N0ZXQtc3RyZWFtIiwidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L2ZpbGUifSwieDQwMlZlcnNpb24iOjJ9",
+    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIyNTAiLCJhc3NldCI6IktBUyIsImV4dHJhIjp7ImFkZGl0aXZlVGhyZXNob2xkU29tcGkiOiIxMDAiLCJhc3NldERlY2ltYWxzIjo4LCJhc3NldEtpbmQiOiJuYXRpdmUiLCJiaW5kaW5nIjoia2FzcGEtZXhhY3QtdjEiLCJib3Jyb3dBbW91bnQiOiIxMDAwIiwiYm9ycm93T3V0cG9pbnQiOnsiaW5kZXgiOjIsInR4aWQiOiI1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1In0sImJvcnJvd1JlZGVlbVNjcmlwdCI6IjUxIiwiYm9ycm93U2NyaXB0UHVibGljS2V5IjoiMDAwMGFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiYWJhYmFiIiwiZmluYWxpdHkiOiJhY2NlcHRlZCIsInBheW1lbnRPdXRwdXRJbmRleCI6MCwicmVzZXJ2YXRpb25FeHBpcmVzQXQiOiIyMDk5LTAxLTAxVDAwOjAwOjAwLjAwMFoiLCJyZXNlcnZhdGlvbklkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWtpcDEwLWFkZGl0aXZlLXYxIiwidHJhbnNhY3Rpb25FbmNvZGluZyI6Imthc3BhLXNkay1zYWZlLWpzb24tdjIuMC4wIn0sIm1heFRpbWVvdXRTZWNvbmRzIjo2MCwibmV0d29yayI6Imthc3BhOnRlc3RuZXQtMTAiLCJwYXlUbyI6Imthc3BhdGVzdDpwYXlvdXQiLCJzY2hlbWUiOiJleGFjdCJ9LCJwYXlsb2FkIjp7InBheWVyQWRkcmVzcyI6Imthc3BhdGVzdDpyZWZ1bmQiLCJwYXltZW50T3V0cHV0SW5kZXgiOjAsInJlcXVlc3RIYXNoIjoiOTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OSIsInRyYW5zYWN0aW9uIjoie1widHJhbnNhY3Rpb25cIjpcInNpZ25lZC1raXAxMC1leGFjdFwifSIsInRyYW5zYWN0aW9uRW5jb2RpbmciOiJrYXNwYS1zZGstc2FmZS1qc29uLXYyLjAuMCIsInR5cGUiOiJleGFjdC10cmFuc2FjdGlvbiJ9LCJ4NDAyVmVyc2lvbiI6Mn0=",
+    "paymentResponse": "eyJhbW91bnQiOiIyNTAiLCJleHRlbnNpb25zIjp7Imthc3BhIjp7ImJvcnJvd091dHBvaW50Ijp7ImluZGV4IjoyLCJ0eGlkIjoiNTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NTU1NSJ9LCJmaW5hbGl0eSI6ImFjY2VwdGVkIiwicGF5bWVudE91dHB1dEluZGV4IjowLCJyZXF1ZXN0SGFzaCI6Ijk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTk5OTkiLCJyZXNlcnZhdGlvbklkIjoiODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4ODg4OCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWtpcDEwLWFkZGl0aXZlLXYxIiwidHJhbnNhY3Rpb25FbmNvZGluZyI6Imthc3BhLXNkay1zYWZlLWpzb24tdjIuMC4wIn19LCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheWVyIjoia2FzcGF0ZXN0OnJlZnVuZCIsInN1Y2Nlc3MiOnRydWUsInRyYW5zYWN0aW9uIjoiNzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3Nzc3NyJ9"
+  }
+}

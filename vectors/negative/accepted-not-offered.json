@@ -18,7 +18,20 @@
         "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         "maxTimeoutSeconds": 60,
         "extra": {
-          "binding": "kaspa-exact-v1"
+          "binding": "kaspa-exact-v1",
+          "finality": "accepted",
+          "templateId": "kaspa-x402-kip10-additive-v1",
+          "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+          "borrowOutpoint": {
+            "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+            "index": 2
+          },
+          "borrowAmount": "1000",
+          "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+          "borrowRedeemScript": "51",
+          "additiveThresholdSompi": "100",
+          "paymentOutputIndex": 0,
+          "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
         }
       }
     ]
@@ -33,12 +46,26 @@
       "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
       "maxTimeoutSeconds": 60,
       "extra": {
-        "binding": "kaspa-exact-v1"
+        "binding": "kaspa-exact-v1",
+        "finality": "accepted",
+        "templateId": "kaspa-x402-kip10-additive-v1",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "borrowOutpoint": {
+          "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+          "index": 2
+        },
+        "borrowAmount": "1000",
+        "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+        "borrowRedeemScript": "51",
+        "additiveThresholdSompi": "100",
+        "paymentOutputIndex": 0,
+        "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
       }
     },
     "payload": {
-      "type": "exact-transfer",
-      "transactionId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "type": "exact-transaction",
+      "transaction": "{\"transaction\":\"signed-kip10-exact\"}",
+      "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
       "paymentOutputIndex": 0
     }
   }

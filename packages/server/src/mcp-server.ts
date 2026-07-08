@@ -53,13 +53,33 @@ export async function handlePaidMcpToolCall(
     return mcpErrorResult(`MCP tool name mismatch: expected ${options.name}`);
   }
 
-  const fallbackPaymentRequired = server.buildPaymentRequired({ resource, amount: options.amount, scheme: options.scheme });
   let paymentPayload: PaymentPayload | undefined;
   try {
     paymentPayload = readMcpPaymentPayload(params);
   } catch {
-    return mcpPaymentRequiredResult(fallbackPaymentRequired);
+    const response = await server.handlePaidRequest(
+      {
+        method: "MCP",
+        url: resource.url,
+        resource,
+        body: {
+          toolName: options.name,
+          arguments: params.arguments ?? null,
+        },
+        paymentAmount: options.amount,
+        paymentScheme: options.scheme,
+      },
+      async () => ({ body: mcpErrorResult("unreachable") }),
+    );
+    return serverResponseToMcpResult(response);
   }
+  const fallbackPaymentRequired: PaymentRequired | undefined = paymentPayload
+    ? {
+        x402Version: 2,
+        resource,
+        accepts: [paymentPayload.accepted],
+      }
+    : undefined;
 
   const requestHash = paymentPayload
     ? mcpToolCallFingerprint({

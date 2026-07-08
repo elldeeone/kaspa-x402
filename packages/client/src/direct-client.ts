@@ -27,7 +27,7 @@ import {
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
 import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
-import { parsePaymentRequiredHeaderValue } from "./payment-required.js";
+import { parsePaymentRequiredHeaderValue, type ParsePaymentRequiredOptions } from "./payment-required.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -37,10 +37,13 @@ import {
   type DirectModeChannel,
   type DirectModeClientOptions,
   type EscrowDepositResult,
+  type ExactPaymentRequest,
+  type ExactTransactionPaymentResult,
   type FetchLike,
   type HeadersInitLike,
   type HttpRequestInitLike,
   type PaidFetchResult,
+  type ParsedPaymentRequired,
   type PaymentRequestContext,
   type RefundResult,
 } from "./types.js";
@@ -64,12 +67,13 @@ export class DirectModeClient {
     return supportedSchemesForClient(this.#options);
   }
 
+  selectPaymentRequirement(header: string): ParsedPaymentRequired {
+    return parsePaymentRequiredHeaderValue(header, paymentRequiredParseOptionsForClient(this.#options));
+  }
+
   async createPayment(header: string, context: PaymentRequestContext): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
-    const parsed = parsePaymentRequiredHeaderValue(header, {
-      supportedNetworks: supportedNetworksForClient(this.#options),
-      supportedSchemes: supportedSchemesForClient(this.#options),
-    });
+    const parsed = this.selectPaymentRequirement(header);
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
       return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, contextWithRequestHash(context, parsed.accepted));
@@ -397,39 +401,35 @@ export class DirectModeClient {
     paymentRequired: CreatePaymentResult["paymentRequired"],
     context: PaymentRequestContext,
   ): Promise<CreatePaymentResult> {
-    if (!this.#options.fundingProvider.payExact) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter is required");
-    }
-    const exact = await this.#options.fundingProvider.payExact({
+    const exactRequest: ExactPaymentRequest = {
       network: accepted.network,
       amount: accepted.amount,
       payTo: accepted.payTo,
       requestHash: context.requestHash,
       requiredFinality: accepted.extra.finality,
       fundingSource: this.#options.fundingPolicy?.requiredSource,
-    });
-    if (this.#options.fundingPolicy?.requiredSource && exact.fundingSource && exact.fundingSource !== this.#options.fundingPolicy.requiredSource) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payment funding source does not satisfy policy");
+    };
+    const reservation = exactReservationHint(accepted);
+    if (!reservation) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements must include KIP-10 reservation terms");
     }
-    if (!Number.isInteger(exact.paymentOutputIndex) || exact.paymentOutputIndex < 0) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment output index is invalid");
-    }
-    if (!/^[0-9a-fA-F]{64}$/.test(exact.transactionId)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment transaction id is invalid");
-    }
-    const finality = readExactPaymentFinality(exact.finality);
-    const requiredFinality = readExactFinality(accepted.extra.finality);
-    if (requiredFinality && !exactFinalityMeets(finality, requiredFinality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter returned payment below required finality");
-    }
-    const identity = exact.payerAddress ? undefined : await this.#options.fundingProvider.getPublicIdentity();
-    const paymentPayload = buildPaymentPayload(paymentRequired, accepted, context, {
-      type: "exact-transfer",
-      payerAddress: exact.payerAddress ?? identity?.address,
-      transactionId: exact.transactionId,
-      paymentOutputIndex: exact.paymentOutputIndex,
+    let exact: ExactTransactionPaymentResult;
+    let payload: PaymentPayload["payload"];
+    let payerAddress: string | undefined;
+    const transactionExact = await this.#createReservedExactTransaction({ ...exactRequest, reservation });
+    this.#assertExactResult(transactionExact);
+    const identity = transactionExact.payerAddress ? undefined : await this.#options.fundingProvider.getPublicIdentity();
+    payerAddress = transactionExact.payerAddress ?? identity?.address;
+    payload = {
+      type: "exact-transaction" as const,
+      payerAddress,
+      transaction: transactionExact.transaction,
+      transactionEncoding: transactionExact.transactionEncoding,
+      paymentOutputIndex: transactionExact.paymentOutputIndex,
       ...(context.requestHash ? { requestHash: context.requestHash } : {}),
-    });
+    };
+    exact = transactionExact;
+    const paymentPayload = buildPaymentPayload(paymentRequired, accepted, context, payload);
     const retryValidation = validatePaymentRetry({ paymentRequired, paymentPayload });
     if (!retryValidation.ok) throw retryValidation.error;
     return {
@@ -438,10 +438,39 @@ export class DirectModeClient {
       paymentPayload,
       scheme: "exact",
       openedChannel: false,
-      transactionId: exact.transactionId,
+      ...("transactionId" in exact && exact.transactionId ? { transactionId: exact.transactionId } : {}),
       paymentOutputIndex: exact.paymentOutputIndex,
-      payerAddress: exact.payerAddress ?? identity?.address,
+      payerAddress,
     };
+  }
+
+  #assertExactResult(exact: ExactTransactionPaymentResult): void {
+    if (this.#options.fundingPolicy?.requiredSource && exact.fundingSource && exact.fundingSource !== this.#options.fundingPolicy.requiredSource) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payment funding source does not satisfy policy");
+    }
+    if (!Number.isInteger(exact.paymentOutputIndex) || exact.paymentOutputIndex < 0) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment output index is invalid");
+    }
+  }
+
+  async #createReservedExactTransaction(request: ExactPaymentRequest & { reservation: NonNullable<ExactPaymentRequest["reservation"]> }): Promise<ExactTransactionPaymentResult> {
+    if (!this.#options.fundingProvider.payExactTransaction) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "reserved KIP-10 exact offers require an exact transaction adapter");
+    }
+    const exact = await this.#options.fundingProvider.payExactTransaction(request);
+    if (!isExactTransactionPaymentResult(exact)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction adapter must return signed transaction artifacts");
+    }
+    if (!/^[0-9a-fA-F]{64}$/.test(exact.transactionId)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction adapter must return transaction id evidence");
+    }
+    if (exact.transactionEncoding !== request.reservation.transactionEncoding) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction encoding does not match reserved terms");
+    }
+    if (exact.paymentOutputIndex !== request.reservation.paymentOutputIndex) {
+      throw new KaspaX402Error("invalid_kaspa_outpoint", "exact transaction output index does not match reserved terms");
+    }
+    return exact;
   }
 
   async #buildVoucherPayload(
@@ -582,9 +611,22 @@ function supportedNetworksForClient(options: DirectModeClientOptions): readonly 
 function supportedSchemesForClient(options: DirectModeClientOptions): readonly ("exact" | "batch-settlement")[] {
   if (options.supportedSchemes) return options.supportedSchemes;
   const schemes: ("exact" | "batch-settlement")[] = [];
-  if (options.fundingProvider.payExact) schemes.push("exact");
+  if (options.fundingProvider.payExactTransaction) schemes.push("exact");
   schemes.push("batch-settlement");
   return schemes;
+}
+
+function paymentRequiredParseOptionsForClient(options: DirectModeClientOptions): ParsePaymentRequiredOptions {
+  return {
+    supportedNetworks: supportedNetworksForClient(options),
+    supportedSchemes: supportedSchemesForClient(options),
+    supportsRequirement: (requirement) => supportsRequirementForClient(options, requirement),
+  };
+}
+
+function supportsRequirementForClient(options: DirectModeClientOptions, requirement: PaymentRequirements): boolean {
+  if (requirement.scheme !== "exact") return true;
+  return Boolean(exactReservationHint(requirement) && options.fundingProvider.payExactTransaction);
 }
 
 function buildPaymentPayload(
@@ -612,7 +654,7 @@ function applyExactSettlement(payment: CreatePaymentResult, response: Settlement
   }
   const payload = payment.paymentPayload.payload;
   const accepted = payment.accepted as ExactPaymentRequirements;
-  if (payload.type !== "exact-transfer") {
+  if (payload.type !== "exact-transaction") {
     throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "exact settlement does not correspond to an exact payment payload");
   }
   if (response.network !== accepted.network) {
@@ -621,8 +663,8 @@ function applyExactSettlement(payment: CreatePaymentResult, response: Settlement
   if (!/^[0-9a-fA-F]{64}$/.test(response.transaction)) {
     throw new KaspaX402Error("invalid_kaspa_transaction", "successful exact settlement must include a transaction id");
   }
-  if (response.transaction.toLowerCase() !== payload.transactionId.toLowerCase()) {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "settlement transaction id does not match exact payment payload");
+  if (payment.transactionId && response.transaction.toLowerCase() !== payment.transactionId.toLowerCase()) {
+    throw new KaspaX402Error("invalid_kaspa_transaction", "settlement transaction id does not match exact payment transaction");
   }
   if (response.amount !== accepted.amount) {
     throw new KaspaX402Error("invalid_kaspa_settlement_response", "exact settlement amount does not match accepted requirement");
@@ -664,12 +706,37 @@ function readExactFinality(value: unknown): "mempool" | "accepted" | "confirmed"
   throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement finality is invalid");
 }
 
-function readExactPaymentFinality(value: unknown): "mempool" | "accepted" | "confirmed" {
-  if (value === "mempool" || value === "accepted" || value === "confirmed") return value;
-  if (value === "broadcast") {
-    throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter must wait for observable finality");
+function exactReservationHint(accepted: ExactPaymentRequirements): ExactPaymentRequest["reservation"] | undefined {
+  const extra = accepted.extra;
+  if (
+    extra.templateId !== "kaspa-x402-kip10-additive-v1" ||
+    extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
+    !extra.borrowOutpoint ||
+    typeof extra.borrowAmount !== "string" ||
+    typeof extra.borrowScriptPublicKey !== "string" ||
+    typeof extra.borrowRedeemScript !== "string" ||
+    typeof extra.additiveThresholdSompi !== "string" ||
+    typeof extra.paymentOutputIndex !== "number" ||
+    typeof extra.reservationId !== "string"
+  ) {
+    return undefined;
   }
-  throw new KaspaX402Error("invalid_kaspa_transaction", "exact payment adapter must return observable finality");
+  return {
+    templateId: extra.templateId,
+    transactionEncoding: extra.transactionEncoding,
+    borrowOutpoint: extra.borrowOutpoint,
+    borrowAmount: extra.borrowAmount,
+    borrowScriptPublicKey: extra.borrowScriptPublicKey,
+    borrowRedeemScript: extra.borrowRedeemScript,
+    additiveThresholdSompi: extra.additiveThresholdSompi,
+    paymentOutputIndex: extra.paymentOutputIndex,
+    reservationId: extra.reservationId,
+    ...(typeof extra.reservationExpiresAt === "string" ? { reservationExpiresAt: extra.reservationExpiresAt } : {}),
+  };
+}
+
+function isExactTransactionPaymentResult(exact: unknown): exact is ExactTransactionPaymentResult {
+  return isRecord(exact) && typeof exact.transaction === "string" && exact.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0";
 }
 
 function paymentIdentifierExtensions(paymentRequired: CreatePaymentResult["paymentRequired"], context: PaymentRequestContext): PaymentPayload["extensions"] {

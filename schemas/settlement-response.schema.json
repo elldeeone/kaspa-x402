@@ -178,6 +178,18 @@
         "requestHash": {
           "$ref": "#/$defs/hash32"
         },
+        "transactionEncoding": {
+          "const": "kaspa-sdk-safe-json-v2.0.0"
+        },
+        "templateId": {
+          "const": "kaspa-x402-kip10-additive-v1"
+        },
+        "reservationId": {
+          "$ref": "#/$defs/hash32"
+        },
+        "borrowOutpoint": {
+          "$ref": "#/$defs/outpoint"
+        },
         "channelState": {
           "$ref": "https://kaspa-x402.org/schemas/channel-state.schema.json"
         },

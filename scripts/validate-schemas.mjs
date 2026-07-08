@@ -81,7 +81,7 @@ function expectedBindingForScheme(scheme) {
 
 function expectedPayloadTypesForScheme(scheme) {
   return {
-    exact: ["exact-transfer"],
+    exact: ["exact-transaction"],
     "batch-settlement": ["deposit-voucher", "voucher", "claim", "refund"],
   }[scheme];
 }

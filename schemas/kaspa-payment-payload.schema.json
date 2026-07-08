@@ -9,7 +9,7 @@
   "properties": {
     "type": {
       "enum": [
-        "exact-transfer",
+        "exact-transaction",
         "deposit-voucher",
         "voucher",
         "refund",
@@ -20,7 +20,11 @@
       "type": "string"
     },
     "transaction": {
-      "$ref": "#/$defs/hex"
+      "type": "string",
+      "minLength": 1
+    },
+    "transactionEncoding": {
+      "const": "kaspa-sdk-safe-json-v2.0.0"
     },
     "transactionId": {
       "$ref": "#/$defs/hash32"
@@ -138,7 +142,7 @@
       "if": {
         "properties": {
           "type": {
-            "const": "exact-transfer"
+            "const": "exact-transaction"
           }
         },
         "required": [
@@ -148,12 +152,13 @@
       "then": {
         "required": [
           "type",
-          "transactionId",
+          "transaction",
+          "transactionEncoding",
           "paymentOutputIndex"
         ],
         "not": {
           "required": [
-            "transaction"
+            "transactionId"
           ]
         }
       }

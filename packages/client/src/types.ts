@@ -3,6 +3,7 @@ import type {
   ByteHex,
   ChannelConfig,
   ExactPaymentRequirements,
+  ExactTransactionEncoding,
   FundingOutpoint,
   Hash32Hex,
   NetworkId,
@@ -63,15 +64,35 @@ export interface ExactPaymentRequest {
   requestHash?: Hash32Hex;
   requiredFinality?: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
+  reservation?: Pick<
+    ExactPaymentRequirements["extra"],
+    | "templateId"
+    | "transactionEncoding"
+    | "borrowOutpoint"
+    | "borrowAmount"
+    | "borrowScriptPublicKey"
+    | "borrowRedeemScript"
+    | "additiveThresholdSompi"
+    | "paymentOutputIndex"
+    | "reservationId"
+    | "reservationExpiresAt"
+  >;
 }
 
-export interface ExactPaymentResult {
+export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
+  reservation: NonNullable<ExactPaymentRequest["reservation"]>;
+}
+
+export interface ExactTransactionPaymentResult {
+  transaction: string;
+  transactionEncoding: ExactTransactionEncoding;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
   payerAddress?: string;
-  finality: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
 }
+
+export type ExactPaymentResult = ExactTransactionPaymentResult;
 
 export interface FeeEstimateRequest {
   network: NetworkId;
@@ -93,7 +114,7 @@ export interface FundingProvider {
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
   fundEscrowDeposit(request: EscrowDepositRequest): Promise<EscrowDepositResult>;
-  payExact?(request: ExactPaymentRequest): Promise<ExactPaymentResult>;
+  payExactTransaction?(request: ExactTransactionPaymentRequest): Promise<ExactTransactionPaymentResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;

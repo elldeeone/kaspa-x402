@@ -55,24 +55,39 @@ try {
 
 async function runExactProof() {
   const { client, facilitator, server, serverStore } = createMockDirectModeEnvironment();
-  const url = "https://api.example.test/download";
+  const url = "https://api.example.test/kip10-download";
   const resource = {
     url,
-    description: "Fixed-price file",
+    description: "Fixed-price KIP-10 file",
     mimeType: "application/octet-stream",
   };
-  const requestHash = mockRequestHash({ proof: "offline", scheme: "exact", step: "download" });
-  const payment = await client.createPayment(paymentRequiredFor(server, { resource, amount: "100000", scheme: "exact" }), {
+  const amount = "100000";
+  const requestHash = mockRequestHash({ proof: "offline", scheme: "exact", mode: "kip10-transaction", step: "download" });
+  const unpaid = await server.handlePaidRequest({ url, resource, paymentAmount: amount, paymentScheme: "exact" }, async () => ({
+    status: 200,
+    body: { ok: false },
+  }));
+  assert.equal(unpaid.status, 402);
+  const paymentRequiredHeader = unpaid.headers[PAYMENT_REQUIRED_HEADER];
+  assert.ok(paymentRequiredHeader);
+  const required = decodePaymentRequiredHeader(paymentRequiredHeader);
+  const accepted = required.accepts[0];
+  assert.equal(accepted.scheme, "exact");
+  assert.equal(accepted.extra.templateId, "kaspa-x402-kip10-additive-v1");
+  assert.equal(accepted.extra.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
+
+  const payment = await client.createPayment(paymentRequiredHeader, {
     url,
-    paymentIdentifier: "offline-exact-download",
+    paymentIdentifier: "offline-exact-kip10-download",
     requestHash,
   });
-
   assert.equal(payment.scheme, "exact");
-  assert.equal(payment.paymentPayload.payload.type, "exact-transfer");
-  check("exact payload creation", {
-    transactionId: payment.transactionId,
+  assert.equal(payment.paymentPayload.payload.type, "exact-transaction");
+  assert.equal(payment.paymentPayload.payload.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
+  check("exact KIP-10 transaction payload creation", {
+    transactionEncoding: payment.paymentPayload.payload.transactionEncoding,
     paymentOutputIndex: payment.paymentOutputIndex,
+    reservationId: accepted.extra.reservationId,
   });
 
   const verification = await facilitator.verify({
@@ -83,31 +98,36 @@ async function runExactProof() {
     requestHash,
   });
   assert.equal(verification.isValid, true);
-  check("exact server verification", {
+  check("exact KIP-10 server verification", {
     payer: verification.payer,
-    finality: verification.extra?.finality,
+    reservationId: accepted.extra.reservationId,
   });
 
   let executions = 0;
-  const response = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount: "100000", requestHash }), async () => {
+  const response = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount, requestHash }), async () => {
     executions += 1;
     return {
       status: 200,
-      body: { ok: true, route: "download" },
+      body: { ok: true, route: "kip10-download" },
     };
   });
   assert.equal(response.status, 200);
   assert.equal(executions, 1);
   const settlement = decodeResponse(response);
+  const settlementExtra = readKaspaSettlementExtension(settlement);
   assert.equal(settlement.success, true);
-  assert.equal(settlement.amount, "100000");
-  check("exact settlement commit", {
+  assert.equal(settlement.amount, amount);
+  assert.equal(settlementExtra?.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
+  assert.equal(settlementExtra?.templateId, "kaspa-x402-kip10-additive-v1");
+  assert.equal(settlementExtra?.reservationId, accepted.extra.reservationId);
+  check("exact KIP-10 settlement commit", {
     transaction: settlement.transaction,
     amount: settlement.amount,
+    reservationId: settlementExtra?.reservationId,
   });
 
   let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount: "100000", requestHash }), async () => {
+  const cached = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount, requestHash }), async () => {
     cachedExecutions += 1;
     return {
       status: 200,
@@ -116,40 +136,50 @@ async function runExactProof() {
   });
   assert.equal(cached.status, 200);
   assert.equal(cachedExecutions, 0);
-  assert.equal(cached.body.route, "download");
-  check("exact payment identifier idempotency", {
+  assert.equal(cached.body.route, "kip10-download");
+  check("exact KIP-10 payment identifier idempotency", {
     status: cached.status,
     handlerExecutions: cachedExecutions,
   });
 
-  const replayPayment = await client.createPayment(paymentRequiredFor(server, { resource, amount: "100000", scheme: "exact" }), {
-    url,
+  const replayUrl = "https://api.example.test/kip10-replay";
+  const replayResource = {
+    url: replayUrl,
+    description: "Fixed-price KIP-10 replay source",
+    mimeType: "application/octet-stream",
+  };
+  const replayRequired = await server.handlePaidRequest({ url: replayUrl, resource: replayResource, paymentAmount: amount, paymentScheme: "exact" }, async () => ({
+    status: 200,
+    body: { ok: false },
+  }));
+  assert.equal(replayRequired.status, 402);
+  const replayPayment = await client.createPayment(replayRequired.headers[PAYMENT_REQUIRED_HEADER], {
+    url: replayUrl,
   });
-  const replayPayload = structuredClone(replayPayment.paymentPayload);
-  delete replayPayload.payload.requestHash;
-  const replayFirstHash = mockRequestHash({ proof: "offline", scheme: "exact", step: "replay-source" });
+  const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
+  assert.ok(replayFirstHash);
   const replaySource = await server.handlePaidRequest(
-    requestWithPayment(replayPayload, {
-      url,
-      resource,
+    requestWithPayment(replayPayment.paymentPayload, {
+      url: replayUrl,
+      resource: replayResource,
       scheme: "exact",
-      amount: "100000",
+      amount,
       requestHash: replayFirstHash,
     }),
     async () => ({
       status: 200,
-      body: { ok: true, route: "replay-source" },
+      body: { ok: true, route: "kip10-replay-source" },
     }),
   );
   assert.equal(replaySource.status, 200);
 
   let replayExecutions = 0;
   const replay = await server.handlePaidRequest(
-    requestWithPayment(replayPayload, {
-      url,
-      resource,
+    requestWithPayment(replayPayment.paymentPayload, {
+      url: replayUrl,
+      resource: replayResource,
       scheme: "exact",
-      amount: "100000",
+      amount,
       requestHash: "13".repeat(32),
     }),
     async () => {
@@ -160,20 +190,25 @@ async function runExactProof() {
       };
     },
   );
-  assert.equal(replay.status, 409);
-  assert.equal(replay.body.error, "invalid_transaction_state");
+  assert.equal(replay.status, 402);
+  assert.equal(replay.body.error, "invalid_payload");
   assert.equal(replayExecutions, 0);
-  check("exact replay rejection", {
+  check("exact KIP-10 request-bound replay rejection", {
     status: replay.status,
     error: replay.body.error,
   });
 
-  const stored = await serverStore.loadExactPayment(payment.transactionId);
-  assert.equal(stored?.amount, "100000");
+  const storedReservation = await serverStore.loadExactReservation(accepted.extra.reservationId);
+  assert.equal(storedReservation?.status, "consumed");
+  assert.equal(storedReservation?.transactionId, settlement.transaction);
+  const stored = await serverStore.loadExactPayment(settlement.transaction);
+  assert.equal(stored?.amount, amount);
 
   return {
     transaction: settlement.transaction,
     amount: settlement.amount,
+    transactionEncoding: settlementExtra?.transactionEncoding,
+    reservationStatus: storedReservation?.status,
     idempotentStatus: cached.status,
     replayStatus: replay.status,
   };

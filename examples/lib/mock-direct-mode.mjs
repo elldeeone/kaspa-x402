@@ -9,12 +9,13 @@ export const CLIENT_PUBLIC_KEY = "22".repeat(32);
 export const REFUND_ADDRESS = "kaspatest:refund";
 export const PAYOUT_ADDRESS = "kaspatest:payout";
 
-export function createMockDirectModeEnvironment() {
+export function createMockDirectModeEnvironment(options = {}) {
   const chainProvider = new MockChainProvider();
   const fundingProvider = new MockFundingProvider(chainProvider);
   const addressCodec = new MockAddressCodec();
   const serverStore = new MemoryServerChannelStore();
   const clientStore = new MemoryChannelStore();
+  let reservationIndex = 0;
   const server = new DirectModeServer({
     network: NETWORK,
     payTo: PAYOUT_ADDRESS,
@@ -32,17 +33,39 @@ export function createMockDirectModeEnvironment() {
     },
     exactTransactionVerifier: {
       verifyExactPayment(request) {
+        const transactionId = mockHash(`chain-broadcast:${request.transaction}`);
         return {
-          transactionId: request.transactionId ?? mockHash(`exact:${request.amount}:${request.payTo}`),
+          transactionId,
           paymentOutput: {
             amount: request.amount,
             scriptPublicKey: request.payToScriptPublicKey,
           },
-          finality: "accepted",
           payerAddress: REFUND_ADDRESS,
         };
       },
     },
+    ...(options.exactReservations !== false
+      ? {
+          exactReservationProvider: {
+            reserveExactPayment(request) {
+              const index = reservationIndex;
+              reservationIndex += 1;
+              return {
+                reservationId: mockHash(`exact-reservation:${index}`),
+                templateId: "kaspa-x402-kip10-additive-v1",
+                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+                borrowOutpoint: { txid: mockHash(`exact-borrow:${index}`), index: 0 },
+                borrowAmount: request.amount,
+                borrowScriptPublicKey: request.payToScriptPublicKey,
+                borrowRedeemScript: mockTransaction(`exact-borrow-redeem:${index}`),
+                additiveThresholdSompi: "0",
+                paymentOutputIndex: 0,
+                expiresAt: "2099-01-01T00:00:00.000Z",
+              };
+            },
+          },
+        }
+      : {}),
   });
   const client = new DirectModeClient({
     fundingProvider,
@@ -186,15 +209,14 @@ class MockFundingProvider {
     };
   }
 
-  async payExact(request) {
-    const transactionId = mockHash(`exact:${this.nextIndex}:${request.amount}`);
-    this.nextIndex += 1;
+  async payExactTransaction(request) {
+    const transaction = mockTransaction(`exact-transaction:${request.reservation.reservationId}:${request.amount}`);
     return {
-      transaction: mockTransaction(`exact:${transactionId}`),
-      transactionId,
-      paymentOutputIndex: 0,
+      transaction,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      transactionId: mockHash(`chain-broadcast:${transaction}`),
+      paymentOutputIndex: request.reservation.paymentOutputIndex,
       payerAddress: REFUND_ADDRESS,
-      finality: "accepted",
       fundingSource: this.sourceKind,
     };
   }

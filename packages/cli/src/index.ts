@@ -146,8 +146,8 @@ async function verifyVectors(parsed: ParsedArgs, io: CliIo): Promise<Record<stri
 
 function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
   const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer") {
-    throw new CliError("payment payload is not an exact-transfer");
+  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transaction") {
+    throw new CliError("payment payload is not an exact-transaction");
   }
   const paymentRequired = readPaymentRequiredForRetry(parsed, paymentPayload);
   const retry = validatePaymentRetry({ paymentPayload, paymentRequired });
@@ -159,15 +159,15 @@ function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
     network: paymentPayload.accepted.network,
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
-    transactionId: paymentPayload.payload.transactionId,
+    transactionEncoding: paymentPayload.payload.transactionEncoding,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
   };
 }
 
 function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
   const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transfer") {
-    throw new CliError("payment payload is not an exact-transfer");
+  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transaction") {
+    throw new CliError("payment payload is not an exact-transaction");
   }
   return {
     scheme: "exact",
@@ -175,7 +175,8 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
     payerAddress: paymentPayload.payload.payerAddress ?? null,
-    transactionId: paymentPayload.payload.transactionId,
+    transactionEncoding: paymentPayload.payload.transactionEncoding,
+    transactionBytes: paymentPayload.payload.transaction.length,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
     requestHash: paymentPayload.payload.requestHash ?? null,
   };

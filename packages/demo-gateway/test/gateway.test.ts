@@ -30,7 +30,7 @@ describe("gateway canary", () => {
       "schema-url:ok",
       "release-snapshot:ok",
       "docs-index:ok",
-      "exact-offer:ok",
+      "exact-offer:skipped",
       "batch-offer:ok",
       "unsupported-scheme-rejection:ok",
       "paid-exact-canary:skipped",
