@@ -20,8 +20,7 @@ const config = {
 };
 
 const requiredFlows = [
-  "exact payment and replay rejection",
-  "exact alpha.5 transactionId evidence and legacy transaction rejection",
+  "exact KIP-10 transaction artifact settlement and replay rejection",
   "batch deposit-voucher settlement",
   "batch voucher-only settlement",
   "batch claim transaction construction and broadcast",
@@ -158,19 +157,21 @@ function validateLiveProofResult(result, flows) {
   require(isHash32(result.exact?.txid), "exact.txid", "must be a transaction id");
   require(isTxVersion(result.exact?.txVersion), "exact.txVersion", "must state the transaction version");
   require(isTxVersionSource(result.exact?.txVersionSource), "exact.txVersionSource", "must state an allowed version evidence source");
-  require(result.exact?.txVersionSource === SDK_GENERATED_TX_VERSION_SOURCE, "exact.txVersionSource", "must be sdk-generated-transaction");
+  require(result.exact?.txVersion === 1, "exact.txVersion", "must be transaction v1 for the KIP-10 exact artifact");
+  require(result.exact?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "exact.txVersionSource", "must be adapter-submitted-transaction-shape");
   require(isIndex(result.exact?.outputIndex), "exact.outputIndex", "must be a non-negative integer");
   require(isPositiveSompi(result.exact?.amount), "exact.amount", "must be a positive sompi string");
   require(isFinal(result.exact?.finality), "exact.finality", "must be accepted or confirmed");
-  require(result.exact?.payloadEvidence?.type === "transactionId-output-index", "exact.payloadEvidence.type", "must be transactionId-output-index");
-  if (isHash32(result.exact?.txid)) {
-    require(result.exact?.payloadEvidence?.transactionId?.toLowerCase() === result.exact.txid.toLowerCase(), "exact.payloadEvidence.transactionId", "must match exact txid");
-  }
+  require(result.exact?.payloadEvidence?.type === "kip10-exact-transaction", "exact.payloadEvidence.type", "must be kip10-exact-transaction");
+  require(result.exact?.payloadEvidence?.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0", "exact.payloadEvidence.transactionEncoding", "must be kaspa-sdk-safe-json-v2.0.0");
+  require(isHash32(result.exact?.payloadEvidence?.reservationId), "exact.payloadEvidence.reservationId", "must be a reservation id");
+  require(validOutpoint(result.exact?.payloadEvidence?.borrowOutpoint), "exact.payloadEvidence.borrowOutpoint", "must be a borrow outpoint");
+  require(isHash32(result.exact?.payloadEvidence?.transactionArtifactSha256), "exact.payloadEvidence.transactionArtifactSha256", "must identify the signed transaction artifact");
   if (isIndex(result.exact?.outputIndex)) {
     require(result.exact?.payloadEvidence?.paymentOutputIndex === result.exact.outputIndex, "exact.payloadEvidence.paymentOutputIndex", "must match exact outputIndex");
   }
-  require(result.exact?.legacyTransactionPayloadRejected?.rejected === true, "exact.legacyTransactionPayloadRejected.rejected", "must be true");
-  require(result.exact?.legacyTransactionPayloadRejected?.status === 402, "exact.legacyTransactionPayloadRejected.status", "must be 402");
+  require(result.exact?.serverBroadcast?.txid?.toLowerCase() === result.exact?.txid?.toLowerCase(), "exact.serverBroadcast.txid", "must match exact txid");
+  require(isFinal(result.exact?.serverBroadcast?.finality), "exact.serverBroadcast.finality", "must be accepted or confirmed");
   require(result.exact?.replay?.status === 409, "exact.replay.status", "must be 409");
   require(result.exact?.replay?.error === "invalid_transaction_state", "exact.replay.error", "must be invalid_transaction_state");
 

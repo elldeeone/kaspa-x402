@@ -7,11 +7,12 @@ The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
-Deployment status on 2026-07-06: `0.1.0-alpha.5` is deployed on the static
-site and the hosted Worker. Exact payload evidence is `transactionId` plus
-`paymentOutputIndex`; legacy serialized `transaction` evidence is rejected.
-The separate private TN10 full live harness was rerun for alpha.5 on
-2026-07-06 and is recorded in `docs/live-testnet-report.md`.
+Deployment status: alpha.6 source uses the KIP-10 `exact-transaction` path for
+direct-mode servers that advertise reservations. A hosted gateway without an
+exact reservation provider must not advertise `exact`; `/exact` should return
+`503 exact_unavailable`, while `/batch` remains the public integration target.
+The separate private TN10 full live harness was rerun for alpha.6 on
+2026-07-07 and is recorded in `docs/live-testnet-report.md`.
 
 ## Base URL
 
@@ -29,7 +30,7 @@ https://demo.kaspa-x402.org
 | `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
 | `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
 | `GET` | `/supported` | Returns the direct-mode supported-kind list. |
-| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
+| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource when a KIP-10 reservation provider is deployed; otherwise returns `503 exact_unavailable`. |
 | `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
 
@@ -38,21 +39,24 @@ https://demo.kaspa-x402.org
 
 ## Payment Terms
 
-The gateway only advertises:
+The gateway always uses:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
-- `scheme: "exact"` with `extra.binding: "kaspa-exact-v1"`;
-- `scheme: "batch-settlement"` with `extra.binding: "kaspa-escrow-v1"`;
 - accepted finality of `accepted`;
 - a testnet pay-to address configured in the Worker environment.
+
+The current hosted gateway advertises `batch-settlement` with
+`extra.binding: "kaspa-escrow-v1"`. It must advertise `exact` with
+`extra.binding: "kaspa-exact-v1"` only after a KIP-10 reservation provider is
+deployed and tested.
 
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
 
 Current hosted terms:
 
-- exact price: `20000000` sompi;
+- exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
 - batch minimum deposit: `20000000` sompi.
 
@@ -76,9 +80,9 @@ The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
 Failure modes are fail-closed:
 
 - if REST chain health fails, paid endpoints do not settle payments;
-- exact payments must include `payload.transactionId` and
-  `payload.paymentOutputIndex`; the selected output must be present at the
-  advertised pay-to address;
+- exact payments are unavailable unless the gateway can reserve KIP-10 borrow
+  terms, verify an `exact-transaction` artifact, broadcast it if needed, observe
+  finality, and consume the reservation;
 - batch deposits and vouchers must reference an accepted active escrow UTXO;
 - claim broadcasting is disabled on the hosted gateway.
 
@@ -123,6 +127,12 @@ For alpha.5 exact payments, the header payload carries the observed
 `transactionId` and selected `paymentOutputIndex`. A serialized `transaction`
 field is legacy alpha evidence and must not be accepted as exact-payment
 evidence after the alpha.5 gateway deployment.
+
+The alpha.6 `exact-transaction` path requires server-advertised buildable
+reservation terms, including the borrow redeem script and additive threshold,
+plus a signed transaction artifact. The hosted gateway must not advertise that
+path until it can reserve, verify, broadcast, and consume those exact
+reservations end to end.
 
 ## Testnet Funding
 
@@ -179,6 +189,20 @@ deployment checks completed on 2026-07-06:
   with `invalid_transaction_state` for intentionally fake txid evidence;
 - paid hosted TN10 E2E result: exact, deposit-voucher, voucher-only, and stale
   replay checks passed.
+
+## Alpha.6 Evidence Status
+
+Status: source live evidence complete; hosted exact evidence pending.
+
+Alpha.6 source introduces KIP-10 exact transaction artifacts and removes
+observe-only exact from the current supported exact path. The private TN10 live
+harness passed on 2026-07-07 and is summarized in
+`docs/live-testnet-report.md`. Before the public gateway can advertise hosted
+exact evidence, operators must deploy reviewed source with an exact reservation
+provider, confirm `/supported` advertises `exact`, run the unpaid shape checks,
+run a funded TN10 KIP-10 exact canary, and update this document with the Worker
+version and payment evidence. Without that provider, `/supported` should list
+only `batch-settlement` and `/exact` should remain unavailable.
 
 ## Alpha.5 Hosted Payment Evidence
 

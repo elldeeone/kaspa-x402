@@ -23,9 +23,7 @@ state, and reports under `KASPA_X402_DATA_DIR`. Keep that directory ignored.
 
 The current proof requires:
 
-- exact payment and exact replay rejection;
-- alpha.5 exact `transactionId` plus `paymentOutputIndex` evidence and legacy
-  serialized-transaction payload rejection;
+- exact KIP-10 transaction artifact settlement and replay rejection;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
@@ -33,9 +31,12 @@ The current proof requires:
 - batch refund transaction construction and broadcast after timeout.
 
 Broadcast transaction evidence must include transaction ids, transaction
-versions, version evidence source, and accepted-or-confirmed finality. Batch
-claim and refund evidence must reconcile inputs, outputs, charged amounts,
-fees, and continuation or refund value.
+versions, version evidence source, and accepted-or-confirmed finality. Exact
+KIP-10 evidence must include the transaction encoding, reservation id, borrow
+outpoint, payment output index, transaction-artifact hash, server broadcast
+result, final settlement transaction id, and adapter-submitted transaction-v1
+shape evidence. Batch claim and refund evidence must reconcile inputs, outputs,
+charged amounts, fees, and continuation or refund value.
 
 ## Safety Gates
 

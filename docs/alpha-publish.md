@@ -1,8 +1,8 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.5` published on 2026-07-06. Publishes require npm
-authorization and must not happen accidentally from CI or an unauthenticated
-shell.
+Status: preparing `0.1.0-alpha.6`. `0.1.0-alpha.5` was published on
+2026-07-06. Publishes require npm authorization and must not happen
+accidentally from CI or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
@@ -24,7 +24,12 @@ shape. `0.1.0-alpha.4` carries the raw-digest voucher signature cutover and the
 script-public-key endianness erratum. `0.1.0-alpha.5` carries the exact-payment
 evidence cutover: `exact-transfer` payloads require `transactionId` plus
 `paymentOutputIndex`; serialized `transaction` evidence is not part of the
-alpha.5 exact wire shape.
+alpha.5 exact wire shape. `0.1.0-alpha.6` replaces the observe-only exact path
+with KIP-10 `exact-transaction`: servers advertise a buildable reservation tuple
+including the reserved borrow outpoint, redeem script, additive threshold, and
+expected payment output index; clients return a signed transaction artifact
+encoded as `kaspa-sdk-safe-json-v2.0.0`; and servers verify, broadcast, observe,
+and consume the reservation before releasing protected content.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -73,6 +78,23 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
+## Alpha.6 Registry And Tarball Recheck
+
+Before publishing alpha.6, check:
+
+- `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client`, and
+  `@kaspa-x402/server` package manifests are bumped to `0.1.0-alpha.6`;
+- internal workspace dependencies point exactly at `0.1.0-alpha.6`;
+- dry-run tarballs for the publishable alpha manifests contain only `LICENSE`,
+  `README.md`, `package.json`, `dist/index.js`, and `dist/index.d.ts`;
+- ignored local planning, review, and live-run artifacts are not in the
+  dry-run package file lists;
+- a clean temporary project installs the four local alpha.6 tarballs together
+  and imports `@kaspa-x402/core`, `@kaspa-x402/covenant`,
+  `@kaspa-x402/client`, and `@kaspa-x402/server` successfully;
+- the local alpha.6 tarball set can create and settle the offline KIP-10
+  `exact-transaction` flow.
+
 ## Alpha.5 Registry And Tarball Recheck
 
 Checked for alpha.5 on 2026-07-06:
@@ -99,6 +121,37 @@ Checked for alpha.5 on 2026-07-06:
   development-tooling advisories through `wrangler`/`miniflare`.
 
 ## Hosted Evidence Gate
+
+For alpha.6, the source release gate is not the same as the public hosted
+gateway gate. Alpha.6 source adds the KIP-10 exact transaction-artifact path for
+direct-mode servers that advertise reservations. The hosted
+`demo.kaspa-x402.org` gateway must not advertise exact evidence until it is
+redeployed with an exact reservation provider and a funded TN10 KIP-10 exact
+canary has passed.
+
+Before advertising alpha.6 live evidence, run:
+
+```sh
+npm run proof:live:check -- --live --write-report
+```
+
+The expected alpha.6 live proof must include:
+
+- exact KIP-10 transaction artifact settlement and replay rejection;
+- batch deposit-voucher settlement;
+- batch voucher-only settlement;
+- batch claim transaction construction and broadcast;
+- replay rejection across exact and batch-settlement;
+- batch refund transaction construction and broadcast after timeout.
+
+Checked for alpha.6 on 2026-07-07:
+
+- the funded TN10 live proof completed with status `complete`;
+- exact KIP-10 `exact-transaction` settlement used adapter-submitted tx-v1
+  evidence and server broadcast finality `accepted`;
+- batch deposit-voucher, voucher-only, claim, replay rejection, and refund all
+  passed;
+- the sanitized summary is recorded in `docs/live-testnet-report.md`.
 
 Checked for alpha.5 on 2026-07-06:
 
@@ -177,6 +230,5 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
-- alpha.5 exact payloads use `transactionId` plus `paymentOutputIndex`, not
-  serialized `transaction` evidence;
+- alpha.6 exact supports preferred KIP-10 `exact-transaction` artifacts;
 - live proof evidence is testnet-only.

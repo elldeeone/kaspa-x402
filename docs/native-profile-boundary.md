@@ -14,6 +14,12 @@ the shipped compatibility contract until they can be expressed with native
 Kaspa validation and covered by the same level of schemas, vectors, tests, and
 live evidence.
 
+## Asset Boundary
+
+The shipped profiles settle native KAS only. `kaspa-exact-v1` verifies that a
+Kaspa transaction pays the required sompi amount to the required script public
+key, and `kaspa-escrow-v1` settles native KAS from a funded escrow/channel.
+
 ## Absent Upstream Schemes
 
 Upstream x402 currently defines four schemes: `exact`, `upto`,
@@ -53,7 +59,7 @@ must clear the full readiness bar below before it can ship.
 ## Boundary Rules
 
 - Public schemas accept only `exact` and `batch-settlement`.
-- Payment payloads accept only `exact-transfer`, `deposit-voucher`, `voucher`,
+- Payment payloads accept only `exact-transaction`, `deposit-voucher`, `voucher`,
   `claim`, and `refund`.
 - Kaspa requirements extras accept only `kaspa-exact-v1` and
   `kaspa-escrow-v1`.

@@ -33,32 +33,25 @@ async function smokeGateway(baseUrl) {
   const health = await getJson(`${baseUrl}/health`);
   const canary = await getJson(`${baseUrl}/canary`);
   const supported = await getJson(`${baseUrl}/supported`);
-  const exact = await fetch(`${baseUrl}/exact`);
-  const exactRequired = decodePaymentRequiredHeader(exact.headers.get("PAYMENT-REQUIRED"));
+  const exact = await getJson(`${baseUrl}/exact`);
   const batch = await fetch(`${baseUrl}/batch`);
   const batchRequired = decodePaymentRequiredHeader(batch.headers.get("PAYMENT-REQUIRED"));
-  const legacyExact = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": paymentHeader(legacyExactPayload(exactRequired.accepts[0])) } });
-  const newExact = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": paymentHeader(transactionIdExactPayload(exactRequired.accepts[0])) } });
   const unsupportedHeader = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
-  const unsupported = await getJson(`${baseUrl}/exact`, { headers: { "PAYMENT-SIGNATURE": unsupportedHeader } });
-  const head = await fetch(`${baseUrl}/exact`, { method: "HEAD" });
+  const unsupported = await getJson(`${baseUrl}/batch`, { headers: { "PAYMENT-SIGNATURE": unsupportedHeader } });
+  const head = await fetch(`${baseUrl}/batch`, { method: "HEAD" });
 
   assert(health.status === 200 && health.body.ok === true, "health endpoint failed");
   assert(health.body.enabled === true, "health did not report enabled gateway");
   assert(canary.status === 200 && canary.body.ok === true, "canary endpoint failed");
   assert(health.body.chain?.networkName === "kaspa-testnet-10", `unexpected network ${health.body.chain?.networkName}`);
-  assert(exact.status === 402, `expected exact 402, got ${exact.status}`);
+  assert(exact.status === 503 && exact.body.error === "exact_unavailable", `expected exact_unavailable 503, got ${exact.status}`);
   assert(batch.status === 402, `expected batch 402, got ${batch.status}`);
-  assert(exactRequired.accepts[0]?.scheme === "exact", "exact offer did not advertise exact");
-  assert(exactRequired.accepts[0]?.amount === "20000000", "exact offer amount changed");
   assert(batchRequired.accepts[0]?.scheme === "batch-settlement", "batch offer did not advertise batch-settlement");
   assert(batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v1", "batch offer binding changed");
-  assert(legacyExact.status === 402, `legacy exact transaction payload was not rejected: ${legacyExact.status}`);
-  assert(newExact.status === 402 && newExact.body.error === "invalid_transaction_state", "transactionId exact evidence did not reach verifier path");
   assert(unsupported.status === 402 && unsupported.body.error === "unsupported_scheme", "unsupported scheme was not rejected");
   assert(head.status === 402, `expected HEAD 402, got ${head.status}`);
   assert(supported.body.enabled === true, "supported endpoint did not report enabled gateway");
-  assert(Array.isArray(supported.body.kinds) && supported.body.kinds.length === 2, "supported kinds changed");
+  assert(Array.isArray(supported.body.kinds) && supported.body.kinds.length === 1, "supported kinds changed");
 
   return {
     url: baseUrl,
@@ -68,44 +61,14 @@ async function smokeGateway(baseUrl) {
     },
     supported: supported.body.kinds.map((kind) => `${kind.scheme}:${kind.network}`),
     exact: {
-      scheme: exactRequired.accepts[0].scheme,
-      amount: exactRequired.accepts[0].amount,
-      legacyTransactionRejected: legacyExact.status,
-      transactionIdEvidenceRejectedAfterVerifier: newExact.body.error,
+      status: exact.status,
+      error: exact.body.error,
     },
     batch: {
       scheme: batchRequired.accepts[0].scheme,
       amount: batchRequired.accepts[0].amount,
     },
     unsupported: unsupported.body.error,
-  };
-}
-
-function paymentHeader(payload) {
-  return btoa(JSON.stringify(payload));
-}
-
-function legacyExactPayload(accepted) {
-  return {
-    x402Version: 2,
-    accepted,
-    payload: {
-      type: "exact-transfer",
-      transaction: "77".repeat(32),
-      paymentOutputIndex: 0,
-    },
-  };
-}
-
-function transactionIdExactPayload(accepted) {
-  return {
-    x402Version: 2,
-    accepted,
-    payload: {
-      type: "exact-transfer",
-      transactionId: "77".repeat(32),
-      paymentOutputIndex: 0,
-    },
   };
 }
 

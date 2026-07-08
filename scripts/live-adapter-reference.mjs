@@ -6,6 +6,7 @@ import { createRequire } from "node:module";
 import {
   DirectModeClient,
   MemoryChannelStore,
+  PAYMENT_REQUIRED_HEADER,
   PAYMENT_SIGNATURE_HEADER,
 } from "@kaspa-x402/client";
 import {
@@ -22,10 +23,15 @@ import {
 import {
   buildClaimArgs,
   buildEscrowRedeemScript,
+  buildKip10AdditiveBorrowArgs,
+  buildKip10AdditiveRedeemScript,
   buildRefundArgs,
   CLAIM_COMPUTE_BUDGET,
+  KIP10_ADDITIVE_TEMPLATE_ID,
+  KIP10_EXACT_TRANSACTION_ENCODING,
   REFUND_COMPUTE_BUDGET,
   escrowScriptPublicKey,
+  kip10AdditiveScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
 import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
@@ -37,6 +43,10 @@ const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
 const DEFAULT_FEE_SOMPI = 2_000_000n;
 const EXACT_AMOUNT = "100000000";
+const EXACT_KIP10_BORROW_AMOUNT = "100000000";
+const EXACT_KIP10_ADDITIVE_THRESHOLD = "0";
+const EXACT_KIP10_COMPUTE_BUDGET = 10;
+const P2PK_COMPUTE_BUDGET = 10;
 const BATCH_REQUEST_AMOUNT = "100000000";
 const BATCH_DEPOSIT_AMOUNT = "400000000";
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
@@ -68,6 +78,7 @@ export async function runLiveProof(context) {
   const rpc = new sdk.RpcClient({ url: context.rpcUrl, networkId });
   const pendingBroadcasts = new Map();
   const knownUtxos = new Map();
+  const spentOutpoints = new Set();
   const fundingVersionByTxid = new Map();
   try {
     await rpc.connect({ timeoutDuration: 15_000, retries: 2 });
@@ -83,8 +94,11 @@ export async function runLiveProof(context) {
       sdk,
       addressCodec,
       networkId,
+      network: context.network,
+      serverPayoutAddress,
       pendingBroadcasts,
       knownUtxos,
+      spentOutpoints,
       dataDir,
     });
     const fundingProvider = makeFundingProvider({
@@ -100,6 +114,7 @@ export async function runLiveProof(context) {
       fundingPublicKey,
       pendingBroadcasts,
       knownUtxos,
+      spentOutpoints,
       fundingVersionByTxid,
     });
     const signer = makeSigner({
@@ -110,43 +125,71 @@ export async function runLiveProof(context) {
     });
     const serverStore = new MemoryServerChannelStore();
     const clientStore = new MemoryChannelStore();
-    const server = new DirectModeServer({
+    const voucherVerifier = {
+      verifyVoucher({ digest, voucher, clientPublicKey }) {
+        return schnorr.verify(hexToBytes(voucher.signature, { expectedLength: 64 }), hexToBytes(digest, { expectedLength: 32 }), hexToBytes(clientPublicKey, { expectedLength: 32 }));
+      },
+    };
+    const exactTransactionVerifier = {
+      async verifyExactPayment(request) {
+        if (request.transaction) {
+          return verifyKip10ExactTransaction({
+            sdk,
+            transactionArtifact: request.transaction,
+            request,
+            fundingAddress,
+          });
+        }
+        const utxo = await waitForAddressOutpoint({
+          rpc,
+          address: request.payTo,
+          txid: request.transactionId,
+          index: request.paymentOutputIndex,
+          amount: BigInt(request.amount),
+          scriptPublicKey: request.payToScriptPublicKey,
+        });
+        return {
+          transactionId: utxo.outpoint.txid,
+          paymentOutput: {
+            amount: utxo.amount,
+            scriptPublicKey: utxo.scriptPublicKey,
+            address: request.payTo,
+          },
+          finality: "accepted",
+          payerAddress: fundingAddress,
+        };
+      },
+    };
+    const baseServerConfig = {
       network: context.network,
       payTo: serverPayoutAddress,
       serverPublicKey: serverChannelKey.publicKey,
       amount: EXACT_AMOUNT,
       minDepositSompi: BATCH_DEPOSIT_AMOUNT,
       refundTimeoutDaa,
-      store: serverStore,
       chainProvider: chain,
       addressCodec,
-      voucherVerifier: {
-        verifyVoucher({ digest, voucher, clientPublicKey }) {
-          return schnorr.verify(hexToBytes(voucher.signature, { expectedLength: 64 }), hexToBytes(digest, { expectedLength: 32 }), hexToBytes(clientPublicKey, { expectedLength: 32 }));
-        },
-      },
-      exactTransactionVerifier: {
-        async verifyExactPayment(request) {
-          const utxo = await waitForAddressOutpoint({
-            rpc,
-            address: request.payTo,
-            txid: request.transactionId,
-            index: request.paymentOutputIndex,
-            amount: BigInt(request.amount),
-            scriptPublicKey: request.payToScriptPublicKey,
-          });
-          return {
-            transactionId: utxo.outpoint.txid,
-            paymentOutput: {
-              amount: utxo.amount,
-              scriptPublicKey: utxo.scriptPublicKey,
-              address: request.payTo,
-            },
-            finality: "accepted",
-            payerAddress: fundingAddress,
-          };
-        },
-      },
+      voucherVerifier,
+      exactTransactionVerifier,
+      acceptedFinality: "accepted",
+    };
+    const server = new DirectModeServer({
+      ...baseServerConfig,
+      store: serverStore,
+      exactReservationProvider: makeExactReservationProvider({
+        rpc,
+        sdk,
+        addressCodec,
+        networkId,
+        network: context.network,
+        fundingPrivateKey,
+        fundingAddress,
+        fundingPublicKey,
+        pendingBroadcasts,
+        knownUtxos,
+        spentOutpoints,
+        fundingVersionByTxid,
+      }),
       claimBuilder: {
         async buildClaimTransaction({ channel, claimAmount }) {
           return buildAndSubmitClaim({
@@ -159,10 +202,10 @@ export async function runLiveProof(context) {
             addressCodec,
             pendingBroadcasts,
             knownUtxos,
+            spentOutpoints,
           });
         },
       },
-      acceptedFinality: "accepted",
     });
     const client = new DirectModeClient({
       fundingProvider,
@@ -204,6 +247,7 @@ export async function runLiveProof(context) {
         fundingAddress,
         pendingBroadcasts,
         knownUtxos,
+        spentOutpoints,
         fundingVersionByTxid,
         timeoutDaa: BigInt(refundTimeoutDaa),
       });
@@ -224,9 +268,28 @@ export async function runLiveProof(context) {
 
 async function runExact({ client, server, fundingVersionByTxid }) {
   const resource = { url: "https://live.kaspa-x402.local/exact", description: "Live exact proof" };
-  const payment = await client.createPayment(paymentRequiredFor(server, { resource, amount: EXACT_AMOUNT, scheme: "exact" }), {
+  const unpaid = await server.handlePaidRequest({
+    method: "GET",
+    url: resource.url,
+    body: null,
+    headers: {},
+    resource,
+    paymentAmount: EXACT_AMOUNT,
+    paymentScheme: "exact",
+  }, async () => ({
+    status: 200,
+    body: { ok: false },
+  }));
+  const paymentRequired = unpaid.headers?.[PAYMENT_REQUIRED_HEADER];
+  if (unpaid.status !== 402 || !paymentRequired) {
+    throw new Error(`exact unpaid request did not return a KIP-10 payment challenge: ${unpaid.status}`);
+  }
+  const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
   });
+  if (payment.paymentPayload.payload.type !== "exact-transaction") {
+    throw new Error(`exact KIP-10 challenge produced ${payment.paymentPayload.payload.type} instead of exact-transaction`);
+  }
   const requestHash = payment.paymentPayload.payload.requestHash;
   if (!requestHash) throw new Error("exact payment did not include a request hash");
   try {
@@ -258,45 +321,246 @@ async function runExact({ client, server, fundingVersionByTxid }) {
   if (replay.status !== 409 || replay.body?.error !== "invalid_transaction_state") {
     throw new Error(`exact replay was not rejected: ${replay.status}`);
   }
-  const legacyPayload = JSON.parse(JSON.stringify(payment.paymentPayload));
-  legacyPayload.payload = {
-    ...legacyPayload.payload,
-    transaction: "00",
-  };
-  delete legacyPayload.payload.transactionId;
-  delete legacyPayload.payload.paymentOutputIndex;
-  const legacyTransactionPayloadRejected = await server.handlePaidRequest(requestWithPaymentHeader(unsafePaymentHeader(legacyPayload), {
-    url: `${resource.url}/legacy-transaction`,
-    resource,
-    scheme: "exact",
-    amount: EXACT_AMOUNT,
-    requestHash: hash({ flow: "exact", request: "legacy-transaction" }),
-  }), async () => ({
-    status: 200,
-    body: { ok: false },
-  }));
   return {
     txid: settlement.transaction,
-    ...versionEvidenceForTxid(fundingVersionByTxid, settlement.transaction),
+    txVersion: 1,
+    txVersionSource: ADAPTER_SUBMITTED_TX_VERSION_SOURCE,
     outputIndex: settlementExtra.paymentOutputIndex,
     amount: settlement.amount,
     finality: settlementExtra.finality,
     payloadEvidence: {
-      type: "transactionId-output-index",
-      transactionId: payment.paymentPayload.payload.transactionId,
+      type: "kip10-exact-transaction",
+      transactionEncoding: payment.paymentPayload.payload.transactionEncoding,
+      reservationId: payment.paymentPayload.accepted.extra.reservationId,
+      borrowOutpoint: payment.paymentPayload.accepted.extra.borrowOutpoint,
+      transactionArtifactSha256: sha256Hex(payment.paymentPayload.payload.transaction),
       paymentOutputIndex: payment.paymentPayload.payload.paymentOutputIndex,
     },
-    legacyTransactionPayloadRejected: {
-      rejected: legacyTransactionPayloadRejected.status === 402,
-      status: legacyTransactionPayloadRejected.status,
-      error: legacyTransactionPayloadRejected.body?.error,
+    serverBroadcast: {
+      txid: settlement.transaction,
+      finality: settlementExtra.finality,
     },
     replay: { status: replay.status, error: replay.body.error },
   };
 }
 
+function makeExactReservationProvider(input) {
+  const { rpc, sdk, addressCodec, networkId, network, fundingPrivateKey, fundingAddress, fundingPublicKey, knownUtxos, spentOutpoints, fundingVersionByTxid } = input;
+  return {
+    async reserveExactPayment(request) {
+      const redeemScript = buildKip10AdditiveRedeemScript({
+        ownerPublicKey: fundingPublicKey,
+        amount: EXACT_KIP10_ADDITIVE_THRESHOLD,
+      });
+      const scriptPublicKey = kip10AdditiveScriptPublicKey({
+        ownerPublicKey: fundingPublicKey,
+        amount: EXACT_KIP10_ADDITIVE_THRESHOLD,
+      });
+      const borrowScriptPublicKey = serializedScriptPublicKey(scriptPublicKey);
+      const borrowAddress = addressCodec.encodeScriptAddress({
+        network,
+        scriptPublicKey,
+        serializedScriptPublicKey: borrowScriptPublicKey,
+      });
+      const sent = await fundKip10ReservationOutputs({
+        rpc,
+        sdk,
+        fundingPrivateKey,
+        fundingAddress,
+        borrowScriptPublicKey,
+        spentOutpoints,
+      });
+      const utxo = await waitForAddressOutpoint({
+        rpc,
+        address: borrowAddress,
+        txid: sent.txid,
+        amount: BigInt(EXACT_KIP10_BORROW_AMOUNT),
+        scriptPublicKey: borrowScriptPublicKey,
+      });
+      rememberUtxo(knownUtxos, utxo);
+      const reservationId = hash({
+        kind: "kip10-exact-reservation",
+        network: request.network,
+        resource: request.resource,
+        payTo: request.payTo,
+        amount: request.amount,
+        borrowOutpoint: utxo.outpoint,
+        borrowScriptPublicKey,
+        borrowRedeemScript: redeemScript,
+        additiveThresholdSompi: EXACT_KIP10_ADDITIVE_THRESHOLD,
+      });
+      return {
+        reservationId,
+        templateId: KIP10_ADDITIVE_TEMPLATE_ID,
+        transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
+        borrowOutpoint: utxo.outpoint,
+        borrowAmount: utxo.amount,
+        borrowScriptPublicKey,
+        borrowRedeemScript: redeemScript,
+        additiveThresholdSompi: EXACT_KIP10_ADDITIVE_THRESHOLD,
+        paymentOutputIndex: 1,
+        expiresAt: new Date(Date.now() + request.maxTimeoutSeconds * 1000).toISOString(),
+      };
+    },
+  };
+}
+
+async function buildKip10ExactTransaction(input) {
+  const { rpc, sdk, networkId, network, fundingPrivateKey, fundingAddress, request, spentOutpoints } = input;
+  const reservation = request.reservation;
+  if (!reservation) throw new Error("KIP-10 exact transaction requires a reservation");
+  if (reservation.templateId !== KIP10_ADDITIVE_TEMPLATE_ID) throw new Error("unsupported exact reservation template");
+  if (reservation.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) throw new Error("unsupported exact transaction encoding");
+
+  const paymentAmount = BigInt(request.amount);
+  const borrowAmount = BigInt(reservation.borrowAmount);
+  const threshold = BigInt(reservation.additiveThresholdSompi);
+  const fundingNeeded = paymentAmount + DEFAULT_FEE_SOMPI + threshold;
+  const fundingUtxo = await selectFundingUtxo(rpc, fundingAddress, fundingNeeded + 10_000_000n, spentOutpoints);
+  const fundingAmount = BigInt(fundingUtxo.amount);
+  if (fundingAmount < fundingNeeded) {
+    throw new Error(`reserved exact funding output ${fundingAmount} is below required ${fundingNeeded}`);
+  }
+  const borrowScriptPublicKey = scriptPublicKeyFromSerialized(sdk, reservation.borrowScriptPublicKey);
+  const fundingScriptPublicKey = scriptPublicKeyFromSerialized(sdk, fundingUtxo.scriptPublicKey);
+  const paymentScriptPublicKey = sdk.payToAddressScript(request.payTo);
+  const changeScriptPublicKey = sdk.payToAddressScript(fundingAddress);
+  const outputs = [
+    { value: borrowAmount + threshold, scriptPublicKey: borrowScriptPublicKey },
+    { value: paymentAmount, scriptPublicKey: paymentScriptPublicKey },
+  ];
+  const change = fundingAmount - fundingNeeded;
+  if (change >= 10_000_000n) {
+    outputs.push({ value: change, scriptPublicKey: changeScriptPublicKey });
+  }
+  const borrowInput = p2shComputeBudgetInputBase(
+    reservation.borrowOutpoint,
+    borrowAmount,
+    borrowScriptPublicKey,
+    0n,
+    EXACT_KIP10_COMPUTE_BUDGET,
+  );
+  const fundingInput = p2pkInputBase(fundingUtxo.outpoint, fundingAmount, fundingScriptPublicKey, 0n);
+  const txShape = { version: 1, outputs, lockTime: 0n, subnetworkId: NATIVE_SUBNETWORK_ID, gas: 0n, payload: "" };
+  const unsigned = new sdk.Transaction({
+    ...txShape,
+    inputs: [
+      { ...borrowInput, signatureScript: "" },
+      { ...fundingInput, signatureScript: "" },
+    ],
+  });
+  const fundingSignature = sdk.createInputSignature(unsigned, 1, fundingPrivateKey, sdk.SighashType.All);
+  const borrowSignatureScript = sdk.payToScriptHashSignatureScript(reservation.borrowRedeemScript, buildKip10AdditiveBorrowArgs());
+  const signed = new sdk.Transaction({
+    ...txShape,
+    inputs: [
+      { ...borrowInput, signatureScript: borrowSignatureScript },
+      { ...fundingInput, signatureScript: fundingSignature },
+    ],
+  });
+  markOutpointSpent(spentOutpoints, fundingUtxo.outpoint);
+  return {
+    transaction: signed.serializeToSafeJSON(),
+    transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
+    paymentOutputIndex: reservation.paymentOutputIndex ?? 1,
+    transactionId: signed.id,
+    payerAddress: fundingAddress,
+    fundingSource: "hot-wallet",
+  };
+}
+
+async function fundKip10ReservationOutputs(input) {
+  const { rpc, sdk, fundingPrivateKey, fundingAddress, borrowScriptPublicKey, spentOutpoints } = input;
+  const borrowAmount = BigInt(EXACT_KIP10_BORROW_AMOUNT);
+  const source = await selectFundingUtxo(rpc, fundingAddress, borrowAmount + DEFAULT_FEE_SOMPI + 10_000_000n, spentOutpoints);
+  const sourceAmount = BigInt(source.amount);
+  const sourceScriptPublicKey = scriptPublicKeyFromSerialized(sdk, source.scriptPublicKey);
+  const borrowSpk = scriptPublicKeyFromSerialized(sdk, borrowScriptPublicKey);
+  const fundingSpk = sdk.payToAddressScript(fundingAddress);
+  const change = sourceAmount - borrowAmount - DEFAULT_FEE_SOMPI;
+  if (change < 10_000_000n) {
+    throw new Error(`funding UTXO ${sourceAmount} leaves non-standard change ${change}`);
+  }
+  const txShape = {
+    version: 0,
+    outputs: [
+      { value: borrowAmount, scriptPublicKey: borrowSpk },
+      { value: change, scriptPublicKey: fundingSpk },
+    ],
+    lockTime: 0n,
+    subnetworkId: NATIVE_SUBNETWORK_ID,
+    gas: 0n,
+    payload: "",
+  };
+  const inputBase = p2pkLegacyInputBase(source.outpoint, sourceAmount, sourceScriptPublicKey, 0n);
+  const unsigned = new sdk.Transaction({ ...txShape, inputs: [{ ...inputBase, signatureScript: "" }] });
+  const signatureScript = sdk.createInputSignature(unsigned, 0, fundingPrivateKey, sdk.SighashType.All);
+  const signed = new sdk.Transaction({ ...txShape, inputs: [{ ...inputBase, signatureScript }] });
+  const { transactionId } = await rpc.submitTransaction({ transaction: signed, allowOrphan: false });
+  markOutpointSpent(spentOutpoints, source.outpoint);
+  return { txid: String(transactionId), txVersion: 0, txVersionSource: ADAPTER_SUBMITTED_TX_VERSION_SOURCE };
+}
+
+function verifyKip10ExactTransaction({ sdk, transactionArtifact, request, fundingAddress }) {
+  if (request.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) {
+    throw new Error("unsupported exact transaction encoding");
+  }
+  if (!request.reservation) throw new Error("exact transaction verification requires reservation terms");
+  if (!request.reservation.borrowRedeemScript) throw new Error("exact transaction reservation is missing borrow redeem script");
+  if (!request.reservation.additiveThresholdSompi) throw new Error("exact transaction reservation is missing additive threshold");
+  const tx = sdk.Transaction.deserializeFromSafeJSON(transactionArtifact);
+  const object = tx.serializeToObject();
+  const paymentOutput = object.outputs?.[request.paymentOutputIndex];
+  if (!paymentOutput) throw new Error("exact transaction is missing payment output");
+  const paymentScriptPublicKey = String(paymentOutput.scriptPublicKey ?? "").toLowerCase();
+  if (paymentScriptPublicKey !== request.payToScriptPublicKey.toLowerCase()) {
+    throw new Error("exact transaction payment output script does not match payTo");
+  }
+  if (String(paymentOutput.value) !== request.amount) {
+    throw new Error("exact transaction payment output amount does not match accepted amount");
+  }
+
+  const borrowInputIndex = object.inputs.findIndex((entry) => {
+    const outpoint = transactionInputOutpoint(entry);
+    return (
+      outpoint?.txid.toLowerCase() === request.reservation.borrowOutpoint.txid.toLowerCase() &&
+      outpoint.index === request.reservation.borrowOutpoint.index
+    );
+  });
+  if (borrowInputIndex < 0) throw new Error("exact transaction does not spend the reserved borrow outpoint");
+  const advertisedBorrowScript = serializedScriptPublicKey(sdk.payToScriptHashScript(request.reservation.borrowRedeemScript)).toLowerCase();
+  if (advertisedBorrowScript !== request.reservation.borrowScriptPublicKey.toLowerCase()) {
+    throw new Error("exact transaction borrow redeem script does not match reservation script public key");
+  }
+  const borrowInput = object.inputs[borrowInputIndex];
+  if (String(borrowInput.utxo?.scriptPublicKey ?? "").toLowerCase() !== request.reservation.borrowScriptPublicKey.toLowerCase()) {
+    throw new Error("exact transaction borrow input script does not match reservation");
+  }
+  if (String(borrowInput.utxo?.amount ?? "") !== request.reservation.borrowAmount) {
+    throw new Error("exact transaction borrow input amount does not match reservation");
+  }
+  const continuation = object.outputs[borrowInputIndex];
+  if (!continuation) throw new Error("exact transaction is missing KIP-10 continuation output");
+  if (String(continuation.scriptPublicKey ?? "").toLowerCase() !== request.reservation.borrowScriptPublicKey.toLowerCase()) {
+    throw new Error("exact transaction KIP-10 continuation script does not match reservation");
+  }
+  if (BigInt(continuation.value) < BigInt(request.reservation.borrowAmount) + BigInt(request.reservation.additiveThresholdSompi)) {
+    throw new Error("exact transaction KIP-10 continuation amount is below the additive threshold");
+  }
+
+  return {
+    transactionId: tx.id,
+    paymentOutput: {
+      amount: String(paymentOutput.value),
+      scriptPublicKey: paymentScriptPublicKey,
+      address: request.payTo,
+    },
+    payerAddress: fundingAddress,
+  };
+}
+
 async function runBatch(input) {
-  const { client, server, serverStore, rpc, sdk, networkId, addressCodec, serverPrivateKeyHex, fundingAddress, fundingVersionByTxid, timeoutDaa } = input;
+  const { client, server, serverStore, rpc, sdk, networkId, addressCodec, serverPrivateKeyHex, fundingAddress, spentOutpoints, fundingVersionByTxid, timeoutDaa } = input;
   const firstResource = { url: "https://live.kaspa-x402.local/batch/first", description: "Live batch first request" };
   const firstHash = hash({ flow: "batch", request: 1 });
   const first = await client.createPayment(paymentRequiredFor(server, { resource: firstResource, amount: BATCH_REQUEST_AMOUNT, scheme: "batch-settlement" }), {
@@ -360,6 +624,7 @@ async function runBatch(input) {
     networkId,
     addressCodec,
     serverPrivateKeyHex,
+    spentOutpoints,
   });
   if (!replay.rejected) throw new Error("batch replay was accepted");
 
@@ -372,6 +637,7 @@ async function runBatch(input) {
     sdk,
     networkId,
     addressCodec,
+    spentOutpoints,
   });
 
   return {
@@ -434,7 +700,7 @@ async function runBatch(input) {
 }
 
 function makeFundingProvider(input) {
-  const { rpc, sdk, addressCodec, chain, networkId, network, fundingPrivateKey, fundingPrivateKeyHex, fundingAddress, fundingPublicKey, knownUtxos, fundingVersionByTxid } = input;
+  const { rpc, sdk, chain, networkId, network, fundingPrivateKey, fundingAddress, fundingPublicKey, knownUtxos, spentOutpoints, fundingVersionByTxid } = input;
   return {
     networkId: network,
     sourceKind: "hot-wallet",
@@ -448,6 +714,7 @@ function makeFundingProvider(input) {
         networkId,
         fundingPrivateKey,
         fundingAddress,
+        spentOutpoints,
         outputs: [{ address: request.escrowAddress, amount: BigInt(request.amount) }],
       });
       rememberFundingVersion(fundingVersionByTxid, sent);
@@ -468,30 +735,17 @@ function makeFundingProvider(input) {
         transaction: sent.txid,
       };
     },
-    async payExact(request) {
-      const sent = await sendFromFunding({
+    async payExactTransaction(request) {
+      return buildKip10ExactTransaction({
         rpc,
         sdk,
         networkId,
+        network,
         fundingPrivateKey,
         fundingAddress,
-        outputs: [{ address: request.payTo, amount: BigInt(request.amount) }],
+        spentOutpoints,
+        request,
       });
-      rememberFundingVersion(fundingVersionByTxid, sent);
-      const utxo = await waitForAddressOutpoint({
-        rpc,
-        address: request.payTo,
-        txid: sent.txid,
-        amount: BigInt(request.amount),
-        scriptPublicKey: addressCodec.scriptPublicKeyForAddress(request.payTo, network),
-      });
-      return {
-        transactionId: sent.txid,
-        paymentOutputIndex: utxo.outpoint.index,
-        payerAddress: fundingAddress,
-        finality: "accepted",
-        fundingSource: "hot-wallet",
-      };
     },
     async getUtxos(addresses) {
       const utxos = [];
@@ -517,7 +771,7 @@ function makeFundingProvider(input) {
   };
 }
 
-function makeChainProvider({ rpc, knownUtxos, pendingBroadcasts, dataDir }) {
+function makeChainProvider({ rpc, sdk, addressCodec, network, serverPayoutAddress, knownUtxos, spentOutpoints, pendingBroadcasts, dataDir }) {
   return {
     async getUtxo(outpoint) {
       return knownUtxos.get(outpointKey(outpoint)) ?? null;
@@ -531,11 +785,80 @@ function makeChainProvider({ rpc, knownUtxos, pendingBroadcasts, dataDir }) {
     },
     async sendTransaction(transaction) {
       const record = pendingBroadcasts.get(transaction);
-      if (record?.submitted) {
+      if (record?.accepted) {
         return { transactionId: record.txid, finality: "accepted" };
       }
-      throw new Error("unknown live transaction token");
+      if (record?.submitted && record.kind === "exact-transaction") {
+        await waitForAddressOutpoint({
+          rpc,
+          address: record.paymentAddress,
+          txid: record.txid,
+          index: record.paymentOutputIndex,
+          amount: BigInt(record.paymentAmount),
+          scriptPublicKey: record.paymentScriptPublicKey,
+        });
+        record.accepted = true;
+        return { transactionId: record.txid, finality: "accepted" };
+      }
+      const parsed = sdk.Transaction.deserializeFromSafeJSON(transaction);
+      const paymentEvidence = exactTransactionPaymentEvidence({
+        transaction: parsed,
+        addressCodec,
+        network,
+        paymentAddress: serverPayoutAddress,
+      });
+      let transactionId;
+      try {
+        ({ transactionId } = await rpc.submitTransaction({ transaction: parsed, allowOrphan: false }));
+      } catch (error) {
+        fs.writeFileSync(
+          path.join(dataDir, "last-exact-broadcast-error.json"),
+          `${JSON.stringify({
+            generatedAt: new Date().toISOString(),
+            transactionId: parsed.id,
+            message: error instanceof Error ? error.message : String(error),
+          }, null, 2)}\n`,
+          { mode: 0o600 },
+        );
+        throw error;
+      }
+      const txid = String(transactionId);
+      markTransactionInputsSpent(spentOutpoints, knownUtxos, parsed);
+      const pending = {
+        kind: "exact-transaction",
+        submitted: true,
+        accepted: false,
+        txid,
+        ...paymentEvidence,
+      };
+      pendingBroadcasts.set(transaction, pending);
+      await waitForAddressOutpoint({
+        rpc,
+        address: pending.paymentAddress,
+        txid,
+        index: pending.paymentOutputIndex,
+        amount: BigInt(pending.paymentAmount),
+        scriptPublicKey: pending.paymentScriptPublicKey,
+      });
+      pending.accepted = true;
+      return { transactionId: txid, finality: "accepted" };
     },
+  };
+}
+
+function exactTransactionPaymentEvidence({ transaction, addressCodec, network, paymentAddress }) {
+  const object = transaction.serializeToObject();
+  const paymentScriptPublicKey = addressCodec.scriptPublicKeyForAddress(paymentAddress, network).toLowerCase();
+  const paymentOutputIndex = object.outputs.findIndex((output) => String(output.scriptPublicKey ?? "").toLowerCase() === paymentScriptPublicKey);
+  if (paymentOutputIndex < 0) {
+    throw new Error("exact transaction artifact does not pay the configured server address");
+  }
+  const paymentOutput = object.outputs[paymentOutputIndex];
+  return {
+    paymentAddress,
+    paymentOutputIndex,
+    paymentAmount: String(paymentOutput.value),
+    paymentScriptPublicKey,
   };
 }
 
@@ -579,7 +902,7 @@ function makeAddressCodec(sdk, networkId) {
 }
 
 async function buildAndSubmitClaim(input) {
-  const { channel, claimAmount, rpc, sdk, networkId, serverPrivateKeyHex, addressCodec, pendingBroadcasts, knownUtxos } = input;
+  const { channel, claimAmount, rpc, sdk, networkId, serverPrivateKeyHex, addressCodec, pendingBroadcasts, knownUtxos, spentOutpoints } = input;
   const claim = BigInt(claimAmount);
   const inputAmount = BigInt(channel.fundingAmount);
   const fee = DEFAULT_FEE_SOMPI;
@@ -607,6 +930,7 @@ async function buildAndSubmitClaim(input) {
   const transaction = { ...txShape, inputs: [{ ...base, signatureScript }] };
   const { transactionId } = await rpc.submitTransaction({ transaction, allowOrphan: false });
   const txid = String(transactionId);
+  markTransactionInputsSpent(spentOutpoints, knownUtxos, transaction);
   const continuation = await waitForAddressOutpoint({
     rpc,
     address: channel.escrowAddress,
@@ -628,7 +952,7 @@ async function buildAndSubmitClaim(input) {
 }
 
 async function attemptBatchReplay(input) {
-  const { channel, oldVoucher, rpc, sdk, serverPrivateKeyHex } = input;
+  const { channel, oldVoucher, rpc, sdk, serverPrivateKeyHex, spentOutpoints } = input;
   const replayClaimAmount = BigInt(channel.fundingAmount) / 2n;
   const evidence = {
     attemptedInputOutpoint: channel.activeOutpoint,
@@ -649,6 +973,7 @@ async function attemptBatchReplay(input) {
       sdk,
       serverPrivateKeyHex,
       destination: channel.channelConfig.payTo,
+      spentOutpoints,
     });
     return { ...evidence, rejected: false, reason: "replay transaction was accepted" };
   } catch (error) {
@@ -656,7 +981,7 @@ async function attemptBatchReplay(input) {
   }
 }
 
-async function rawClaim({ channel, voucher, claimAmount, rpc, sdk, serverPrivateKeyHex, destination }) {
+async function rawClaim({ channel, voucher, claimAmount, rpc, sdk, serverPrivateKeyHex, destination, spentOutpoints }) {
   const inputAmount = BigInt(channel.fundingAmount);
   const params = escrowParams(channel, {
     scriptPublicKeyForAddress(address, network) {
@@ -676,11 +1001,13 @@ async function rawClaim({ channel, voucher, claimAmount, rpc, sdk, serverPrivate
   const serverSignature = hexToBytes(sdk.createInputSignature(unsigned, 0, new sdk.PrivateKey(serverPrivateKeyHex), sdk.SighashType.All)).slice(1);
   const signatureScript = sdk.payToScriptHashSignatureScript(redeem, buildClaimArgs({ serverSignature, voucherSignature: voucher.signature, amount: voucher.amount }));
   const transaction = { ...txShape, inputs: [{ ...base, signatureScript }] };
-  return rpc.submitTransaction({ transaction, allowOrphan: false });
+  const result = await rpc.submitTransaction({ transaction, allowOrphan: false });
+  markTransactionInputsSpent(spentOutpoints, undefined, transaction);
+  return result;
 }
 
 async function buildAndSubmitRefund(input) {
-  const { channel, clientPrivateKeyHex, refundAddress, rpc, sdk, addressCodec } = input;
+  const { channel, clientPrivateKeyHex, refundAddress, rpc, sdk, addressCodec, spentOutpoints } = input;
   const inputAmount = BigInt(channel.fundingAmount);
   const params = escrowParams(channel, addressCodec);
   const redeem = buildEscrowRedeemScript(params);
@@ -694,6 +1021,7 @@ async function buildAndSubmitRefund(input) {
   const signatureScript = sdk.payToScriptHashSignatureScript(redeem, buildRefundArgs({ clientSignature }));
   const transaction = { ...txShape, inputs: [{ ...base, signatureScript }] };
   const { transactionId } = await rpc.submitTransaction({ transaction, allowOrphan: false });
+  markTransactionInputsSpent(spentOutpoints, undefined, transaction);
   const refundUtxo = await waitForAddressOutpoint({
     rpc,
     address: refundAddress,
@@ -715,10 +1043,10 @@ async function buildAndSubmitRefund(input) {
   };
 }
 
-async function sendFromFunding({ rpc, sdk, networkId, fundingPrivateKey, fundingAddress, outputs, entries }) {
+async function sendFromFunding({ rpc, sdk, networkId, fundingPrivateKey, fundingAddress, outputs, entries, spentOutpoints }) {
   const feeEstimate = await rpc.getFeeEstimate();
   const feeRate = feeEstimate.estimate?.normalBuckets?.[0]?.feerate ?? feeEstimate.estimate?.priorityBucket?.feerate ?? 1;
-  const sourceEntries = entries ?? (await rpc.getUtxosByAddresses([fundingAddress])).entries;
+  const sourceEntries = spendableFundingEntries(entries ?? (await rpc.getUtxosByAddresses([fundingAddress])).entries, spentOutpoints);
   const { transactions } = await sdk.createTransactions({
     entries: sourceEntries,
     outputs,
@@ -733,9 +1061,22 @@ async function sendFromFunding({ rpc, sdk, networkId, fundingPrivateKey, funding
     txVersion = generatedTransactionVersion(pending);
     await pending.sign([fundingPrivateKey]);
     txid = await pending.submit(rpc);
+    markTransactionInputsSpent(spentOutpoints, undefined, pending.transaction);
   }
   if (!txid) throw new Error("transaction generator produced no transaction");
   return { txid, txVersion, txVersionSource: SDK_GENERATED_TX_VERSION_SOURCE };
+}
+
+function spendableFundingEntries(entries, spentOutpoints) {
+  const spendable = entries.filter((entry) => !spentOutpoints?.has(entryOutpointKey(entry)));
+  if (spendable.length === 0) {
+    throw new Error("no locally spendable funding UTXOs remain after excluding pending spends");
+  }
+  return spendable.sort((left, right) => {
+    const leftAmount = BigInt(left.entry?.amount ?? left.amount ?? 0);
+    const rightAmount = BigInt(right.entry?.amount ?? right.amount ?? 0);
+    return leftAmount > rightAmount ? -1 : leftAmount < rightAmount ? 1 : 0;
+  });
 }
 
 function generatedTransactionVersion(pending) {
@@ -835,6 +1176,37 @@ function p2shInputBase(outpoint, amount, scriptPublicKey, sequence, sigOpCount) 
   };
 }
 
+function p2pkInputBase(outpoint, amount, scriptPublicKey, sequence) {
+  return {
+    previousOutpoint: { transactionId: outpoint.txid, index: outpoint.index },
+    sequence,
+    sigOpCount: 0,
+    computeBudget: P2PK_COMPUTE_BUDGET,
+    utxo: {
+      outpoint: { transactionId: outpoint.txid, index: outpoint.index },
+      amount,
+      scriptPublicKey,
+      blockDaaScore: 0n,
+      isCoinbase: false,
+    },
+  };
+}
+
+function p2pkLegacyInputBase(outpoint, amount, scriptPublicKey, sequence) {
+  return {
+    previousOutpoint: { transactionId: outpoint.txid, index: outpoint.index },
+    sequence,
+    sigOpCount: 1,
+    utxo: {
+      outpoint: { transactionId: outpoint.txid, index: outpoint.index },
+      amount,
+      scriptPublicKey,
+      blockDaaScore: 0n,
+      isCoinbase: false,
+    },
+  };
+}
+
 function p2shComputeBudgetInputBase(outpoint, amount, scriptPublicKey, sequence, computeBudget) {
   return {
     previousOutpoint: { transactionId: outpoint.txid, index: outpoint.index },
@@ -849,6 +1221,27 @@ function p2shComputeBudgetInputBase(outpoint, amount, scriptPublicKey, sequence,
       isCoinbase: false,
     },
   };
+}
+
+async function selectFundingUtxo(rpc, fundingAddress, minimumAmount, spentOutpoints) {
+  const candidates = await getAddressUtxos(rpc, fundingAddress);
+  const sorted = candidates
+    .filter((utxo) => BigInt(utxo.amount) >= minimumAmount && !spentOutpoints?.has(outpointKey(utxo.outpoint)))
+    .sort((left, right) => (BigInt(left.amount) > BigInt(right.amount) ? -1 : BigInt(left.amount) < BigInt(right.amount) ? 1 : 0));
+  const selected = sorted[0];
+  if (!selected) {
+    const available = candidates.map((utxo) => utxo.amount).join(", ") || "none";
+    throw new Error(`no funding UTXO covers ${minimumAmount} sompi for exact KIP-10 transaction; available: ${available}`);
+  }
+  return selected;
+}
+
+function scriptPublicKeyFromSerialized(sdk, serialized) {
+  const bytes = hexToBytes(serialized);
+  if (bytes.length < 3) throw new Error("serialized script public key is too short");
+  const version = (bytes[0] << 8) | bytes[1];
+  const script = bytesToHex(bytes.slice(2));
+  return new sdk.ScriptPublicKey(version, script);
 }
 
 function escrowParams(channel, addressCodec) {
@@ -945,8 +1338,43 @@ function rememberUtxo(knownUtxos, utxo) {
   knownUtxos.set(outpointKey(utxo.outpoint), utxo);
 }
 
+function markTransactionInputsSpent(spentOutpoints, knownUtxos, transaction) {
+  if (!spentOutpoints || !transaction) return;
+  const object = typeof transaction.serializeToObject === "function" ? transaction.serializeToObject() : transaction;
+  for (const input of object.inputs ?? []) {
+    const outpoint = transactionInputOutpoint(input);
+    if (!outpoint) continue;
+    markOutpointSpent(spentOutpoints, outpoint);
+    knownUtxos?.delete(outpointKey(outpoint));
+  }
+}
+
+function markOutpointSpent(spentOutpoints, outpoint) {
+  spentOutpoints?.add(outpointKey(outpoint));
+}
+
 function outpointKey(outpoint) {
   return `${outpoint.txid.toLowerCase()}:${outpoint.index}`;
+}
+
+function entryOutpointKey(entry) {
+  const raw = entry.entry ?? entry;
+  const outpoint = raw.outpoint ?? entry.outpoint;
+  return outpointKey({
+    txid: String(outpoint.transactionId),
+    index: Number(outpoint.index),
+  });
+}
+
+function transactionInputOutpoint(input) {
+  const outpoint = input.previousOutpoint ?? input.utxo?.outpoint;
+  const txid = outpoint?.transactionId ?? input.transactionId;
+  const index = outpoint?.index ?? input.index;
+  if (txid === undefined || index === undefined) return undefined;
+  return {
+    txid: String(txid),
+    index: Number(index),
+  };
 }
 
 function hash(value) {

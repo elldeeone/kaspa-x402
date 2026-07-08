@@ -142,23 +142,31 @@ Use an isolated testnet key. Do not import a key that controls mainnet funds.
 
 Minimum manual paid checks:
 
-1. Request `GET /exact` and confirm HTTP `402`.
-2. Pay the advertised exact amount to the advertised `payTo` address.
-3. Retry with `PAYMENT-SIGNATURE` carrying `payload.transactionId` and
-   `payload.paymentOutputIndex`, and confirm HTTP `200`.
-4. Retry the identical paid request and confirm idempotent HTTP `200`.
-5. Present the same exact transaction to a different resource and confirm
+1. If exact is not deployed with a KIP-10 reservation provider, request
+   `GET /exact` and confirm HTTP `503 exact_unavailable`.
+2. If exact is deployed, request `GET /exact`, confirm HTTP `402`, build a
+   signed KIP-10 `exact-transaction` artifact from the advertised reservation
+   terms, retry with `PAYMENT-SIGNATURE`, and confirm HTTP `200`.
+3. Retry the identical paid exact request and confirm idempotent HTTP `200`.
+4. Present the same exact transaction to a different resource and confirm
    conflict rejection.
-6. Open a batch channel with a deposit-voucher payment and confirm HTTP `200`.
-7. Reuse the channel with a voucher-only payment and confirm HTTP `200`.
-8. Replay an earlier stale batch voucher after the later voucher and confirm
+5. Open a batch channel with a deposit-voucher payment and confirm HTTP `200`.
+6. Reuse the channel with a voucher-only payment and confirm HTTP `200`.
+7. Replay an earlier stale batch voucher after the later voucher and confirm
    corrective HTTP `402`.
 
 Record transaction ids, output indexes, Worker version, response status, and
 `PAYMENT-RESPONSE` summaries in the operator notes.
 
-For alpha.5 and later, also confirm that a legacy exact retry containing
-`payload.transaction` is rejected and does not return protected content.
+For alpha.6 and later, also confirm that observe-only `exact-transfer` evidence
+is rejected and does not return protected content.
+
+For alpha.6 KIP-10 exact deployments, advertise `exact` only after the gateway
+can reserve a borrow outpoint, return the reservation fields in
+`PaymentRequired.extra`, verify the signed transaction artifact, broadcast it,
+observe accepted finality, and consume the reservation. If the gateway does not
+have that reservation provider, exact must remain unavailable and hosted
+canaries should cover `batch-settlement` only.
 
 ## Durable State Policy
 
@@ -200,6 +208,17 @@ Alpha.5 exact-evidence cutover:
   `payload.transaction` shape is rejected, confirm the new evidence shape
   reaches the exact verifier, and run the funded TN10 live proof with
   `npm run proof:live:check -- --live --write-report`.
+
+Alpha.6 KIP-10 exact-transaction cutover:
+
+- `0.1.0-alpha.6` replaces the alpha.5 observe-only exact payload with a signed
+  KIP-10 transaction artifact carrying `transactionEncoding:
+  "kaspa-sdk-safe-json-v2.0.0"`.
+- Do not advertise the alpha.6 exact path from the hosted gateway unless an
+  exact reservation provider is configured and tested.
+- Do not serve observe-only `exact-transfer` as a current alpha exact fallback.
+- Before advertising alpha.6 hosted evidence, run unpaid shape checks, a funded
+  TN10 KIP-10 exact canary, replay rejection, and the full live proof runner.
 
 ## Rotate Addresses And Keys
 

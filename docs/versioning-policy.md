@@ -12,6 +12,15 @@ contract.
 Breaking wire changes before stability should update vectors, schemas, package
 minor/pre-release versions, and the affected docs in the same change.
 
+Current alpha wire notes:
+
+- `0.1.0-alpha.5` made `exact-transfer` observe-only by requiring
+  `transactionId` plus `paymentOutputIndex`.
+- `0.1.0-alpha.6` replaces observe-only exact with KIP-10
+  `exact-transaction` payloads carrying a signed transaction artifact,
+  `transactionEncoding`, and server-advertised buildable reservation terms
+  including borrow redeem script and additive threshold.
+
 ## Package Versions
 
 Alpha packages use semver prereleases:
@@ -30,10 +39,11 @@ Rules:
 
 ## Template IDs
 
-Template IDs identify covenant families. The current escrow template id is:
+Template IDs identify covenant families. The current template ids are:
 
 ```text
 kaspa-x402-escrow-v1
+kaspa-x402-kip10-additive-v1
 ```
 
 Change the template id when the script source, argument layout, successor-output

@@ -37,10 +37,13 @@ The binding ships two x402 schemes:
 }
 ```
 
-`exact` is a fixed-price one-shot native transfer. `batch-settlement` funds a
-covenant-backed escrow once and meters repeated or variable-cost requests
-with off-chain vouchers. On-chain outputs must clear Kaspa's standard-output
-storage-mass floor (about 0.1 KAS); batch-settlement vouchers price below it.
+`exact` is a fixed-price one-shot native transfer. Alpha.6 uses the preferred
+KIP-10 `exact-transaction` artifact path for reservation-backed direct exact
+settlement.
+`batch-settlement` funds a covenant-backed escrow once and meters repeated or
+variable-cost requests with off-chain vouchers. On-chain outputs must clear
+Kaspa's standard-output storage-mass floor (about 0.1 KAS); batch-settlement
+vouchers price below it.
 
 ## What's Here
 
@@ -80,10 +83,11 @@ node examples/self-hosted-facilitator/index.mjs
 node examples/recovery/index.mjs
 ```
 
-`npm run proof:offline` exercises exact replay rejection, batch settlement
-idempotency, corrective stale-voucher handling, and tx-v1 claim/refund
-artifacts against mock adapters. Live testnet proof is fail-closed and
-adapter-driven; see [docs/live-testnet-proof.md](docs/live-testnet-proof.md).
+`npm run proof:offline` exercises exact replay rejection, KIP-10
+`exact-transaction` settlement, batch settlement idempotency, corrective
+stale-voucher handling, and tx-v1 claim/refund artifacts against mock
+adapters. Live testnet proof is fail-closed and adapter-driven; see
+[docs/live-testnet-proof.md](docs/live-testnet-proof.md).
 
 ## Packages
 

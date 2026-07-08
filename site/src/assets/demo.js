@@ -256,6 +256,19 @@ function exactExtra() {
   return {
     binding: "kaspa-exact-v1",
     finality: ui.finality.value,
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: {
+      txid: "11".repeat(32),
+      index: 0,
+    },
+    borrowAmount: canonicalAmount(ui.amount.value, "borrow amount"),
+    borrowScriptPublicKey: "0000" + "ab".repeat(34),
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "0",
+    paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
+    reservationId: "22".repeat(32),
+    reservationExpiresAt: "2099-01-01T00:00:00.000Z",
     assetKind: "native",
     assetDecimals: 8,
   };
@@ -282,12 +295,19 @@ function buildPaymentRetry() {
     throw new Error("The mock retry builder is only for exact offers.");
   }
   const transactionId = normalizedTxId(requiredText(ui.transactionId.value, "transaction id"));
+  const transactionArtifact =
+    ui.transaction.value.trim() ||
+    stableStringify({
+      demo: "kaspa-x402-kip10-exact",
+      transactionIdHint: transactionId,
+    });
   const paymentPayload = {
     x402Version: 2,
     accepted,
     payload: {
-      type: "exact-transfer",
-      transactionId,
+      type: "exact-transaction",
+      transaction: transactionArtifact,
+      transactionEncoding: accepted.extra.transactionEncoding,
       paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
       payerAddress: ui.address.value.trim() || undefined,
     },
@@ -334,7 +354,7 @@ async function broadcastTransaction() {
   if (txHexOrJson.trim().startsWith("{")) {
     transaction = Transaction.deserializeFromSafeJSON(txHexOrJson);
   } else if (/^[0-9a-fA-F]+$/.test(txHexOrJson.trim())) {
-    throw new Error("Broadcast requires a safe JSON transaction object from the SDK. Exact x402 payloads use transaction id plus output index evidence, not raw transaction hex.");
+    throw new Error("Broadcast requires a safe JSON transaction object from the SDK. Exact x402 payloads use KIP-10 transaction artifacts, not raw transaction hex.");
   } else {
     throw new Error("Broadcast input must be a safe JSON transaction object.");
   }
@@ -389,9 +409,34 @@ function skipReason(entry) {
 function isExactExtra(extra) {
   if (!extra || typeof extra !== "object" || extra.binding !== "kaspa-exact-v1") return false;
   if (extra.finality !== undefined && !["mempool", "accepted", "confirmed"].includes(extra.finality)) return false;
+  if (extra.templateId !== "kaspa-x402-kip10-additive-v1") return false;
+  if (extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0") return false;
+  if (!isOutpoint(extra.borrowOutpoint)) return false;
+  if (!isAmount(extra.borrowAmount)) return false;
+  if (!isSerializedScriptPublicKey(extra.borrowScriptPublicKey)) return false;
+  if (!isHexBytes(extra.borrowRedeemScript)) return false;
+  if (!isAmount(extra.additiveThresholdSompi)) return false;
+  if (!isUint32(extra.paymentOutputIndex)) return false;
+  if (!isHash32(extra.reservationId)) return false;
   if (extra.assetKind !== undefined && extra.assetKind !== "native") return false;
   if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8) return false;
   return true;
+}
+
+function isOutpoint(value) {
+  return Boolean(value && typeof value === "object" && isHash32(value.txid) && isUint32(value.index));
+}
+
+function isSerializedScriptPublicKey(value) {
+  return typeof value === "string" && /^0000(?:[0-9a-fA-F]{2})+$/.test(value);
+}
+
+function isHexBytes(value) {
+  return typeof value === "string" && /^(?:[0-9a-fA-F]{2})+$/.test(value);
+}
+
+function isHash32(value) {
+  return typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value);
 }
 
 function isBatchExtra(extra) {

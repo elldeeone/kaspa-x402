@@ -50,15 +50,16 @@ transactions.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Expected support:
+Expected support from the current hosted gateway:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
-- `scheme: "exact"`;
 - `scheme: "batch-settlement"`;
 - accepted finality: `accepted`.
 
-No mainnet profile is advertised.
+No mainnet profile is advertised. A gateway should advertise `exact` only when
+it has a KIP-10 reservation provider and can settle `exact-transaction`
+artifacts end to end.
 
 ## Exact Flow
 
@@ -68,17 +69,22 @@ Request the protected resource:
 curl -i https://demo.kaspa-x402.org/exact
 ```
 
-Expected result:
+Current hosted result without a reservation provider:
+
+- HTTP `503`;
+- JSON body with `error: "exact_unavailable"`.
+
+Reservation-enabled expected result:
 
 - HTTP `402`;
 - `PAYMENT-REQUIRED` response header;
 - a JSON body with `error: "payment_required"`.
 
-Decode the `PAYMENT-REQUIRED` header and select the `exact` offer. Build a
-native Kaspa testnet transaction that pays exactly the advertised amount to the
-advertised `payTo` address, broadcast it with your wallet or SDK, and retry
-with a `PaymentPayload` whose exact payload contains the observed
-`transactionId` and `paymentOutputIndex`. The retry must send:
+Decode the `PAYMENT-REQUIRED` header and select the `exact` offer only when it
+contains buildable KIP-10 reservation terms in `PaymentRequired.extra`: borrow
+outpoint, amount, script public key, redeem script, additive threshold, expected
+payment output index, and reservation id. Build the signed SDK-safe JSON
+transaction artifact and retry with an `exact-transaction` payload:
 
 ```text
 PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>
@@ -93,7 +99,8 @@ Successful retry result:
 
 Identical retries with the same request and payment evidence should return the
 cached HTTP `200`. Reusing the same exact transaction for a different resource
-must be rejected.
+must be rejected. If a gateway has no exact reservation provider, clients should
+use `batch-settlement` or another server.
 
 ## Batch Flow
 
