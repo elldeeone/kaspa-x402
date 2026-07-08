@@ -1307,7 +1307,7 @@ function makeExactRequired(input: { amount: string; finality?: "mempool" | "acce
                 borrowAmount: "1000",
                 borrowScriptPublicKey: "0000" + "ab".repeat(34),
                 borrowRedeemScript: "51",
-                additiveThresholdSompi: "100",
+                additiveThresholdSompi: "10000000",
                 paymentOutputIndex: 0,
                 reservationId: EXACT_RESERVATION_ID,
                 reservationExpiresAt: "2099-01-01T00:00:00.000Z",

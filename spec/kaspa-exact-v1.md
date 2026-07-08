@@ -89,12 +89,30 @@ script-hash addresses.
 | `extra.borrowAmount` | yes | Amount in sompi held by `borrowOutpoint`. |
 | `extra.borrowScriptPublicKey` | yes | Serialized script public key for `borrowOutpoint`. |
 | `extra.borrowRedeemScript` | yes | Hex-encoded redeem script for the reserved KIP-10 additive path. |
-| `extra.additiveThresholdSompi` | yes | Minimum additional value, in sompi, that the KIP-10 continuation output must carry. |
+| `extra.additiveThresholdSompi` | yes | Minimum additional value, in sompi, that the KIP-10 continuation output must carry. Production reservation providers should set this at or above the standard-output floor unless they have a stronger local anti-DoS policy. |
 | `extra.paymentOutputIndex` | yes | Output index the server expects to pay `payTo`. |
 | `extra.reservationId` | yes | Server-local reservation identifier for the advertised borrow terms. |
 | `extra.reservationExpiresAt` | no | Reservation expiry timestamp. |
 
 `extra.finality` is a server policy hint. It does not weaken validation. A server may require stronger finality than advertised, but should not require weaker finality than the value it advertises.
+
+## Reservation Policy
+
+The reserved KIP-10 borrow outpoint is expected to be merchant-controlled
+inventory. In other words, the merchant or its chosen operator prepares UTXOs
+that are spendable through the advertised additive path, and the reservation
+provider leases one outpoint to one x402 challenge at a time.
+
+This creates a dust-churn risk if the advertised additive threshold is too low:
+an attacker could keep touching merchant inventory with economically trivial
+top-ups. For the alpha.6 reference path, reservation providers should reject
+offers whose `additiveThresholdSompi` is below `10000000` sompi, the current
+standard-output storage-mass floor used elsewhere in this binding. Operators may
+raise that threshold for higher-value services.
+
+Third-party escrowed borrow inventory is possible as a future deployment model,
+but it adds a trust and availability dependency and is not part of the reference
+alpha profile.
 
 ## Lifecycle
 

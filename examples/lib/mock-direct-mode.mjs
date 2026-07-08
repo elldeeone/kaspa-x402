@@ -58,7 +58,7 @@ export function createMockDirectModeEnvironment(options = {}) {
                 borrowAmount: request.amount,
                 borrowScriptPublicKey: request.payToScriptPublicKey,
                 borrowRedeemScript: mockTransaction(`exact-borrow-redeem:${index}`),
-                additiveThresholdSompi: "0",
+                additiveThresholdSompi: request.minimumAdditiveThresholdSompi,
                 paymentOutputIndex: 0,
                 expiresAt: "2099-01-01T00:00:00.000Z",
               };

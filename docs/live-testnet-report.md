@@ -1,6 +1,8 @@
 # Live Testnet Report
 
-Status: complete alpha.6 full live harness run.
+Status: historical alpha.6 full live harness run. Rerun required before citing
+fresh exact evidence for the `10000000` sompi additive-threshold policy added on
+2026-07-08.
 
 Generated: `2026-07-07T11:21:44.516Z`
 
@@ -13,6 +15,9 @@ Virtual DAA score at run start: `510648301`
 The 2026-07-07 live proof runner validated the preferred alpha.6 KIP-10
 `exact-transaction` payload shape and the batch-settlement covenant lifecycle.
 Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
+This report does not prove the later anti-dust threshold floor; the release
+candidate must be rerun with the current reference adapter before advertising
+that evidence.
 
 ## Exact KIP-10 Transaction
 
@@ -27,6 +32,8 @@ Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 - Reservation id: `e81813c76021f1d3e513991b5888f38d9161dcac162f3e611a575f971e0c8842`
 - Borrow outpoint:
   `a7dc63cfeb44b87a63a4fdb7942c703d8dd182a9ab25cb55e831ed05f1662825:0`
+- Additive threshold: not recorded in this historical run; the current proof
+  definition requires at least `10000000` sompi.
 - Transaction artifact SHA-256:
   `70f010cccda79346b098f0632bc82f5186ebf97613d771300ce03f984e52f27a`
 - Payload payment output index: `1`

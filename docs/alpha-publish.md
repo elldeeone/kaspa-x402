@@ -137,6 +137,9 @@ npm run proof:live:check -- --live --write-report
 
 The expected alpha.6 live proof must include:
 
+- KIP-10 exact reservation terms with `additiveThresholdSompi` at or above
+  `10000000` sompi;
+
 - exact KIP-10 transaction artifact settlement and replay rejection;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;

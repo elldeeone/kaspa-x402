@@ -117,7 +117,7 @@ function makeExactRequired(): PaymentRequired {
           borrowAmount: "1000",
           borrowScriptPublicKey: "0000" + "ab".repeat(34),
           borrowRedeemScript: "51",
-          additiveThresholdSompi: "100",
+          additiveThresholdSompi: "10000000",
           paymentOutputIndex: 0,
           reservationId: "88".repeat(32),
           reservationExpiresAt: "2099-01-01T00:00:00.000Z",

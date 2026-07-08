@@ -167,6 +167,39 @@ describe("direct-mode server", () => {
     await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({ status: "reserved" });
   });
 
+  it("rejects exact reservation offers below the configured additive threshold", async () => {
+    const setup = makeServer({
+      exactReservationProvider: {
+        reserveExactPayment(request) {
+          return exactReservation({
+            borrowScriptPublicKey: request.payToScriptPublicKey,
+            additiveThresholdSompi: "1",
+          });
+        },
+      },
+    });
+
+    const response = await setup.server.handlePaidRequest({ url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" }, async () => ({
+      body: "unreachable",
+    }));
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "invalid_payload" });
+    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+  });
+
+  it("rejects explicit exact reservations below the configured additive threshold", () => {
+    const setup = makeServer();
+
+    expect(() =>
+      setup.server.buildPaymentRequired({
+        resource: RESOURCE,
+        scheme: "exact",
+        exactReservation: exactReservation({ additiveThresholdSompi: "1" }),
+      }),
+    ).toThrow("exact reservation additive threshold is below server minimum");
+  });
+
   it("rejects invalid MCP payment metadata without executing the tool", async () => {
     const setup = makeServer({ amount: "100" });
     let executed = false;
@@ -2314,7 +2347,7 @@ function exactReservation(overrides: Partial<ExactBorrowReservation> = {}): Exac
     borrowAmount: "1000",
     borrowScriptPublicKey: new FakeAddressCodec().scriptPublicKeyForAddress("kaspatest:payout", "kaspa:testnet-10"),
     borrowRedeemScript: "51",
-    additiveThresholdSompi: "100",
+    additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
     expiresAt: "2099-01-01T00:00:00.000Z",
     ...overrides,

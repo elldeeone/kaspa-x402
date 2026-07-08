@@ -308,7 +308,7 @@ function exactReservation(overrides: Partial<ExactReservationRecord> = {}): Exac
     borrowAmount: "100",
     borrowScriptPublicKey: SCRIPT,
     borrowRedeemScript: "51",
-    additiveThresholdSompi: "100",
+    additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
     status: "reserved",
     reservedAt: "2026-07-07T00:00:00.000Z",

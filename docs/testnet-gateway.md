@@ -63,6 +63,9 @@ Current hosted terms:
 The exact price and batch deposit are on-chain outputs, so they must stay at or
 above the Kaspa standard-output storage-mass floor of `10000000` sompi. The
 Worker fails closed at startup if either configured value is below that floor.
+If hosted exact is enabled later, its KIP-10 reservation provider must also use
+merchant-owned borrow UTXO inventory and advertise an
+`additiveThresholdSompi` of at least `10000000` sompi.
 
 Operational details, rollback steps, the gateway disable switch, and manual
 paid canary procedure are covered in the

@@ -85,6 +85,7 @@ type ResolvedServerConfig = DirectModeServerConfig &
 	      | "templateId"
 	      | "maxTimeoutSeconds"
 	      | "acceptedFinality"
+	      | "minimumExactAdditiveThresholdSompi"
 	      | "lockManager"
     >
   >;
@@ -113,6 +114,7 @@ export class DirectModeServer {
 	      templateId: "kaspa-x402-escrow-v1",
 	      maxTimeoutSeconds: 60,
 	      acceptedFinality: "accepted",
+	      minimumExactAdditiveThresholdSompi: "10000000",
 	      lockManager: new MemoryChannelLockManager(),
       ...config,
 	    };
@@ -167,13 +169,15 @@ export class DirectModeServer {
         payToScriptPublicKey,
         maxTimeoutSeconds: this.#config.maxTimeoutSeconds,
         resource: options.resource,
+        minimumAdditiveThresholdSompi: this.#config.minimumExactAdditiveThresholdSompi,
       });
+      const paymentRequired = makePaymentRequired(this.#config, { ...options, exactReservation });
       await this.#config.store.saveExactReservation({
         ...exactReservation,
         status: "reserved",
         reservedAt: new Date().toISOString(),
       });
-      return makePaymentRequired(this.#config, { ...options, exactReservation });
+      return paymentRequired;
     }
     return makePaymentRequired(this.#config, options);
   }
@@ -1292,6 +1296,7 @@ function makeAcceptedRequirement(
     if (!options.exactReservation) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements require KIP-10 reservation terms");
     }
+    assertExactReservationPolicy(options.exactReservation, config.minimumExactAdditiveThresholdSompi);
     return {
       scheme: "exact",
       network: config.network,
@@ -1528,6 +1533,12 @@ function exactReservationFromAccepted(accepted: ExactPaymentRequirements): Exact
     paymentOutputIndex: extra.paymentOutputIndex,
     ...(typeof extra.reservationExpiresAt === "string" ? { expiresAt: extra.reservationExpiresAt } : {}),
   };
+}
+
+function assertExactReservationPolicy(reservation: ExactBorrowReservation, minimumAdditiveThresholdSompi: SompiString): void {
+  if (parseSompiString(reservation.additiveThresholdSompi) < parseSompiString(minimumAdditiveThresholdSompi)) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation additive threshold is below server minimum");
+  }
 }
 
 function shouldRefreshExactReservation(error: unknown): boolean {

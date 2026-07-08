@@ -161,7 +161,9 @@ function checkUntrackedPublishableFiles() {
   const untrackedVectors = git(["ls-files", "--others", "--exclude-standard", "vectors"])
     .split(/\r?\n/)
     .filter((file) => /\.(?:json|md)$/.test(file));
-  for (const file of untrackedVectors) fail(`untracked vector-like file would be skipped by site build: ${file}`);
+  for (const file of untrackedVectors) {
+    if (!fs.existsSync(path.join(outDir, file))) fail(`untracked vector-like file was not copied by site build: ${file}`);
+  }
 }
 
 function checkPrivateFiles() {
@@ -439,10 +441,11 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
-  return git(["ls-files", relativeDir])
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .sort();
+  const files = new Set([
+    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
+    ...listFiles(path.join(root, relativeDir)).map((file) => path.relative(root, file).replaceAll(path.sep, "/")),
+  ]);
+  return [...files].sort();
 }
 
 function git(args) {

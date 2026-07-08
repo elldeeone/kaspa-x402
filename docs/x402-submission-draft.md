@@ -63,7 +63,9 @@ gates.
   facilitator to verify, broadcast if needed, and observe. Amounts are decimal
   strings in sompi. Advertised prices
   must sit above Kaspa's standard-output storage-mass floor (about 0.1 KAS);
-  the docs state this constraint prominently.
+  the docs state this constraint prominently. Reference reservation providers
+  use merchant-owned borrow UTXOs and an additive threshold of at least the same
+  floor to avoid dust-churn of reusable borrow inventory.
 - `batch-settlement` (`extra.binding: "kaspa-escrow-v1"`): the client funds
   a covenant-backed escrow once, signs a cumulative Schnorr voucher per paid
   request, and the chain is touched again only at claim or refund time. This

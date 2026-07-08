@@ -143,7 +143,7 @@ function writeHomePage() {
 
     <h2>The two profiles</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
-    <p><code>exact</code> — fixed-price one-shot native transfer. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
+    <p><code>exact</code> — fixed-price one-shot native transfer. Alpha.6 focuses on preferred KIP-10 transaction artifacts for reservation-backed direct exact settlement, with merchant-owned borrow UTXOs and a non-dust additive threshold. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated or variable-cost requests against escrow/channel state. Spec: <a href="/spec/kaspa-batch-settlement-v1/">kaspa-batch-settlement-v1</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -425,9 +425,9 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-mock">
       <h2 id="demo-mock">Exact Mock Flow</h2>
-      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. A real gateway must still verify and settle the transaction.</p>
-      <label for="demo-transaction">Transaction JSON for optional broadcast</label>
-      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; not included in the x402 payload"></textarea>
+      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. A real gateway must still verify and settle the transaction artifact.</p>
+      <label for="demo-transaction">Signed transaction artifact</label>
+      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; a deterministic placeholder is used if empty"></textarea>
       <div class="demo-grid">
         <label>Payment output index
           <input id="demo-output-index" type="number" min="0" max="4294967295" value="0">
@@ -1170,10 +1170,11 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
-  return git(["ls-files", relativeDir])
-    .split(/\r?\n/)
-    .filter(Boolean)
-    .sort();
+  const files = new Set([
+    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
+    ...listFiles(relativeDir),
+  ]);
+  return [...files].sort();
 }
 
 function listFiles(relativeDir) {

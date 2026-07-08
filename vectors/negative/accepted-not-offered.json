@@ -29,7 +29,7 @@
           "borrowAmount": "1000",
           "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
           "borrowRedeemScript": "51",
-          "additiveThresholdSompi": "100",
+          "additiveThresholdSompi": "10000000",
           "paymentOutputIndex": 0,
           "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
         }
@@ -57,7 +57,7 @@
         "borrowAmount": "1000",
         "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
         "borrowRedeemScript": "51",
-        "additiveThresholdSompi": "100",
+        "additiveThresholdSompi": "10000000",
         "paymentOutputIndex": 0,
         "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
       }

@@ -33,10 +33,12 @@ The current proof requires:
 Broadcast transaction evidence must include transaction ids, transaction
 versions, version evidence source, and accepted-or-confirmed finality. Exact
 KIP-10 evidence must include the transaction encoding, reservation id, borrow
-outpoint, payment output index, transaction-artifact hash, server broadcast
-result, final settlement transaction id, and adapter-submitted transaction-v1
-shape evidence. Batch claim and refund evidence must reconcile inputs, outputs,
-charged amounts, fees, and continuation or refund value.
+outpoint, additive threshold, payment output index, transaction-artifact hash,
+server broadcast result, final settlement transaction id, and adapter-submitted
+transaction-v1 shape evidence. The reference alpha requires the advertised
+additive threshold to be at least `10000000` sompi. Batch claim and refund
+evidence must reconcile inputs, outputs, charged amounts, fees, and continuation
+or refund value.
 
 ## Safety Gates
 

@@ -83,8 +83,11 @@ Reservation-enabled expected result:
 Decode the `PAYMENT-REQUIRED` header and select the `exact` offer only when it
 contains buildable KIP-10 reservation terms in `PaymentRequired.extra`: borrow
 outpoint, amount, script public key, redeem script, additive threshold, expected
-payment output index, and reservation id. Build the signed SDK-safe JSON
-transaction artifact and retry with an `exact-transaction` payload:
+payment output index, and reservation id. For the reference alpha, the
+reservation provider should use merchant-owned borrow UTXOs and an
+`additiveThresholdSompi` of at least `10000000` sompi. Build the signed
+SDK-safe JSON transaction artifact and retry with an `exact-transaction`
+payload:
 
 ```text
 PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>

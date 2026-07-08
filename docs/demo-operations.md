@@ -216,6 +216,9 @@ Alpha.6 KIP-10 exact-transaction cutover:
   "kaspa-sdk-safe-json-v2.0.0"`.
 - Do not advertise the alpha.6 exact path from the hosted gateway unless an
   exact reservation provider is configured and tested.
+- That provider should use merchant-owned borrow UTXO inventory and advertise an
+  `additiveThresholdSompi` of at least `10000000` sompi for the reference alpha.
+  Do not advertise hosted exact with zero-threshold borrow terms.
 - Do not serve observe-only `exact-transfer` as a current alpha exact fallback.
 - Before advertising alpha.6 hosted evidence, run unpaid shape checks, a funded
   TN10 KIP-10 exact canary, replay rejection, and the full live proof runner.

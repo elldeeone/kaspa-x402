@@ -265,7 +265,7 @@ function exactExtra() {
     borrowAmount: canonicalAmount(ui.amount.value, "borrow amount"),
     borrowScriptPublicKey: "0000" + "ab".repeat(34),
     borrowRedeemScript: "51",
-    additiveThresholdSompi: "0",
+    additiveThresholdSompi: "10000000",
     paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
     reservationId: "22".repeat(32),
     reservationExpiresAt: "2099-01-01T00:00:00.000Z",

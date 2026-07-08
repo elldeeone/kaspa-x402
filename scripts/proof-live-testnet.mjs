@@ -29,6 +29,7 @@ const requiredFlows = [
 ];
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
 const ADAPTER_SUBMITTED_TX_VERSION_SOURCE = "adapter-submitted-transaction-shape";
+const MIN_EXACT_ADDITIVE_THRESHOLD_SOMPI = 10_000_000n;
 
 const report = {
   generatedAt: new Date().toISOString(),
@@ -166,6 +167,14 @@ function validateLiveProofResult(result, flows) {
   require(result.exact?.payloadEvidence?.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0", "exact.payloadEvidence.transactionEncoding", "must be kaspa-sdk-safe-json-v2.0.0");
   require(isHash32(result.exact?.payloadEvidence?.reservationId), "exact.payloadEvidence.reservationId", "must be a reservation id");
   require(validOutpoint(result.exact?.payloadEvidence?.borrowOutpoint), "exact.payloadEvidence.borrowOutpoint", "must be a borrow outpoint");
+  require(isSompi(result.exact?.payloadEvidence?.additiveThresholdSompi), "exact.payloadEvidence.additiveThresholdSompi", "must be a sompi string");
+  if (isSompi(result.exact?.payloadEvidence?.additiveThresholdSompi)) {
+    require(
+      BigInt(result.exact.payloadEvidence.additiveThresholdSompi) >= MIN_EXACT_ADDITIVE_THRESHOLD_SOMPI,
+      "exact.payloadEvidence.additiveThresholdSompi",
+      "must be at least 10000000 sompi",
+    );
+  }
   require(isHash32(result.exact?.payloadEvidence?.transactionArtifactSha256), "exact.payloadEvidence.transactionArtifactSha256", "must identify the signed transaction artifact");
   if (isIndex(result.exact?.outputIndex)) {
     require(result.exact?.payloadEvidence?.paymentOutputIndex === result.exact.outputIndex, "exact.payloadEvidence.paymentOutputIndex", "must match exact outputIndex");

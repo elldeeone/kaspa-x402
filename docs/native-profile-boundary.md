@@ -18,7 +18,10 @@ live evidence.
 
 The shipped profiles settle native KAS only. `kaspa-exact-v1` verifies that a
 Kaspa transaction pays the required sompi amount to the required script public
-key, and `kaspa-escrow-v1` settles native KAS from a funded escrow/channel.
+key. The alpha.6 exact path is not limited to a bare address-transfer model:
+the server advertises KIP-10 P2SH reservation terms and the client returns a
+signed transaction artifact that satisfies those terms. `kaspa-escrow-v1`
+settles native KAS from a funded escrow/channel.
 
 ## Absent Upstream Schemes
 

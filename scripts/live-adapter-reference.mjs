@@ -44,7 +44,7 @@ const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
 const DEFAULT_FEE_SOMPI = 2_000_000n;
 const EXACT_AMOUNT = "100000000";
 const EXACT_KIP10_BORROW_AMOUNT = "100000000";
-const EXACT_KIP10_ADDITIVE_THRESHOLD = "0";
+const EXACT_KIP10_ADDITIVE_THRESHOLD = "10000000";
 const EXACT_KIP10_COMPUTE_BUDGET = 10;
 const P2PK_COMPUTE_BUDGET = 10;
 const BATCH_REQUEST_AMOUNT = "100000000";
@@ -333,6 +333,7 @@ async function runExact({ client, server, fundingVersionByTxid }) {
       transactionEncoding: payment.paymentPayload.payload.transactionEncoding,
       reservationId: payment.paymentPayload.accepted.extra.reservationId,
       borrowOutpoint: payment.paymentPayload.accepted.extra.borrowOutpoint,
+      additiveThresholdSompi: payment.paymentPayload.accepted.extra.additiveThresholdSompi,
       transactionArtifactSha256: sha256Hex(payment.paymentPayload.payload.transaction),
       paymentOutputIndex: payment.paymentPayload.payload.paymentOutputIndex,
     },
@@ -348,13 +349,14 @@ function makeExactReservationProvider(input) {
   const { rpc, sdk, addressCodec, networkId, network, fundingPrivateKey, fundingAddress, fundingPublicKey, knownUtxos, spentOutpoints, fundingVersionByTxid } = input;
   return {
     async reserveExactPayment(request) {
+      const additiveThresholdSompi = maxSompi(EXACT_KIP10_ADDITIVE_THRESHOLD, request.minimumAdditiveThresholdSompi);
       const redeemScript = buildKip10AdditiveRedeemScript({
         ownerPublicKey: fundingPublicKey,
-        amount: EXACT_KIP10_ADDITIVE_THRESHOLD,
+        amount: additiveThresholdSompi,
       });
       const scriptPublicKey = kip10AdditiveScriptPublicKey({
         ownerPublicKey: fundingPublicKey,
-        amount: EXACT_KIP10_ADDITIVE_THRESHOLD,
+        amount: additiveThresholdSompi,
       });
       const borrowScriptPublicKey = serializedScriptPublicKey(scriptPublicKey);
       const borrowAddress = addressCodec.encodeScriptAddress({
@@ -387,7 +389,7 @@ function makeExactReservationProvider(input) {
         borrowOutpoint: utxo.outpoint,
         borrowScriptPublicKey,
         borrowRedeemScript: redeemScript,
-        additiveThresholdSompi: EXACT_KIP10_ADDITIVE_THRESHOLD,
+        additiveThresholdSompi,
       });
       return {
         reservationId,
@@ -397,7 +399,7 @@ function makeExactReservationProvider(input) {
         borrowAmount: utxo.amount,
         borrowScriptPublicKey,
         borrowRedeemScript: redeemScript,
-        additiveThresholdSompi: EXACT_KIP10_ADDITIVE_THRESHOLD,
+        additiveThresholdSompi,
         paymentOutputIndex: 1,
         expiresAt: new Date(Date.now() + request.maxTimeoutSeconds * 1000).toISOString(),
       };
@@ -1379,6 +1381,10 @@ function transactionInputOutpoint(input) {
 
 function hash(value) {
   return sha256Hex(stableStringify(value));
+}
+
+function maxSompi(left, right) {
+  return (BigInt(left) >= BigInt(right) ? left : right).toString();
 }
 
 function kaspaNetworkId(network) {

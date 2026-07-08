@@ -118,6 +118,7 @@ export interface ExactBorrowReservationRequest {
   payToScriptPublicKey: ByteHex;
   maxTimeoutSeconds: number;
   resource: ResourceInfo;
+  minimumAdditiveThresholdSompi: SompiString;
 }
 
 export interface ExactBorrowReservationProvider {
@@ -359,6 +360,7 @@ export interface DirectModeServerConfig {
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactReservationProvider?: ExactBorrowReservationProvider;
+  minimumExactAdditiveThresholdSompi?: SompiString;
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
