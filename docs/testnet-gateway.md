@@ -10,14 +10,12 @@ custodian, facilitator, mainnet service, or availability commitment.
 Deployment status: alpha.6 source uses the KIP-10 `exact-transaction` path for
 direct-mode servers that advertise reservations. The hosted Worker can reserve
 Durable Object-backed exact inventory, verify a signed SDK-safe JSON
-transaction artifact, match an accepted chain transaction back to that artifact,
-observe finality, and consume the reservation. The public TN10 REST submit
-model does not preserve tx-v1 compute budget, so hosted exact clients must
-broadcast the signed artifact through a Kaspa RPC path before retrying the
-gateway. The gateway advertises `exact` only while funded borrow-UTXO inventory
-is available; when inventory is empty, `/exact` returns `503 exact_unavailable`
-and `/batch` remains usable. The separate private TN10 full live harness was
-rerun for alpha.6 on 2026-07-09 and is recorded in
+transaction artifact, broadcast that artifact through TN10 PNN/WSS, match the
+accepted chain transaction back to the artifact, observe finality, and consume
+the reservation. The gateway advertises `exact` only while funded borrow-UTXO
+inventory is available; when inventory is empty, `/exact` returns
+`503 exact_unavailable` and `/batch` remains usable. The separate private TN10
+full live harness was rerun for alpha.6 on 2026-07-09 and is recorded in
 `docs/live-testnet-report.md`.
 
 ## Base URL
@@ -122,7 +120,8 @@ paid canary procedure are covered in the
 ## Chain Adapter
 
 The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
-`https://api-tn10.kaspa.org` as its chain evidence source. The adapter checks:
+`https://api-tn10.kaspa.org` as its read-side chain evidence source. The adapter
+checks:
 
 - `/info/blockdag` for network and virtual DAA health;
 - `/addresses/{address}/utxos` for accepted pay-to UTXO evidence;
@@ -130,11 +129,11 @@ The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
   finality evidence;
 - derived escrow-address UTXOs for batch channel funding.
 
-The Worker has a REST submit fallback in code, but current public REST submit
-does not carry `transaction.inputs[].computeBudget` into Kaspa RPC. It must not
-be cited as KIP-10 broadcast evidence until that upstream API supports tx-v1
-compute budget or the Worker is configured with another reviewed broadcast
-path.
+For hosted exact, the Worker submits KIP-10 transaction artifacts through the
+configured public TN10 PNN/WSS endpoints. The REST submit fallback remains in
+code for non-KIP-10 paths, but current public REST submit does not carry
+`transaction.inputs[].computeBudget` into Kaspa RPC and must not be cited as
+KIP-10 broadcast evidence.
 
 Failure modes are fail-closed:
 
@@ -258,27 +257,34 @@ confirming `/supported` advertises `exact`.
 Hosted exact proof:
 
 - Worker version:
-  `6701209a-f008-4e21-880b-88c8dc202210`;
+  `47862b0f-2ecf-49d0-b793-81e89caa4dfa`;
 - client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
   node with UTXO index;
-- virtual DAA score at run start: `512096118`;
+- Worker broadcast path: public TN10 PNN/WSS JSON endpoints;
+- virtual DAA score at run start: `512119428`;
 - registered borrow inventory count: `3`;
 - registered borrow outpoints:
-  `22993e0480d6e5833ee1eabbff6065328449adf55fe9faf63f46a5ac95fee321:0`,
-  `0696f587396d961c141fd4928f499b71913f7d771d23798c44b5175e25aecf23:0`,
+  `6d523b56724fc6cd298a18724eaf798e29cac9a95fb7b1f53189ab13433f8191:0`,
+  `e8fa2c24be8d0c426e5ca647e35cc21064f1b70696ec256d8a0f040e53488897:0`,
   and
-  `3e6e3e48a0fbe6ff5aeb9d4e183fb8284c380f0c9b8e6949be6eca72e00b59c4:0`;
+  `837523c22cec7ba9cd7e4080db594e7c5ca8581145f36a557081ccb29fdc00c0:0`;
 - borrow amount per inventory item: `100000000` sompi;
 - additive threshold: `10000000` sompi;
+- reservation id:
+  `1eab6dc69af1a7570443952d874df16cb7313bb839e2588f9540b2cd0dedee3c`;
+- transaction artifact SHA-256:
+  `12fbe2b88521c44e4509024b078d1c39fbdb55a2594f72aca2f733680da66e82`;
 - exact request result: HTTP `200`;
 - exact transaction id:
-  `f1ca4fc25b17adf88e5a5c90697b1a4d257a38a24900f6af0f6cfc6108832f01`;
+  `632dadcf96ac9ce4c56c781d95aac31ed52365a0fb86eb4b0cbbcd1f3eb2f55c`;
 - payment output index: `1`;
 - charged amount: `20000000` sompi;
 - finality: `accepted`;
 - identical paid retry result: HTTP `200` with the same settlement
   transaction;
-- inventory after payment: `4` available, `1` consumed, `0` reserved.
+- inventory after payment: `5` available, `2` consumed, `1` reserved. The
+  reserved item was an unrelated unpaid live probe still inside its lease
+  window at the read time.
 
 ## Alpha.5 Hosted Payment Evidence
 

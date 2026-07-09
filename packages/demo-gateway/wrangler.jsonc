@@ -46,6 +46,10 @@
     "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org",
     "KASPA_X402_SITE_BASE_URL": "https://kaspa-x402.org",
     "KASPA_X402_GATEWAY_BASE_URL": "https://demo.kaspa-x402.org",
-    "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED": "true"
+    "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED": "true",
+    "KASPA_X402_CHAIN_BROADCAST_MODE": "pnn",
+    "KASPA_X402_PNN_ENDPOINTS": "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json,wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/json,wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/json,wss://muon-10.kaspa.blue/kaspa/testnet-10/wrpc/json",
+    "KASPA_X402_PNN_TIMEOUT_MS": "15000",
+    "KASPA_X402_PNN_ATTEMPTS": "2"
   }
 }

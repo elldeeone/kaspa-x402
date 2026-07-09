@@ -26,7 +26,9 @@ Important non-secret variables:
 | `KASPA_X402_MIN_DEPOSIT_SOMPI` | Batch escrow deposit floor. Must be at least `10000000`. |
 | `KASPA_X402_SITE_BASE_URL` | Standards site base URL used by canary checks. |
 | `KASPA_X402_GATEWAY_BASE_URL` | Gateway base URL used by canary checks. |
-| `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, finality observation, and inventory consumption path are deployed. Current public exact proof expects the signed transaction to be broadcast through a Kaspa RPC path before the Worker observes it. |
+| `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, finality observation, and inventory consumption path are deployed. |
+| `KASPA_X402_CHAIN_BROADCAST_MODE` | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact. |
+| `KASPA_X402_PNN_ENDPOINTS` | Comma-separated public TN10 WSS endpoints used by the Worker to submit exact transaction artifacts. |
 
 The Worker must not receive a mainnet key, a spending key, or a faucet key.
 Claim broadcasting is disabled in the hosted gateway package.
@@ -132,21 +134,25 @@ Re-enable by restoring:
 KASPA_X402_GATEWAY_ENABLED=true
 ```
 
-## Chain Evidence Outage
+## Chain Evidence Or PNN Outage
 
-The Worker uses REST evidence for accepted UTXOs and DAA health. If
-`/health` or the scheduled canary reports REST failure:
+The Worker uses REST evidence for accepted UTXOs and DAA health. Hosted exact
+also uses public TN10 PNN/WSS for transaction submission. If `/health`, the
+scheduled canary, or the hosted exact proof reports chain failure:
 
 1. Confirm whether `https://api-tn10.kaspa.org/info/blockdag` is reachable.
 2. If the REST endpoint is down or stale, disable the gateway.
 3. Do not point the public gateway at mainnet or an unreviewed private node.
 4. If moving to a different `kaspa:testnet-10` REST endpoint, deploy only after
    unpaid offers and a manual paid exact check pass.
-5. Re-enable only after `/health`, `/canary`, batch deposit, replay rejection,
+5. If PNN submission is failing, disable hosted exact or the full gateway until
+   a paid exact proof passes again.
+6. Re-enable only after `/health`, `/canary`, batch deposit, replay rejection,
    and exact payment checks pass when hosted exact settlement is enabled.
 
-The static browser demo uses PNN/WASM for client-side checks. A PNN outage can
-break wallet-side demos while the Worker gateway still verifies via REST.
+The static browser demo uses PNN/WASM for client-side checks, and hosted exact
+uses lightweight PNN/WSS JSON inside the Worker for KIP-10 submission. A PNN
+outage can break hosted exact while `/batch` remains usable.
 
 ## Scheduled Canary
 
@@ -188,8 +194,8 @@ Minimum manual paid checks:
    `GET /exact` and confirm HTTP `503 exact_unavailable`.
 2. If exact is deployed, request `GET /exact`, confirm HTTP `402`, build a
    signed KIP-10 `exact-transaction` artifact from the advertised reservation
-   terms, broadcast it through a Kaspa RPC path, wait for accepted finality,
-   retry with `PAYMENT-SIGNATURE`, and confirm HTTP `200`.
+   terms, retry with `PAYMENT-SIGNATURE`, and confirm the Worker broadcasts the
+   artifact through PNN, observes accepted finality, and returns HTTP `200`.
 3. Retry the identical paid exact request and confirm idempotent HTTP `200`.
 4. Present the same exact transaction to a different resource and confirm
    conflict rejection.
@@ -202,9 +208,9 @@ Record transaction ids, output indexes, Worker version, response status, and
 `PAYMENT-RESPONSE` summaries in the operator notes.
 
 The committed hosted exact proof seeds funded inventory, registers it through
-the admin API, pre-broadcasts the signed exact artifact through the configured
-TN10 RPC node, pays `/exact`, retries the same payment for idempotency, and
-leaves at least one inventory item available by default:
+the admin API, pays `/exact` with a signed exact transaction artifact, confirms
+the Worker-broadcast transaction is accepted, retries the same payment for
+idempotency, and leaves at least one inventory item available by default:
 
 ```sh
 KASPA_X402_RPC_URL=<tn10-rpc-url> \
@@ -220,12 +226,11 @@ is rejected and does not return protected content.
 
 For alpha.6 KIP-10 exact deployments, advertise `exact` only after the gateway
 can reserve a borrow outpoint, return the reservation fields in
-`PaymentRequired.extra`, verify the signed transaction artifact, observe
-accepted finality, and consume the reservation. Current public REST submit does
-not preserve tx-v1 compute budget, so hosted exact clients must broadcast the
-artifact through a Kaspa RPC path before retrying the gateway. If the gateway
-does not have that settlement path, exact must remain unavailable and hosted
-canaries should cover `batch-settlement` only.
+`PaymentRequired.extra`, verify the signed transaction artifact, submit it
+through the configured TN10 PNN/WSS endpoints, observe accepted finality, and
+consume the reservation. If the gateway does not have that settlement path,
+exact must remain unavailable and hosted canaries should cover
+`batch-settlement` only.
 
 ## Durable State Policy
 

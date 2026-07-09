@@ -15,9 +15,11 @@ import {
   type ServerStateStore,
 } from "@kaspa-x402/server";
 import {
+  KaspaPnnClient,
   KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
+  PnnBroadcastChainProvider,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -216,6 +218,7 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
 
 async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateClient): Promise<boolean> {
   if (!config.hostedExactSettlementEnabled) return false;
+  if (config.chainBroadcastMode !== "pnn") return false;
   const stats = await state.exactInventoryStats();
   return stats.available > 0;
 }
@@ -224,6 +227,7 @@ function createGateway(config: GatewayConfig, state: GatewayStateClient, options
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
+  const restChainProvider = new RestKaspaChainProvider(rest, book, config.claimFeeSompi);
   const store = new AddressRecordingStore(state, book);
   const server = new DirectModeServer({
     network: config.network,
@@ -234,7 +238,18 @@ function createGateway(config: GatewayConfig, state: GatewayStateClient, options
     refundTimeoutDaa: config.refundTimeoutDaa,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     store,
-    chainProvider: new RestKaspaChainProvider(rest, book, config.claimFeeSompi),
+    chainProvider:
+      config.chainBroadcastMode === "pnn"
+        ? new PnnBroadcastChainProvider(
+            restChainProvider,
+            book,
+            new KaspaPnnClient({
+              endpoints: config.pnnEndpoints,
+              timeoutMs: config.pnnTimeoutMs,
+              attempts: config.pnnAttempts,
+            }),
+          )
+        : restChainProvider,
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
@@ -349,6 +364,8 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
         enabled: config.enabled,
         gateway: "kaspa-x402-testnet",
         hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
+        chainBroadcastMode: config.chainBroadcastMode,
+        pnnEndpoints: config.chainBroadcastMode === "pnn" ? config.pnnEndpoints : [],
         chain,
         metrics: await state.metrics(),
         exactInventory: await state.exactInventoryStats(),
@@ -461,6 +478,7 @@ function skippedCheck(name: string, detail: string): GatewayCanaryCheck {
 
 function exactUnavailableReason(config: GatewayConfig, stats: { available: number }): string {
   if (!config.hostedExactSettlementEnabled) return "hosted gateway exact verifier/broadcast path is not enabled";
+  if (config.chainBroadcastMode !== "pnn") return "hosted gateway exact requires PNN broadcast mode";
   if (stats.available <= 0) return "hosted gateway exact inventory is empty";
   return "hosted gateway exact is unavailable";
 }

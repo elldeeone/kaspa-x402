@@ -163,16 +163,6 @@ async function runHostedExactProof(input) {
       payload: payment.paymentPayload.payload,
       transactionArtifactSha256: sha256Hex(payment.paymentPayload.payload.transaction),
     });
-    const prebroadcast = await broadcastExactArtifact({
-      rpc,
-      sdk,
-      transaction: payment.paymentPayload.payload.transaction,
-      payTo: payment.paymentPayload.accepted.payTo,
-      txid: payment.transactionId,
-      paymentOutputIndex: payment.paymentPayload.payload.paymentOutputIndex,
-      amount: payment.paymentPayload.accepted.amount,
-      scriptPublicKey: addressCodec.scriptPublicKeyForAddress(payment.paymentPayload.accepted.payTo, input.network),
-    });
     const paid = await submitPayment(exactUrl, payment.paymentPayload, { expectStatus: 200, label: "hosted exact" });
     const settlement = decodePaymentResponseHeader(paid.headers.get(PAYMENT_RESPONSE_HEADER));
     const applied = await client.applySettlement(payment, settlement);
@@ -180,6 +170,14 @@ async function runHostedExactProof(input) {
     const replaySettlement = decodePaymentResponseHeader(replay.headers.get(PAYMENT_RESPONSE_HEADER));
     const statsAfterPayment = await gatewayAdminRequest(input.gatewayBase, "/admin/exact-inventory", input.adminToken);
     const extra = readKaspaSettlementExtension(settlement);
+    const observedPayment = await waitForAddressOutpoint({
+      rpc,
+      address: payment.paymentPayload.accepted.payTo,
+      txid: settlement.transaction,
+      index: extra?.paymentOutputIndex ?? payment.paymentPayload.payload.paymentOutputIndex,
+      amount: BigInt(settlement.amount),
+      scriptPublicKey: addressCodec.scriptPublicKeyForAddress(payment.paymentPayload.accepted.payTo, input.network),
+    });
 
     return {
       node: {
@@ -207,7 +205,11 @@ async function runHostedExactProof(input) {
         reservationId: extra?.reservationId,
         chargedAmount: applied.chargedAmount,
         transactionArtifactSha256: sha256Hex(payment.paymentPayload.payload.transaction),
-        prebroadcast,
+        gatewaySettlement: {
+          broadcaster: "demo-gateway-pnn",
+          observedFinality: "accepted",
+          observedOutpoint: observedPayment.outpoint,
+        },
         replayStatus: replay.status,
         replaySettlementTransaction: replaySettlement.transaction,
       },
@@ -216,26 +218,6 @@ async function runHostedExactProof(input) {
   } finally {
     await rpc.disconnect().catch(() => undefined);
   }
-}
-
-async function broadcastExactArtifact(input) {
-  const transaction = input.sdk.Transaction.deserializeFromSafeJSON(input.transaction);
-  let txid = input.txid || transaction.id;
-  try {
-    const result = await input.rpc.submitTransaction({ transaction, allowOrphan: false });
-    txid = String(result.transactionId);
-  } catch (error) {
-    if (!/\b(already|duplicate|known|mempool|accepted)\b/i.test(error instanceof Error ? error.message : String(error))) throw error;
-  }
-  await waitForAddressOutpoint({
-    rpc: input.rpc,
-    address: input.payTo,
-    txid,
-    index: input.paymentOutputIndex,
-    amount: BigInt(input.amount),
-    scriptPublicKey: input.scriptPublicKey,
-  });
-  return { txid, finality: "accepted" };
 }
 
 async function createHostedInventory(input) {

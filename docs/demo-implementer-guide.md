@@ -87,9 +87,9 @@ outpoint, amount, script public key, redeem script, additive threshold, expected
 payment output index, and reservation id. For the reference alpha, the
 reservation provider should use merchant-owned borrow UTXOs and an
 `additiveThresholdSompi` of at least `10000000` sompi. Build the signed
-SDK-safe JSON transaction artifact, broadcast it through a Kaspa RPC path, wait
-until the payment output is accepted, and retry with an `exact-transaction`
-payload:
+SDK-safe JSON transaction artifact and retry with an `exact-transaction`
+payload. The hosted gateway submits that artifact through TN10 PNN/WSS and waits
+for accepted payment evidence before serving the response:
 
 ```text
 PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>
@@ -107,9 +107,9 @@ cached HTTP `200`. Reusing the same exact transaction for a different resource
 must be rejected. If a gateway has no exact reservation provider, clients should
 use `batch-settlement` or another server.
 
-The hosted gateway currently observes accepted exact artifacts. Its public REST
-chain source cannot broadcast KIP-10 transactions itself because the REST submit
-model does not preserve tx-v1 `computeBudget`.
+The hosted gateway uses REST for read-side evidence and public TN10 PNN/WSS for
+KIP-10 exact transaction submission. Public REST submit is not used for hosted
+KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
 

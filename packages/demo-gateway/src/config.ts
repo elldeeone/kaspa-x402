@@ -21,6 +21,10 @@ export interface GatewayEnv {
   KASPA_X402_GATEWAY_BASE_URL?: string;
   KASPA_X402_ADMIN_TOKEN?: string;
   KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED?: string;
+  KASPA_X402_CHAIN_BROADCAST_MODE?: string;
+  KASPA_X402_PNN_ENDPOINTS?: string;
+  KASPA_X402_PNN_TIMEOUT_MS?: string;
+  KASPA_X402_PNN_ATTEMPTS?: string;
 }
 
 export interface GatewayConfig {
@@ -41,6 +45,10 @@ export interface GatewayConfig {
   gatewayBaseUrl: string;
   adminToken?: string;
   hostedExactSettlementEnabled: boolean;
+  chainBroadcastMode: "rest" | "pnn";
+  pnnEndpoints: string[];
+  pnnTimeoutMs: number;
+  pnnAttempts: number;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -56,6 +64,11 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
   const minDepositSompi = sompi(env.KASPA_X402_MIN_DEPOSIT_SOMPI ?? "20000000", "KASPA_X402_MIN_DEPOSIT_SOMPI");
   assertStandardOutputAmount(exactAmount, "KASPA_X402_EXACT_AMOUNT");
   assertStandardOutputAmount(minDepositSompi, "KASPA_X402_MIN_DEPOSIT_SOMPI");
+  const chainBroadcastMode = broadcastMode(env.KASPA_X402_CHAIN_BROADCAST_MODE ?? "rest");
+  const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "");
+  if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
+    throw new Error("KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn");
+  }
   return {
     enabled: bool(env.KASPA_X402_GATEWAY_ENABLED ?? "true", "KASPA_X402_GATEWAY_ENABLED"),
     network,
@@ -76,6 +89,10 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       env.KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED ?? "false",
       "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED",
     ),
+    chainBroadcastMode,
+    pnnEndpoints: endpoints,
+    pnnTimeoutMs: uint(env.KASPA_X402_PNN_TIMEOUT_MS ?? "15000", "KASPA_X402_PNN_TIMEOUT_MS", 1000, 60000),
+    pnnAttempts: uint(env.KASPA_X402_PNN_ATTEMPTS ?? "2", "KASPA_X402_PNN_ATTEMPTS", 1, 5),
     ...(env.KASPA_X402_ADMIN_TOKEN?.trim() ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() } : {}),
   };
 }
@@ -104,6 +121,29 @@ function bool(value: string, name: string): boolean {
   if (normalized === "true" || normalized === "1") return true;
   if (normalized === "false" || normalized === "0") return false;
   throw new Error(`${name} must be true or false`);
+}
+
+function broadcastMode(value: string): "rest" | "pnn" {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "rest" || normalized === "pnn") return normalized;
+  throw new Error("KASPA_X402_CHAIN_BROADCAST_MODE must be rest or pnn");
+}
+
+function pnnEndpoints(value: string): string[] {
+  const entries = value
+    .split(",")
+    .map((entry) => entry.trim())
+    .filter(Boolean);
+  for (const entry of entries) {
+    const parsed = new URL(entry);
+    if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") {
+      throw new Error("KASPA_X402_PNN_ENDPOINTS entries must be ws or wss URLs");
+    }
+    if (parsed.protocol === "ws:" && parsed.hostname !== "127.0.0.1" && parsed.hostname !== "localhost") {
+      throw new Error("KASPA_X402_PNN_ENDPOINTS must use wss except for localhost");
+    }
+  }
+  return entries;
 }
 
 function baseUrl(value: string, name: string): string {

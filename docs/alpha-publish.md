@@ -125,14 +125,20 @@ Checked for alpha.5 on 2026-07-06:
 For alpha.6, the source release gate is not the same as the public hosted
 gateway gate. Alpha.6 source adds the KIP-10 exact transaction-artifact path for
 direct-mode servers that advertise reservations. The hosted
-`demo.kaspa-x402.org` gateway must not advertise exact evidence until it is
-redeployed with a working exact reservation, verifier, broadcast-or-observe,
-and finality path, and a funded TN10 KIP-10 exact canary has passed.
+`demo.kaspa-x402.org` gateway may advertise exact evidence only while it is
+deployed with working exact reservations, PNN broadcast, finality observation,
+and funded TN10 borrow-UTXO inventory.
 
-Before advertising alpha.6 live evidence, run:
+Before advertising alpha.6 source live evidence, run:
 
 ```sh
 npm run proof:live:check -- --live --write-report
+```
+
+Before advertising hosted exact evidence, run:
+
+```sh
+KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS npm run proof:hosted-exact
 ```
 
 The expected alpha.6 live proof must include:
@@ -156,6 +162,11 @@ Checked for alpha.6 on 2026-07-09:
 - batch deposit-voucher, voucher-only, claim, replay rejection, and refund all
   passed;
 - the sanitized summary is recorded in `docs/live-testnet-report.md`.
+- the hosted gateway Worker version
+  `47862b0f-2ecf-49d0-b793-81e89caa4dfa` settled exact transaction
+  `632dadcf96ac9ce4c56c781d95aac31ed52365a0fb86eb4b0cbbcd1f3eb2f55c`
+  through the TN10 PNN broadcast path; the hosted summary is recorded in
+  `docs/testnet-gateway.md`.
 
 Checked for alpha.5 on 2026-07-06:
 

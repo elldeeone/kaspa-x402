@@ -20,6 +20,25 @@ import {
 import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
 
 type FetchLike = typeof fetch;
+type SleepLike = (ms: number) => Promise<void>;
+
+type PnnRpc = {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  getServerInfo(): Promise<{ networkId?: unknown; isSynced?: unknown; virtualDaaScore?: unknown }>;
+  submitTransaction(request: { transaction: unknown; allowOrphan: boolean }): Promise<{ transactionId?: unknown }>;
+  getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
+};
+
+type PnnRpcFactory = (endpoint: string, timeoutMs: number) => PnnRpc;
+
+type KaspaPnnClientOptions = {
+  endpoints: string[];
+  timeoutMs?: number;
+  attempts?: number;
+  rpcFactory?: PnnRpcFactory;
+  sleep?: SleepLike;
+};
 
 export class ScriptAddressBook {
   readonly #scriptToAddress = new Map<string, string>();
@@ -30,6 +49,10 @@ export class ScriptAddressBook {
 
   addresses(): string[] {
     return Array.from(new Set(this.#scriptToAddress.values()));
+  }
+
+  addressForScriptPublicKey(scriptPublicKey: string): string | undefined {
+    return this.#scriptToAddress.get(scriptPublicKey.toLowerCase());
   }
 }
 
@@ -103,6 +126,274 @@ export class RestKaspaChainProvider implements ServerChainProvider {
     }
     await this.#client.waitForTransactionAccepted(parsed);
     return { transactionId: parsed.id, finality: "accepted" };
+  }
+}
+
+export class PnnBroadcastChainProvider implements ServerChainProvider {
+  readonly #reads: RestKaspaChainProvider;
+  readonly #book: ScriptAddressBook;
+  readonly #pnn: KaspaPnnClient;
+
+  constructor(reads: RestKaspaChainProvider, book: ScriptAddressBook, pnn: KaspaPnnClient) {
+    this.#reads = reads;
+    this.#book = book;
+    this.#pnn = pnn;
+  }
+
+  getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null> {
+    return this.#reads.getUtxo(outpoint, network);
+  }
+
+  getVirtualDaaScore(): Promise<SompiString> {
+    return this.#reads.getVirtualDaaScore();
+  }
+
+  estimateClaimFee(): Promise<SompiString> {
+    return this.#reads.estimateClaimFee();
+  }
+
+  sendTransaction(transaction: PreparedTransaction): Promise<TransactionBroadcast> {
+    return this.#pnn.submitTransaction(transaction, this.#book);
+  }
+}
+
+export class KaspaPnnClient {
+  readonly #endpoints: string[];
+  readonly #timeoutMs: number;
+  readonly #attempts: number;
+  readonly #rpcFactory: PnnRpcFactory;
+  readonly #sleep: SleepLike;
+
+  constructor(options: KaspaPnnClientOptions) {
+    this.#endpoints = options.endpoints;
+    this.#timeoutMs = options.timeoutMs ?? 15_000;
+    this.#attempts = options.attempts ?? 2;
+    this.#rpcFactory = options.rpcFactory ?? ((endpoint, timeoutMs) => new JsonPnnRpc(endpoint, timeoutMs));
+    this.#sleep = options.sleep ?? sleep;
+  }
+
+  async health(): Promise<{ ok: true; networkId: string; endpoint: string; virtualDaaScore?: string }> {
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      const info = await this.#checkedServerInfo(rpc, endpoint);
+      return {
+        ok: true,
+        networkId: "testnet-10",
+        endpoint,
+        ...(info.virtualDaaScore !== undefined ? { virtualDaaScore: String(info.virtualDaaScore) } : {}),
+      };
+    });
+  }
+
+  async submitTransaction(transaction: PreparedTransaction, book: ScriptAddressBook): Promise<TransactionBroadcast> {
+    const safe = parseSafeTransactionArtifact(transaction);
+    const evidence = pnnPaymentEvidence(safe, book);
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      const parsed = pnnTransactionFromSafe(safe);
+      let transactionId = safe.id;
+      try {
+        const result = await withTimeout(rpc.submitTransaction({ transaction: parsed, allowOrphan: false }), this.#timeoutMs, "pnn submitTransaction");
+        if (typeof result.transactionId !== "string" || !/^[0-9a-fA-F]{64}$/.test(result.transactionId)) {
+          throw invalidTransaction("Kaspa PNN did not return a transaction id");
+        }
+        transactionId = result.transactionId.toLowerCase();
+      } catch (error) {
+        if (!isDuplicateTransactionError(error)) throw error;
+      }
+      if (transactionId !== safe.id) {
+        throw invalidTransaction("Kaspa PNN returned a transaction id that does not match the exact artifact");
+      }
+      await this.#waitForAcceptedPayment(rpc, safe.id, evidence);
+      return { transactionId: safe.id, finality: "accepted" };
+    });
+  }
+
+  async #withRpc<T>(fn: (input: { rpc: PnnRpc; endpoint: string }) => Promise<T>): Promise<T> {
+    if (this.#endpoints.length === 0) throw invalidTransaction("Kaspa PNN endpoints are not configured");
+    const errors: string[] = [];
+    for (const endpoint of this.#endpoints) {
+      const rpc = this.#rpcFactory(endpoint, this.#timeoutMs);
+      try {
+        await withTimeout(rpc.connect(), this.#timeoutMs, `pnn connect ${endpoint}`);
+        return await fn({ rpc, endpoint });
+      } catch (error) {
+        errors.push(`${endpoint}: ${errorMessage(error)}`);
+      } finally {
+        await rpc.disconnect().catch(() => undefined);
+      }
+    }
+    throw invalidTransaction(`Kaspa PNN request failed: ${errors.join(" | ")}`);
+  }
+
+  async #checkedServerInfo(rpc: PnnRpc, endpoint: string): Promise<{ virtualDaaScore?: unknown }> {
+    const info = await withTimeout(rpc.getServerInfo(), this.#timeoutMs, `pnn getServerInfo ${endpoint}`);
+    if (info.networkId !== "testnet-10") throw invalidTransaction(`Kaspa PNN endpoint returned network ${String(info.networkId)}`);
+    if (info.isSynced === false) throw invalidTransaction("Kaspa PNN endpoint is not synced");
+    return info;
+  }
+
+  async #waitForAcceptedPayment(rpc: PnnRpc, txid: string, evidence: PnnPaymentEvidence): Promise<void> {
+    let last = "not checked";
+    for (let attempt = 0; attempt < this.#attempts; attempt += 1) {
+      const match = await this.#findAcceptedPayment(rpc, txid, evidence);
+      if (match) return;
+      last = `attempt ${attempt + 1} found no matching payment output`;
+      await this.#sleep(Math.min(1_000 * (attempt + 1), this.#timeoutMs));
+    }
+    const deadline = Date.now() + this.#timeoutMs;
+    while (Date.now() <= deadline) {
+      const match = await this.#findAcceptedPayment(rpc, txid, evidence);
+      if (match) return;
+      last = "payment output not accepted yet";
+      await this.#sleep(1_000);
+    }
+    throw invalidTransaction(`exact transaction did not reach accepted finality through PNN: ${last}`);
+  }
+
+  async #findAcceptedPayment(rpc: PnnRpc, txid: string, evidence: PnnPaymentEvidence): Promise<boolean> {
+    const result = await withTimeout(rpc.getUtxosByAddresses([evidence.address]), this.#timeoutMs, "pnn getUtxosByAddresses");
+    const entries = Array.isArray(result.entries) ? result.entries : [];
+    return entries.some((entry) => {
+      const utxo = pnnUtxo(entry);
+      return (
+        utxo.outpoint.txid === txid &&
+        utxo.outpoint.index === evidence.outputIndex &&
+        utxo.amount === evidence.amount &&
+        utxo.scriptPublicKey === evidence.scriptPublicKey
+      );
+    });
+  }
+}
+
+class JsonPnnRpc implements PnnRpc {
+  readonly #endpoint: string;
+  readonly #timeoutMs: number;
+  #ws: WebSocket | undefined;
+  #nextId = 1;
+  readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeoutId: ReturnType<typeof setTimeout> }>();
+
+  constructor(endpoint: string, timeoutMs: number) {
+    this.#endpoint = endpoint;
+    this.#timeoutMs = timeoutMs;
+  }
+
+  connect(): Promise<void> {
+    if (this.#ws && this.#ws.readyState === WebSocket.OPEN) return Promise.resolve();
+    return new Promise((resolve, reject) => {
+      const ws = new WebSocket(this.#endpoint);
+      this.#ws = ws;
+      let settled = false;
+      const cleanup = () => {
+        ws.removeEventListener("open", handleOpen);
+        ws.removeEventListener("error", handleError);
+        ws.removeEventListener("close", handleClose);
+      };
+      const timeoutId = setTimeout(() => {
+        if (settled) return;
+        settled = true;
+        cleanup();
+        try {
+          ws.close();
+        } catch {
+          // Ignore close failures while failing the connection attempt.
+        }
+        reject(new Error(`pnn websocket connect timed out after ${this.#timeoutMs}ms`));
+      }, this.#timeoutMs);
+      const handleOpen = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        cleanup();
+        ws.addEventListener("message", (event) => this.#handleMessage(event));
+        ws.addEventListener("close", () => this.#rejectPending("pnn websocket closed"));
+        ws.addEventListener("error", () => this.#rejectPending("pnn websocket error"));
+        resolve();
+      };
+      const handleError = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        cleanup();
+        reject(new Error("pnn websocket error"));
+      };
+      const handleClose = () => {
+        if (settled) return;
+        settled = true;
+        clearTimeout(timeoutId);
+        cleanup();
+        reject(new Error("pnn websocket closed before connect"));
+      };
+      ws.addEventListener("open", handleOpen);
+      ws.addEventListener("error", handleError);
+      ws.addEventListener("close", handleClose);
+    });
+  }
+
+  disconnect(): Promise<void> {
+    this.#rejectPending("pnn websocket disconnected");
+    if (this.#ws && this.#ws.readyState !== WebSocket.CLOSED && this.#ws.readyState !== WebSocket.CLOSING) {
+      this.#ws.close();
+    }
+    this.#ws = undefined;
+    return Promise.resolve();
+  }
+
+  getServerInfo(): Promise<{ networkId?: unknown; isSynced?: unknown; virtualDaaScore?: unknown }> {
+    return this.#request("getServerInfo", {});
+  }
+
+  submitTransaction(request: { transaction: unknown; allowOrphan: boolean }): Promise<{ transactionId?: unknown }> {
+    return this.#request("submitTransaction", request);
+  }
+
+  getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }> {
+    return this.#request("getUtxosByAddresses", { addresses });
+  }
+
+  #request<T>(method: string, params: unknown): Promise<T> {
+    const ws = this.#ws;
+    if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("pnn websocket is not connected"));
+    const id = this.#nextId;
+    this.#nextId += 1;
+    return new Promise<T>((resolve, reject) => {
+      const timeoutId = setTimeout(() => {
+        this.#pending.delete(id);
+        reject(new Error(`pnn ${method} timed out after ${this.#timeoutMs}ms`));
+      }, this.#timeoutMs);
+      this.#pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeoutId });
+      ws.send(JSON.stringify({ id, method, params }));
+    });
+  }
+
+  #handleMessage(event: MessageEvent): void {
+    if (typeof event.data !== "string") {
+      this.#rejectPending("pnn websocket returned a non-text message");
+      return;
+    }
+    const message = parseJson(event.data);
+    if (!isRecord(message)) {
+      this.#rejectPending("pnn websocket returned malformed JSON");
+      return;
+    }
+    const id = typeof message.id === "number" ? message.id : undefined;
+    if (id === undefined) return;
+    const pending = this.#pending.get(id);
+    if (!pending) return;
+    this.#pending.delete(id);
+    clearTimeout(pending.timeoutId);
+    if (message.error !== undefined) {
+      pending.reject(new Error(pnnErrorMessage(message.error)));
+      return;
+    }
+    pending.resolve(message.params);
+  }
+
+  #rejectPending(message: string): void {
+    for (const [id, pending] of this.#pending) {
+      this.#pending.delete(id);
+      clearTimeout(pending.timeoutId);
+      pending.reject(new Error(message));
+    }
   }
 }
 
@@ -366,6 +657,7 @@ type SafeTransaction = {
   subnetworkId?: string;
   gas?: string;
   payload?: string;
+  storageMass?: string;
 };
 
 type SafeTransactionInput = {
@@ -385,6 +677,60 @@ type SafeTransactionOutput = {
   value: string;
   scriptPublicKey: string;
 };
+
+type PnnPaymentEvidence = {
+  address: string;
+  outputIndex: number;
+  amount: string;
+  scriptPublicKey: string;
+};
+
+type PnnUtxo = {
+  outpoint: FundingOutpoint;
+  amount: string;
+  scriptPublicKey: string;
+};
+
+function pnnPaymentEvidence(transaction: SafeTransaction, book: ScriptAddressBook): PnnPaymentEvidence {
+  for (let outputIndex = 0; outputIndex < transaction.outputs.length; outputIndex += 1) {
+    const output = transaction.outputs[outputIndex];
+    const address = book.addressForScriptPublicKey(output.scriptPublicKey);
+    if (address) {
+      return {
+        address,
+        outputIndex,
+        amount: output.value,
+        scriptPublicKey: output.scriptPublicKey,
+      };
+    }
+  }
+  throw invalidTransaction("exact transaction artifact does not pay a known gateway address");
+}
+
+function pnnUtxo(entry: unknown): PnnUtxo {
+  if (!isRecord(entry)) throw invalidTransaction("Kaspa PNN UTXO entry is not an object");
+  const raw = isRecord(entry.entry) ? entry.entry : entry;
+  const utxoEntry = isRecord(raw.utxoEntry) ? raw.utxoEntry : isRecord(raw.utxo) ? raw.utxo : raw;
+  const outpoint = isRecord(raw.outpoint) ? raw.outpoint : isRecord(entry.outpoint) ? entry.outpoint : undefined;
+  if (!outpoint) throw invalidTransaction("Kaspa PNN UTXO entry is missing outpoint");
+  return {
+    outpoint: {
+      txid: hashValue(outpoint.transactionId, "Kaspa PNN UTXO transactionId"),
+      index: uint32Value(outpoint.index, "Kaspa PNN UTXO index"),
+    },
+    amount: uintStringValue(utxoEntry.amount ?? raw.amount ?? entry.amount, "Kaspa PNN UTXO amount"),
+    scriptPublicKey: serializeSdkScriptPublicKey(utxoEntry.scriptPublicKey ?? raw.scriptPublicKey ?? entry.scriptPublicKey),
+  };
+}
+
+function serializeSdkScriptPublicKey(value: unknown): string {
+  if (typeof value === "string") return serializedScriptValue(value, "Kaspa PNN UTXO scriptPublicKey");
+  if (!isRecord(value)) throw invalidTransaction("Kaspa PNN UTXO scriptPublicKey is not an object");
+  const script = hexValue(value.script, "Kaspa PNN UTXO script");
+  const version = uint32Value(value.version ?? 0, "Kaspa PNN UTXO script version");
+  if (version > 0xffff) throw invalidTransaction("Kaspa PNN UTXO script version exceeds uint16");
+  return `${(version & 0xff).toString(16).padStart(2, "0")}${((version >>> 8) & 0xff).toString(16).padStart(2, "0")}${script}`.toLowerCase();
+}
 
 function assertTestnet(network: NetworkId): void {
   if (network !== "kaspa:testnet-10") {
@@ -422,6 +768,7 @@ function parseSafeTransactionArtifact(transaction: PreparedTransaction): SafeTra
     ...(typeof parsed.subnetworkId === "string" ? { subnetworkId: hexValue(parsed.subnetworkId, "subnetworkId") } : {}),
     ...(parsed.gas !== undefined ? { gas: uintStringValue(parsed.gas, "gas") } : {}),
     ...(typeof parsed.payload === "string" ? { payload: hexValue(parsed.payload, "payload") } : {}),
+    ...(parsed.storageMass !== undefined ? { storageMass: uintStringValue(parsed.storageMass, "storageMass") } : {}),
   };
 }
 
@@ -473,6 +820,35 @@ function restSubmitTransactionFromSafe(transaction: SafeTransaction): Record<str
     ...(transaction.subnetworkId !== undefined ? { subnetworkId: transaction.subnetworkId } : {}),
     ...(transaction.gas !== undefined ? { gas: transaction.gas } : {}),
     ...(transaction.payload !== undefined ? { payload: transaction.payload } : {}),
+  };
+}
+
+function pnnTransactionFromSafe(transaction: SafeTransaction): Record<string, unknown> {
+  return {
+    version: transaction.version,
+    inputs: transaction.inputs.map((input) => ({
+      previousOutpoint: {
+        transactionId: input.transactionId,
+        index: input.index,
+      },
+      signatureScript: input.signatureScript,
+      sequence: uintSafeNumber(input.sequence, "transaction input sequence"),
+      sigOpCount: input.sigOpCount,
+      computeBudget: input.computeBudget ?? 0,
+      verboseData: null,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      value: uintSafeNumber(output.value, "transaction output value"),
+      scriptPublicKey: output.scriptPublicKey,
+      verboseData: null,
+      covenant: null,
+    })),
+    lockTime: uintSafeNumber(transaction.lockTime ?? "0", "lockTime"),
+    subnetworkId: transaction.subnetworkId ?? "00".repeat(20),
+    gas: uintSafeNumber(transaction.gas ?? "0", "gas"),
+    payload: transaction.payload ?? "",
+    storageMass: uintSafeNumber(transaction.storageMass ?? "0", "storageMass"),
+    verboseData: null,
   };
 }
 
@@ -563,6 +939,12 @@ function uintStringValue(value: unknown, label: string): string {
   return value;
 }
 
+function uintSafeNumber(value: string, label: string): number {
+  const number = Number(value);
+  if (!Number.isSafeInteger(number) || number < 0) throw invalidTransaction(`${label} exceeds JSON-safe integer range`);
+  return number;
+}
+
 function parseJson(text: string): unknown {
   if (!text) return undefined;
   try {
@@ -582,7 +964,29 @@ function invalidTransaction(message: string): KaspaX402Error {
 
 function isDuplicateTransactionError(error: unknown): boolean {
   const message = error instanceof Error ? error.message : String(error);
-  return /\b(already|duplicate|known|mempool)\b/i.test(message);
+  return /\b(already|duplicate|known|mempool|accepted)\b/i.test(message);
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function pnnErrorMessage(error: unknown): string {
+  if (!isRecord(error)) return String(error);
+  if (typeof error.message === "string") return error.message;
+  return JSON.stringify(error);
+}
+
+async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+  let timeoutId: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<never>((_, reject) => {
+    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+  });
+  try {
+    return await Promise.race([promise, timeout]);
+  } finally {
+    if (timeoutId) clearTimeout(timeoutId);
+  }
 }
 
 async function sleep(ms: number): Promise<void> {

@@ -120,6 +120,8 @@ describe("gateway canary", () => {
       GATEWAY_STATE: fakeNamespace(storage),
       KASPA_X402_ADMIN_TOKEN: "admin-token",
       KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
     };
 
     const registered = await handleGatewayRequest(

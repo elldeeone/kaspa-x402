@@ -38,14 +38,15 @@ gates.
   error-reason vocabulary. MCP transport uses the standard
   `_meta["x402/payment"]` and `_meta["x402/payment-response"]` keys.
 - Hosted testnet gateway: https://demo.kaspa-x402.org is a Cloudflare Worker
-  with Durable Object state serving public `batch-settlement` integration
-  endpoints against live `kaspa:testnet-10` chain evidence, with a scheduled
-  public canary at `/canary`. The Worker holds no spending keys. It must not be
-  cited as hosted `exact` evidence until it is deployed with a KIP-10 exact
-  reservation provider and funded canary.
+  with Durable Object state serving public `batch-settlement` and KIP-10
+  `exact-transaction` integration endpoints against live `kaspa:testnet-10`
+  chain evidence, with a scheduled public canary at `/canary`. The Worker holds
+  no spending keys; funded exact borrow inventory is registered by operator
+  admin command, and exact transaction artifacts are submitted through TN10
+  PNN/WSS.
 - Recorded live paid evidence is split intentionally: gateway docs cover hosted
-  batch evidence; the alpha.6 private TN10 live harness covers the KIP-10
-  `exact-transaction` path, replay handling, and the batch escrow claim/refund
+  batch evidence and the hosted KIP-10 exact proof; the alpha.6 private TN10
+  live harness covers replay handling and the batch escrow claim/refund
   lifecycle.
 - Reference implementation on npm under prerelease tags:
   `@kaspa-x402/core`, `@kaspa-x402/client`, `@kaspa-x402/server`,

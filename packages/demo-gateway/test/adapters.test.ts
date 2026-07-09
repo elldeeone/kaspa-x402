@@ -3,6 +3,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import { blake2b } from "@noble/hashes/blake2.js";
 import { payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
+  KaspaPnnClient,
   KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
@@ -148,6 +149,160 @@ describe("RestKaspaChainProvider", () => {
       amount: "110000000",
       scriptPublicKey: { version: 0, scriptPublicKey: exact.borrowScriptPublicKey.slice(4) },
     });
+  });
+});
+
+describe("KaspaPnnClient", () => {
+  it("submits exact artifacts through PNN and waits for accepted payment evidence", async () => {
+    const exact = exactTransactionFixture();
+    const book = new ScriptAddressBook();
+    book.record(exact.payToScriptPublicKey, exact.payTo);
+    const submitted: unknown[] = [];
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() {},
+      async getServerInfo() {
+        return { networkId: "testnet-10", isSynced: true, virtualDaaScore: "507000000" };
+      },
+      async submitTransaction(request) {
+        submitted.push(request);
+        return { transactionId: exact.txid };
+      },
+      async getUtxosByAddresses(addresses) {
+        expect(addresses).toEqual([exact.payTo]);
+        return { entries: [pnnPaymentUtxo(exact)] };
+      },
+    }));
+
+    const result = await new KaspaPnnClient({
+      endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json"],
+      timeoutMs: 50,
+      attempts: 1,
+      rpcFactory,
+      sleep: async () => undefined,
+    }).submitTransaction(exact.artifact, book);
+
+    expect(result).toEqual({ transactionId: exact.txid, finality: "accepted" });
+    expect(submitted).toHaveLength(1);
+    const request = submitted[0] as { allowOrphan: boolean; transaction: { version: number; inputs: unknown[]; outputs: unknown[]; storageMass: number } };
+    expect(request.allowOrphan).toBe(false);
+    expect(request.transaction.version).toBe(1);
+    expect(request.transaction.inputs[0]).toMatchObject({
+      previousOutpoint: { transactionId: exact.borrowTxid, index: 0 },
+      computeBudget: 10,
+      signatureScript: "00",
+    });
+    expect(request.transaction.outputs[0]).toMatchObject({
+      value: 110000000,
+      scriptPublicKey: exact.borrowScriptPublicKey,
+    });
+    expect(request.transaction.storageMass).toBe(0);
+  });
+
+  it("fails over to the next PNN endpoint", async () => {
+    const exact = exactTransactionFixture();
+    const book = new ScriptAddressBook();
+    book.record(exact.payToScriptPublicKey, exact.payTo);
+    const endpoints: string[] = [];
+    const rpcFactory = mockPnnRpcFactory((endpoint) => {
+      endpoints.push(endpoint);
+      if (endpoint.includes("pnn-a")) {
+        return {
+          async connect() {
+            throw new Error("first endpoint down");
+          },
+          async disconnect() {},
+          async getServerInfo() {
+            throw new Error("unreachable");
+          },
+          async submitTransaction() {
+            throw new Error("unreachable");
+          },
+          async getUtxosByAddresses() {
+            throw new Error("unreachable");
+          },
+        };
+      }
+      return {
+        async connect() {},
+        async disconnect() {},
+        async getServerInfo() {
+          return { networkId: "testnet-10", isSynced: true };
+        },
+        async submitTransaction() {
+          return { transactionId: exact.txid };
+        },
+        async getUtxosByAddresses() {
+          return { entries: [pnnPaymentUtxo(exact)] };
+        },
+      };
+    });
+
+    await expect(
+      new KaspaPnnClient({
+        endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json", "wss://pnn-b.example.test/kaspa/testnet-10/wrpc/json"],
+        timeoutMs: 50,
+        attempts: 1,
+        rpcFactory,
+        sleep: async () => undefined,
+      }).submitTransaction(exact.artifact, book),
+    ).resolves.toEqual({ transactionId: exact.txid, finality: "accepted" });
+    expect(endpoints).toEqual(["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json", "wss://pnn-b.example.test/kaspa/testnet-10/wrpc/json"]);
+  });
+
+  it("waits for evidence when PNN reports the transaction was already accepted", async () => {
+    const exact = exactTransactionFixture();
+    const book = new ScriptAddressBook();
+    book.record(exact.payToScriptPublicKey, exact.payTo);
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() {},
+      async getServerInfo() {
+        return { networkId: "testnet-10", isSynced: true };
+      },
+      async submitTransaction() {
+        throw new Error("transaction already accepted");
+      },
+      async getUtxosByAddresses() {
+        return { entries: [pnnPaymentUtxo(exact)] };
+      },
+    }));
+
+    await expect(
+      new KaspaPnnClient({
+        endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json"],
+        timeoutMs: 50,
+        attempts: 1,
+        rpcFactory,
+        sleep: async () => undefined,
+      }).submitTransaction(exact.artifact, book),
+    ).resolves.toEqual({ transactionId: exact.txid, finality: "accepted" });
+  });
+
+  it("rejects PNN endpoints on the wrong network", async () => {
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() {},
+      async getServerInfo() {
+        return { networkId: "mainnet", isSynced: true };
+      },
+      async submitTransaction() {
+        throw new Error("unreachable");
+      },
+      async getUtxosByAddresses() {
+        throw new Error("unreachable");
+      },
+    }));
+
+    await expect(
+      new KaspaPnnClient({
+        endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json"],
+        timeoutMs: 50,
+        attempts: 1,
+        rpcFactory,
+        sleep: async () => undefined,
+      }).health(),
+    ).rejects.toThrow("Kaspa PNN request failed");
   });
 });
 
@@ -318,6 +473,28 @@ describe("NativeVoucherVerifier", () => {
     ).toBe(false);
   });
 });
+
+type MockPnnRpc = {
+  connect(): Promise<void>;
+  disconnect(): Promise<void>;
+  getServerInfo(): Promise<{ networkId?: unknown; isSynced?: unknown; virtualDaaScore?: unknown }>;
+  submitTransaction(request: { transaction: unknown; allowOrphan: boolean }): Promise<{ transactionId?: unknown }>;
+  getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
+};
+
+function mockPnnRpcFactory(factory: (endpoint: string) => MockPnnRpc) {
+  return (endpoint: string) => factory(endpoint);
+}
+
+function pnnPaymentUtxo(exact: ReturnType<typeof exactTransactionFixture>) {
+  return {
+    outpoint: { transactionId: exact.txid, index: 1 },
+    utxoEntry: {
+      amount: "20000000",
+      scriptPublicKey: exact.payToScriptPublicKey,
+    },
+  };
+}
 
 function exactTransactionFixture() {
   const payTo = "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh";

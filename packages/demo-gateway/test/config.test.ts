@@ -66,4 +66,40 @@ describe("gateway config", () => {
       }),
     ).toThrow("KASPA_X402_GATEWAY_ENABLED must be true or false");
   });
+
+  it("parses PNN broadcast settings", () => {
+    expect(
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+        KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json, ws://127.0.0.1:17210",
+        KASPA_X402_PNN_TIMEOUT_MS: "20000",
+        KASPA_X402_PNN_ATTEMPTS: "3",
+      }),
+    ).toMatchObject({
+      chainBroadcastMode: "pnn",
+      pnnEndpoints: ["wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json", "ws://127.0.0.1:17210"],
+      pnnTimeoutMs: 20000,
+      pnnAttempts: 3,
+    });
+  });
+
+  it("requires endpoints when PNN broadcast mode is selected", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      }),
+    ).toThrow("KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn");
+  });
+
+  it("rejects non-local cleartext PNN endpoints", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+        KASPA_X402_PNN_ENDPOINTS: "ws://example.test/kaspa/testnet-10/wrpc/json",
+      }),
+    ).toThrow("KASPA_X402_PNN_ENDPOINTS must use wss except for localhost");
+  });
 });
