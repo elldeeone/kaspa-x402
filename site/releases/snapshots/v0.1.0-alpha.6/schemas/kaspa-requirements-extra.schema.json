@@ -1,0 +1,325 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+  "title": "Kaspa x402 PaymentRequirements Extra",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "binding"
+      ],
+      "properties": {
+        "binding": {
+          "const": "kaspa-exact-v1"
+        },
+        "finality": {
+          "enum": [
+            "mempool",
+            "accepted",
+            "confirmed"
+          ]
+        },
+        "templateId": {
+          "const": "kaspa-x402-kip10-additive-v1"
+        },
+        "transactionEncoding": {
+          "const": "kaspa-sdk-safe-json-v2.0.0"
+        },
+        "borrowOutpoint": {
+          "type": "object",
+          "required": [
+            "txid",
+            "index"
+          ],
+          "properties": {
+            "txid": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "additionalProperties": false
+        },
+        "borrowAmount": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+        },
+        "borrowScriptPublicKey": {
+          "type": "string",
+          "description": "Serialized Kaspa ScriptPublicKey: uint16_be version followed by script bytes. Kaspa x402 v1 requires version 0.",
+          "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+        },
+        "borrowRedeemScript": {
+          "type": "string",
+          "description": "Redeem script for the reserved KIP-10 additive P2SH borrow outpoint.",
+          "pattern": "^(?:[0-9a-fA-F]{2})+$"
+        },
+        "additiveThresholdSompi": {
+          "type": "string",
+          "description": "Minimum additive value, in sompi, that must remain on the continuation output.",
+          "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+        },
+        "paymentOutputIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "reservationId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "reservationExpiresAt": {
+          "type": "string"
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "dependentRequired": {
+        "templateId": [
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "transactionEncoding": [
+          "templateId",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "borrowOutpoint": [
+          "templateId",
+          "transactionEncoding",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "borrowAmount": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "borrowScriptPublicKey": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "borrowRedeemScript": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "additiveThresholdSompi": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "paymentOutputIndex",
+          "reservationId"
+        ],
+        "paymentOutputIndex": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "reservationId"
+        ],
+        "reservationId": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex"
+        ],
+        "reservationExpiresAt": [
+          "templateId",
+          "transactionEncoding",
+          "borrowOutpoint",
+          "borrowAmount",
+          "borrowScriptPublicKey",
+          "borrowRedeemScript",
+          "additiveThresholdSompi",
+          "paymentOutputIndex",
+          "reservationId"
+        ]
+      },
+      "additionalProperties": true
+    },
+    {
+      "$ref": "#/$defs/batchExtra"
+    }
+  ],
+  "$defs": {
+    "batchExtra": {
+      "type": "object",
+      "required": [
+        "binding",
+        "templateId",
+        "serverPublicKey",
+        "minDepositSompi",
+        "refundTimeoutDaa"
+      ],
+      "properties": {
+        "binding": {
+          "const": "kaspa-escrow-v1"
+        },
+        "templateId": {
+          "const": "kaspa-x402-escrow-v1"
+        },
+        "serverPublicKey": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "minDepositSompi": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+        },
+        "refundTimeoutDaa": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+        },
+        "claimPolicy": {
+          "type": "object",
+          "properties": {
+            "claimWhenUnclaimedAmountExceeds": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            },
+            "claimAfterSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "additionalProperties": true
+        },
+        "channelState": {
+          "type": "object",
+          "required": [
+            "channelId",
+            "activeOutpoint",
+            "activeScriptPublicKey",
+            "fundingAmount",
+            "chargedCumulativeAmount",
+            "claimedCumulativeAmount",
+            "signedMaxClaimable"
+          ],
+          "properties": {
+            "channelId": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "activeOutpoint": {
+              "type": "object",
+              "required": [
+                "txid",
+                "index"
+              ],
+              "properties": {
+                "txid": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              },
+              "additionalProperties": false
+            },
+            "activeScriptPublicKey": {
+              "type": "string",
+              "description": "Serialized Kaspa ScriptPublicKey: uint16_be version followed by script bytes. Kaspa x402 v1 requires version 0.",
+              "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+            },
+            "fundingAmount": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            },
+            "chargedCumulativeAmount": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            },
+            "claimedCumulativeAmount": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            },
+            "signedMaxClaimable": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "voucherState": {
+          "type": "object",
+          "required": [
+            "amount",
+            "signature"
+          ],
+          "properties": {
+            "amount": {
+              "type": "string",
+              "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+            },
+            "signature": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{128}$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}

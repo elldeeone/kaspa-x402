@@ -1,0 +1,123 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+  "title": "Kaspa x402 PaymentPayload",
+  "type": "object",
+  "required": ["x402Version", "accepted", "payload"],
+  "properties": {
+    "x402Version": {
+      "const": 2
+    },
+    "accepted": {
+      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentRequirements"
+    },
+    "payload": {
+      "$ref": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
+    },
+    "extensions": {
+      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentExtensions"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "exact"
+              }
+            },
+            "required": ["scheme"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "type": {
+                "const": "exact-transaction"
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "exact"
+              }
+            },
+            "required": ["scheme"]
+          },
+          "payload": {
+            "properties": {
+              "type": {
+                "const": "exact-transaction"
+              }
+            },
+            "required": ["type"]
+          }
+        },
+        "required": ["accepted", "payload"]
+      },
+      "then": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "extra": {
+                "required": [
+                  "templateId",
+                  "transactionEncoding",
+                  "borrowOutpoint",
+                  "borrowAmount",
+                  "borrowScriptPublicKey",
+                  "borrowRedeemScript",
+                  "additiveThresholdSompi",
+                  "paymentOutputIndex",
+                  "reservationId"
+                ]
+              }
+            },
+            "required": ["extra"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "batch-settlement"
+              }
+            },
+            "required": ["scheme"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "type": {
+                "enum": ["deposit-voucher", "voucher", "claim", "refund"]
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}
