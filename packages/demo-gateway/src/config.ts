@@ -20,6 +20,7 @@ export interface GatewayEnv {
   KASPA_X402_SITE_BASE_URL?: string;
   KASPA_X402_GATEWAY_BASE_URL?: string;
   KASPA_X402_ADMIN_TOKEN?: string;
+  KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED?: string;
 }
 
 export interface GatewayConfig {
@@ -39,6 +40,7 @@ export interface GatewayConfig {
   siteBaseUrl: string;
   gatewayBaseUrl: string;
   adminToken?: string;
+  hostedExactSettlementEnabled: boolean;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -70,6 +72,10 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(env.KASPA_X402_SITE_BASE_URL ?? "https://kaspa-x402.org", "KASPA_X402_SITE_BASE_URL"),
     gatewayBaseUrl: baseUrl(env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org", "KASPA_X402_GATEWAY_BASE_URL"),
+    hostedExactSettlementEnabled: bool(
+      env.KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED ?? "false",
+      "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED",
+    ),
     ...(env.KASPA_X402_ADMIN_TOKEN?.trim() ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() } : {}),
   };
 }

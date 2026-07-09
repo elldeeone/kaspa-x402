@@ -38,7 +38,6 @@ type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
-const HOSTED_EXACT_SETTLEMENT_ENABLED = false;
 
 export async function handleGatewayRequest(request: Request, env: GatewayEnv, context: WaitUntilContext): Promise<Response> {
   let config: GatewayConfig;
@@ -60,7 +59,8 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (url.pathname === "/metrics" && request.method === "GET") return json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) });
   if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
 
-  const gateway = createGateway(config, state, { exactAvailable: HOSTED_EXACT_SETTLEMENT_ENABLED });
+  const exactAvailable = await hostedExactAvailable(config, state);
+  const gateway = createGateway(config, state, { exactAvailable });
   if (url.pathname === "/supported" && request.method === "GET") {
     return json({ ok: true, enabled: config.enabled, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
   }
@@ -184,10 +184,11 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
     }),
   );
   if (config.enabled) {
-    if (createGateway(config, state, { exactAvailable: HOSTED_EXACT_SETTLEMENT_ENABLED }).server.supportedKinds().some((kind) => kind.scheme === "exact")) {
-      checks.push(await offerCheck(env, config, "/exact", "exact"));
+    const exactAvailable = await hostedExactAvailable(config, state);
+    if (exactAvailable) {
+      checks.push(await supportedKindCheck(env, config, "exact"));
     } else {
-      checks.push(skippedCheck("exact-offer", "hosted gateway exact verifier/broadcast path is not enabled"));
+      checks.push(skippedCheck("exact-offer", exactUnavailableReason(config, await state.exactInventoryStats())));
     }
     checks.push(await offerCheck(env, config, "/batch", "batch-settlement"));
     checks.push(await unsupportedSchemeCheck(env, config));
@@ -211,6 +212,12 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
   await persistCanaryReport(state, report);
   await state.incrementMetric(report.ok ? "canary_ok" : "canary_failed");
   return report;
+}
+
+async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateClient): Promise<boolean> {
+  if (!config.hostedExactSettlementEnabled) return false;
+  const stats = await state.exactInventoryStats();
+  return stats.available > 0;
 }
 
 function createGateway(config: GatewayConfig, state: GatewayStateClient, options: { exactAvailable: boolean }): { server: DirectModeServer } {
@@ -341,6 +348,7 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
         ok: true,
         enabled: config.enabled,
         gateway: "kaspa-x402-testnet",
+        hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
         chain,
         metrics: await state.metrics(),
         exactInventory: await state.exactInventoryStats(),
@@ -407,6 +415,19 @@ async function offerCheck(env: GatewayEnv, config: GatewayConfig, path: string, 
   });
 }
 
+async function supportedKindCheck(env: GatewayEnv, config: GatewayConfig, profile: Profile): Promise<GatewayCanaryCheck> {
+  return checked(`${profileMetric(profile)}-offer`, async () => {
+    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/supported`);
+    if (response.status !== 200) throw new Error(`expected 200, got ${response.status}`);
+    const body = (await response.json()) as { kinds?: Array<{ scheme?: unknown }> };
+    if (!body.kinds?.some((kind) => kind.scheme === profile)) throw new Error(`${profile} support not advertised`);
+    return {
+      detail: `${profile} support is advertised without consuming reservation inventory`,
+      evidence: { status: response.status, network: config.network },
+    };
+  });
+}
+
 async function unsupportedSchemeCheck(env: GatewayEnv, config: GatewayConfig): Promise<GatewayCanaryCheck> {
   return checked("unsupported-scheme-rejection", async () => {
     const header = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
@@ -436,6 +457,12 @@ function failedCheck(name: string, detail: string): GatewayCanaryCheck {
 
 function skippedCheck(name: string, detail: string): GatewayCanaryCheck {
   return { name, status: "skipped", detail };
+}
+
+function exactUnavailableReason(config: GatewayConfig, stats: { available: number }): string {
+  if (!config.hostedExactSettlementEnabled) return "hosted gateway exact verifier/broadcast path is not enabled";
+  if (stats.available <= 0) return "hosted gateway exact inventory is empty";
+  return "hosted gateway exact is unavailable";
 }
 
 function canaryReport(trigger: CanaryTrigger, checks: GatewayCanaryCheck[]): GatewayCanaryReport {

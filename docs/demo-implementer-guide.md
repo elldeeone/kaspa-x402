@@ -55,11 +55,12 @@ Expected support from the current hosted gateway:
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - `scheme: "batch-settlement"`;
+- `scheme: "exact"` only while hosted KIP-10 borrow inventory is available;
 - accepted finality: `accepted`.
 
-No mainnet profile is advertised. The current hosted gateway does not advertise
-`exact`; it will do so only after the Worker can reserve merchant-owned KIP-10
-borrow UTXOs and settle `exact-transaction` artifacts end to end.
+No mainnet profile is advertised. If `exact` is absent from `/supported` or
+`/exact` returns `503 exact_unavailable`, the hosted exact inventory is empty or
+the operator has disabled exact settlement; use `batch-settlement` instead.
 
 ## Exact Flow
 
@@ -74,7 +75,7 @@ Hosted result while exact settlement is disabled or inventory is unavailable:
 - HTTP `503`;
 - JSON body with `error: "exact_unavailable"`.
 
-Future reservation-enabled expected result:
+Reservation-enabled expected result:
 
 - HTTP `402`;
 - `PAYMENT-REQUIRED` response header;
@@ -86,7 +87,8 @@ outpoint, amount, script public key, redeem script, additive threshold, expected
 payment output index, and reservation id. For the reference alpha, the
 reservation provider should use merchant-owned borrow UTXOs and an
 `additiveThresholdSompi` of at least `10000000` sompi. Build the signed
-SDK-safe JSON transaction artifact and retry with an `exact-transaction`
+SDK-safe JSON transaction artifact, broadcast it through a Kaspa RPC path, wait
+until the payment output is accepted, and retry with an `exact-transaction`
 payload:
 
 ```text
@@ -104,6 +106,10 @@ Identical retries with the same request and payment evidence should return the
 cached HTTP `200`. Reusing the same exact transaction for a different resource
 must be rejected. If a gateway has no exact reservation provider, clients should
 use `batch-settlement` or another server.
+
+The hosted gateway currently observes accepted exact artifacts. Its public REST
+chain source cannot broadcast KIP-10 transactions itself because the REST submit
+model does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
 

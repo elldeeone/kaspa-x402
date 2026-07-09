@@ -79,7 +79,7 @@ describe("gateway canary", () => {
     expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
   });
 
-  it("requires operator auth and keeps hosted exact disabled after inventory registration", async () => {
+  it("requires operator auth and keeps hosted exact disabled unless settlement is enabled", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };
 
@@ -111,6 +111,35 @@ describe("gateway canary", () => {
     const exact = await requestJson(env, "/exact");
     expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "exact_unavailable" } });
     await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 1, reserved: 0 });
+  });
+
+  it("advertises exact when hosted settlement is enabled and inventory is available", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_ADMIN_TOKEN: "admin-token",
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+    };
+
+    const registered = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({ record: exactInventory() }),
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(registered.status).toBe(200);
+
+    const supported = await requestJson(env, "/supported");
+    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).toContain("exact");
+
+    const exact = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/exact"), env, fakeContext());
+    expect(exact.status).toBe(402);
+    expect(exact.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
+    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 0, reserved: 1 });
   });
 
   it("does not partially register invalid inventory batches", async () => {

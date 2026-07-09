@@ -8,12 +8,16 @@ exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
 Deployment status: alpha.6 source uses the KIP-10 `exact-transaction` path for
-direct-mode servers that advertise reservations. The hosted Worker has a
-Durable Object-backed exact inventory staging path, but hosted exact remains
-unadvertised until the Worker verifier/broadcast/observe path is implemented
-and tested. For now, `/exact` returns `503 exact_unavailable` and `/batch`
-remains the public integration target. The separate private TN10 full live
-harness was rerun for alpha.6 on 2026-07-09 and is recorded in
+direct-mode servers that advertise reservations. The hosted Worker can reserve
+Durable Object-backed exact inventory, verify a signed SDK-safe JSON
+transaction artifact, match an accepted chain transaction back to that artifact,
+observe finality, and consume the reservation. The public TN10 REST submit
+model does not preserve tx-v1 compute budget, so hosted exact clients must
+broadcast the signed artifact through a Kaspa RPC path before retrying the
+gateway. The gateway advertises `exact` only while funded borrow-UTXO inventory
+is available; when inventory is empty, `/exact` returns `503 exact_unavailable`
+and `/batch` remains usable. The separate private TN10 full live harness was
+rerun for alpha.6 on 2026-07-09 and is recorded in
 `docs/live-testnet-report.md`.
 
 ## Base URL
@@ -32,7 +36,7 @@ https://demo.kaspa-x402.org
 | `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
 | `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
 | `GET` | `/supported` | Returns the direct-mode supported-kind list. |
-| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource once hosted KIP-10 settlement is deployed; currently returns `503 exact_unavailable`. |
+| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED` only while hosted KIP-10 inventory is available; otherwise returns `503 exact_unavailable`. |
 | `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
 
@@ -57,10 +61,9 @@ The gateway always uses:
 - accepted finality of `accepted`;
 - a testnet pay-to address configured in the Worker environment.
 
-The hosted gateway currently advertises `batch-settlement` with `extra.binding:
-"kaspa-escrow-v1"`. It does not advertise `exact` until the hosted Worker can
-reserve KIP-10 inventory, verify the signed transaction artifact, broadcast or
-observe it to accepted finality, and consume the reservation.
+The hosted gateway always advertises `batch-settlement` with `extra.binding:
+"kaspa-escrow-v1"`. It advertises `exact` only when hosted exact settlement is
+enabled and at least one funded KIP-10 borrow UTXO is available in inventory.
 
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
@@ -74,8 +77,7 @@ Current hosted terms:
 The exact price and batch deposit are on-chain outputs, so they must stay at or
 above the Kaspa standard-output storage-mass floor of `10000000` sompi. The
 Worker fails closed at startup if either configured value is below that floor.
-When hosted exact is enabled in a future deployment, its KIP-10 reservation
-provider must use merchant-owned borrow UTXO inventory and advertise an
+Hosted exact uses merchant-owned borrow UTXO inventory and advertises an
 `additiveThresholdSompi` of at least `10000000` sompi.
 
 Exact inventory records are public transaction terms, not wallet secrets. A
@@ -108,10 +110,10 @@ Check availability with:
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
 ```
 
-Registration does not by itself enable public exact offers. Expired reserved
-inventory is retired for operator reconciliation rather than automatically
-reused, because a late or already-propagating transaction may still consume the
-borrow outpoint.
+Registration enables public exact offers only when the hosted exact settlement
+flag is also enabled. Expired reserved inventory is retired for operator
+reconciliation rather than automatically reused, because a late or
+already-propagating transaction may still consume the borrow outpoint.
 
 Operational details, rollback steps, the gateway disable switch, and manual
 paid canary procedure are covered in the
@@ -124,7 +126,15 @@ The Worker uses the public `kaspa:testnet-10` REST explorer endpoint
 
 - `/info/blockdag` for network and virtual DAA health;
 - `/addresses/{address}/utxos` for accepted pay-to UTXO evidence;
+- `/transactions/{transaction_id}` and `/transactions/acceptance` for accepted
+  finality evidence;
 - derived escrow-address UTXOs for batch channel funding.
+
+The Worker has a REST submit fallback in code, but current public REST submit
+does not carry `transaction.inputs[].computeBudget` into Kaspa RPC. It must not
+be cited as KIP-10 broadcast evidence until that upstream API supports tx-v1
+compute budget or the Worker is configured with another reviewed broadcast
+path.
 
 Failure modes are fail-closed:
 
@@ -173,16 +183,10 @@ domain. Send it only over TLS to the intended gateway, and do not publish or log
 unused payment headers or transaction material before the paid retry has been
 settled.
 
-For alpha.5 exact payments, the header payload carries the observed
-`transactionId` and selected `paymentOutputIndex`. A serialized `transaction`
-field is legacy alpha evidence and must not be accepted as exact-payment
-evidence after the alpha.5 gateway deployment.
-
 The alpha.6 `exact-transaction` path requires server-advertised buildable
 reservation terms, including the borrow redeem script and additive threshold,
-plus a signed transaction artifact. The hosted gateway must not advertise that
-path until it can reserve, verify, broadcast, and consume those exact
-reservations end to end.
+plus a signed SDK-safe JSON transaction artifact. The hosted gateway rejects
+observe-only `exact-transfer` evidence on reserved offers.
 
 ## Testnet Funding
 
@@ -242,18 +246,39 @@ deployment checks completed on 2026-07-06:
 
 ## Alpha.6 Evidence Status
 
-Status: source live evidence complete; hosted exact evidence pending.
+Status: source live evidence and hosted gateway exact proof complete.
 
 Alpha.6 source introduces KIP-10 exact transaction artifacts and removes
 observe-only exact from the current supported exact path. The private TN10 live
 harness passed on 2026-07-09 and is summarized in
-`docs/live-testnet-report.md`. Before the public gateway can advertise hosted
-exact evidence, operators must deploy reviewed source with a working hosted
-reservation, verifier, broadcast-or-observe, and finality path, confirm
-`/supported` advertises `exact`, run the unpaid shape checks, run a funded TN10
-KIP-10 exact canary, and update this document with the Worker version and
-payment evidence. Until then, `/supported` should list only `batch-settlement`
-and `/exact` should remain unavailable.
+`docs/live-testnet-report.md`. The public hosted gateway proof was then run on
+2026-07-09 after deploying the Worker path, registering funded inventory, and
+confirming `/supported` advertises `exact`.
+
+Hosted exact proof:
+
+- Worker version:
+  `6701209a-f008-4e21-880b-88c8dc202210`;
+- client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
+  node with UTXO index;
+- virtual DAA score at run start: `512096118`;
+- registered borrow inventory count: `3`;
+- registered borrow outpoints:
+  `22993e0480d6e5833ee1eabbff6065328449adf55fe9faf63f46a5ac95fee321:0`,
+  `0696f587396d961c141fd4928f499b71913f7d771d23798c44b5175e25aecf23:0`,
+  and
+  `3e6e3e48a0fbe6ff5aeb9d4e183fb8284c380f0c9b8e6949be6eca72e00b59c4:0`;
+- borrow amount per inventory item: `100000000` sompi;
+- additive threshold: `10000000` sompi;
+- exact request result: HTTP `200`;
+- exact transaction id:
+  `f1ca4fc25b17adf88e5a5c90697b1a4d257a38a24900f6af0f6cfc6108832f01`;
+- payment output index: `1`;
+- charged amount: `20000000` sompi;
+- finality: `accepted`;
+- identical paid retry result: HTTP `200` with the same settlement
+  transaction;
+- inventory after payment: `4` available, `1` consumed, `0` reserved.
 
 ## Alpha.5 Hosted Payment Evidence
 

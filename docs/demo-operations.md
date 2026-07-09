@@ -26,6 +26,7 @@ Important non-secret variables:
 | `KASPA_X402_MIN_DEPOSIT_SOMPI` | Batch escrow deposit floor. Must be at least `10000000`. |
 | `KASPA_X402_SITE_BASE_URL` | Standards site base URL used by canary checks. |
 | `KASPA_X402_GATEWAY_BASE_URL` | Gateway base URL used by canary checks. |
+| `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, finality observation, and inventory consumption path are deployed. Current public exact proof expects the signed transaction to be broadcast through a Kaspa RPC path before the Worker observes it. |
 
 The Worker must not receive a mainnet key, a spending key, or a faucet key.
 Claim broadcasting is disabled in the hosted gateway package.
@@ -60,11 +61,10 @@ requires an isolated funded testnet wallet.
 
 ## Exact Inventory
 
-Hosted exact is not enabled by inventory registration alone. The Worker has an
-admin staging path for funded KIP-10 borrow UTXO inventory, but public exact
-offers stay unavailable until the hosted verifier/broadcast/observe settlement
-path is implemented and tested. The Worker does not hold the merchant wallet
-key and does not create borrow outputs from public requests.
+Hosted exact is enabled only when both conditions are true: the Worker
+configuration has `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED=true`, and funded
+KIP-10 borrow UTXO inventory is available. The Worker does not hold the
+merchant wallet key and does not create borrow outputs from public requests.
 
 1. Create one or more merchant-owned KIP-10 additive borrow UTXOs from an
    isolated TN10 wallet.
@@ -84,12 +84,11 @@ KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-The current hosted Worker must still omit `exact` from `/supported` and return
-`503 exact_unavailable` from `/exact`. Once hosted exact settlement is enabled,
-an unpaid `/exact` request leases one available inventory item until the
-advertised reservation expires, and a paid exact settlement consumes the
-inventory item. Expired reservations are retired for operator reconciliation
-rather than automatically reused.
+When inventory is available, `/supported` advertises `exact` and an unpaid
+`/exact` request leases one inventory item until the advertised reservation
+expires. A paid exact settlement consumes the inventory item. Expired
+reservations are retired for operator reconciliation rather than automatically
+reused.
 
 ## Rollback
 
@@ -159,7 +158,8 @@ The canary checks:
 - the public `payment-required` schema URL;
 - the immutable `v0.1.0-alpha.1` release snapshot with a cache-busted request;
 - the public docs index and expected page marker;
-- unpaid exact offer shape and amount only when hosted exact settlement is enabled;
+- exact support advertisement only when hosted exact settlement is enabled and
+  inventory is available, without consuming a reservation;
 - unpaid batch offer shape and deposit floor;
 - unsupported foreign payment scheme rejection.
 
@@ -188,7 +188,8 @@ Minimum manual paid checks:
    `GET /exact` and confirm HTTP `503 exact_unavailable`.
 2. If exact is deployed, request `GET /exact`, confirm HTTP `402`, build a
    signed KIP-10 `exact-transaction` artifact from the advertised reservation
-   terms, retry with `PAYMENT-SIGNATURE`, and confirm HTTP `200`.
+   terms, broadcast it through a Kaspa RPC path, wait for accepted finality,
+   retry with `PAYMENT-SIGNATURE`, and confirm HTTP `200`.
 3. Retry the identical paid exact request and confirm idempotent HTTP `200`.
 4. Present the same exact transaction to a different resource and confirm
    conflict rejection.
@@ -200,14 +201,30 @@ Minimum manual paid checks:
 Record transaction ids, output indexes, Worker version, response status, and
 `PAYMENT-RESPONSE` summaries in the operator notes.
 
+The committed hosted exact proof seeds funded inventory, registers it through
+the admin API, pre-broadcasts the signed exact artifact through the configured
+TN10 RPC node, pays `/exact`, retries the same payment for idempotency, and
+leaves at least one inventory item available by default:
+
+```sh
+KASPA_X402_RPC_URL=<tn10-rpc-url> \
+KASPA_X402_FUNDING_WALLET=wallet-key:/path/to/testnet-key \
+KASPA_X402_KASPA_WASM_MODULE=/path/to/kaspa.js \
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
+  npm run proof:hosted-exact
+```
+
 For alpha.6 and later, also confirm that observe-only `exact-transfer` evidence
 is rejected and does not return protected content.
 
 For alpha.6 KIP-10 exact deployments, advertise `exact` only after the gateway
 can reserve a borrow outpoint, return the reservation fields in
-`PaymentRequired.extra`, verify the signed transaction artifact, broadcast it,
-observe accepted finality, and consume the reservation. If the gateway does not
-have that full settlement path, exact must remain unavailable and hosted
+`PaymentRequired.extra`, verify the signed transaction artifact, observe
+accepted finality, and consume the reservation. Current public REST submit does
+not preserve tx-v1 compute budget, so hosted exact clients must broadcast the
+artifact through a Kaspa RPC path before retrying the gateway. If the gateway
+does not have that settlement path, exact must remain unavailable and hosted
 canaries should cover `batch-settlement` only.
 
 ## Durable State Policy
@@ -257,9 +274,8 @@ Alpha.6 KIP-10 exact-transaction cutover:
 - `0.1.0-alpha.6` replaces the alpha.5 observe-only exact payload with a signed
   KIP-10 transaction artifact carrying `transactionEncoding:
   "kaspa-sdk-safe-json-v2.0.0"`.
-- Do not advertise the alpha.6 exact path from the hosted gateway unless the
-  verifier/broadcast/observe path is implemented and exact inventory is
-  registered and tested.
+- Advertise the alpha.6 exact path from the hosted gateway only while the
+  verifier/broadcast/observe path is enabled and exact inventory is available.
 - The provider uses merchant-owned borrow UTXO inventory and must advertise an
   `additiveThresholdSompi` of at least `10000000` sompi for the reference alpha.
   Do not advertise hosted exact with zero-threshold borrow terms.
