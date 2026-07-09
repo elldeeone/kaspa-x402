@@ -30,6 +30,12 @@ Important non-secret variables:
 The Worker must not receive a mainnet key, a spending key, or a faucet key.
 Claim broadcasting is disabled in the hosted gateway package.
 
+Secret variables:
+
+| Variable | Purpose |
+| -------- | ------- |
+| `KASPA_X402_ADMIN_TOKEN` | Bearer token for exact inventory registration and stats endpoints. Set with `wrangler secret put`; do not commit it. |
+
 ## Deploy
 
 From the repository root:
@@ -48,8 +54,42 @@ npm run check:demo-gateway
 ```
 
 `check:demo-gateway` starts a local Worker, verifies the unpaid exact and batch
-offers, rejects a foreign payment scheme, and checks the health and canary
-routes. A deployed paid check still requires an isolated funded testnet wallet.
+availability gate, verifies the unpaid batch offer, rejects a foreign payment
+scheme, and checks the health and canary routes. A deployed paid check still
+requires an isolated funded testnet wallet.
+
+## Exact Inventory
+
+Hosted exact is not enabled by inventory registration alone. The Worker has an
+admin staging path for funded KIP-10 borrow UTXO inventory, but public exact
+offers stay unavailable until the hosted verifier/broadcast/observe settlement
+path is implemented and tested. The Worker does not hold the merchant wallet
+key and does not create borrow outputs from public requests.
+
+1. Create one or more merchant-owned KIP-10 additive borrow UTXOs from an
+   isolated TN10 wallet.
+2. Record the borrow outpoint, serialized script public key, redeem script,
+   borrow amount, additive threshold, and payment output index.
+3. Register those terms with the Worker:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+  npm run demo:exact-inventory -- register --file inventory.json
+```
+
+4. Confirm inventory availability:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
+curl -fsS https://demo.kaspa-x402.org/supported
+```
+
+The current hosted Worker must still omit `exact` from `/supported` and return
+`503 exact_unavailable` from `/exact`. Once hosted exact settlement is enabled,
+an unpaid `/exact` request leases one available inventory item until the
+advertised reservation expires, and a paid exact settlement consumes the
+inventory item. Expired reservations are retired for operator reconciliation
+rather than automatically reused.
 
 ## Rollback
 
@@ -61,7 +101,9 @@ Rollback procedure:
 1. Identify the last deployment that served valid `/health` and `/canary`.
 2. Roll back to that Worker version in Cloudflare.
 3. Confirm `https://demo.kaspa-x402.org/health` returns `ok: true`.
-4. Run an unpaid exact and batch request and confirm each returns HTTP `402`.
+4. Run an unpaid batch request and confirm HTTP `402`; confirm `/exact` returns
+   `503 exact_unavailable` unless a working hosted exact settlement path is
+   deliberately enabled and tested.
 5. Record the version, reason, and verification result in the operator notes.
 
 If the bad deployment changed durable state shape, disable the gateway first
@@ -101,8 +143,8 @@ The Worker uses REST evidence for accepted UTXOs and DAA health. If
 3. Do not point the public gateway at mainnet or an unreviewed private node.
 4. If moving to a different `kaspa:testnet-10` REST endpoint, deploy only after
    unpaid offers and a manual paid exact check pass.
-5. Re-enable only after `/health`, `/canary`, exact payment, batch deposit, and
-   replay rejection checks pass.
+5. Re-enable only after `/health`, `/canary`, batch deposit, replay rejection,
+   and exact payment checks pass when hosted exact settlement is enabled.
 
 The static browser demo uses PNN/WASM for client-side checks. A PNN outage can
 break wallet-side demos while the Worker gateway still verifies via REST.
@@ -117,7 +159,7 @@ The canary checks:
 - the public `payment-required` schema URL;
 - the immutable `v0.1.0-alpha.1` release snapshot with a cache-busted request;
 - the public docs index and expected page marker;
-- unpaid exact offer shape and amount;
+- unpaid exact offer shape and amount only when hosted exact settlement is enabled;
 - unpaid batch offer shape and deposit floor;
 - unsupported foreign payment scheme rejection.
 
@@ -142,7 +184,7 @@ Use an isolated testnet key. Do not import a key that controls mainnet funds.
 
 Minimum manual paid checks:
 
-1. If exact is not deployed with a KIP-10 reservation provider, request
+1. If exact is not deployed with a working KIP-10 settlement path, request
    `GET /exact` and confirm HTTP `503 exact_unavailable`.
 2. If exact is deployed, request `GET /exact`, confirm HTTP `402`, build a
    signed KIP-10 `exact-transaction` artifact from the advertised reservation
@@ -165,7 +207,7 @@ For alpha.6 KIP-10 exact deployments, advertise `exact` only after the gateway
 can reserve a borrow outpoint, return the reservation fields in
 `PaymentRequired.extra`, verify the signed transaction artifact, broadcast it,
 observe accepted finality, and consume the reservation. If the gateway does not
-have that reservation provider, exact must remain unavailable and hosted
+have that full settlement path, exact must remain unavailable and hosted
 canaries should cover `batch-settlement` only.
 
 ## Durable State Policy
@@ -178,7 +220,8 @@ Policy for the public alpha:
 
 - durable state is operational evidence, not a user account database;
 - no private keys or wallet seeds are stored;
-- no public backup, export, or admin read route is exposed;
+- no unauthenticated backup, export, or admin read route is exposed;
+- exact inventory admin routes require `KASPA_X402_ADMIN_TOKEN`;
 - state may be reset during alpha incidents after the gateway is disabled and
   the reset is disclosed in operator notes;
 - production operators should design their own backup and state-partitioning
@@ -214,9 +257,10 @@ Alpha.6 KIP-10 exact-transaction cutover:
 - `0.1.0-alpha.6` replaces the alpha.5 observe-only exact payload with a signed
   KIP-10 transaction artifact carrying `transactionEncoding:
   "kaspa-sdk-safe-json-v2.0.0"`.
-- Do not advertise the alpha.6 exact path from the hosted gateway unless an
-  exact reservation provider is configured and tested.
-- That provider should use merchant-owned borrow UTXO inventory and advertise an
+- Do not advertise the alpha.6 exact path from the hosted gateway unless the
+  verifier/broadcast/observe path is implemented and exact inventory is
+  registered and tested.
+- The provider uses merchant-owned borrow UTXO inventory and must advertise an
   `additiveThresholdSompi` of at least `10000000` sompi for the reference alpha.
   Do not advertise hosted exact with zero-threshold borrow terms.
 - Do not serve observe-only `exact-transfer` as a current alpha exact fallback.
@@ -235,8 +279,9 @@ or a clean public demo history is needed.
 4. Update `KASPA_X402_PAY_TO` and `KASPA_X402_SERVER_PUBLIC_KEY`.
 5. Decide whether to preserve or reset the Durable Object namespace. Preserve
    state for replay continuity; reset state for a clean demo history.
-6. Deploy and verify `/health`, `/canary`, unpaid offers, paid exact, batch
-   deposit-voucher, voucher-only reuse, and replay rejection.
+6. Deploy and verify `/health`, `/canary`, unpaid offers, paid exact only when
+   hosted exact settlement is enabled, batch deposit-voucher, voucher-only
+   reuse, and replay rejection.
 7. Re-enable the gateway.
 
 ## Incident Note Template

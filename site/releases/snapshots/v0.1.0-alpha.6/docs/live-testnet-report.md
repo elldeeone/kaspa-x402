@@ -1,27 +1,23 @@
 # Live Testnet Report
 
-Status: historical alpha.6 full live harness run. Rerun required before citing
-fresh exact evidence for the `10000000` sompi additive-threshold policy added on
-2026-07-08.
+Status: current alpha.6 full live harness run.
 
-Generated: `2026-07-07T11:21:44.516Z`
+Generated: `2026-07-09T01:52:34.497Z`
 
 Network: `kaspa:testnet-10`
 
 Node: private `kaspa:testnet-10` node, synced with UTXO index enabled.
 
-Virtual DAA score at run start: `510648301`
+Virtual DAA score at run start: `512033363`
 
-The 2026-07-07 live proof runner validated the preferred alpha.6 KIP-10
-`exact-transaction` payload shape and the batch-settlement covenant lifecycle.
-Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
-This report does not prove the later anti-dust threshold floor; the release
-candidate must be rerun with the current reference adapter before advertising
-that evidence.
+The 2026-07-09 live proof runner validated the preferred alpha.6 KIP-10
+`exact-transaction` payload shape, the `10000000` sompi additive-threshold
+floor, and the batch-settlement covenant lifecycle. Hosted-gateway evidence is
+tracked separately in `docs/testnet-gateway.md`.
 
 ## Exact KIP-10 Transaction
 
-- Transaction id: `cb774512b28d9972298577acfed9bd916791f6040628671b0a9d47b2f905d07f`
+- Transaction id: `8339c688683f3d472e146b095d3aecc720d78ca01f26ec69436ae6d0655b7738`
 - Transaction version: `1`
 - Version evidence source: `adapter-submitted-transaction-shape`
 - Output index: `1`
@@ -29,30 +25,29 @@ that evidence.
 - Finality: `accepted`
 - Payload evidence type: `kip10-exact-transaction`
 - Transaction encoding: `kaspa-sdk-safe-json-v2.0.0`
-- Reservation id: `e81813c76021f1d3e513991b5888f38d9161dcac162f3e611a575f971e0c8842`
+- Reservation id: `90984c654bd8cce0c2c47bb9939bcf5351e98cf2ee68b5bb61404da80193c119`
 - Borrow outpoint:
-  `a7dc63cfeb44b87a63a4fdb7942c703d8dd182a9ab25cb55e831ed05f1662825:0`
-- Additive threshold: not recorded in this historical run; the current proof
-  definition requires at least `10000000` sompi.
+  `739a5a5ff3928b6db8d1a0fc65b75a0ce9a9c343bef3f7cef80d89302517e68f:0`
+- Additive threshold: `10000000` sompi
 - Transaction artifact SHA-256:
-  `70f010cccda79346b098f0632bc82f5186ebf97613d771300ce03f984e52f27a`
+  `d496f11501d203af08a0b8ffd475b1ae1eea64256ebb99483b2e99dc43ea4d0a`
 - Payload payment output index: `1`
 - Server broadcast transaction id:
-  `cb774512b28d9972298577acfed9bd916791f6040628671b0a9d47b2f905d07f`
+  `8339c688683f3d472e146b095d3aecc720d78ca01f26ec69436ae6d0655b7738`
 - Server broadcast finality: `accepted`
 - Replay rejection: HTTP `409`, `invalid_transaction_state`
 
 ## Batch Deposit-Voucher
 
-- Funding transaction id: `2c90e497f17fa09a589fb4d6bdf4033ed81439550e32820354830214a1d444d6`
+- Funding transaction id: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868`
 - Transaction version: `0`
 - Version evidence source: `sdk-generated-transaction`
 - Escrow output: index `0`
-- Deposit outpoint: `2c90e497f17fa09a589fb4d6bdf4033ed81439550e32820354830214a1d444d6:0`
-- Escrow address: `kaspatest:pp0f682knw6aty5ledy4h3htlyyegma6s27jtsl2as0y3fzl8f5tg5fssye5g`
+- Deposit outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
+- Escrow address: `kaspatest:pz7prpc3hk3e7y3t8dk7hcjq4xjnsffq03w2e553eh7xh03yaenxukthx0f20`
 - Funding amount: `400000000` sompi
-- Channel id: `cd419c5e771f59d01f2ef48e9b8037fbe3e8edfaf92feb6d52466e6d83fd6d4e`
-- Settlement commitment: `d5462e689bca718c294e0b485ff775759201ae0eb9760f9ce3b1fe6490355ef1`
+- Channel id: `b7394746555fd09d53d4a975354ad3394affb6983412cd14d685f44a7c706ed2`
+- Settlement commitment: `b79452478e8a218e7e132bc7e292e12c5ede24abb79db0724488f5da628484fd`
 - Finality: `accepted`
 - Charged amount: `100000000` sompi
 - Top-level settlement amount: `100000000` sompi
@@ -62,9 +57,9 @@ that evidence.
 ## Batch Voucher-Only
 
 - Reused existing channel: yes
-- Channel id: `cd419c5e771f59d01f2ef48e9b8037fbe3e8edfaf92feb6d52466e6d83fd6d4e`
-- Active outpoint: `2c90e497f17fa09a589fb4d6bdf4033ed81439550e32820354830214a1d444d6:0`
-- Settlement commitment: `b906e159dccbbd5ec308c3117291d9328261919ad4aab19c26153b4590843371`
+- Channel id: `b7394746555fd09d53d4a975354ad3394affb6983412cd14d685f44a7c706ed2`
+- Active outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
+- Settlement commitment: `b068ef7cb9202e9f7551c6fd0a69793458f457f2bcabb118bdd98c7c5a7258dc`
 - Charged amount: `100000000` sompi
 - Top-level settlement amount: `100000000` sompi
 - Extension charged amount: `100000000` sompi
@@ -73,12 +68,12 @@ that evidence.
 
 ## Batch Claim
 
-- Claim transaction id: `a942dab6640f1c35a4337b37829ef63de882dbe3cabe3d2bb22c6e5c83a30b0e`
+- Claim transaction id: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4`
 - Transaction version: `1`
 - Version evidence source: `adapter-submitted-transaction-shape`
 - Finality: `accepted`
-- Original outpoint: `2c90e497f17fa09a589fb4d6bdf4033ed81439550e32820354830214a1d444d6:0`
-- Continuation outpoint: `a942dab6640f1c35a4337b37829ef63de882dbe3cabe3d2bb22c6e5c83a30b0e:1`
+- Original outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
+- Continuation outpoint: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4:1`
 - Input amount: `400000000` sompi
 - Claimed cumulative amount before claim: `0` sompi
 - Active charged amount: `200000000` sompi
@@ -89,9 +84,9 @@ that evidence.
 
 ## Batch Replay Rejection
 
-- Old outpoint: `2c90e497f17fa09a589fb4d6bdf4033ed81439550e32820354830214a1d444d6:0`
-- Old script public key: `0000aa205e9d1d569bb5d5929fcb495bc6ebf909946fba82bd25c3eaec1e48a45f3a68b487`
-- Attempted input outpoint: `a942dab6640f1c35a4337b37829ef63de882dbe3cabe3d2bb22c6e5c83a30b0e:1`
+- Old outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
+- Old script public key: `0000aa20bc118711bda39f122b3b6debe240a9a53825207c5cacd291cdfc6bbe24ee666e87`
+- Attempted input outpoint: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4:1`
 - Attempted transaction version: `1`
 - Version evidence source: `adapter-submitted-transaction-shape`
 - Finality: `rejected`
@@ -103,7 +98,7 @@ that evidence.
 
 ## Batch Refund
 
-- Refund transaction id: `40f00e54ebf03eb25f0a496c12bfea48db290d4e12f2f34eb80fbaa91173831a`
+- Refund transaction id: `9688335e6a9b7f3a001beeb0d05925ea412324862c1b61049d46c353ddbf4cda`
 - Transaction version: `1`
 - Version evidence source: `adapter-submitted-transaction-shape`
 - Finality: `accepted`

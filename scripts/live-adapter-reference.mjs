@@ -802,6 +802,9 @@ function makeChainProvider({ rpc, sdk, addressCodec, network, serverPayoutAddres
         record.accepted = true;
         return { transactionId: record.txid, finality: "accepted" };
       }
+      if (record?.submitted && record.txid) {
+        return { transactionId: record.txid, finality: "accepted" };
+      }
       const parsed = sdk.Transaction.deserializeFromSafeJSON(transaction);
       const paymentEvidence = exactTransactionPaymentEvidence({
         transaction: parsed,

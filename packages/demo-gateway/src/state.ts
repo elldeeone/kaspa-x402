@@ -1,6 +1,9 @@
+import { parseSompiString, sha256Hex, type NetworkId } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
   ChannelLockManager,
+  ExactBorrowReservation,
+  ExactBorrowReservationRequest,
   ClaimAttemptRecord,
   ExactPaymentRecord,
   ExactReservationRecord,
@@ -15,10 +18,10 @@ type GatewayTransaction = {
   get<T = unknown>(key: string): Promise<T | undefined>;
   put<T = unknown>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean | void>;
+  list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>>;
 };
 
 export type GatewayStorage = GatewayTransaction & {
-  list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>>;
   transaction<T>(closure: (txn: GatewayTransaction) => Promise<T>): Promise<T>;
 };
 
@@ -31,6 +34,8 @@ type RateRecord = {
   count: number;
   resetAt: number;
 };
+
+const MIN_EXACT_INVENTORY_SOMPI = 10_000_000n;
 
 export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
 
@@ -48,6 +53,36 @@ export interface GatewayCanaryReport {
   checks: GatewayCanaryCheck[];
 }
 
+export type GatewayExactInventoryStatus = "available" | "reserved" | "consumed" | "retired";
+
+export type GatewayExactInventoryRegistration = Omit<ExactBorrowReservation, "reservationId" | "expiresAt"> & {
+  network: NetworkId;
+  inventoryId?: string;
+  note?: string;
+};
+
+export type GatewayExactInventoryRecord = GatewayExactInventoryRegistration & {
+  inventoryId: string;
+  status: GatewayExactInventoryStatus;
+  registeredAt: string;
+  updatedAt: string;
+  reservationId?: string;
+  reservedAt?: string;
+  expiresAt?: string;
+  transactionId?: string;
+  consumedAt?: string;
+  retiredAt?: string;
+};
+
+export interface GatewayExactInventoryStats {
+  total: number;
+  available: number;
+  reserved: number;
+  consumed: number;
+  retired: number;
+  expiredRetired: number;
+}
+
 export type GatewayStateMethod =
   | "loadChannel"
   | "saveChannel"
@@ -59,6 +94,11 @@ export type GatewayStateMethod =
   | "saveExactReservation"
   | "loadExactReservation"
   | "consumeExactReservation"
+  | "registerExactInventory"
+  | "registerExactInventoryBatch"
+  | "reserveExactInventory"
+  | "listExactInventory"
+  | "exactInventoryStats"
   | "commitSettlement"
   | "commitExactPayment"
   | "loadOpenClaimAttempt"
@@ -172,10 +212,104 @@ export class GatewayLedger implements ServerStateStore {
       const current = await txn.get<ExactReservationRecord>(exactReservationKey(reservationId));
       if (!current) throw new Error("exact reservation was not found");
       if (current.status === "consumed") {
-        if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) return;
+        if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) {
+          await markInventoryConsumed(txn, reservationId, transactionId);
+          return;
+        }
         throw new Error("exact reservation was already consumed by a different transaction");
       }
       await txn.put(exactReservationKey(reservationId), { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
+      await markInventoryConsumed(txn, reservationId, transactionId);
+    });
+  }
+
+  async registerExactInventory(input: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord> {
+    return (await this.registerExactInventoryBatch([input]))[0]!;
+  }
+
+  async registerExactInventoryBatch(inputs: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]> {
+    const now = new Date().toISOString();
+    const records = inputs.map((input) => normalizeExactInventoryRegistration(input, now));
+    return this.#storage.transaction(async (txn) => {
+      const seen = new Set<string>();
+      const registered: GatewayExactInventoryRecord[] = [];
+      const pendingWrites: GatewayExactInventoryRecord[] = [];
+      for (const record of records) {
+        if (seen.has(record.inventoryId)) throw new Error("duplicate exact inventory id in registration batch");
+        seen.add(record.inventoryId);
+        const key = exactInventoryKey(record.inventoryId);
+        const existing = await txn.get<GatewayExactInventoryRecord>(key);
+        if (!existing) {
+          registered.push(clone(record));
+          pendingWrites.push(record);
+          continue;
+        }
+        if (stableJson(exactInventoryTerms(existing)) !== stableJson(exactInventoryTerms(record))) {
+          throw new Error("exact inventory id is already registered for different terms");
+        }
+        if (existing.status === "consumed") throw new Error("exact inventory was already consumed");
+        if (existing.status === "retired") throw new Error("exact inventory was retired; register a fresh borrow outpoint");
+        registered.push(clone(existing));
+      }
+      for (const record of pendingWrites) await txn.put(exactInventoryKey(record.inventoryId), clone(record));
+      return registered;
+    });
+  }
+
+  async reserveExactInventory(request: ExactBorrowReservationRequest, nowIso = new Date().toISOString()): Promise<ExactBorrowReservation | undefined> {
+    return this.#storage.transaction(async (txn) => {
+      await retireExpiredExactInventory(txn, Date.parse(nowIso), nowIso);
+      const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
+      const available = Array.from(entries.values())
+        .filter((record) => exactInventoryMatchesRequest(record, request))
+        .sort(compareExactInventory)[0];
+      if (!available) return undefined;
+
+      const expiresAt = new Date(Date.parse(nowIso) + request.maxTimeoutSeconds * 1000).toISOString();
+      const reservation: ExactBorrowReservation = {
+        reservationId: exactInventoryReservationId(request, available, expiresAt),
+        templateId: available.templateId,
+        transactionEncoding: available.transactionEncoding,
+        borrowOutpoint: clone(available.borrowOutpoint),
+        borrowAmount: available.borrowAmount,
+        borrowScriptPublicKey: available.borrowScriptPublicKey,
+        borrowRedeemScript: available.borrowRedeemScript,
+        additiveThresholdSompi: available.additiveThresholdSompi,
+        paymentOutputIndex: available.paymentOutputIndex,
+        expiresAt,
+      };
+      await txn.put(exactInventoryKey(available.inventoryId), {
+        ...clone(available),
+        status: "reserved",
+        reservationId: reservation.reservationId,
+        reservedAt: nowIso,
+        expiresAt,
+        transactionId: undefined,
+        consumedAt: undefined,
+        updatedAt: nowIso,
+      });
+      await txn.put(exactInventoryReservationKey(reservation.reservationId), available.inventoryId);
+      return reservation;
+    });
+  }
+
+  async listExactInventory(): Promise<GatewayExactInventoryRecord[]> {
+    await this.exactInventoryStats();
+    return Array.from((await this.#storage.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" })).values())
+      .map(clone)
+      .sort(compareExactInventory);
+  }
+
+  async exactInventoryStats(nowIso = new Date().toISOString()): Promise<GatewayExactInventoryStats> {
+    return this.#storage.transaction(async (txn) => {
+      const expiredRetired = await retireExpiredExactInventory(txn, Date.parse(nowIso), nowIso);
+      const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
+      const stats: GatewayExactInventoryStats = { total: 0, available: 0, reserved: 0, consumed: 0, retired: 0, expiredRetired };
+      for (const record of entries.values()) {
+        stats.total += 1;
+        stats[record.status] += 1;
+      }
+      return stats;
     });
   }
 
@@ -302,6 +436,11 @@ export type GatewayStateClient = ServerStateStore & {
   acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;
   checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }>;
+  registerExactInventory(record: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord>;
+  registerExactInventoryBatch(records: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]>;
+  reserveExactInventory(request: ExactBorrowReservationRequest, nowIso?: string): Promise<ExactBorrowReservation | undefined>;
+  listExactInventory(): Promise<GatewayExactInventoryRecord[]>;
+  exactInventoryStats(nowIso?: string): Promise<GatewayExactInventoryStats>;
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
   saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
@@ -332,6 +471,18 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
       const payload = readPayload<{ reservationId: string; transactionId: string }>(request);
       return ledger.consumeExactReservation(payload.reservationId, payload.transactionId);
     }
+    case "registerExactInventory":
+      return ledger.registerExactInventory(readPayload<{ record: GatewayExactInventoryRegistration }>(request).record);
+    case "registerExactInventoryBatch":
+      return ledger.registerExactInventoryBatch(readPayload<{ records: GatewayExactInventoryRegistration[] }>(request).records);
+    case "reserveExactInventory": {
+      const payload = readPayload<{ request: ExactBorrowReservationRequest; nowIso?: string }>(request);
+      return ledger.reserveExactInventory(payload.request, payload.nowIso);
+    }
+    case "listExactInventory":
+      return ledger.listExactInventory();
+    case "exactInventoryStats":
+      return ledger.exactInventoryStats(readPayload<{ nowIso?: string }>(request).nowIso);
     case "commitSettlement":
       return ledger.commitSettlement(readPayload<{ record: SettlementCommit }>(request).record);
     case "commitExactPayment":
@@ -434,6 +585,14 @@ function exactReservationKey(reservationId: string): string {
   return `exact-reservation:${reservationId.toLowerCase()}`;
 }
 
+function exactInventoryKey(inventoryId: string): string {
+  return `exact-inventory:${inventoryId.toLowerCase()}`;
+}
+
+function exactInventoryReservationKey(reservationId: string): string {
+  return `exact-inventory-reservation:${reservationId.toLowerCase()}`;
+}
+
 function paymentIdentifierKey(id: string): string {
   return `payment-identifier:${id}`;
 }
@@ -473,6 +632,145 @@ function cloneOrUndefined<T>(value: T | undefined): T | undefined {
 function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
   const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
   return terms;
+}
+
+function exactInventoryTerms(
+  record: GatewayExactInventoryRecord,
+): Omit<
+  GatewayExactInventoryRecord,
+  "status" | "registeredAt" | "updatedAt" | "reservedAt" | "expiresAt" | "reservationId" | "transactionId" | "consumedAt" | "retiredAt"
+> {
+  const {
+    status: _status,
+    registeredAt: _registeredAt,
+    updatedAt: _updatedAt,
+    reservedAt: _reservedAt,
+    expiresAt: _expiresAt,
+    reservationId: _reservationId,
+    transactionId: _transactionId,
+    consumedAt: _consumedAt,
+    retiredAt: _retiredAt,
+    ...terms
+  } = record;
+  return terms;
+}
+
+function normalizeExactInventoryRegistration(input: GatewayExactInventoryRegistration, nowIso: string): GatewayExactInventoryRecord {
+  const inventoryId = (input.inventoryId ?? `${input.borrowOutpoint.txid}:${input.borrowOutpoint.index}`).toLowerCase();
+  if (!/^[0-9a-f]{64}:\d+$/.test(inventoryId)) throw new Error("exact inventory id must be <txid>:<index>");
+  if (input.network !== "kaspa:testnet-10") throw new Error("exact inventory only supports kaspa:testnet-10");
+  if (input.templateId !== "kaspa-x402-kip10-additive-v1") throw new Error("exact inventory templateId must be KIP-10 additive");
+  if (input.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0") throw new Error("exact inventory transaction encoding is not supported");
+  if (!/^[0-9a-f]{64}$/i.test(input.borrowOutpoint.txid)) throw new Error("exact inventory borrow txid must be 32-byte hex");
+  if (!Number.isInteger(input.borrowOutpoint.index) || input.borrowOutpoint.index < 0 || input.borrowOutpoint.index > 0xffffffff) {
+    throw new Error("exact inventory borrow index is outside uint32 range");
+  }
+  if (!/^0000(?:[0-9a-f]{2})+$/i.test(input.borrowScriptPublicKey)) {
+    throw new Error("exact inventory borrow script public key must be serialized script public key hex");
+  }
+  if (!/^(?:[0-9a-f]{2})+$/i.test(input.borrowRedeemScript)) throw new Error("exact inventory borrow redeem script must be byte hex");
+  const borrowAmount = parseSompiString(input.borrowAmount);
+  const additiveThreshold = parseSompiString(input.additiveThresholdSompi);
+  if (borrowAmount < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory borrow amount is below the standard output floor");
+  if (additiveThreshold < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory additive threshold is below the server minimum");
+  if (!Number.isInteger(input.paymentOutputIndex) || input.paymentOutputIndex < 0 || input.paymentOutputIndex > 0xffffffff) {
+    throw new Error("exact inventory payment output index is outside uint32 range");
+  }
+  const record: GatewayExactInventoryRecord = {
+    inventoryId,
+    network: input.network,
+    templateId: input.templateId,
+    transactionEncoding: input.transactionEncoding,
+    borrowOutpoint: { txid: input.borrowOutpoint.txid.toLowerCase(), index: input.borrowOutpoint.index },
+    borrowAmount: input.borrowAmount,
+    borrowScriptPublicKey: input.borrowScriptPublicKey.toLowerCase(),
+    borrowRedeemScript: input.borrowRedeemScript.toLowerCase(),
+    additiveThresholdSompi: input.additiveThresholdSompi,
+    paymentOutputIndex: input.paymentOutputIndex,
+    ...(input.note ? { note: input.note } : {}),
+    status: "available",
+    registeredAt: nowIso,
+    updatedAt: nowIso,
+  };
+  if (record.inventoryId !== `${record.borrowOutpoint.txid}:${record.borrowOutpoint.index}`) {
+    throw new Error("exact inventory id must match borrow outpoint");
+  }
+  return record;
+}
+
+function exactInventoryMatchesRequest(record: GatewayExactInventoryRecord, request: ExactBorrowReservationRequest): boolean {
+  return (
+    record.status === "available" &&
+    record.network === request.network &&
+    record.templateId === "kaspa-x402-kip10-additive-v1" &&
+    record.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0" &&
+    parseSompiString(record.additiveThresholdSompi) >= parseSompiString(request.minimumAdditiveThresholdSompi)
+  );
+}
+
+function exactInventoryReservationId(request: ExactBorrowReservationRequest, inventory: GatewayExactInventoryRecord, expiresAt: string): string {
+  return sha256Hex(
+    stableJson({
+      domain: "kaspa:x402:gateway-exact-reservation:v1",
+      network: request.network,
+      amount: request.amount,
+      payTo: request.payTo,
+      payToScriptPublicKey: request.payToScriptPublicKey.toLowerCase(),
+      resource: request.resource.url,
+      maxTimeoutSeconds: request.maxTimeoutSeconds,
+      minimumAdditiveThresholdSompi: request.minimumAdditiveThresholdSompi,
+      inventoryId: inventory.inventoryId,
+      borrowOutpoint: inventory.borrowOutpoint,
+      borrowAmount: inventory.borrowAmount,
+      borrowScriptPublicKey: inventory.borrowScriptPublicKey,
+      borrowRedeemScript: inventory.borrowRedeemScript,
+      additiveThresholdSompi: inventory.additiveThresholdSompi,
+      paymentOutputIndex: inventory.paymentOutputIndex,
+      expiresAt,
+    }),
+  );
+}
+
+async function retireExpiredExactInventory(txn: GatewayTransaction, nowMs: number, nowIso: string): Promise<number> {
+  const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
+  let retired = 0;
+  for (const record of entries.values()) {
+    if (record.status !== "reserved" || !record.expiresAt || Date.parse(record.expiresAt) > nowMs) continue;
+    await txn.put(exactInventoryKey(record.inventoryId), {
+      ...clone(record),
+      status: "retired",
+      retiredAt: nowIso,
+      updatedAt: nowIso,
+    });
+    retired += 1;
+  }
+  return retired;
+}
+
+async function markInventoryConsumed(txn: GatewayTransaction, reservationId: string, transactionId: string): Promise<void> {
+  const inventoryId = await txn.get<string>(exactInventoryReservationKey(reservationId));
+  if (!inventoryId) return;
+  const current = await txn.get<GatewayExactInventoryRecord>(exactInventoryKey(inventoryId));
+  if (!current) return;
+  if (current.status === "consumed") {
+    if (current.transactionId?.toLowerCase() !== transactionId.toLowerCase()) {
+      throw new Error("exact inventory was already consumed by a different transaction");
+    }
+    return;
+  }
+  if (current.reservationId?.toLowerCase() !== reservationId.toLowerCase()) return;
+  const nowIso = new Date().toISOString();
+  await txn.put(exactInventoryKey(current.inventoryId), {
+    ...clone(current),
+    status: "consumed",
+    transactionId: transactionId.toLowerCase(),
+    consumedAt: nowIso,
+    updatedAt: nowIso,
+  });
+}
+
+function compareExactInventory(left: GatewayExactInventoryRecord, right: GatewayExactInventoryRecord): number {
+  return left.registeredAt.localeCompare(right.registeredAt) || left.inventoryId.localeCompare(right.inventoryId);
 }
 
 function stableJson(value: unknown): string {

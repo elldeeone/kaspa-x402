@@ -19,6 +19,7 @@ export interface GatewayEnv {
   KASPA_X402_CORS_ORIGIN?: string;
   KASPA_X402_SITE_BASE_URL?: string;
   KASPA_X402_GATEWAY_BASE_URL?: string;
+  KASPA_X402_ADMIN_TOKEN?: string;
 }
 
 export interface GatewayConfig {
@@ -37,6 +38,7 @@ export interface GatewayConfig {
   corsOrigin: string;
   siteBaseUrl: string;
   gatewayBaseUrl: string;
+  adminToken?: string;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -68,6 +70,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(env.KASPA_X402_SITE_BASE_URL ?? "https://kaspa-x402.org", "KASPA_X402_SITE_BASE_URL"),
     gatewayBaseUrl: baseUrl(env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org", "KASPA_X402_GATEWAY_BASE_URL"),
+    ...(env.KASPA_X402_ADMIN_TOKEN?.trim() ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() } : {}),
   };
 }
 

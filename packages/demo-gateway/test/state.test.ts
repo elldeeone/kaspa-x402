@@ -2,6 +2,7 @@ import { describe, expect, it } from "vitest";
 import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
+  ExactBorrowReservationRequest,
   ExactPaymentRecord,
   ExactReservationRecord,
   PaymentIdentifierRecord,
@@ -69,6 +70,76 @@ describe("gateway durable ledger", () => {
     });
     await expect(ledger.consumeExactReservation(TX, "aa".repeat(32))).rejects.toThrow("different transaction");
     await expect(ledger.saveExactReservation(first)).rejects.toThrow("already consumed");
+  });
+
+  it("leases exact inventory and retires expired unpaid reservations", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await expect(ledger.registerExactInventory(exactInventory({ additiveThresholdSompi: "1" }))).rejects.toThrow("additive threshold");
+    await ledger.registerExactInventory(exactInventory());
+    await ledger.registerExactInventory(exactInventory());
+
+    await expect(ledger.exactInventoryStats("2026-07-07T00:00:00.000Z")).resolves.toMatchObject({
+      total: 1,
+      available: 1,
+      reserved: 0,
+    });
+
+    const reservation = await ledger.reserveExactInventory(exactReservationRequest({ maxTimeoutSeconds: 1 }), "2026-07-07T00:00:00.000Z");
+    expect(reservation).toMatchObject({
+      templateId: "kaspa-x402-kip10-additive-v1",
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+      paymentOutputIndex: 0,
+      expiresAt: "2026-07-07T00:00:01.000Z",
+    });
+    await expect(ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:00.500Z")).resolves.toBeUndefined();
+    await expect(ledger.exactInventoryStats("2026-07-07T00:00:02.000Z")).resolves.toMatchObject({
+      available: 0,
+      reserved: 0,
+      retired: 1,
+      expiredRetired: 1,
+    });
+    await expect(ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:02.000Z")).resolves.toBeUndefined();
+    await expect(ledger.listExactInventory()).resolves.toMatchObject([{ status: "retired", reservationId: reservation!.reservationId }]);
+  });
+
+  it("registers exact inventory batches atomically", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+
+    await expect(
+      ledger.registerExactInventoryBatch([
+        exactInventory(),
+        exactInventory({ borrowOutpoint: { txid: OTHER_TX, index: 0 }, additiveThresholdSompi: "1" }),
+      ]),
+    ).rejects.toThrow("additive threshold");
+    await expect(ledger.exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0 });
+
+    await expect(
+      ledger.registerExactInventoryBatch([exactInventory(), exactInventory({ borrowOutpoint: { txid: OTHER_TX, index: 0 } })]),
+    ).resolves.toHaveLength(2);
+    await expect(ledger.exactInventoryStats()).resolves.toMatchObject({ total: 2, available: 2 });
+  });
+
+  it("marks leased exact inventory consumed with its settlement", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerExactInventory(exactInventory());
+    const reservation = await ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:00.000Z");
+    expect(reservation).toBeDefined();
+
+    await ledger.saveExactReservation({ ...reservation!, status: "reserved", reservedAt: "2026-07-07T00:00:00.000Z" });
+    await ledger.consumeExactReservation(reservation!.reservationId, TX);
+
+    await expect(ledger.listExactInventory()).resolves.toMatchObject([
+      {
+        inventoryId: `${FUNDING_TX}:0`,
+        status: "consumed",
+        transactionId: TX,
+      },
+    ]);
+    await expect(ledger.exactInventoryStats("2026-07-07T00:00:01.000Z")).resolves.toMatchObject({
+      available: 0,
+      consumed: 1,
+    });
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
@@ -239,13 +310,41 @@ function exactReservation(overrides: Partial<ExactReservationRecord> = {}): Exac
     templateId: "kaspa-x402-kip10-additive-v1",
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-    borrowAmount: "100",
+    borrowAmount: "100000000",
     borrowScriptPublicKey: SCRIPT,
     borrowRedeemScript: "51",
     additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
     status: "reserved",
     reservedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function exactInventory(overrides: Partial<Parameters<GatewayLedger["registerExactInventory"]>[0]> = {}): Parameters<GatewayLedger["registerExactInventory"]>[0] {
+  return {
+    network: "kaspa:testnet-10",
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    borrowAmount: "100000000",
+    borrowScriptPublicKey: SCRIPT,
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "10000000",
+    paymentOutputIndex: 0,
+    ...overrides,
+  };
+}
+
+function exactReservationRequest(overrides: Partial<ExactBorrowReservationRequest> = {}): ExactBorrowReservationRequest {
+  return {
+    network: "kaspa:testnet-10",
+    amount: "20000000",
+    payTo: "kaspatest:payout",
+    payToScriptPublicKey: SCRIPT,
+    maxTimeoutSeconds: 60,
+    resource: { url: "https://demo.kaspa-x402.org/exact/report" },
+    minimumAdditiveThresholdSompi: "10000000",
     ...overrides,
   };
 }

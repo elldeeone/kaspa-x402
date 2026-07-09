@@ -1,6 +1,8 @@
 import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
+  ExactBorrowReservation,
+  ExactBorrowReservationRequest,
   ExactPaymentRecord,
   ExactReservationRecord,
   ExactSettlementCommit,
@@ -8,7 +10,15 @@ import type {
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
-import type { GatewayCanaryReport, GatewayStateClient, GatewayStateMethod, GatewayStateRequest } from "./state.js";
+import type {
+  GatewayCanaryReport,
+  GatewayExactInventoryRecord,
+  GatewayExactInventoryRegistration,
+  GatewayExactInventoryStats,
+  GatewayStateClient,
+  GatewayStateMethod,
+  GatewayStateRequest,
+} from "./state.js";
 
 export type GatewayStateNamespace = DurableObjectNamespace;
 
@@ -65,6 +75,26 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
     return this.#call("consumeExactReservation", { reservationId, transactionId });
+  }
+
+  registerExactInventory(record: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord> {
+    return this.#call("registerExactInventory", { record });
+  }
+
+  registerExactInventoryBatch(records: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]> {
+    return this.#call("registerExactInventoryBatch", { records });
+  }
+
+  reserveExactInventory(request: ExactBorrowReservationRequest, nowIso?: string): Promise<ExactBorrowReservation | undefined> {
+    return this.#call("reserveExactInventory", { request, nowIso });
+  }
+
+  listExactInventory(): Promise<GatewayExactInventoryRecord[]> {
+    return this.#call("listExactInventory");
+  }
+
+  exactInventoryStats(nowIso?: string): Promise<GatewayExactInventoryStats> {
+    return this.#call("exactInventoryStats", { nowIso });
   }
 
   loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {

@@ -126,8 +126,8 @@ For alpha.6, the source release gate is not the same as the public hosted
 gateway gate. Alpha.6 source adds the KIP-10 exact transaction-artifact path for
 direct-mode servers that advertise reservations. The hosted
 `demo.kaspa-x402.org` gateway must not advertise exact evidence until it is
-redeployed with an exact reservation provider and a funded TN10 KIP-10 exact
-canary has passed.
+redeployed with a working exact reservation, verifier, broadcast-or-observe,
+and finality path, and a funded TN10 KIP-10 exact canary has passed.
 
 Before advertising alpha.6 live evidence, run:
 
@@ -147,11 +147,12 @@ The expected alpha.6 live proof must include:
 - replay rejection across exact and batch-settlement;
 - batch refund transaction construction and broadcast after timeout.
 
-Checked for alpha.6 on 2026-07-07:
+Checked for alpha.6 on 2026-07-09:
 
 - the funded TN10 live proof completed with status `complete`;
 - exact KIP-10 `exact-transaction` settlement used adapter-submitted tx-v1
-  evidence and server broadcast finality `accepted`;
+  evidence, server broadcast finality `accepted`, and a `10000000` sompi
+  additive threshold;
 - batch deposit-voucher, voucher-only, claim, replay rejection, and refund all
   passed;
 - the sanitized summary is recorded in `docs/live-testnet-report.md`.

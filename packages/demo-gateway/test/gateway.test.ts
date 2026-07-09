@@ -3,6 +3,9 @@ import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
 import { dispatchGatewayState, GatewayLedger, type GatewayStateRequest, type GatewayStorage } from "../src/state.js";
 import type { GatewayEnv } from "../src/config.js";
 
+const FUNDING_TX = "88".repeat(32);
+const SCRIPT = "0000" + "99".repeat(34);
+
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
@@ -74,6 +77,60 @@ describe("gateway canary", () => {
     expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: false } });
     expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
     expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
+  });
+
+  it("requires operator auth and keeps hosted exact disabled after inventory registration", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };
+
+    const unauthorized = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+        method: "POST",
+        body: JSON.stringify({ record: exactInventory() }),
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(unauthorized.status).toBe(401);
+
+    const registered = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({ record: exactInventory() }),
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(registered.status).toBe(200);
+
+    const supported = await requestJson(env, "/supported");
+    expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: true } });
+    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).not.toContain("exact");
+
+    const exact = await requestJson(env, "/exact");
+    expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "exact_unavailable" } });
+    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 1, reserved: 0 });
+  });
+
+  it("does not partially register invalid inventory batches", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };
+
+    const response = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({
+          records: [exactInventory(), exactInventory({ borrowOutpoint: { txid: "66".repeat(32), index: 0 }, additiveThresholdSompi: "1" })],
+        }),
+      }),
+      env,
+      fakeContext(),
+    );
+
+    expect(response.status).toBe(400);
+    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0 });
   });
 });
 
@@ -161,4 +218,22 @@ class FakeStorage implements GatewayStorage {
 
 function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : structuredClone(value);
+}
+
+function exactInventory(overrides: Partial<ReturnType<typeof exactInventoryBase>> = {}) {
+  return { ...exactInventoryBase(), ...overrides };
+}
+
+function exactInventoryBase() {
+  return {
+    network: "kaspa:testnet-10",
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
+    borrowAmount: "100000000",
+    borrowScriptPublicKey: SCRIPT,
+    borrowRedeemScript: "51",
+    additiveThresholdSompi: "10000000",
+    paymentOutputIndex: 0,
+  };
 }

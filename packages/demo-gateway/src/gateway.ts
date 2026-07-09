@@ -10,6 +10,8 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  type ExactBorrowReservationProvider,
+  type ExactBorrowReservationRequest,
   type ServerStateStore,
 } from "@kaspa-x402/server";
 import {
@@ -22,13 +24,21 @@ import {
 } from "./adapters.js";
 import { readGatewayConfig, type GatewayConfig, type GatewayEnv } from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
-import { DurableGatewayLockManager, type GatewayCanaryCheck, type GatewayCanaryReport, type GatewayStateClient } from "./state.js";
+import {
+  DurableGatewayLockManager,
+  type GatewayCanaryCheck,
+  type GatewayCanaryReport,
+  type GatewayExactInventoryRegistration,
+  type GatewayStateClient,
+} from "./state.js";
 
 type Profile = "exact" | "batch-settlement";
 type CanaryTrigger = GatewayCanaryReport["trigger"];
 type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
+const MAX_ADMIN_JSON_BYTES = 64 * 1024;
+const HOSTED_EXACT_SETTLEMENT_ENABLED = false;
 
 export async function handleGatewayRequest(request: Request, env: GatewayEnv, context: WaitUntilContext): Promise<Response> {
   let config: GatewayConfig;
@@ -42,12 +52,15 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(config) });
 
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
+  if (url.pathname.startsWith("/admin/exact-inventory")) {
+    return exactInventoryAdminResponse(request, url, config, state);
+  }
   if (url.pathname === "/" && request.method === "GET") return json(indexBody(url), { headers: corsHeaders(config) });
   if (url.pathname === "/health" && request.method === "GET") return healthResponse(config, state);
   if (url.pathname === "/metrics" && request.method === "GET") return json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) });
   if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
 
-  const gateway = createGateway(config, state);
+  const gateway = createGateway(config, state, { exactAvailable: HOSTED_EXACT_SETTLEMENT_ENABLED });
   if (url.pathname === "/supported" && request.method === "GET") {
     return json({ ok: true, enabled: config.enabled, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
   }
@@ -171,10 +184,10 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
     }),
   );
   if (config.enabled) {
-    if (createGateway(config, state).server.supportedKinds().some((kind) => kind.scheme === "exact")) {
+    if (createGateway(config, state, { exactAvailable: HOSTED_EXACT_SETTLEMENT_ENABLED }).server.supportedKinds().some((kind) => kind.scheme === "exact")) {
       checks.push(await offerCheck(env, config, "/exact", "exact"));
     } else {
-      checks.push(skippedCheck("exact-offer", "hosted gateway has no KIP-10 reservation provider"));
+      checks.push(skippedCheck("exact-offer", "hosted gateway exact verifier/broadcast path is not enabled"));
     }
     checks.push(await offerCheck(env, config, "/batch", "batch-settlement"));
     checks.push(await unsupportedSchemeCheck(env, config));
@@ -200,7 +213,7 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
   return report;
 }
 
-function createGateway(config: GatewayConfig, state: GatewayStateClient): { server: DirectModeServer } {
+function createGateway(config: GatewayConfig, state: GatewayStateClient, options: { exactAvailable: boolean }): { server: DirectModeServer } {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
@@ -218,11 +231,26 @@ function createGateway(config: GatewayConfig, state: GatewayStateClient): { serv
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
+    ...(options.exactAvailable ? { exactReservationProvider: new GatewayExactReservationProvider(state) } : {}),
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     requirePaymentIdentifier: false,
   });
   return { server };
+}
+
+class GatewayExactReservationProvider implements ExactBorrowReservationProvider {
+  readonly #state: GatewayStateClient;
+
+  constructor(state: GatewayStateClient) {
+    this.#state = state;
+  }
+
+  async reserveExactPayment(request: ExactBorrowReservationRequest) {
+    const reservation = await this.#state.reserveExactInventory(request);
+    if (!reservation) throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation inventory unavailable");
+    return reservation;
+  }
 }
 
 class AddressRecordingStore implements ServerStateStore {
@@ -315,6 +343,7 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
         gateway: "kaspa-x402-testnet",
         chain,
         metrics: await state.metrics(),
+        exactInventory: await state.exactInventoryStats(),
         canary: await state.loadCanaryReport(),
       },
       { headers: corsHeaders(config) },
@@ -324,11 +353,35 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
   }
 }
 
+async function exactInventoryAdminResponse(request: Request, url: URL, config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
+  if (!config.adminToken) return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
+  if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`) {
+    return json({ ok: false, error: "unauthorized" }, { status: 401, headers: corsHeaders(config) });
+  }
+  if (url.pathname === "/admin/exact-inventory" && request.method === "GET") {
+    return json(
+      { ok: true, stats: await state.exactInventoryStats(), inventory: await state.listExactInventory() },
+      { headers: corsHeaders(config) },
+    );
+  }
+  if (url.pathname === "/admin/exact-inventory/register" && request.method === "POST") {
+    try {
+      const body = await readRequestJsonWithLimit<Record<string, unknown>>(request, MAX_ADMIN_JSON_BYTES, "exact inventory registration");
+      const registered = await state.registerExactInventoryBatch(exactInventoryRegistrations(body));
+      return json({ ok: true, registered, stats: await state.exactInventoryStats() }, { headers: corsHeaders(config) });
+    } catch (error) {
+      return json({ ok: false, error: errorMessage(error) }, { status: 400, headers: corsHeaders(config) });
+    }
+  }
+  return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
+}
+
 async function canaryResponse(config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
   return json(
     {
       ok: true,
       enabled: config.enabled,
+      exactInventory: await state.exactInventoryStats(),
       canary: await state.loadCanaryReport(),
     },
     { headers: corsHeaders(config) },
@@ -454,6 +507,18 @@ async function readJsonWithLimit<T>(response: Response, maxBytes: number, label:
   return JSON.parse(text) as T;
 }
 
+async function readRequestJsonWithLimit<T>(request: Request, maxBytes: number, label: string): Promise<T> {
+  const text = await request.text();
+  if (new TextEncoder().encode(text).byteLength > maxBytes) throw new Error(`${label} request body too large`);
+  return JSON.parse(text) as T;
+}
+
+function exactInventoryRegistrations(body: Record<string, unknown>): GatewayExactInventoryRegistration[] {
+  const records = Array.isArray(body.records) ? body.records : body.record ? [body.record] : [body];
+  if (records.length === 0) throw new Error("exact inventory registration is empty");
+  return records.map((entry) => entry as GatewayExactInventoryRegistration);
+}
+
 async function dispatchCanaryRequest(env: GatewayEnv, url: string, init?: RequestInit): Promise<Response> {
   const pending: Promise<unknown>[] = [];
   const context: WaitUntilContext = {
@@ -531,8 +596,8 @@ function json(body: unknown, init: ResponseInit = {}): Response {
 function corsHeaders(config: GatewayConfig | undefined): Record<string, string> {
   return {
     "access-control-allow-origin": config?.corsOrigin ?? "https://kaspa-x402.org",
-    "access-control-allow-methods": "GET, HEAD, OPTIONS",
-    "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, content-type`,
+    "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
+    "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, authorization, content-type`,
     "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}`,
     "access-control-max-age": "86400",
     vary: "Origin",

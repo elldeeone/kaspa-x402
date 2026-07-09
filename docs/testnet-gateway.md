@@ -8,11 +8,13 @@ exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
 Deployment status: alpha.6 source uses the KIP-10 `exact-transaction` path for
-direct-mode servers that advertise reservations. A hosted gateway without an
-exact reservation provider must not advertise `exact`; `/exact` should return
-`503 exact_unavailable`, while `/batch` remains the public integration target.
-The separate private TN10 full live harness was rerun for alpha.6 on
-2026-07-07 and is recorded in `docs/live-testnet-report.md`.
+direct-mode servers that advertise reservations. The hosted Worker has a
+Durable Object-backed exact inventory staging path, but hosted exact remains
+unadvertised until the Worker verifier/broadcast/observe path is implemented
+and tested. For now, `/exact` returns `503 exact_unavailable` and `/batch`
+remains the public integration target. The separate private TN10 full live
+harness was rerun for alpha.6 on 2026-07-09 and is recorded in
+`docs/live-testnet-report.md`.
 
 ## Base URL
 
@@ -30,9 +32,18 @@ https://demo.kaspa-x402.org
 | `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
 | `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
 | `GET` | `/supported` | Returns the direct-mode supported-kind list. |
-| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource when a KIP-10 reservation provider is deployed; otherwise returns `503 exact_unavailable`. |
+| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource once hosted KIP-10 settlement is deployed; currently returns `503 exact_unavailable`. |
 | `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
 | `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
+
+The Worker also exposes admin-only exact inventory endpoints:
+
+| Method | Path | Purpose |
+| ------ | ---- | ------- |
+| `GET` | `/admin/exact-inventory` | Requires `Authorization: Bearer <token>`; returns inventory stats and records. |
+| `POST` | `/admin/exact-inventory/register` | Requires `Authorization: Bearer <token>`; registers funded KIP-10 borrow UTXO terms. |
+
+The admin token is a Worker secret and is not committed to the repository.
 
 `HEAD` follows the same payment behavior as `GET` without a response body.
 `OPTIONS` returns the CORS preflight response.
@@ -46,10 +57,10 @@ The gateway always uses:
 - accepted finality of `accepted`;
 - a testnet pay-to address configured in the Worker environment.
 
-The current hosted gateway advertises `batch-settlement` with
-`extra.binding: "kaspa-escrow-v1"`. It must advertise `exact` with
-`extra.binding: "kaspa-exact-v1"` only after a KIP-10 reservation provider is
-deployed and tested.
+The hosted gateway currently advertises `batch-settlement` with `extra.binding:
+"kaspa-escrow-v1"`. It does not advertise `exact` until the hosted Worker can
+reserve KIP-10 inventory, verify the signed transaction artifact, broadcast or
+observe it to accepted finality, and consume the reservation.
 
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
@@ -63,9 +74,44 @@ Current hosted terms:
 The exact price and batch deposit are on-chain outputs, so they must stay at or
 above the Kaspa standard-output storage-mass floor of `10000000` sompi. The
 Worker fails closed at startup if either configured value is below that floor.
-If hosted exact is enabled later, its KIP-10 reservation provider must also use
-merchant-owned borrow UTXO inventory and advertise an
+When hosted exact is enabled in a future deployment, its KIP-10 reservation
+provider must use merchant-owned borrow UTXO inventory and advertise an
 `additiveThresholdSompi` of at least `10000000` sompi.
+
+Exact inventory records are public transaction terms, not wallet secrets. A
+registration record has this shape:
+
+```json
+{
+  "network": "kaspa:testnet-10",
+  "templateId": "kaspa-x402-kip10-additive-v1",
+  "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+  "borrowOutpoint": { "txid": "<funded-borrow-txid>", "index": 0 },
+  "borrowAmount": "100000000",
+  "borrowScriptPublicKey": "0000...",
+  "borrowRedeemScript": "...",
+  "additiveThresholdSompi": "10000000",
+  "paymentOutputIndex": 1
+}
+```
+
+Register inventory with:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+  npm run demo:exact-inventory -- register --file inventory.json
+```
+
+Check availability with:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
+```
+
+Registration does not by itself enable public exact offers. Expired reserved
+inventory is retired for operator reconciliation rather than automatically
+reused, because a late or already-propagating transaction may still consume the
+borrow outpoint.
 
 Operational details, rollback steps, the gateway disable switch, and manual
 paid canary procedure are covered in the
@@ -95,6 +141,7 @@ Gateway state is held in a SQLite-backed Cloudflare Durable Object. The ledger
 records:
 
 - exact transaction replay reservations;
+- exact KIP-10 borrow UTXO inventory and active reservation leases;
 - payment-identifier response cache entries;
 - batch channel state and settlement commitments;
 - one open claim attempt per channel, though public claim execution is disabled;
@@ -199,13 +246,14 @@ Status: source live evidence complete; hosted exact evidence pending.
 
 Alpha.6 source introduces KIP-10 exact transaction artifacts and removes
 observe-only exact from the current supported exact path. The private TN10 live
-harness passed on 2026-07-07 and is summarized in
+harness passed on 2026-07-09 and is summarized in
 `docs/live-testnet-report.md`. Before the public gateway can advertise hosted
-exact evidence, operators must deploy reviewed source with an exact reservation
-provider, confirm `/supported` advertises `exact`, run the unpaid shape checks,
-run a funded TN10 KIP-10 exact canary, and update this document with the Worker
-version and payment evidence. Without that provider, `/supported` should list
-only `batch-settlement` and `/exact` should remain unavailable.
+exact evidence, operators must deploy reviewed source with a working hosted
+reservation, verifier, broadcast-or-observe, and finality path, confirm
+`/supported` advertises `exact`, run the unpaid shape checks, run a funded TN10
+KIP-10 exact canary, and update this document with the Worker version and
+payment evidence. Until then, `/supported` should list only `batch-settlement`
+and `/exact` should remain unavailable.
 
 ## Alpha.5 Hosted Payment Evidence
 

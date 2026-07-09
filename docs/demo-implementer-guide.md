@@ -57,9 +57,9 @@ Expected support from the current hosted gateway:
 - `scheme: "batch-settlement"`;
 - accepted finality: `accepted`.
 
-No mainnet profile is advertised. A gateway should advertise `exact` only when
-it has a KIP-10 reservation provider and can settle `exact-transaction`
-artifacts end to end.
+No mainnet profile is advertised. The current hosted gateway does not advertise
+`exact`; it will do so only after the Worker can reserve merchant-owned KIP-10
+borrow UTXOs and settle `exact-transaction` artifacts end to end.
 
 ## Exact Flow
 
@@ -69,12 +69,12 @@ Request the protected resource:
 curl -i https://demo.kaspa-x402.org/exact
 ```
 
-Current hosted result without a reservation provider:
+Hosted result while exact settlement is disabled or inventory is unavailable:
 
 - HTTP `503`;
 - JSON body with `error: "exact_unavailable"`.
 
-Reservation-enabled expected result:
+Future reservation-enabled expected result:
 
 - HTTP `402`;
 - `PAYMENT-REQUIRED` response header;

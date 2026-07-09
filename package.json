@@ -29,6 +29,7 @@
     "check:pnn-browser": "node scripts/check-pnn-browser.mjs",
     "check:vendor-wasm": "node scripts/check-vendored-kaspa-wasm.mjs",
     "check:demo-gateway": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/demo-gateway run build && node scripts/check-demo-gateway.mjs",
+    "demo:exact-inventory": "node scripts/demo-exact-inventory.mjs",
     "check:diff": "git diff --check -- . ':(exclude)site/src/vendor/kaspa-wasm/**'",
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
     "validate:schemas": "node scripts/validate-schemas.mjs",
