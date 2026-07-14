@@ -30,7 +30,10 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
-- `x402-http`: validate decoded objects and recompute the three HTTP headers.
+- `x402-http`: validate decoded objects and recompute the three HTTP headers. The
+  exact-transaction fixture is also verified against the hosted verifier and the
+  pinned rusty-kaspa consensus harness so its KIP-10 script and transaction shape
+  remain semantic, not merely schema-valid.
 - `settlement-response`: validate settlement responses and corrective 402 payloads.
 - `negative`: assert a JSON object fails the referenced schema and carries an `expectedError`.
 - `semantic-negative`: assert cross-object protocol failures that JSON Schema cannot express.

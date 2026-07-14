@@ -82,6 +82,70 @@ describe("gateway canary", () => {
     expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
   });
 
+  it("keeps supported and disabled responses independent of Kaspa REST", async () => {
+    const storage = new FakeStorage();
+    const fetchMock = vi.fn(async () => {
+      throw new Error("chain API unavailable");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const enabled: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
+    const disabled: GatewayEnv = { ...enabled, KASPA_X402_GATEWAY_ENABLED: "false" };
+
+    const supported = await requestJson(enabled, "/supported");
+    const exact = await requestJson(disabled, "/exact");
+    const batch = await requestJson(disabled, "/batch");
+
+    expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: true } });
+    expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
+    expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("rejects invalid and rate-limited requests before Kaspa REST", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
+    };
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      if (url === "https://api-tn10.kaspa.org/info/blockdag") {
+        return Response.json({ networkName: "kaspa-testnet-10", virtualDaaScore: "507000000" });
+      }
+      throw new Error(`unexpected fetch ${url}`);
+    });
+    vi.stubGlobal("fetch", fetchMock);
+
+    const missing = await requestJson(env, "/missing");
+    const method = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/batch", { method: "POST" }),
+      env,
+      fakeContext(),
+    );
+    const firstResponse = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/batch", { headers: { "cf-connecting-ip": "203.0.113.10" } }),
+      env,
+      fakeContext(),
+    );
+    const fetchesAfterAllowedRequest = fetchMock.mock.calls.length;
+    const limitedResponse = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/batch", { headers: { "cf-connecting-ip": "203.0.113.10" } }),
+      env,
+      fakeContext(),
+    );
+    const limited = { status: limitedResponse.status, body: await limitedResponse.json() };
+
+    expect(missing).toMatchObject({ status: 404, body: { ok: false, error: "not_found" } });
+    expect(method.status).toBe(405);
+    await expect(method.json()).resolves.toMatchObject({ ok: false, error: "method_not_allowed" });
+    expect(firstResponse.status).toBe(402);
+    expect(fetchesAfterAllowedRequest).toBeGreaterThan(0);
+    expect(limited).toMatchObject({ status: 429, body: { ok: false, error: "rate_limited" } });
+    expect(fetchMock).toHaveBeenCalledTimes(fetchesAfterAllowedRequest);
+  });
+
   it("requires operator auth and keeps hosted exact disabled unless settlement is enabled", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };

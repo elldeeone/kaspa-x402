@@ -1262,6 +1262,7 @@ export class DirectModeServer {
     const channelId = safePaymentChannelId(paymentPayload);
     const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
+    const reusableChannel = activeChannel && (await this.#canReuseCorrectiveChannel(activeChannel)) ? activeChannel : undefined;
     const scheme = paymentPayload.accepted.scheme === "exact" ? paymentPayload.accepted.scheme : requestedScheme;
     const exactReservation = paymentPayload.accepted.scheme === "exact" ? exactReservationFromAccepted(paymentPayload.accepted) : undefined;
     const reusableExactReservation = exactReservation && !shouldRefreshExactReservation(error) ? exactReservation : undefined;
@@ -1271,7 +1272,7 @@ export class DirectModeServer {
       scheme,
       error: errorReason,
       ...(reusableExactReservation ? { exactReservation: reusableExactReservation } : {}),
-      ...(activeChannel ? { channel: activeChannel, voucherState: latestVoucher(activeChannel) } : {}),
+      ...(reusableChannel ? { channel: reusableChannel, voucherState: latestVoucher(reusableChannel) } : {}),
     });
     return {
       ...paymentRequired,
@@ -1285,6 +1286,15 @@ export class DirectModeServer {
     const channel = await this.#config.store.loadChannel(channelId);
     if (!channel) throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     return channel;
+  }
+
+  async #canReuseCorrectiveChannel(channel: ServerChannelRecord): Promise<boolean> {
+    try {
+      await this.#assertRefundWindow(channel.channelConfig.refundTimeoutDaa);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #expectedPaymentRequired(

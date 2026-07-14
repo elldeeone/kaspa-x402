@@ -51,7 +51,12 @@
         "required": ["success"]
       },
       "then": {
-        "required": ["network", "amount"]
+        "required": ["network", "amount"],
+        "properties": {
+          "transaction": {
+            "pattern": "^[0-9a-fA-F]{64}$"
+          }
+        }
       }
     },
     {

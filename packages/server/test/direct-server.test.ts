@@ -1452,6 +1452,50 @@ describe("direct-mode server", () => {
     expect(conflict.status).toBe(409);
   });
 
+  it("offers a fresh rolling channel after the stored refund window expires", async () => {
+    const store = new MemoryServerChannelStore();
+    const rolling = {
+      minimumRefundLeadDaa: "100",
+      allowRollingRefundTimeoutDaa: true,
+      maximumRefundHorizonDaa: "1000",
+    } as const;
+    const initial = makeServer({ ...rolling, store, refundTimeoutDaa: "2000" });
+    initial.chain.daa = "1000";
+    const deposit = makeDepositPayment(initial);
+    await initial.server.handlePaidRequest(requestWithPayment(deposit.payload), async () => ({ chargedAmount: "100" }));
+    const channel = await requireChannel(store, deposit.channelId);
+    const accepted = initial.server.buildPaymentRequired({
+      resource: RESOURCE,
+      scheme: "batch-settlement",
+      channel,
+    }).accepts[0] as BatchPaymentRequirements;
+
+    const refreshed = makeServer({ ...rolling, store, refundTimeoutDaa: "2900" });
+    refreshed.chain.daa = "1900";
+    refreshed.chain.setUtxo({
+      outpoint: channel.activeOutpoint,
+      amount: channel.fundingAmount,
+      scriptPublicKey: channel.activeScriptPublicKey,
+      finality: "accepted",
+    });
+    const voucher = makeVoucherPayment(refreshed, channel, { accepted, voucherAmount: "200" });
+    let executed = false;
+
+    const response = await refreshed.server.handlePaidRequest(requestWithPayment(voucher), async () => {
+      executed = true;
+      return { body: "wrong" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    const corrective = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    const next = corrective.accepts[0] as BatchPaymentRequirements;
+    expect(next.extra.refundTimeoutDaa).toBe("2900");
+    expect(next.extra.channelState).toBeUndefined();
+    expect(next.extra.voucherState).toBeUndefined();
+    await expect(store.loadChannel(channel.channelId)).resolves.toMatchObject({ status: "active" });
+  });
+
   it("accepts a retry that selected a corrective channel-state offer", async () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);

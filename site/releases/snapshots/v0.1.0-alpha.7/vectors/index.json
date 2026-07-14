@@ -1,8 +1,8 @@
 [
   {
     "path": "/vectors/README.md",
-    "bytes": 2397,
-    "sha256": "10f21407e1bacc03866061ffaf531069e21d479182a7cac77ce79350cdd54499"
+    "bytes": 2608,
+    "sha256": "0489b6f7824b3a7ffd007624af2c860a6cb91843fdb65cd50b6d89ea4505d65c"
   },
   {
     "path": "/vectors/channel-id/base.json",
@@ -36,8 +36,8 @@
   },
   {
     "path": "/vectors/negative/empty-success-without-commitment.json",
-    "bytes": 410,
-    "sha256": "a9613bcc8245286dc8f6b4042092681d1d9dbae5debc11451e1032e29f6607e7"
+    "bytes": 434,
+    "sha256": "0b577f568c4a654fb76a74f6b7d498065ba6e150c81d72d964326ffb26802bbd"
   },
   {
     "path": "/vectors/negative/exact-reservation-partial-terms.json",
@@ -186,7 +186,7 @@
   },
   {
     "path": "/vectors/x402-http/exact-transaction.json",
-    "bytes": 7162,
-    "sha256": "15b5a878df6453d456b06b36bab3e17f872430bb744efd716a8008a0fbe17a9f"
+    "bytes": 11035,
+    "sha256": "4adb28c483ca11554c22d164dc691800c5a85cde3bc68557cb225e34e75a81b5"
   }
 ]

@@ -1,3 +1,5 @@
+import fs from "node:fs";
+import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { blake2b } from "@noble/hashes/blake2.js";
@@ -312,6 +314,64 @@ describe("KaspaPnnClient", () => {
 });
 
 describe("RestExactTransactionVerifier", () => {
+  it("verifies the committed KIP-10 exact HTTP vector", async () => {
+    const vector = JSON.parse(
+      await fs.promises.readFile(
+        fileURLToPath(new URL("../../../vectors/x402-http/exact-transaction.json", import.meta.url).toString()),
+        "utf8",
+      ),
+    ) as {
+      paymentRequired: {
+        accepts: Array<{
+          amount: string;
+          payTo: string;
+          extra: {
+            reservationId: string;
+            templateId: "kaspa-x402-kip10-additive-v1";
+            transactionEncoding: "kaspa-sdk-safe-json-v2.0.0";
+            borrowOutpoint: { txid: string; index: number };
+            borrowAmount: string;
+            borrowScriptPublicKey: string;
+            borrowRedeemScript: string;
+            additiveThresholdSompi: string;
+            paymentOutputIndex: number;
+          };
+        }>;
+      };
+      paymentPayload: {
+        payload: {
+          transaction: string;
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0";
+          paymentOutputIndex: number;
+        };
+      };
+    };
+    const accepted = vector.paymentRequired.accepts[0]!;
+    const artifact = JSON.parse(vector.paymentPayload.payload.transaction) as { id: string };
+    const verifier = offlineExactVerifier();
+
+    await expect(
+      verifier.verifyExactPayment({
+        network: "kaspa:testnet-10",
+        transaction: vector.paymentPayload.payload.transaction,
+        transactionEncoding: vector.paymentPayload.payload.transactionEncoding,
+        paymentOutputIndex: vector.paymentPayload.payload.paymentOutputIndex,
+        amount: accepted.amount,
+        payTo: accepted.payTo,
+        payToScriptPublicKey: scriptPublicKeyForAddress(accepted.payTo, "kaspa:testnet-10"),
+        requiredFinality: "accepted",
+        reservation: accepted.extra,
+      }),
+    ).resolves.toMatchObject({
+      transactionId: artifact.id,
+      continuation: {
+        outpoint: { txid: artifact.id, index: 0 },
+        amount: "110000000",
+        scriptPublicKey: accepted.extra.borrowScriptPublicKey,
+      },
+    });
+  });
+
   it("verifies reservation-backed KIP-10 exact transaction artifacts", async () => {
     const exact = exactTransactionFixture();
     const verifier = new RestExactTransactionVerifier(

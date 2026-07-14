@@ -9,7 +9,7 @@ use kaspa_consensus_core::{
         tx as tx_hashing,
         HasherExtensions,
     },
-    mass::{transaction_estimated_serialized_size, MassCalculator, SigopCount},
+    mass::{transaction_estimated_serialized_size, MassCalculator},
     subnets::SubnetworkId,
     tx::{
         CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint,
@@ -151,7 +151,7 @@ fn main() -> Result<()> {
             "transactionHash": vector.expected.transaction_hash,
         }));
     }
-    let kip10 = validate_kip10_exact_template()?;
+    let kip10 = validate_kip10_exact_template(repo_root)?;
 
     println!(
         "{}",
@@ -170,11 +170,27 @@ fn main() -> Result<()> {
     Ok(())
 }
 
-fn validate_kip10_exact_template() -> Result<serde_json::Value> {
-    let owner_public_key = [0x11_u8; 32];
-    let threshold = 10_000_000_i64;
+fn validate_kip10_exact_template(repo_root: &Path) -> Result<serde_json::Value> {
+    let vector_path = "vectors/x402-http/exact-transaction.json";
+    let contents = fs::read_to_string(repo_root.join(vector_path)).with_context(|| format!("reading {vector_path}"))?;
+    let vector: serde_json::Value = serde_json::from_str(&contents).with_context(|| format!("parsing {vector_path}"))?;
+    let extra = &vector["paymentRequired"]["accepts"][0]["extra"];
+    let expected_script = json_string(extra, "borrowRedeemScript")?;
+    let script = parse_hex(expected_script, "borrowRedeemScript")?;
+    if script.len() < 34 || script[0] != OpIf || script[1] != 32 {
+        return Err(anyhow!("exact HTTP vector does not contain a canonical KIP-10 owner key prefix"));
+    }
+    let owner_public_key: [u8; 32] = script[2..34]
+        .try_into()
+        .map_err(|_| anyhow!("KIP-10 owner public key must be 32 bytes"))?;
+    let threshold = json_string(extra, "additiveThresholdSompi")?
+        .parse::<i64>()
+        .context("parsing additiveThresholdSompi")?;
+    if threshold <= 0 {
+        return Err(anyhow!("additiveThresholdSompi must be positive"));
+    }
     let mut builder = ScriptBuilder::new();
-    let script = builder
+    let canonical_script = builder
         .add_op(OpIf)?
         .add_data(&owner_public_key)?
         .add_op(OpCheckSig)?
@@ -192,25 +208,37 @@ fn validate_kip10_exact_template() -> Result<serde_json::Value> {
         .add_ops(&[OpSub, OpTxInputIndex, OpTxInputAmount, OpGreaterThanOrEqual])?
         .add_op(OpEndIf)?
         .drain();
-    let expected_script = format!(
-        "6320{}ac67b9bfb9c388b9c2048096980094b9bea268",
-        "11".repeat(32)
-    );
-    expect_eq(hex::encode(&script), expected_script.as_str(), "KIP-10 redeem script")?;
+    expect_eq(hex::encode(&canonical_script), expected_script, "KIP-10 redeem script")?;
 
-    let script_public_key = pay_to_script_hash_script(&script);
-    let input_amount = 100_000_000_u64;
+    let script_public_key = pay_to_script_hash_script(&canonical_script);
+    let serialized_script_public_key = format!(
+        "{:02x}{:02x}{}",
+        script_public_key.version() >> 8,
+        script_public_key.version() & 0xff,
+        hex::encode(script_public_key.script())
+    );
+    expect_eq(
+        serialized_script_public_key.as_str(),
+        json_string(extra, "borrowScriptPublicKey")?,
+        "KIP-10 script public key",
+    )?;
+
+    let input_amount = json_string(extra, "borrowAmount")?
+        .parse::<u64>()
+        .context("parsing borrowAmount")?;
+    let borrow_outpoint = &extra["borrowOutpoint"];
     let mut signature_builder = ScriptBuilder::new();
-    let signature_script = signature_builder.add_op(OpFalse)?.add_data(&script)?.drain();
-    let input = TransactionInput {
-        previous_outpoint: TransactionOutpoint {
-            transaction_id: TransactionId::from_bytes([0x22; 32]),
-            index: 0,
+    let signature_script = signature_builder.add_op(OpFalse)?.add_data(&canonical_script)?.drain();
+    let input = TransactionInput::new_with_compute_budget(
+        TransactionOutpoint {
+            transaction_id: TransactionId::from_str(json_string(borrow_outpoint, "txid")?)
+                .context("parsing borrow outpoint txid")?,
+            index: json_u32(borrow_outpoint, "index")?,
         },
         signature_script,
-        sequence: 0,
-        compute_commit: SigopCount(1).into(),
-    };
+        0,
+        10,
+    );
     let utxo = UtxoEntry::new(input_amount, script_public_key.clone(), 0, false, None);
     let output = TransactionOutput {
         value: input_amount + threshold as u64,
@@ -233,13 +261,28 @@ fn validate_kip10_exact_template() -> Result<serde_json::Value> {
     }
 
     Ok(json!({
+        "vector": vector_path,
         "template": "kaspa-x402-kip10-additive-v1",
         "redeemScript": expected_script,
+        "scriptPublicKey": serialized_script_public_key,
         "thresholdSompi": threshold.to_string(),
         "validContinuation": "accepted",
         "belowThreshold": "rejected",
         "wrongContinuationScript": "rejected",
     }))
+}
+
+fn json_string<'a>(value: &'a serde_json::Value, field: &str) -> Result<&'a str> {
+    value[field]
+        .as_str()
+        .ok_or_else(|| anyhow!("{field} must be a string"))
+}
+
+fn json_u32(value: &serde_json::Value, field: &str) -> Result<u32> {
+    let number = value[field]
+        .as_u64()
+        .ok_or_else(|| anyhow!("{field} must be an unsigned integer"))?;
+    number.try_into().map_err(|_| anyhow!("{field} exceeds uint32"))
 }
 
 fn execute_kip10_input(tx: &Transaction, utxo: &UtxoEntry) -> Result<()> {
