@@ -69,6 +69,7 @@ import {
   type DirectModeServerConfig,
   type ExactPaymentRecord,
   type ExactHeadChallenge,
+  type ExactHeadLineageStep,
   type ExactHeadRecord,
   type ExactSettlementAttemptRecord,
   type ExactSettlementClaimResult,
@@ -632,6 +633,94 @@ export class DirectModeServer {
       new Date().toISOString(),
     );
     return this.#config.store.loadExactSettlementAttempt(attempt.transactionId);
+  }
+
+  async reconcileExactHead(
+    headId: Hash32Hex,
+    candidateTransactionIds: readonly Hash32Hex[] = [],
+  ): Promise<ExactHeadRecord> {
+    if (!this.#config.exactHeadReconciler) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact head reconciler is required",
+      );
+    }
+    if (
+      candidateTransactionIds.length > 64 ||
+      candidateTransactionIds.some(
+        (transactionId) => !/^[0-9a-fA-F]{64}$/.test(transactionId),
+      )
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact head reconciliation candidates are invalid",
+      );
+    }
+    const head = await this.#config.store.loadExactHead(headId);
+    if (!head) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact head was not found",
+      );
+    }
+    if (head.status === "claimed" || head.status === "retired") {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "claimed or retired exact heads cannot be externally reconciled",
+      );
+    }
+
+    const result = await this.#config.exactHeadReconciler.reconcileExactHead(
+      head,
+      candidateTransactionIds,
+    );
+    const observedAt = new Date().toISOString();
+    if (result.status === "unknown") {
+      await this.#config.store.markExactHeadUnavailable(
+        head.headId,
+        result.reason,
+        observedAt,
+      );
+      return (await this.#config.store.loadExactHead(head.headId))!;
+    }
+    if (result.status === "current") {
+      if (
+        !sameOutpoint(result.outpoint, head.currentOutpoint) ||
+        result.amount !== head.currentAmount ||
+        result.scriptPublicKey.toLowerCase() !==
+          head.scriptPublicKey.toLowerCase()
+      ) {
+        await this.#config.store.markExactHeadUnavailable(
+          head.headId,
+          "trusted current-head evidence does not match durable state",
+          observedAt,
+        );
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "trusted current-head evidence does not match durable state",
+        );
+      }
+      return head;
+    }
+
+    try {
+      assertExactHeadLineageResult(head, result.steps);
+    } catch (error) {
+      await this.#config.store.markExactHeadUnavailable(
+        head.headId,
+        "trusted external-head evidence failed lineage validation",
+        observedAt,
+      );
+      throw error;
+    }
+    return this.#config.store.applyExactHeadLineage({
+      headId: head.headId,
+      expectedVersion: head.version,
+      expectedOutpoint: head.currentOutpoint,
+      expectedAmount: head.currentAmount,
+      steps: result.steps,
+      observedAt,
+    });
   }
 
   async listClaimableChannels(): Promise<ServerChannelRecord[]> {
@@ -3235,6 +3324,41 @@ function sameActiveOutpoint(
     channel.activeScriptPublicKey.toLowerCase() ===
       activeScriptPublicKey.toLowerCase()
   );
+}
+
+function assertExactHeadLineageResult(
+  head: ExactHeadRecord,
+  steps: readonly ExactHeadLineageStep[],
+): void {
+  if (steps.length === 0 || steps.length > 64) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_transaction",
+      "exact head reconciliation requires between 1 and 64 lineage steps",
+    );
+  }
+  const threshold = parseSompiString(head.additiveThresholdSompi);
+  let currentOutpoint = head.currentOutpoint;
+  let currentAmount = parseSompiString(head.currentAmount);
+  for (const step of steps) {
+    if (
+      (step.finality !== "accepted" && step.finality !== "confirmed") ||
+      !/^[0-9a-fA-F]{64}$/.test(step.transactionId) ||
+      !sameOutpoint(step.spentOutpoint, currentOutpoint) ||
+      step.successor.outpoint.txid.toLowerCase() !==
+        step.transactionId.toLowerCase() ||
+      step.successor.outpoint.index !== currentOutpoint.index ||
+      step.successor.scriptPublicKey.toLowerCase() !==
+        head.scriptPublicKey.toLowerCase() ||
+      parseSompiString(step.successor.amount) < currentAmount + threshold
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact head reconciliation does not prove a valid KIP-10 successor lineage",
+      );
+    }
+    currentOutpoint = step.successor.outpoint;
+    currentAmount = parseSompiString(step.successor.amount);
+  }
 }
 
 function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {

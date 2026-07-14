@@ -54,7 +54,33 @@ async function main() {
     return;
   }
 
-  throw new Error(`Unknown command ${command}. Use stats, list, or register.`);
+  if (command === "reconcile") {
+    const headId = option("--head-id");
+    if (!headId) throw new Error("Pass --head-id <64-hex-head-id>.");
+    const transactionList = option("--transactions");
+    const candidateTransactionIds = transactionList
+      ? transactionList.split(",").map((value) => value.trim())
+      : [];
+    if (candidateTransactionIds.some((value) => value.length === 0))
+      throw new Error(
+        "--transactions must be an ordered comma-separated transaction-id list.",
+      );
+    const result = await requestJson(
+      gatewayUrl,
+      "/admin/exact-heads/reconcile",
+      adminToken,
+      {
+        method: "POST",
+        body: JSON.stringify({ headId, candidateTransactionIds }),
+      },
+    );
+    console.log(JSON.stringify(result, null, 2));
+    return;
+  }
+
+  throw new Error(
+    `Unknown command ${command}. Use stats, list, register, or reconcile.`,
+  );
 }
 
 async function requestJson(baseUrl, path, adminToken, init = {}) {

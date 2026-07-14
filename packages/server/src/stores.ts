@@ -1,6 +1,7 @@
 import { parseSompiString, type Hash32Hex } from "@kaspa-x402/core";
 import {
   acceptExactHead,
+  applyExactHeadLineage as applyExactHeadLineageRecord,
   claimExactHead,
   exactHeadMatchesSelection as sharedExactHeadMatchesSelection,
   exactSettlementAttemptsMatch,
@@ -15,6 +16,7 @@ import type {
   ExactPaymentRecord,
   ExactSettlementCommit,
   ExactHeadRecord,
+  ExactHeadLineageApply,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
@@ -317,6 +319,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
       unavailableReason: reason,
       updatedAt: observedAt,
     });
+  }
+
+  async applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    const head = this.#exactHeads.get(input.headId.toLowerCase());
+    if (!head) throw new Error("exact head was not found");
+    const advanced = applyExactHeadLineageRecord(head, input);
+    this.#exactHeads.set(advanced.headId, clone(advanced));
+    return clone(advanced);
   }
 
   #requireExactAttempt(transactionId: Hash32Hex): ExactSettlementAttemptRecord {

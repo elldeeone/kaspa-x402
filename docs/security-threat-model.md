@@ -55,6 +55,13 @@ Required checks include:
   amount, script, threshold, and request fingerprint without reserving the head;
 - additive settlement advances the expected head version atomically, and stale
   competitors receive fresh terms;
+- an available hosted additive head is checked against trusted current UTXO
+  evidence before an offer; external advancement is adopted only through an
+  ordered accepted transaction lineage that spends each prior outpoint and
+  preserves the same script and output index;
+- arbitrary same-address outputs are never treated as head successors, and an
+  unprovable external spend makes only that optional additive head unavailable
+  while default standard-native exact remains usable;
 - the transaction/output identity has not already been consumed;
 - finality satisfies the server policy before protected content is released.
 

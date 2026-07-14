@@ -14,6 +14,7 @@ import {
   type ExactPaymentRecord,
   type ExactSettlementCommit,
   type ExactHeadRecord,
+  type ExactHeadLineageApply,
   type ExactSettlementAttemptRecord,
   type PaymentIdentifierRecord,
   type ServerChannelRecord,
@@ -154,6 +155,60 @@ function defineStoreContract(factory: StoreFactory): void {
         version: "0",
       }),
     ]);
+  });
+
+  it("applies external head lineage atomically and persists it across restart", async () => {
+    let store = await factory.create();
+    await store.registerExactHead(exactHead());
+    const input: ExactHeadLineageApply = {
+      headId: HEAD_ID,
+      expectedVersion: "0",
+      expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+      expectedAmount: "100000000",
+      steps: [
+        {
+          transactionId: TX,
+          spentOutpoint: { txid: FUNDING_TX, index: 0 },
+          successor: {
+            outpoint: { txid: TX, index: 0 },
+            amount: "110000000",
+            scriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+          },
+          finality: "accepted",
+        },
+        {
+          transactionId: OTHER_TX,
+          spentOutpoint: { txid: TX, index: 0 },
+          successor: {
+            outpoint: { txid: OTHER_TX, index: 0 },
+            amount: "125000000",
+            scriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+          },
+          finality: "confirmed",
+        },
+      ],
+      observedAt: "2026-07-07T00:00:03.000Z",
+    };
+
+    await expect(store.applyExactHeadLineage(input)).resolves.toMatchObject({
+      version: "2",
+      currentOutpoint: { txid: OTHER_TX, index: 0 },
+      currentAmount: "125000000",
+      lastTransactionId: OTHER_TX,
+      status: "available",
+    });
+    await expect(store.applyExactHeadLineage(input)).rejects.toThrow(
+      "head changed",
+    );
+
+    if (store instanceof DurableMockServerChannelStore) {
+      store = await store.restart();
+      await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+        version: "2",
+        currentOutpoint: { txid: OTHER_TX, index: 0 },
+        currentAmount: "125000000",
+      });
+    }
   });
 
   it("claims one additive head winner, advances by compare-and-swap, and prevents handler replay", async () => {
@@ -351,6 +406,7 @@ type DurableMockOperation =
       reason: string;
       observedAt: string;
     }
+  | { type: "applyExactHeadLineage"; input: ExactHeadLineageApply }
   | { type: "saveClaimAttempt"; record: ClaimAttemptRecord }
   | {
       type: "applyClaimAttempt";
@@ -502,6 +558,17 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     );
   }
 
+  async applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    const advanced = await super.applyExactHeadLineage(input);
+    if (!this.#hydrating)
+      this.#journal.operations.push(
+        clone({ type: "applyExactHeadLineage", input }),
+      );
+    return advanced;
+  }
+
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#write({ type: "saveClaimAttempt", record }, () =>
       super.saveClaimAttempt(record),
@@ -584,6 +651,9 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
           operation.reason,
           operation.observedAt,
         );
+        return;
+      case "applyExactHeadLineage":
+        await super.applyExactHeadLineage(operation.input);
         return;
       case "saveClaimAttempt":
         await super.saveClaimAttempt(operation.record);

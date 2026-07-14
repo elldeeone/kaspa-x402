@@ -103,6 +103,38 @@ describe("gateway durable ledger", () => {
     ]);
   });
 
+  it("atomically persists a verified external head lineage", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerExactHead(exactHead());
+
+    await expect(
+      ledger.applyExactHeadLineage({
+        headId: HEAD_ID,
+        expectedVersion: "0",
+        expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+        expectedAmount: "100000000",
+        steps: [
+          {
+            transactionId: OTHER_TX,
+            spentOutpoint: { txid: FUNDING_TX, index: 0 },
+            successor: {
+              outpoint: { txid: OTHER_TX, index: 0 },
+              amount: "110000000",
+              scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+            },
+            finality: "accepted",
+          },
+        ],
+        observedAt: "2026-07-07T00:00:01.000Z",
+      }),
+    ).resolves.toMatchObject({
+      version: "1",
+      currentOutpoint: { txid: OTHER_TX, index: 0 },
+      currentAmount: "110000000",
+      status: "available",
+    });
+  });
+
   it("atomically advances one additive head winner and opens its handler once", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await ledger.registerExactHead(exactHead());

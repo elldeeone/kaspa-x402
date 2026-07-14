@@ -35,22 +35,23 @@ https://demo.kaspa-x402.org
 
 ## Endpoints
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `GET` | `/` | Returns a JSON endpoint index. |
-| `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
-| `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
-| `GET` | `/supported` | Returns the direct-mode supported-kind list. |
-| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Alpha.8 `standard-native` returns `402` while exact is enabled; optional `additive` also requires an available head. |
-| `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
-| `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
+| Method | Path                         | Purpose                                                                                                                                                     |
+| ------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/`                          | Returns a JSON endpoint index.                                                                                                                              |
+| `GET`  | `/health`                    | Returns configuration health and current `kaspa:testnet-10` chain evidence.                                                                                 |
+| `GET`  | `/canary`                    | Returns the enabled state and latest scheduled canary report.                                                                                               |
+| `GET`  | `/supported`                 | Returns the direct-mode supported-kind list.                                                                                                                |
+| `GET`  | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Alpha.8 `standard-native` returns `402` while exact is enabled; optional `additive` also requires an available head. |
+| `GET`  | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`.                                                             |
+| `GET`  | `/metrics`                   | Returns coarse gateway counters for smoke testing and operations.                                                                                           |
 
 The alpha.8 Worker source exposes admin-only additive-head endpoints:
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `GET` | `/admin/exact-heads` | Requires `Authorization: Bearer <token>`; returns head stats and records. |
-| `POST` | `/admin/exact-heads/register` | Requires `Authorization: Bearer <token>`; registers funded reusable KIP-10 head terms. |
+| Method | Path                           | Purpose                                                                                                                                    |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/admin/exact-heads`           | Requires `Authorization: Bearer <token>`; returns head stats and records.                                                                  |
+| `POST` | `/admin/exact-heads/register`  | Requires `Authorization: Bearer <token>`; registers funded reusable KIP-10 head terms.                                                     |
+| `POST` | `/admin/exact-heads/reconcile` | Requires `Authorization: Bearer <token>`; proves an ordered accepted successor lineage and atomically restores the resulting current head. |
 
 The admin token is a Worker secret and is not committed to the repository.
 
@@ -136,6 +137,24 @@ Check availability with:
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-heads -- stats
 ```
+
+The Worker checks every available additive head against the accepted address
+UTXO set before issuing a paid challenge. A missing or conflicting outpoint is
+marked unavailable. If an external transaction legitimately advanced that
+head, restore it only with the complete ordered lineage:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+  npm run demo:exact-heads -- reconcile \
+  --head-id <head-id> \
+  --transactions <first-txid>,<next-txid>
+```
+
+Each accepted transaction must spend the preceding outpoint, recreate the same
+script at the same output index with at least the fixed KIP-10 increase, and
+end at the current unspent UTXO. A same-address output without that lineage is
+never adopted. Calling `reconcile` without `--transactions` performs a
+current-head check and fails closed if the durable outpoint is missing.
 
 Registration enables additive offers only when hosted exact settlement is also
 enabled. Unpaid offers only read a head. An accepted settlement atomically

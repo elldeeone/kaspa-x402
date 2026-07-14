@@ -22,6 +22,7 @@ import {
   NativeAddressCodec,
   NativeVoucherVerifier,
   PnnBroadcastChainProvider,
+  RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -147,10 +148,23 @@ export async function handleGatewayRequest(
 
   let gateway: { server: DirectModeServer };
   try {
-    gateway = await createGateway(config, state);
+    gateway = await createGateway(config, state, {
+      reconcileAvailableExactHeads:
+        profile === "exact" && config.exactProfile === "additive",
+    });
   } catch (error) {
     return json(
       { ok: false, error: errorMessage(error) },
+      { status: 503, headers: corsHeaders(config) },
+    );
+  }
+  if (
+    profile === "exact" &&
+    config.exactProfile === "additive" &&
+    !(await hostedExactAvailable(config, state))
+  ) {
+    return json(
+      { ok: false, error: "exact_unavailable" },
       { status: 503, headers: corsHeaders(config) },
     );
   }
@@ -398,6 +412,7 @@ function gatewaySupportedKinds(
 async function createGateway(
   config: GatewayConfig,
   state: GatewayStateClient,
+  options: { reconcileAvailableExactHeads?: boolean } = {},
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
@@ -457,10 +472,17 @@ async function createGateway(
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
+    exactHeadReconciler: new RestExactHeadReconciler(rest),
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     requirePaymentIdentifier: false,
   });
+  if (options.reconcileAvailableExactHeads) {
+    for (const head of await state.listExactHeads()) {
+      if (head.status === "available")
+        await server.reconcileExactHead(head.headId);
+    }
+  }
   return { server };
 }
 
@@ -580,6 +602,12 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.markExactHeadUnavailable(headId, reason, observedAt);
   }
 
+  applyExactHeadLineage(
+    input: Parameters<ServerStateStore["applyExactHeadLineage"]>[0],
+  ) {
+    return this.#inner.applyExactHeadLineage(input);
+  }
+
   commitSettlement(
     record: Parameters<ServerStateStore["commitSettlement"]>[0],
   ) {
@@ -689,6 +717,44 @@ async function exactHeadsAdminResponse(
         registered.push(await state.registerExactHead(record));
       return json(
         { ok: true, registered, stats: await exactHeadStats(state) },
+        { headers: corsHeaders(config) },
+      );
+    } catch (error) {
+      return json(
+        { ok: false, error: errorMessage(error) },
+        { status: 400, headers: corsHeaders(config) },
+      );
+    }
+  }
+  if (
+    url.pathname === "/admin/exact-heads/reconcile" &&
+    request.method === "POST"
+  ) {
+    try {
+      const body = await readRequestJsonWithLimit<{
+        headId?: unknown;
+        candidateTransactionIds?: unknown;
+      }>(request, MAX_ADMIN_JSON_BYTES, "exact head reconciliation");
+      if (typeof body.headId !== "string")
+        throw new Error("exact head reconciliation requires headId");
+      if (
+        body.candidateTransactionIds !== undefined &&
+        (!Array.isArray(body.candidateTransactionIds) ||
+          body.candidateTransactionIds.some(
+            (transactionId) => typeof transactionId !== "string",
+          ))
+      ) {
+        throw new Error(
+          "candidateTransactionIds must be an array of transaction ids",
+        );
+      }
+      const gateway = await createGateway(config, state);
+      const head = await gateway.server.reconcileExactHead(
+        body.headId,
+        (body.candidateTransactionIds ?? []) as string[],
+      );
+      return json(
+        { ok: true, head, stats: await exactHeadStats(state) },
         { headers: corsHeaders(config) },
       );
     } catch (error) {

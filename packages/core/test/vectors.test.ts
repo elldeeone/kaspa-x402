@@ -560,6 +560,14 @@ describe("full-consensus exact profile vectors", () => {
 
     expect(standard).toMatchObject({ profile: "standard-native", version: 0 });
     expect(standard.transaction.outputs[0]?.amount).toBe(standard.amount);
+    const standardInputTotal = standard.transaction.inputs.reduce(
+      (total, input) => total + BigInt(input.utxo.amount),
+      0n,
+    );
+    const standardChange = BigInt(standard.transaction.outputs[1]!.amount);
+    expect(standardInputTotal - standardChange).toBe(
+      BigInt(standard.amount) + BigInt(standard.fee),
+    );
     expect(
       standard.transaction.outputs.every((output) => output.covenant === null),
     ).toBe(true);
@@ -569,6 +577,13 @@ describe("full-consensus exact profile vectors", () => {
       BigInt(additive.transaction.outputs[0]!.amount) -
         BigInt(additive.transaction.inputs[0]!.utxo.amount),
     ).toBe(BigInt(additive.amount));
+    const additivePayerInputTotal = additive.transaction.inputs
+      .slice(1)
+      .reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
+    const additiveChange = BigInt(additive.transaction.outputs[1]!.amount);
+    expect(additivePayerInputTotal - additiveChange).toBe(
+      BigInt(additive.amount) + BigInt(additive.fee),
+    );
     expect(additive.transaction.outputs).toHaveLength(2);
     expect(
       additive.transaction.outputs.every((output) => output.covenant === null),

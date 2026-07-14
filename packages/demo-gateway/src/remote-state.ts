@@ -4,6 +4,7 @@ import type {
   ExactPaymentRecord,
   ExactSettlementCommit,
   ExactHeadRecord,
+  ExactHeadLineageApply,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
@@ -144,6 +145,12 @@ export class RemoteGatewayState implements GatewayStateClient {
       reason,
       observedAt,
     });
+  }
+
+  applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    return this.#call("applyExactHeadLineage", { input });
   }
 
   commitSettlement(record: SettlementCommit): Promise<void> {

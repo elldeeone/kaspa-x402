@@ -156,6 +156,45 @@ export interface ExactHeadSelectionRequest {
   selectionKey: Hash32Hex;
 }
 
+/** One accepted transaction link from a known KIP-10 head outpoint to its same-index successor. */
+export interface ExactHeadLineageStep {
+  transactionId: Hash32Hex;
+  spentOutpoint: FundingOutpoint;
+  successor: ExactHeadContinuation;
+  finality: "accepted" | "confirmed";
+}
+
+export type ExactHeadReconciliation =
+  | {
+      status: "current";
+      outpoint: FundingOutpoint;
+      amount: SompiString;
+      scriptPublicKey: ByteHex;
+      finality: "accepted" | "confirmed";
+    }
+  | {
+      status: "advanced";
+      steps: ExactHeadLineageStep[];
+    }
+  | { status: "unknown"; reason: string };
+
+/** Trusted chain adapter that proves current UTXO state or a complete successor lineage. */
+export interface ExactHeadReconciler {
+  reconcileExactHead(
+    head: ExactHeadRecord,
+    candidateTransactionIds?: readonly Hash32Hex[],
+  ): Promise<ExactHeadReconciliation> | ExactHeadReconciliation;
+}
+
+export interface ExactHeadLineageApply {
+  headId: Hash32Hex;
+  expectedVersion: SompiString;
+  expectedOutpoint: FundingOutpoint;
+  expectedAmount: SompiString;
+  steps: ExactHeadLineageStep[];
+  observedAt: string;
+}
+
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
   profile: ExactProfile;
@@ -418,6 +457,8 @@ export interface ExactHeadStore {
     reason: string,
     observedAt: string,
   ): Promise<void>;
+  /** Atomically applies a fully verified external successor chain from the expected head snapshot. */
+  applyExactHeadLineage(input: ExactHeadLineageApply): Promise<ExactHeadRecord>;
 }
 
 export type ClaimAttemptStatus =
@@ -534,6 +575,7 @@ export interface DirectModeServerConfig {
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
+  exactHeadReconciler?: ExactHeadReconciler;
   /** Exact wire profile offered by this server. Defaults to standard-native. */
   exactProfile?: ExactProfile;
   minimumExactAdditiveThresholdSompi?: SompiString;

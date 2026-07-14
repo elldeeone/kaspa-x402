@@ -6,6 +6,7 @@ import {
 } from "@kaspa-x402/covenant";
 import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
 import { addressForScriptPublicKey } from "../src/kaspa-native.js";
+import type { ExactHeadRecord } from "@kaspa-x402/server";
 import {
   dispatchGatewayState,
   GatewayLedger,
@@ -375,6 +376,63 @@ describe("gateway canary", () => {
         }),
       }),
     );
+
+    stubAdditiveHeadFetches("current");
+    await expect(requestJson(env, "/exact")).resolves.toMatchObject({
+      status: 402,
+    });
+  });
+
+  it("fails additive offers closed on a missing head and recovers only from proven lineage", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_EXACT_PROFILE: "additive",
+      KASPA_X402_PAY_TO: KIP10_ADDRESS,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS:
+        "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+      KASPA_X402_ADMIN_TOKEN: "admin-token",
+    };
+    await new GatewayLedger(storage).registerExactHead(exactHead());
+
+    stubAdditiveHeadFetches("missing");
+    await expect(requestJson(env, "/exact")).resolves.toMatchObject({
+      status: 503,
+      body: { ok: false, error: "exact_unavailable" },
+    });
+    await expect(
+      new GatewayLedger(storage).listExactHeads(),
+    ).resolves.toMatchObject([{ status: "unavailable" }]);
+
+    stubAdditiveHeadFetches("advanced");
+    const recovered = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({
+          headId: "90".repeat(32),
+          candidateTransactionIds: ["11".repeat(32)],
+        }),
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(recovered.status).toBe(200);
+    await expect(recovered.json()).resolves.toMatchObject({
+      ok: true,
+      head: {
+        status: "available",
+        version: "1",
+        currentOutpoint: { txid: "11".repeat(32), index: 0 },
+        currentAmount: "120000000",
+      },
+    });
+    await expect(requestJson(env, "/exact")).resolves.toMatchObject({
+      status: 402,
+    });
   });
 });
 
@@ -415,6 +473,69 @@ function stubCanaryFetches(): void {
     if (url === "https://kaspa-x402.org/docs/") {
       return new Response("<!doctype html><h1>Docs</h1>", {
         headers: { "content-type": "text/html" },
+      });
+    }
+    throw new Error(`unexpected fetch ${url}`);
+  });
+}
+
+function stubAdditiveHeadFetches(
+  state: "current" | "missing" | "advanced",
+): void {
+  vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
+    const url = new URL(
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url,
+    );
+    if (url.pathname === "/info/blockdag") {
+      return Response.json({
+        networkName: "kaspa-testnet-10",
+        virtualDaaScore: "507000000",
+      });
+    }
+    if (
+      url.pathname === `/addresses/${encodeURIComponent(KIP10_ADDRESS)}/utxos`
+    ) {
+      if (state === "missing") return Response.json([]);
+      const advanced = state === "advanced";
+      return Response.json([
+        {
+          outpoint: {
+            transactionId: advanced ? "11".repeat(32) : FUNDING_TX,
+            index: 0,
+          },
+          utxoEntry: {
+            amount: advanced ? "120000000" : "100000000",
+            scriptPublicKey: {
+              scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY.slice(4),
+            },
+          },
+        },
+      ]);
+    }
+    if (
+      state === "advanced" &&
+      url.pathname === `/transactions/${"11".repeat(32)}`
+    ) {
+      return Response.json({
+        transaction_id: "11".repeat(32),
+        is_accepted: true,
+        inputs: [
+          {
+            previous_outpoint_hash: FUNDING_TX,
+            previous_outpoint_index: 0,
+          },
+        ],
+        outputs: [
+          {
+            index: 0,
+            amount: "120000000",
+            script_public_key: KIP10_SCRIPT_PUBLIC_KEY.slice(4),
+          },
+        ],
       });
     }
     throw new Error(`unexpected fetch ${url}`);
@@ -490,7 +611,7 @@ function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : structuredClone(value);
 }
 
-function exactHead() {
+function exactHead(): ExactHeadRecord {
   return {
     headId: "90".repeat(32),
     network: "kaspa:testnet-10",

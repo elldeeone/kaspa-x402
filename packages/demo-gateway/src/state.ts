@@ -6,6 +6,7 @@ import type {
   ExactPaymentRecord,
   ExactSettlementCommit,
   ExactHeadRecord,
+  ExactHeadLineageApply,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
@@ -16,6 +17,7 @@ import type {
 } from "@kaspa-x402/server";
 import {
   acceptExactHead,
+  applyExactHeadLineage as applyExactHeadLineageRecord,
   claimExactHead,
   exactHeadMatchesSelection,
   exactSettlementAttemptsMatch,
@@ -80,6 +82,7 @@ export type GatewayStateMethod =
   | "beginExactHandler"
   | "abandonExactSettlement"
   | "markExactHeadUnavailable"
+  | "applyExactHeadLineage"
   | "resolveBatchRefundTimeoutDaa"
   | "commitSettlement"
   | "commitExactPayment"
@@ -366,6 +369,18 @@ export class GatewayLedger implements ServerStateStore {
         unavailableReason: reason,
         updatedAt: observedAt,
       });
+    });
+  }
+
+  async applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    return this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
+      if (!head) throw new Error("exact head was not found");
+      const advanced = applyExactHeadLineageRecord(head, input);
+      await txn.put(exactHeadKey(advanced.headId), advanced);
+      return clone(advanced);
     });
   }
 
@@ -756,6 +771,10 @@ export async function dispatchGatewayState(
         payload.observedAt,
       );
     }
+    case "applyExactHeadLineage":
+      return ledger.applyExactHeadLineage(
+        readPayload<{ input: ExactHeadLineageApply }>(request).input,
+      );
     case "resolveBatchRefundTimeoutDaa": {
       const payload = readPayload<{
         currentDaa: string;

@@ -1600,6 +1600,183 @@ describe("direct-mode server", () => {
     ).resolves.toMatchObject({ status: "available", version: "1" });
   });
 
+  it("follows only a complete trusted external head lineage and fails closed after reorg uncertainty", async () => {
+    let reconciliation = 0;
+    const setup = await makeAdditiveServer({
+      exactHeadReconciler: {
+        reconcileExactHead(head, candidates) {
+          reconciliation += 1;
+          if (reconciliation > 1) {
+            return {
+              status: "unknown",
+              reason: "accepted successor disappeared from the trusted view",
+            };
+          }
+          expect(candidates).toEqual([EXACT_TX_ID, CLAIM_TX]);
+          return {
+            status: "advanced",
+            steps: [
+              {
+                transactionId: EXACT_TX_ID,
+                spentOutpoint: head.currentOutpoint,
+                successor: {
+                  outpoint: { txid: EXACT_TX_ID, index: 0 },
+                  amount: "110000000",
+                  scriptPublicKey: head.scriptPublicKey,
+                },
+                finality: "accepted",
+              },
+              {
+                transactionId: CLAIM_TX,
+                spentOutpoint: { txid: EXACT_TX_ID, index: 0 },
+                successor: {
+                  outpoint: { txid: CLAIM_TX, index: 0 },
+                  amount: "125000000",
+                  scriptPublicKey: head.scriptPublicKey,
+                },
+                finality: "confirmed",
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    await expect(
+      setup.server.reconcileExactHead(EXACT_HEAD_ID, [EXACT_TX_ID, CLAIM_TX]),
+    ).resolves.toMatchObject({
+      status: "available",
+      version: "2",
+      currentOutpoint: { txid: CLAIM_TX, index: 0 },
+      currentAmount: "125000000",
+      lastTransactionId: CLAIM_TX,
+    });
+
+    await expect(
+      setup.server.reconcileExactHead(EXACT_HEAD_ID),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      unavailableReason: "accepted successor disappeared from the trusted view",
+    });
+  });
+
+  it("never adopts an attacker-created same-address output without the expected input lineage", async () => {
+    const setup = await makeAdditiveServer({
+      exactHeadReconciler: {
+        reconcileExactHead(head) {
+          return {
+            status: "advanced",
+            steps: [
+              {
+                transactionId: EXACT_TX_ID,
+                spentOutpoint: { txid: TOP_UP_TX, index: 0 },
+                successor: {
+                  outpoint: { txid: EXACT_TX_ID, index: 0 },
+                  amount: "120000000",
+                  scriptPublicKey: head.scriptPublicKey,
+                },
+                finality: "accepted",
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    await expect(
+      setup.server.reconcileExactHead(EXACT_HEAD_ID),
+    ).rejects.toThrow("valid KIP-10 successor lineage");
+    await expect(
+      setup.store.loadExactHead(EXACT_HEAD_ID),
+    ).resolves.toMatchObject({
+      status: "unavailable",
+      unavailableReason:
+        "trusted external-head evidence failed lineage validation",
+    });
+  });
+
+  it("rejects a hostile adapter finality outside accepted or confirmed", async () => {
+    const setup = await makeAdditiveServer({
+      exactHeadReconciler: {
+        reconcileExactHead(head) {
+          return {
+            status: "advanced",
+            steps: [
+              {
+                transactionId: EXACT_TX_ID,
+                spentOutpoint: head.currentOutpoint,
+                successor: {
+                  outpoint: { txid: EXACT_TX_ID, index: 0 },
+                  amount: "110000000",
+                  scriptPublicKey: head.scriptPublicKey,
+                },
+                finality: "mempool" as never,
+              },
+            ],
+          };
+        },
+      },
+    });
+
+    await expect(
+      setup.server.reconcileExactHead(EXACT_HEAD_ID),
+    ).rejects.toThrow("valid KIP-10 successor lineage");
+    await expect(
+      setup.store.loadExactHead(EXACT_HEAD_ID),
+    ).resolves.toMatchObject({ status: "unavailable" });
+  });
+
+  it("contains top-up grief to the additive head and leaves standard-native available", async () => {
+    const additive = await makeAdditiveServer({
+      exactHeadReconciler: {
+        reconcileExactHead() {
+          return {
+            status: "unknown",
+            reason: "current outpoint spent without trusted successor proof",
+          };
+        },
+      },
+    });
+    await additive.server.reconcileExactHead(EXACT_HEAD_ID);
+
+    const additiveOffer = await additive.server.handlePaidRequest(
+      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(additiveOffer.status).toBe(503);
+
+    const standard = makeServer({ exactProfile: "standard-native" });
+    const standardOffer = await standard.server.handlePaidRequest(
+      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(standardOffer.status).toBe(402);
+    const accepted = decodePaymentRequiredHeader(
+      standardOffer.headers[PAYMENT_REQUIRED_HEADER],
+    ).accepts[0] as ExactPaymentRequirements;
+    expect(accepted.extra.profile).toBe("standard-native");
+  });
+
+  it("bounds external head reconciliation candidates before calling adapters", async () => {
+    let calls = 0;
+    const setup = await makeAdditiveServer({
+      exactHeadReconciler: {
+        reconcileExactHead() {
+          calls += 1;
+          return { status: "unknown", reason: "unreachable" };
+        },
+      },
+    });
+    const candidates = Array.from({ length: 65 }, (_, index) =>
+      index.toString(16).padStart(64, "0"),
+    );
+
+    await expect(
+      setup.server.reconcileExactHead(EXACT_HEAD_ID, candidates),
+    ).rejects.toThrow("candidates are invalid");
+    expect(calls).toBe(0);
+  });
+
   it("returns a controlled 402 when request fingerprinting needs an explicit hash", async () => {
     const setup = makeServer();
     const payment = makeExactPayment(setup);

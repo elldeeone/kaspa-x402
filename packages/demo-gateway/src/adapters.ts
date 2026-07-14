@@ -1,12 +1,16 @@
 import {
   KaspaX402Error,
   type FundingOutpoint,
+  type Hash32Hex,
   type NetworkId,
   type SompiString,
 } from "@kaspa-x402/core";
 import type {
   AddressCodec,
   ChainUtxo,
+  ExactHeadReconciler,
+  ExactHeadReconciliation,
+  ExactHeadRecord,
   PreparedTransaction,
   ExactTransactionVerification,
   ExactTransactionVerificationRequest,
@@ -173,6 +177,126 @@ export class RestKaspaChainProvider implements ServerChainProvider {
     }
     await this.#client.waitForTransactionAccepted(parsed);
     return { transactionId: parsed.id, finality: "accepted" };
+  }
+}
+
+export class RestExactHeadReconciler implements ExactHeadReconciler {
+  readonly #client: KaspaRestClient;
+
+  constructor(client: KaspaRestClient) {
+    this.#client = client;
+  }
+
+  async reconcileExactHead(
+    head: ExactHeadRecord,
+    candidateTransactionIds: readonly Hash32Hex[] = [],
+  ): Promise<ExactHeadReconciliation> {
+    assertTestnet(head.network);
+    const current = (await this.#client.getUtxosForAddress(head.payTo)).find(
+      (utxo) => sameOutpoint(utxo.outpoint, head.currentOutpoint),
+    );
+    if (current) {
+      if (
+        current.amount !== head.currentAmount ||
+        current.scriptPublicKey.toLowerCase() !==
+          head.scriptPublicKey.toLowerCase()
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "current head outpoint conflicts with durable amount or script",
+        };
+      }
+      return {
+        status: "current",
+        outpoint: current.outpoint,
+        amount: current.amount,
+        scriptPublicKey: current.scriptPublicKey,
+        finality: "accepted",
+      };
+    }
+    if (candidateTransactionIds.length === 0) {
+      return {
+        status: "unknown",
+        reason:
+          "current head outpoint is spent or missing and no trusted successor lineage was supplied",
+      };
+    }
+
+    const steps = [];
+    let expectedOutpoint = head.currentOutpoint;
+    for (const candidateId of candidateTransactionIds) {
+      const transaction = await this.#client.getTransaction(candidateId);
+      if (!transaction?.is_accepted) {
+        return {
+          status: "unknown",
+          reason: `candidate head transaction ${candidateId} is not accepted`,
+        };
+      }
+      if (
+        transaction.transaction_id?.toLowerCase() !== candidateId.toLowerCase()
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "candidate head transaction id does not match trusted evidence",
+        };
+      }
+      const spendsExpected = (transaction.inputs ?? []).some(
+        (input) =>
+          input.previous_outpoint_hash?.toLowerCase() ===
+            expectedOutpoint.txid.toLowerCase() &&
+          Number(input.previous_outpoint_index) === expectedOutpoint.index,
+      );
+      const successor = (transaction.outputs ?? []).find(
+        (output, index) =>
+          Number(output.index ?? index) === expectedOutpoint.index,
+      );
+      if (
+        !spendsExpected ||
+        !successor ||
+        successor.amount === undefined ||
+        typeof successor.script_public_key !== "string"
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "candidate transaction does not prove the expected same-index successor",
+        };
+      }
+      const step = {
+        transactionId: candidateId.toLowerCase(),
+        spentOutpoint: structuredClone(expectedOutpoint),
+        successor: {
+          outpoint: {
+            txid: candidateId.toLowerCase(),
+            index: expectedOutpoint.index,
+          },
+          amount: String(successor.amount),
+          scriptPublicKey: normalizeRestScript(successor.script_public_key),
+        },
+        finality: "accepted" as const,
+      };
+      steps.push(step);
+      expectedOutpoint = step.successor.outpoint;
+    }
+
+    const finalStep = steps.at(-1)!;
+    const finalUtxo = (await this.#client.getUtxosForAddress(head.payTo)).find(
+      (utxo) => sameOutpoint(utxo.outpoint, finalStep.successor.outpoint),
+    );
+    if (
+      !finalUtxo ||
+      finalUtxo.amount !== finalStep.successor.amount ||
+      finalUtxo.scriptPublicKey.toLowerCase() !==
+        finalStep.successor.scriptPublicKey.toLowerCase()
+    ) {
+      return {
+        status: "unknown",
+        reason: "proven successor is not the current unspent head",
+      };
+    }
+    return { status: "advanced", steps };
   }
 }
 

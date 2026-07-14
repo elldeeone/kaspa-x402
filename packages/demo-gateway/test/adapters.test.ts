@@ -17,6 +17,7 @@ import {
   KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
+  RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -26,6 +27,7 @@ import {
   encodeScriptAddress,
   scriptPublicKeyForAddress,
 } from "../src/kaspa-native.js";
+import type { ExactHeadRecord } from "@kaspa-x402/server";
 
 const originalFetch = globalThis.fetch;
 
@@ -195,6 +197,117 @@ describe("RestKaspaChainProvider", () => {
         version: 0,
         scriptPublicKey: exact.headScriptPublicKey.slice(4),
       },
+    });
+  });
+});
+
+describe("RestExactHeadReconciler", () => {
+  it("proves an unchanged current head from the address UTXO set", async () => {
+    const exact = exactTransactionFixture();
+    const head = exactHeadFixture(exact);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input.toString());
+      if (url.pathname.endsWith("/utxos")) {
+        return Response.json([
+          {
+            outpoint: { transactionId: exact.headTxid, index: 0 },
+            utxoEntry: {
+              amount: "100000000",
+              scriptPublicKey: {
+                scriptPublicKey: exact.headScriptPublicKey.slice(4),
+              },
+            },
+          },
+        ]);
+      }
+      throw new Error(`unexpected REST request ${url.pathname}`);
+    }) as typeof fetch;
+
+    await expect(
+      new RestExactHeadReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactHead(head),
+    ).resolves.toEqual({
+      status: "current",
+      outpoint: { txid: exact.headTxid, index: 0 },
+      amount: "100000000",
+      scriptPublicKey: exact.headScriptPublicKey,
+      finality: "accepted",
+    });
+  });
+
+  it("proves an ordered accepted successor lineage ending at the current UTXO", async () => {
+    const exact = exactTransactionFixture();
+    const head = exactHeadFixture(exact);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input.toString());
+      if (url.pathname.endsWith("/utxos")) {
+        return Response.json([
+          {
+            outpoint: { transactionId: exact.txid, index: 0 },
+            utxoEntry: {
+              amount: "120000000",
+              scriptPublicKey: {
+                scriptPublicKey: exact.headScriptPublicKey.slice(4),
+              },
+            },
+          },
+        ]);
+      }
+      if (url.pathname === `/transactions/${exact.txid}`)
+        return Response.json(exact.restTransaction);
+      throw new Error(`unexpected REST request ${url.pathname}`);
+    }) as typeof fetch;
+
+    await expect(
+      new RestExactHeadReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactHead(head, [exact.txid]),
+    ).resolves.toEqual({
+      status: "advanced",
+      steps: [
+        {
+          transactionId: exact.txid,
+          spentOutpoint: { txid: exact.headTxid, index: 0 },
+          successor: {
+            outpoint: { txid: exact.txid, index: 0 },
+            amount: "120000000",
+            scriptPublicKey: exact.headScriptPublicKey,
+          },
+          finality: "accepted",
+        },
+      ],
+    });
+  });
+
+  it("does not infer lineage from an attacker output sent to the same address", async () => {
+    const exact = exactTransactionFixture();
+    const head = exactHeadFixture(exact);
+    const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
+      const url = new URL(input.toString());
+      if (url.pathname.endsWith("/utxos")) return Response.json([]);
+      if (url.pathname === `/transactions/${exact.txid}`) {
+        return Response.json({
+          ...exact.restTransaction,
+          inputs: [
+            {
+              previous_outpoint_hash: "ff".repeat(32),
+              previous_outpoint_index: 0,
+            },
+          ],
+        });
+      }
+      throw new Error(`unexpected REST request ${url.pathname}`);
+    }) as typeof fetch;
+
+    await expect(
+      new RestExactHeadReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactHead(head, [exact.txid]),
+    ).resolves.toMatchObject({
+      status: "unknown",
+      reason:
+        "candidate transaction does not prove the expected same-index successor",
     });
   });
 });
@@ -1130,6 +1243,27 @@ function exactTransactionFixture() {
         },
       ],
     },
+  };
+}
+
+function exactHeadFixture(
+  exact: ReturnType<typeof exactTransactionFixture>,
+): ExactHeadRecord {
+  return {
+    headId: "90".repeat(32),
+    network: "kaspa:testnet-10",
+    payTo: exact.payTo,
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    currentOutpoint: { txid: exact.headTxid, index: 0 },
+    currentAmount: "100000000",
+    scriptPublicKey: exact.headScriptPublicKey,
+    redeemScript: exact.headRedeemScript,
+    additiveThresholdSompi: "10000000",
+    version: "0",
+    status: "available",
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt: "2026-07-14T00:00:00.000Z",
   };
 }
 

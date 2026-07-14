@@ -26,31 +26,31 @@ The Worker configuration lives in `packages/demo-gateway/wrangler.jsonc`.
 
 Important non-secret variables:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `KASPA_X402_GATEWAY_ENABLED` | Set to `false` to stop protected exact and batch endpoints with HTTP `503`. `/health`, `/canary`, `/metrics`, and `/supported` remain visible. |
-| `KASPA_X402_CHAIN_API_BASE` | REST chain evidence source. Current value: `https://api-tn10.kaspa.org`. |
-| `KASPA_X402_PAY_TO` | Testnet address receiving exact payments. |
-| `KASPA_X402_SERVER_PUBLIC_KEY` | Testnet server public key advertised in batch escrow terms. |
-| `KASPA_X402_EXACT_AMOUNT` | Exact-payment price in sompi. Must be at least `10000000`. |
-| `KASPA_X402_EXACT_PROFILE` | Alpha.8 exact profile: `standard-native` (default) or optional `additive`. |
-| `KASPA_X402_MIN_DEPOSIT_SOMPI` | Batch escrow deposit floor. Must be at least `10000000`. |
-| `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary. |
-| `KASPA_X402_MINIMUM_REFUND_LEAD_DAA` | Minimum remaining DAA lead required before accepting a batch payment. |
-| `KASPA_X402_SITE_BASE_URL` | Standards site base URL used by canary checks. |
-| `KASPA_X402_GATEWAY_BASE_URL` | Gateway base URL used by canary checks. |
+| Variable                                     | Purpose                                                                                                                                                        |
+| -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `KASPA_X402_GATEWAY_ENABLED`                 | Set to `false` to stop protected exact and batch endpoints with HTTP `503`. `/health`, `/canary`, `/metrics`, and `/supported` remain visible.                 |
+| `KASPA_X402_CHAIN_API_BASE`                  | REST chain evidence source. Current value: `https://api-tn10.kaspa.org`.                                                                                       |
+| `KASPA_X402_PAY_TO`                          | Testnet address receiving exact payments.                                                                                                                      |
+| `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
+| `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
+| `KASPA_X402_EXACT_PROFILE`                   | Alpha.8 exact profile: `standard-native` (default) or optional `additive`.                                                                                     |
+| `KASPA_X402_MIN_DEPOSIT_SOMPI`               | Batch escrow deposit floor. Must be at least `10000000`.                                                                                                       |
+| `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
+| `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
+| `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
+| `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
-| `KASPA_X402_CHAIN_BROADCAST_MODE` | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact. |
-| `KASPA_X402_PNN_ENDPOINTS` | Comma-separated public TN10 WSS endpoints used by the Worker to submit exact transaction artifacts. |
+| `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact.                                                                    |
+| `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used by the Worker to submit exact transaction artifacts.                                                            |
 
 The Worker must not receive a mainnet key, a spending key, or a faucet key.
 Claim broadcasting is disabled in the hosted gateway package.
 
 Secret variables:
 
-| Variable | Purpose |
-| -------- | ------- |
-| `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration and stats endpoints. Set with `wrangler secret put`; do not commit it. |
+| Variable                 | Purpose                                                                                                                                   |
+| ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
+| `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration, reconciliation, and stats endpoints. Set with `wrangler secret put`; do not commit it. |
 
 ## Deploy
 
@@ -107,6 +107,23 @@ retire, or consume a head. Settlement atomically claims the advertised current
 outpoint, verifies a same-script successor whose delta equals the exact price,
 and advances that same durable lineage. Stale competing clients receive a fresh
 402 against the current head.
+
+Before each additive offer, the Worker confirms that the durable current
+outpoint remains in the accepted address UTXO set. A missing or conflicting
+head becomes unavailable. If a known external transaction advanced it, provide
+the complete ordered accepted lineage to recover it:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+  npm run demo:exact-heads -- reconcile \
+  --head-id <head-id> \
+  --transactions <first-txid>,<next-txid>
+```
+
+The gateway accepts only a chain in which every transaction spends the prior
+outpoint, preserves the same script and output index, satisfies the KIP-10
+threshold, and ends at the current unspent head. Never use an arbitrary output
+to the same P2SH address as lineage evidence.
 
 ## Rollback
 
@@ -299,7 +316,7 @@ Alpha.6 KIP-10 exact-transaction cutover:
 
 - `0.1.0-alpha.6` replaces the alpha.5 observe-only exact payload with a signed
   KIP-10 transaction artifact carrying `transactionEncoding:
-  "kaspa-sdk-safe-json-v2.0.0"`.
+"kaspa-sdk-safe-json-v2.0.0"`.
 - Advertise the alpha.6 exact path from the hosted gateway only while the
   verifier/broadcast/observe path is enabled and exact inventory is available.
 - The provider uses merchant-owned borrow UTXO inventory and must advertise an
