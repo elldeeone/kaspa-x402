@@ -1,26 +1,29 @@
 # Testnet Gateway
 
-Status: alpha, testnet-only reference gateway for `exact` and
-`batch-settlement` payments on `kaspa:testnet-10`.
+Status: historical alpha.6 testnet deployment. Do not fund the hosted gateway
+until this page records an alpha.7 redeploy and paid canary.
 
 The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
-Deployment status: alpha.6 source uses the KIP-10 `exact-transaction` path for
-direct-mode servers that advertise reservations. The hosted Worker can reserve
-Durable Object-backed exact inventory, verify a signed SDK-safe JSON
-transaction artifact, broadcast that artifact through TN10 PNN/WSS, match the
-accepted chain transaction back to the artifact, observe finality, and consume
-the reservation. The gateway advertises `exact` only while funded borrow-UTXO
-inventory is available; when inventory is empty, `/exact` returns
-`503 exact_unavailable` and `/batch` remains usable. The separate private TN10
-full live harness was rerun for alpha.6 on 2026-07-09 and is recorded in
-`docs/live-testnet-report.md`.
+Source status: alpha.7 hardens the KIP-10 `exact-transaction` path, exact
+continuation recycling, absolute DAA refund handling, and claim recovery. The
+separate TN10 full live harness passed from alpha.7 source on 2026-07-14 and is
+recorded in `docs/live-testnet-report.md`.
+
+Hosted status: the Worker was last deployed and paid-canary proven from
+alpha.6 source on 2026-07-09. It has not been redeployed or paid-canary proven
+for alpha.7. A read-only check on 2026-07-14 found the Worker healthy but exact
+inventory empty: `/supported` advertised only `batch-settlement` and `/exact`
+returned `503 exact_unavailable`. Its batch offer still carried the historical
+duration-like `refundTimeoutDaa: "3600"`; alpha.7 requires a freshly computed
+absolute DAA score. Do not fund either hosted scheme until the Worker is
+redeployed from reviewed alpha.7 source and the required paid canaries pass.
 
 ## Base URL
 
-The gateway is deployed at:
+The historical gateway deployment is reachable at:
 
 ```text
 https://demo.kaspa-x402.org
@@ -66,7 +69,7 @@ enabled and at least one funded KIP-10 borrow UTXO is available in inventory.
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
 
-Current hosted terms:
+Configured alpha.7 source terms for a future reviewed redeploy:
 
 - exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
@@ -197,7 +200,7 @@ domain. Send it only over TLS to the intended gateway, and do not publish or log
 unused payment headers or transaction material before the paid retry has been
 settled.
 
-The alpha.6 `exact-transaction` path requires server-advertised buildable
+The historical alpha.6 `exact-transaction` path requires server-advertised buildable
 reservation terms, including the borrow redeem script and additive threshold,
 plus a signed SDK-safe JSON transaction artifact. The hosted gateway rejects
 observe-only `exact-transfer` evidence on reserved offers.
@@ -260,7 +263,7 @@ deployment checks completed on 2026-07-06:
 
 ## Alpha.6 Evidence Status
 
-Status: source live evidence and hosted gateway exact proof complete.
+Status: historical source live evidence and hosted gateway exact proof complete.
 
 Alpha.6 source introduces KIP-10 exact transaction artifacts and removes
 observe-only exact from the current supported exact path. The private TN10 live

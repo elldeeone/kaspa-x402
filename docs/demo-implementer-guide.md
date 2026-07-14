@@ -1,7 +1,8 @@
 # Demo Implementer Guide
 
-Status: alpha, testnet-only guide for implementers testing against the hosted
-gateway.
+Status: alpha, testnet-only guide. The hosted gateway has not been redeployed
+or paid-canary proven for alpha.7; do not fund it until the gateway reference
+records those gates as complete.
 
 ## Start With The Artifacts
 
@@ -50,7 +51,8 @@ reference policy; smaller values require transaction-specific mass analysis.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Expected support from the current hosted gateway:
+Historical hosted capability, subject to live availability and the alpha.7
+redeploy gate:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
@@ -61,6 +63,12 @@ Expected support from the current hosted gateway:
 No mainnet profile is advertised. If `exact` is absent from `/supported` or
 `/exact` returns `503 exact_unavailable`, the hosted exact inventory is empty or
 the operator has disabled exact settlement; use `batch-settlement` instead.
+
+The 2026-07-14 read-only check found exact unavailable and found the historical
+batch deployment advertising a duration-like `refundTimeoutDaa` instead of the
+absolute DAA required by alpha.7. Inspecting unpaid responses remains useful,
+but do not fund either hosted scheme until the gateway reference records an
+alpha.7 redeploy and paid canary.
 
 ## Exact Flow
 
@@ -112,6 +120,9 @@ KIP-10 exact transaction submission. Public REST submit is not used for hosted
 KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
+
+The flow below describes the alpha.7 contract. It is not authorization to fund
+the historical hosted deployment.
 
 Request:
 

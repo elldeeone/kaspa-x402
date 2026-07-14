@@ -258,6 +258,33 @@ function checkContent() {
       if (pattern.test(text)) fail(`mainnet/production readiness claim in ${relative}`);
     }
   }
+
+  const activeTextFiles = textFiles.filter((file) => {
+    const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
+    return !/^v0\.1\.0-alpha\.[0-6]\//.test(relative);
+  });
+  const staleCurrentClaims = [
+    /standard-output storage-mass floor(?:,|\s*\()/i,
+    /must (?:clear|sit at or above)[^.]*storage-mass/i,
+    /Alpha\.6 focuses on preferred KIP-10/i,
+    /For real paid requests, use the hosted gateway/i,
+  ];
+  for (const file of activeTextFiles) {
+    const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
+    const text = fs.readFileSync(file, "utf8");
+    for (const pattern of staleCurrentClaims) {
+      if (pattern.test(text)) fail(`stale active-alpha claim in ${relative}: ${pattern}`);
+    }
+  }
+
+  for (const relative of [
+    "index.html",
+    "demo/index.html",
+    "docs/testnet-gateway.md",
+    "docs/demo-interop-checklist.md",
+  ]) {
+    assertContains(path.join(outDir, relative), "not fund", `${relative} hosted-gateway funding warning`);
+  }
 }
 
 function checkLinks() {

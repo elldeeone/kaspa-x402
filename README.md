@@ -6,7 +6,8 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Hosted testnet gateway with live paid endpoints: https://demo.kaspa-x402.org
+- Historical hosted testnet gateway (do not fund until the current-alpha
+  redeploy and paid canary are recorded): https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 
 Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
@@ -37,7 +38,7 @@ The binding ships two x402 schemes:
 }
 ```
 
-`exact` is a fixed-price one-shot native transfer. Alpha.6 uses the preferred
+`exact` is a fixed-price one-shot native transfer. The current alpha uses the
 KIP-10 `exact-transaction` artifact path for reservation-backed direct exact
 settlement. Reservation providers are expected to use merchant-owned borrow
 UTXOs and a policy-bounded additive top-up threshold.
