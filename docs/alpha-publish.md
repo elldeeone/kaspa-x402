@@ -176,7 +176,12 @@ npm run proof:live:check -- --live --write-report
 Before advertising hosted exact evidence, run:
 
 ```sh
-KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS npm run proof:hosted-exact
+KASPA_X402_EXPECTED_GATEWAY_ORIGIN=https://demo.kaspa-x402.org \
+KASPA_X402_EXPECTED_EXACT_PROFILE=standard-native \
+KASPA_X402_EXPECTED_EXACT_AMOUNT=20000000 \
+KASPA_X402_EXPECTED_EXACT_PAY_TO=<expected-merchant-address> \
+KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
+  npm run proof:hosted-exact
 ```
 
 The expected alpha.8 live proof must include:

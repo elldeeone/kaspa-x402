@@ -17,6 +17,8 @@ import type {
   ExactSettlementCommit,
   ExactHeadRecord,
   ExactHeadLineageApply,
+  ExactHeadUnavailableApply,
+  ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
@@ -142,7 +144,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
       payment.transactionId.toLowerCase(),
     );
     if (attempt) {
-      if (attempt.status !== "accepted" || !attempt.handlerStartedAt) {
+      if (
+        attempt.status !== "accepted" ||
+        !attempt.handlerStartedAt ||
+        !attempt.handlerResult
+      ) {
         throw new Error("exact settlement attempt is not ready to apply");
       }
       this.#exactAttempts.set(payment.transactionId, {
@@ -284,6 +290,47 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return true;
   }
 
+  async recordExactHandlerResult(
+    transactionId: Hash32Hex,
+    result: import("./types.js").ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    assertExactHandlerResultTransition(attempt, result, completedAt);
+    if (attempt.handlerResult) {
+      if (stableJson(attempt.handlerResult) !== stableJson(result))
+        throw new Error("exact handler result conflicts with durable state");
+      return;
+    }
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      handlerResult: clone(result),
+      handlerCompletedAt: completedAt,
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
+  }
+
+  async markExactHandlerRecoveryRequired(
+    transactionId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (
+      attempt.status !== "accepted" ||
+      !attempt.handlerStartedAt ||
+      attempt.handlerResult
+    ) {
+      throw new Error("exact handler is not awaiting recovery");
+    }
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
+  }
+
   async abandonExactSettlement(
     transactionId: Hash32Hex,
     reason: string,
@@ -305,20 +352,23 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async markExactHeadUnavailable(
-    headId: Hash32Hex,
-    reason: string,
-    observedAt: string,
-  ): Promise<void> {
-    const head = this.#exactHeads.get(headId.toLowerCase());
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    const head = this.#exactHeads.get(input.headId.toLowerCase());
     if (!head) throw new Error("exact head was not found");
     if (head.status === "retired")
       throw new Error("retired exact head cannot be marked unavailable");
-    this.#exactHeads.set(head.headId, {
+    if (!exactHeadMatchesUnavailableSnapshot(head, input)) {
+      return { applied: false, head: clone(head) };
+    }
+    const unavailable = {
       ...head,
       status: "unavailable",
-      unavailableReason: reason,
-      updatedAt: observedAt,
-    });
+      unavailableReason: input.reason,
+      updatedAt: input.observedAt,
+    } as const;
+    this.#exactHeads.set(head.headId, unavailable);
+    return { applied: true, head: clone(unavailable) };
   }
 
   async applyExactHeadLineage(
@@ -470,6 +520,18 @@ function sameOutpoint(
   );
 }
 
+function exactHeadMatchesUnavailableSnapshot(
+  head: ExactHeadRecord,
+  input: ExactHeadUnavailableApply,
+): boolean {
+  return (
+    head.version === input.expectedVersion &&
+    sameOutpoint(head.currentOutpoint, input.expectedOutpoint) &&
+    head.currentAmount === input.expectedAmount &&
+    head.status === input.expectedStatus
+  );
+}
+
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -478,6 +540,47 @@ function stableJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
     .join(",")}}`;
+}
+
+function assertExactHandlerResultTransition(
+  attempt: ExactSettlementAttemptRecord,
+  result: import("./types.js").ProtectedHandlerResult,
+  completedAt: string,
+): void {
+  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
+    throw new Error("exact handler has not started on an accepted settlement");
+  if (Number.isNaN(Date.parse(completedAt)))
+    throw new Error("exact handler completion time must be an ISO date string");
+  if (
+    result.status !== undefined &&
+    (!Number.isInteger(result.status) ||
+      result.status < 100 ||
+      result.status > 599)
+  ) {
+    throw new Error("exact handler status is invalid");
+  }
+  if (
+    result.headers &&
+    Object.values(result.headers).some((value) => typeof value !== "string")
+  ) {
+    throw new Error("exact handler headers are invalid");
+  }
+  if (result.headers && Object.keys(result.headers).length > 64)
+    throw new Error("exact handler has too many response headers");
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(result);
+  } catch {
+    throw new Error("exact handler result must be JSON serializable");
+  }
+  if (new TextEncoder().encode(serialized).byteLength > 256 * 1024)
+    throw new Error("exact handler result exceeds the durable size limit");
+  if (
+    result.chargedAmount !== undefined &&
+    result.chargedAmount !== attempt.amount
+  ) {
+    throw new Error("exact handler charge must equal the accepted amount");
+  }
 }
 
 function matchesExpectedChannel(

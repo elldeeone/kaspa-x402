@@ -126,7 +126,14 @@ export function normalizeExactSettlementAttempt(
   ) {
     throw new Error("exact settlement hashes must be 32-byte hex");
   }
-  if (input.status !== "pending" || input.finality || input.handlerStartedAt) {
+  if (
+    input.status !== "pending" ||
+    input.finality ||
+    input.handlerStartedAt ||
+    input.handlerResult ||
+    input.handlerCompletedAt ||
+    input.recoveryReason
+  ) {
     throw new Error(
       "new exact settlement attempt must begin pending without finality or handler state",
     );
@@ -395,6 +402,8 @@ function exactAttemptTerms(
   | "updatedAt"
   | "finality"
   | "handlerStartedAt"
+  | "handlerResult"
+  | "handlerCompletedAt"
   | "recoveryReason"
 > {
   const {
@@ -403,6 +412,8 @@ function exactAttemptTerms(
     updatedAt: _updatedAt,
     finality: _finality,
     handlerStartedAt: _handlerStartedAt,
+    handlerResult: _handlerResult,
+    handlerCompletedAt: _handlerCompletedAt,
     recoveryReason: _recoveryReason,
     ...terms
   } = record;

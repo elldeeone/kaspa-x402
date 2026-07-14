@@ -14,10 +14,10 @@ that advertised amount of native KAS.
 
 This binding defines two profiles:
 
-| Profile | Status | Payment |
-| --- | --- | --- |
-| `standard-native` | default | One standard native-KAS merchant output equals the advertised amount. |
-| `additive` | optional | A merchant KIP-10 head successor increases by exactly the advertised amount. |
+| Profile           | Status   | Payment                                                                      |
+| ----------------- | -------- | ---------------------------------------------------------------------------- |
+| `standard-native` | default  | One standard native-KAS merchant output equals the advertised amount.        |
+| `additive`        | optional | A merchant KIP-10 head successor increases by exactly the advertised amount. |
 
 Use `batch-settlement` instead for repeated or variable-cost requests where
 off-chain cumulative vouchers should amortize on-chain settlement.
@@ -73,19 +73,19 @@ Both profiles include:
 }
 ```
 
-| Field | Rule |
-| --- | --- |
-| `scheme` | MUST equal `exact`. |
-| `network` | MUST be one of the recognized Kaspa network identifiers. |
-| `amount` | MUST be a canonical positive uint64 sompi string. It is the entire merchant gain for this request. |
-| `asset` | MUST equal `KAS`. |
-| `payTo` | MUST be a valid recipient address for `network`. |
-| `maxTimeoutSeconds` | MUST be a positive uint32. |
-| `extra.binding` | MUST equal `kaspa-exact-v2`. |
-| `extra.profile` | MUST equal `standard-native` or `additive`. |
-| `extra.finality` | MUST equal `accepted` or `confirmed` in the reference alpha. A stricter server policy is allowed. |
-| `extra.transactionEncoding` | MUST equal `kaspa-sdk-safe-json-v2.0.0` in this draft. |
-| `extra.payToScriptPublicKey` | MUST be the canonical serialized script public key derived independently from `payTo`. |
+| Field                        | Rule                                                                                               |
+| ---------------------------- | -------------------------------------------------------------------------------------------------- |
+| `scheme`                     | MUST equal `exact`.                                                                                |
+| `network`                    | MUST be one of the recognized Kaspa network identifiers.                                           |
+| `amount`                     | MUST be a canonical positive uint64 sompi string. It is the entire merchant gain for this request. |
+| `asset`                      | MUST equal `KAS`.                                                                                  |
+| `payTo`                      | MUST be a valid recipient address for `network`.                                                   |
+| `maxTimeoutSeconds`          | MUST be a positive uint32.                                                                         |
+| `extra.binding`              | MUST equal `kaspa-exact-v2`.                                                                       |
+| `extra.profile`              | MUST equal `standard-native` or `additive`.                                                        |
+| `extra.finality`             | MUST equal `accepted` or `confirmed` in the reference alpha. A stricter server policy is allowed.  |
+| `extra.transactionEncoding`  | MUST equal `kaspa-sdk-safe-json-v2.0.0` in this draft.                                             |
+| `extra.payToScriptPublicKey` | MUST be the canonical serialized script public key derived independently from `payTo`.             |
 
 `mempool` is not sufficient hosted settlement finality for this alpha. It may
 remain an internal diagnostic state, but a successful protected request MUST
@@ -190,18 +190,18 @@ An additive offer includes:
 }
 ```
 
-| Field | Rule |
-| --- | --- |
-| `extra.templateId` | MUST equal `kaspa-x402-kip10-additive-v1`. |
-| `extra.headId` | MUST be a stable server-scoped 32-byte identifier for one additive chain. |
-| `extra.headVersion` | MUST be a canonical uint64 string that increases for every accepted successor. |
-| `extra.expectedHeadOutpoint` | MUST be the exact current unspent head. |
-| `extra.headAmount` | MUST equal the trusted amount of the expected head. |
-| `extra.headScriptPublicKey` | MUST equal `payToScriptPublicKey` and the P2SH script derived from `headRedeemScript`. |
-| `extra.headRedeemScript` | MUST be the canonical additive script for the advertised owner key and threshold. |
-| `extra.additiveThresholdSompi` | MUST be a positive canonical uint64 application minimum. |
-| `extra.challengeId` | MUST identify the server-issued terms and normalized request fingerprint. It is not an exclusive head reservation. |
-| `extra.challengeExpiresAt` | MUST be a valid future ISO-8601 timestamp when the paid retry is verified. |
+| Field                          | Rule                                                                                                               |
+| ------------------------------ | ------------------------------------------------------------------------------------------------------------------ |
+| `extra.templateId`             | MUST equal `kaspa-x402-kip10-additive-v1`.                                                                         |
+| `extra.headId`                 | MUST be a stable server-scoped 32-byte identifier for one additive chain.                                          |
+| `extra.headVersion`            | MUST be a canonical uint64 string that increases for every accepted successor.                                     |
+| `extra.expectedHeadOutpoint`   | MUST be the exact current unspent head.                                                                            |
+| `extra.headAmount`             | MUST equal the trusted amount of the expected head.                                                                |
+| `extra.headScriptPublicKey`    | MUST equal `payToScriptPublicKey` and the P2SH script derived from `headRedeemScript`.                             |
+| `extra.headRedeemScript`       | MUST be the canonical additive script for the advertised owner key and threshold.                                  |
+| `extra.additiveThresholdSompi` | MUST be a positive canonical uint64 application minimum.                                                           |
+| `extra.challengeId`            | MUST identify the server-issued terms and normalized request fingerprint. It is not an exclusive head reservation. |
+| `extra.challengeExpiresAt`     | MUST be a valid future ISO-8601 timestamp when the paid retry is verified.                                         |
 
 `amount` MUST be greater than or equal to `additiveThresholdSompi`. The
 threshold is an anti-churn minimum, not an additional merchant payment.
@@ -270,7 +270,14 @@ Both profiles use one bounded transaction-artifact envelope:
     "transaction": "<signed bounded safe transaction JSON>",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "paymentOutputIndex": 0,
-    "requestHash": "<optional normalized request hash>"
+    "requestHash": "<normalized request hash>",
+    "authorization": {
+      "version": "kaspa-x402-exact-request-authorization-v1",
+      "digest": "<32-byte digest>",
+      "inputIndex": 0,
+      "expiresAt": "2026-07-14T09:00:00.000Z",
+      "signature": "<64-byte Schnorr signature>"
+    }
   }
 }
 ```
@@ -282,6 +289,21 @@ For `additive`, `payload.profile` MUST be `additive`,
 
 `payerAddress` is receipt metadata only. Verified payer attribution comes from
 authoritative input UTXOs and valid signatures.
+
+`requestHash` and `authorization` are mandatory for both profiles. The
+authorization digest binds the canonical transaction id, selected profile,
+payment output index, amount, `payTo`, canonical recipient script, accepted
+requirements hash, normalized request hash, additive challenge when present,
+authorizing payer input index, and expiry. The signer MUST be the public key
+proven by that authoritative standard P2PK funding input. The additive head
+input cannot authorize the payer request.
+
+An on-chain transaction signature authorizes the value transfer; it does not by
+itself authorize which HTTP resource or MCP operation receives that payment.
+The request authorization closes that audience boundary. Removing or changing
+the request hash, route, requirements, profile, recipient, amount, transaction,
+input index, challenge, or expiry MUST invalidate the payment before protected
+work.
 
 The artifact MUST include bounded representations of version, inputs,
 outpoints, input mass fields, signature scripts, outputs, output covenants,
@@ -313,7 +335,9 @@ Before protected work executes, the server or facilitator MUST:
    units, and compute commitments; apply configured bounds.
 10. Validate the transaction in isolation and with the populated UTXO context
     using current Rusty Kaspa consensus behavior.
-11. Enforce request binding, transaction replay, and payment-identifier policy.
+11. Verify the payer request authorization against an authoritative funding
+    input, then enforce request binding, transaction replay, and
+    payment-identifier policy.
 12. For additive, validate the still-live challenge and atomically claim the
     exact expected head/version before protected work.
 
@@ -331,14 +355,17 @@ in JSON.
 4. The client builds and signs a transaction for one selected profile without
    broadcasting it.
 5. The server or facilitator performs full verification using trusted chain
-   facts.
-6. Transaction replay evidence is durably consumed before protected work. For
-   additive, the expected head transition is also atomically claimed.
-7. The x402 resource handler runs according to the host framework's lifecycle.
-8. The server or facilitator broadcasts the exact verified transaction and
-   observes required finality.
-9. Durable state advances to `accepted` and then `applied`; the response reports
-   the independently established transaction id and profile evidence.
+   facts and verifies the payer's request authorization.
+6. Transaction replay evidence is durably consumed. For additive, the expected
+   head transition is also atomically claimed.
+7. The server or facilitator broadcasts the exact verified transaction and
+   observes required finality. Ambiguous outcomes remain consumed for trusted
+   reconciliation.
+8. Only after durable `accepted` state does the x402 resource handler run.
+9. The handler result is persisted before the atomic payment/response commit.
+   A retry resumes the same result without rerunning protected work.
+10. Durable state advances to `applied`; the response reports the independently
+    established transaction id and profile evidence.
 
 If broadcast returns an ambiguous error, consumed evidence and a claimed head
 MUST remain pending until trusted reconciliation resolves the known transaction.
@@ -349,6 +376,23 @@ cannot make arbitrary application side effects atomic with chain broadcast.
 Applications with irreversible side effects MUST use an idempotent handler or
 an application outbox keyed by the durable payment/request identity.
 
+If a handler starts but its result is uncertain, the SDK MUST fail closed with
+an explicit recovery-required state. It MUST NOT rerun the handler blindly. An
+operator may supply a known durable result through the recovery API; the
+identical authorized retry then completes the commit without repeating the
+application effect. The reference store limits the durable result to 256 KiB
+and 64 response headers; larger application output belongs in a durable outbox
+referenced by the bounded result.
+
+## Retry and signer policy
+
+A corrective 402 is a new offer, not permission for a wallet to sign another
+payment automatically. The alpha.8 clients accept `maxPaymentRetries: 0` only.
+Every replacement exact transaction requires a fresh explicit caller or wallet
+authorization. Funding providers MUST expose an `authorizeExactPayment`
+boundary, and deployments SHOULD pin allowed origins, profiles, recipients,
+and a maximum amount before signing.
+
 ## Additive concurrency and head recovery
 
 - A head MAY be referenced by many unexpired challenges.
@@ -358,6 +402,9 @@ an application outbox keyed by the durable payment/request identity.
   protected work.
 - Challenge expiry does not mutate or retire an unspent head.
 - Independent head chains SHOULD be sharded for concurrency.
+- A public unpaid request MUST reconcile only a fixed number of selected heads;
+  work MUST remain bounded independently of total inventory. Full-pool refresh
+  belongs in authenticated or scheduled operator work.
 - Settlement stages MUST be persisted as `pending`, `broadcast`, `accepted`,
   and `applied` or equivalent recoverable states.
 - Reconciliation MUST run at startup, before advertising a potentially stale

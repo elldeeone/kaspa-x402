@@ -28,6 +28,7 @@ import {
   kip10AdditiveScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
+import { assertHostedOfferPinned } from "./hosted-offer-pins.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
@@ -57,6 +58,10 @@ const config = {
     env.KASPA_X402_HOSTED_EXACT_REPORT_FILE ||
     ".kaspa-x402-live/hosted-exact-report.json",
   exactProfile: env.KASPA_X402_EXACT_PROFILE || "standard-native",
+  expectedGatewayOrigin: env.KASPA_X402_EXPECTED_GATEWAY_ORIGIN || "",
+  expectedExactProfile: env.KASPA_X402_EXPECTED_EXACT_PROFILE || "",
+  expectedExactAmount: env.KASPA_X402_EXPECTED_EXACT_AMOUNT || "",
+  expectedExactPayTo: env.KASPA_X402_EXPECTED_EXACT_PAY_TO || "",
   headAmount: BigInt(env.KASPA_X402_EXACT_HEAD_AMOUNT || DEFAULT_HEAD_AMOUNT),
   additiveThreshold: BigInt(
     env.KASPA_X402_EXACT_ADDITIVE_THRESHOLD || DEFAULT_ADDITIVE_THRESHOLD,
@@ -178,6 +183,8 @@ async function runHostedExactProof(input) {
       schnorr,
       spentOutpoints,
     });
+    const expectedPayTo =
+      input.expectedExactPayTo || additiveHead?.record.payTo || "";
     const client = new DirectModeClient({
       fundingProvider,
       signer: makeSigner({ schnorr, dataDir: input.dataDir }),
@@ -187,10 +194,24 @@ async function runHostedExactProof(input) {
       supportedNetworks: [input.network],
       fetch: gatewayFetch,
       maxPaymentRetries: 0,
+      fundingPolicy: {
+        allowedOrigins: [input.expectedGatewayOrigin],
+        allowedExactProfiles: [input.expectedExactProfile],
+        allowedPayTo: [expectedPayTo],
+        maximumExactAmountSompi: input.expectedExactAmount,
+      },
     });
 
     const exactUrl = new URL("/exact", input.gatewayBase).toString();
     const required = await fetchPaymentRequired(exactUrl);
+    assertHostedOfferPinned(required, {
+      exactUrl,
+      gatewayOrigin: input.expectedGatewayOrigin,
+      profile: input.expectedExactProfile,
+      amount: input.expectedExactAmount,
+      payTo: expectedPayTo,
+      network: input.network,
+    });
     const paymentIdentifier = `hosted-exact-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
     const payment = await client.createPayment(required, {
       url: exactUrl,
@@ -277,6 +298,12 @@ async function runHostedExactProof(input) {
       },
       fundingAddress,
       exactProfile: input.exactProfile,
+      expectedOffer: {
+        gatewayOrigin: input.expectedGatewayOrigin,
+        profile: input.expectedExactProfile,
+        amount: input.expectedExactAmount,
+        payTo: expectedPayTo,
+      },
       ...(additiveHead
         ? {
             head: {
@@ -983,6 +1010,24 @@ function validateConfig(input) {
       "KASPA_X402_EXACT_PROFILE must be standard-native or additive",
     );
   }
+  if (!input.expectedGatewayOrigin)
+    throw new Error("KASPA_X402_EXPECTED_GATEWAY_ORIGIN is required");
+  if (new URL(input.gatewayBase).origin !== input.expectedGatewayOrigin)
+    throw new Error(
+      "expected gateway origin does not match the configured gateway URL",
+    );
+  if (input.expectedExactProfile !== input.exactProfile)
+    throw new Error(
+      "KASPA_X402_EXPECTED_EXACT_PROFILE must match KASPA_X402_EXACT_PROFILE",
+    );
+  if (!/^[1-9][0-9]*$/.test(input.expectedExactAmount))
+    throw new Error(
+      "KASPA_X402_EXPECTED_EXACT_AMOUNT must be a positive sompi string",
+    );
+  if (input.exactProfile === "standard-native" && !input.expectedExactPayTo)
+    throw new Error(
+      "KASPA_X402_EXPECTED_EXACT_PAY_TO is required for standard-native proofs",
+    );
   if (input.exactProfile === "additive" && !input.adminToken)
     throw new Error(
       "KASPA_X402_DEMO_ADMIN_TOKEN is required for additive head registration",

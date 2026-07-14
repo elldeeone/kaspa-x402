@@ -1,19 +1,24 @@
 #!/usr/bin/env node
 import fs from "node:fs";
+import path from "node:path";
+import { fileURLToPath } from "node:url";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
 async function main() {
+  if (process.argv.includes("--admin-token")) {
+    throw new Error(
+      "--admin-token is not accepted because process arguments are observable; set KASPA_X402_DEMO_ADMIN_TOKEN instead.",
+    );
+  }
   const command = process.argv[2] ?? "stats";
   const gatewayUrl =
     option("--gateway") ??
     process.env.KASPA_X402_DEMO_GATEWAY_URL ??
     DEFAULT_GATEWAY_URL;
-  const adminToken =
-    option("--admin-token") ?? process.env.KASPA_X402_DEMO_ADMIN_TOKEN;
-  if (!adminToken)
-    throw new Error("Set KASPA_X402_DEMO_ADMIN_TOKEN or pass --admin-token.");
+  const adminToken = process.env.KASPA_X402_DEMO_ADMIN_TOKEN;
+  if (!adminToken) throw new Error("Set KASPA_X402_DEMO_ADMIN_TOKEN.");
 
   if (command === "stats" || command === "list") {
     const result = await requestJson(
@@ -135,14 +140,32 @@ function option(name) {
   return value;
 }
 
-function normalizedBaseUrl(value) {
+export function normalizedBaseUrl(value) {
   const url = new URL(value);
+  if (url.protocol !== "https:" && url.protocol !== "http:")
+    throw new Error("Gateway URL must use HTTPS or loopback HTTP.");
+  const loopback =
+    url.hostname === "localhost" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "[::1]";
+  if (url.protocol === "http:" && !loopback) {
+    throw new Error(
+      "Refusing to send the admin bearer token over non-loopback HTTP.",
+    );
+  }
+  if (url.username || url.password)
+    throw new Error("Gateway URL must not contain credentials.");
   url.hash = "";
   url.search = "";
   return `${url.toString().replace(/\/$/, "")}/`;
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : String(error));
-  process.exitCode = 1;
-});
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : String(error));
+    process.exitCode = 1;
+  });
+}

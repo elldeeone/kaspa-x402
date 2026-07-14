@@ -15,8 +15,11 @@ import {
   type ExactSettlementCommit,
   type ExactHeadRecord,
   type ExactHeadLineageApply,
+  type ExactHeadUnavailableApply,
+  type ExactHeadUnavailableResult,
   type ExactSettlementAttemptRecord,
   type PaymentIdentifierRecord,
+  type ProtectedHandlerResult,
   type ServerChannelRecord,
   type ServerStateStore,
   type SettlementCommit,
@@ -211,6 +214,50 @@ function defineStoreContract(factory: StoreFactory): void {
     }
   });
 
+  it("does not let delayed unavailable evidence downgrade an advanced head", async () => {
+    const store = await factory.create();
+    await store.registerExactHead(exactHead());
+    const staleSnapshot: ExactHeadUnavailableApply = {
+      headId: HEAD_ID,
+      expectedVersion: "0",
+      expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+      expectedAmount: "100000000",
+      expectedStatus: "available",
+      reason: "delayed unknown response",
+      observedAt: "2026-07-07T00:00:04.000Z",
+    };
+    await store.applyExactHeadLineage({
+      headId: HEAD_ID,
+      expectedVersion: "0",
+      expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+      expectedAmount: "100000000",
+      steps: [
+        {
+          transactionId: TX,
+          spentOutpoint: { txid: FUNDING_TX, index: 0 },
+          successor: {
+            outpoint: { txid: TX, index: 0 },
+            amount: "110000000",
+            scriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+          },
+          finality: "accepted",
+        },
+      ],
+      observedAt: "2026-07-07T00:00:03.000Z",
+    });
+
+    await expect(
+      store.markExactHeadUnavailable(staleSnapshot),
+    ).resolves.toMatchObject({
+      applied: false,
+      head: {
+        status: "available",
+        version: "1",
+        currentOutpoint: { txid: TX, index: 0 },
+      },
+    });
+  });
+
   it("claims one additive head winner, advances by compare-and-swap, and prevents handler replay", async () => {
     let store = await factory.create();
     await store.registerExactHead(exactHead());
@@ -268,12 +315,18 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(
       store.beginExactHandler(TX, "2026-07-07T00:00:05.000Z"),
     ).resolves.toBe(false);
+    await store.recordExactHandlerResult(
+      TX,
+      { body: "download", chargedAmount: "20000000" },
+      "2026-07-07T00:00:05.000Z",
+    );
     await store.commitExactPayment({
       payment: exactPayment({ transactionId: TX, paymentOutputIndex: 0 }),
     });
     await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
       handlerStartedAt: "2026-07-07T00:00:04.000Z",
+      handlerResult: { body: "download", chargedAmount: "20000000" },
     });
 
     if (store instanceof DurableMockServerChannelStore) {
@@ -303,11 +356,17 @@ function defineStoreContract(factory: StoreFactory): void {
       claimTransactionId: undefined,
     });
 
-    await store.markExactHeadUnavailable(
-      HEAD_ID,
-      "successor lineage unavailable",
-      "2026-07-07T00:00:03.000Z",
-    );
+    await expect(
+      store.markExactHeadUnavailable({
+        headId: HEAD_ID,
+        expectedVersion: "0",
+        expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+        expectedAmount: "100000000",
+        expectedStatus: "available",
+        reason: "successor lineage unavailable",
+        observedAt: "2026-07-07T00:00:03.000Z",
+      }),
+    ).resolves.toMatchObject({ applied: true });
     await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "unavailable",
       unavailableReason: "successor lineage unavailable",
@@ -315,6 +374,30 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(
       store.selectExactHead(exactHeadSelection()),
     ).resolves.toBeUndefined();
+  });
+
+  it("bounds durable exact handler results", async () => {
+    const store = await factory.create();
+    await store.claimExactSettlement(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+    );
+    await store.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:03.000Z",
+    );
+    await store.beginExactHandler(TX, "2026-07-07T00:00:04.000Z");
+
+    await expect(
+      store.recordExactHandlerResult(
+        TX,
+        { body: "x".repeat(256 * 1024) },
+        "2026-07-07T00:00:05.000Z",
+      ),
+    ).rejects.toThrow("durable size limit");
+    const attempt = await store.loadExactSettlementAttempt(TX);
+    expect(attempt).toMatchObject({ status: "accepted" });
+    expect(attempt).not.toHaveProperty("handlerResult");
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
@@ -395,6 +478,18 @@ type DurableMockOperation =
     }
   | { type: "beginExactHandler"; transactionId: string; startedAt: string }
   | {
+      type: "recordExactHandlerResult";
+      transactionId: string;
+      result: ProtectedHandlerResult;
+      completedAt: string;
+    }
+  | {
+      type: "markExactHandlerRecoveryRequired";
+      transactionId: string;
+      reason: string;
+      observedAt: string;
+    }
+  | {
       type: "abandonExactSettlement";
       transactionId: string;
       reason: string;
@@ -402,9 +497,7 @@ type DurableMockOperation =
     }
   | {
       type: "markExactHeadUnavailable";
-      headId: string;
-      reason: string;
-      observedAt: string;
+      input: ExactHeadUnavailableApply;
     }
   | { type: "applyExactHeadLineage"; input: ExactHeadLineageApply }
   | { type: "saveClaimAttempt"; record: ClaimAttemptRecord }
@@ -536,6 +629,43 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     return started;
   }
 
+  async recordExactHandlerResult(
+    transactionId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    await this.#write(
+      {
+        type: "recordExactHandlerResult",
+        transactionId,
+        result,
+        completedAt,
+      },
+      () => super.recordExactHandlerResult(transactionId, result, completedAt),
+    );
+  }
+
+  async markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.#write(
+      {
+        type: "markExactHandlerRecoveryRequired",
+        transactionId,
+        reason,
+        observedAt,
+      },
+      () =>
+        super.markExactHandlerRecoveryRequired(
+          transactionId,
+          reason,
+          observedAt,
+        ),
+    );
+  }
+
   async abandonExactSettlement(
     transactionId: string,
     reason: string,
@@ -548,14 +678,14 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
   }
 
   async markExactHeadUnavailable(
-    headId: string,
-    reason: string,
-    observedAt: string,
-  ): Promise<void> {
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    const result = await super.markExactHeadUnavailable(input);
     await this.#write(
-      { type: "markExactHeadUnavailable", headId, reason, observedAt },
-      () => super.markExactHeadUnavailable(headId, reason, observedAt),
+      { type: "markExactHeadUnavailable", input },
+      async () => undefined,
     );
+    return result;
   }
 
   async applyExactHeadLineage(
@@ -638,6 +768,20 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
           operation.startedAt,
         );
         return;
+      case "recordExactHandlerResult":
+        await super.recordExactHandlerResult(
+          operation.transactionId,
+          operation.result,
+          operation.completedAt,
+        );
+        return;
+      case "markExactHandlerRecoveryRequired":
+        await super.markExactHandlerRecoveryRequired(
+          operation.transactionId,
+          operation.reason,
+          operation.observedAt,
+        );
+        return;
       case "abandonExactSettlement":
         await super.abandonExactSettlement(
           operation.transactionId,
@@ -646,11 +790,7 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
         );
         return;
       case "markExactHeadUnavailable":
-        await super.markExactHeadUnavailable(
-          operation.headId,
-          operation.reason,
-          operation.observedAt,
-        );
+        await super.markExactHeadUnavailable(operation.input);
         return;
       case "applyExactHeadLineage":
         await super.applyExactHeadLineage(operation.input);

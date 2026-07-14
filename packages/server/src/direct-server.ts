@@ -102,6 +102,7 @@ type ResolvedServerConfig = DirectModeServerConfig &
       | "minimumExactAdditiveThresholdSompi"
       | "minimumRefundLeadDaa"
       | "allowRollingRefundTimeoutDaa"
+      | "reconcileExactHeadOnOffer"
       | "lockManager"
     >
   >;
@@ -130,6 +131,7 @@ export class DirectModeServer {
       minimumExactAdditiveThresholdSompi: "10000000",
       minimumRefundLeadDaa: "1000",
       allowRollingRefundTimeoutDaa: false,
+      reconcileExactHeadOnOffer: false,
       lockManager: new MemoryChannelLockManager(),
       ...config,
     };
@@ -200,35 +202,48 @@ export class DirectModeServer {
           this.#config.payTo,
           this.#config.network,
         );
-      const selectionKey = sha256Hex(
-        stableStringify({
-          scope: "kaspa:x402:additive-head-selection:v1",
+      for (let selectionAttempt = 0; selectionAttempt < 2; selectionAttempt++) {
+        const selectionKey = sha256Hex(
+          stableStringify({
+            scope: "kaspa:x402:additive-head-selection:v1",
+            network: this.#config.network,
+            amount,
+            payTo: this.#config.payTo,
+            resource: options.resource,
+            selectionAttempt,
+          }),
+        );
+        let head = await this.#config.store.selectExactHead({
           network: this.#config.network,
           amount,
           payTo: this.#config.payTo,
-          resource: options.resource,
-        }),
-      );
-      const head = await this.#config.store.selectExactHead({
-        network: this.#config.network,
-        amount,
-        payTo: this.#config.payTo,
-        payToScriptPublicKey,
-        minimumAdditiveThresholdSompi:
-          this.#config.minimumExactAdditiveThresholdSompi,
-        selectionKey,
-      });
-      if (!head)
-        throw new KaspaX402Error(
-          "invalid_kaspa_x402_payload",
-          "additive exact head is unavailable",
+          payToScriptPublicKey,
+          minimumAdditiveThresholdSompi:
+            this.#config.minimumExactAdditiveThresholdSompi,
+          selectionKey,
+        });
+        if (!head) break;
+        if (this.#config.reconcileExactHeadOnOffer) {
+          try {
+            head = await this.reconcileExactHead(head.headId);
+          } catch (error) {
+            const current = await this.#config.store.loadExactHead(head.headId);
+            if (current?.status !== "unavailable") throw error;
+            head = current;
+          }
+          if (head.status !== "available") continue;
+        }
+        const exactHead = makeExactHeadChallenge(
+          head,
+          amount,
+          this.#config.maxTimeoutSeconds,
         );
-      const exactHead = makeExactHeadChallenge(
-        head,
-        amount,
-        this.#config.maxTimeoutSeconds,
+        return makePaymentRequired(this.#config, { ...options, exactHead });
+      }
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact head is unavailable",
       );
-      return makePaymentRequired(this.#config, { ...options, exactHead });
     }
     if (paymentRequirementSchemes(options).includes("batch-settlement")) {
       await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
@@ -449,6 +464,7 @@ export class DirectModeServer {
           );
         }
         const runVerified = async () => {
+          let recoveredExactHandlerResult: ProtectedHandlerResult | undefined;
           if (verified.scheme === "exact") {
             const replay = await this.#checkExactReplay(verified, fingerprint);
             if (replay) return replay;
@@ -458,16 +474,34 @@ export class DirectModeServer {
                 fingerprint,
               );
               verified = await this.#settleExactIfNeeded(verified, claim);
-              const handlerStarted = await this.#config.store.beginExactHandler(
-                verified.transactionId,
-                new Date().toISOString(),
-              );
-              if (!handlerStarted) {
+              const durableAttempt =
+                await this.#config.store.loadExactSettlementAttempt(
+                  verified.transactionId,
+                );
+              recoveredExactHandlerResult = durableAttempt?.handlerResult;
+              if (
+                durableAttempt?.handlerStartedAt &&
+                !recoveredExactHandlerResult
+              ) {
                 return {
                   status: 503,
                   headers: {},
                   body: { error: "exact_settlement_recovery_required" },
                 };
+              }
+              if (!recoveredExactHandlerResult) {
+                const handlerStarted =
+                  await this.#config.store.beginExactHandler(
+                    verified.transactionId,
+                    new Date().toISOString(),
+                  );
+                if (!handlerStarted) {
+                  return {
+                    status: 503,
+                    headers: {},
+                    body: { error: "exact_settlement_recovery_required" },
+                  };
+                }
               }
             } catch (error) {
               return this.#settlementCorrectiveResponse(
@@ -480,19 +514,30 @@ export class DirectModeServer {
             }
           }
           let handlerResult: ProtectedHandlerResult;
-          try {
-            handlerResult = await handler({
-              request,
-              payment: verified,
-              requestFingerprint: fingerprint,
-              paymentIdentifier,
-            });
-          } catch {
-            await this.#preserveLiveDepositTransition(verified);
-            return {
-              status: 500,
-              headers: {},
-            };
+          if (recoveredExactHandlerResult) {
+            handlerResult = recoveredExactHandlerResult;
+          } else {
+            try {
+              handlerResult = await handler({
+                request,
+                payment: verified,
+                requestFingerprint: fingerprint,
+                paymentIdentifier,
+              });
+            } catch {
+              if (verified.scheme === "exact") {
+                await this.#config.store.markExactHandlerRecoveryRequired(
+                  verified.transactionId,
+                  "protected handler threw after exact settlement acceptance",
+                  new Date().toISOString(),
+                );
+              }
+              await this.#preserveLiveDepositTransition(verified);
+              return {
+                status: 500,
+                headers: {},
+              };
+            }
           }
 
           let chargedAmount: SompiString;
@@ -518,6 +563,20 @@ export class DirectModeServer {
               );
             }
           } catch (error) {
+            if (verified.scheme === "exact") {
+              await this.#config.store.markExactHandlerRecoveryRequired(
+                verified.transactionId,
+                error instanceof Error
+                  ? error.message
+                  : "protected handler result is invalid",
+                new Date().toISOString(),
+              );
+              return {
+                status: 500,
+                headers: {},
+                body: { error: "exact_settlement_recovery_required" },
+              };
+            }
             await this.#preserveLiveDepositTransition(verified);
             return this.#correctiveResponse(
               resource,
@@ -529,6 +588,32 @@ export class DirectModeServer {
           }
 
           if (verified.scheme === "exact") {
+            if (!recoveredExactHandlerResult) {
+              try {
+                await this.#config.store.recordExactHandlerResult(
+                  verified.transactionId,
+                  handlerResult,
+                  new Date().toISOString(),
+                );
+              } catch (error) {
+                try {
+                  await this.#config.store.markExactHandlerRecoveryRequired(
+                    verified.transactionId,
+                    error instanceof Error
+                      ? error.message
+                      : "exact handler result persistence failed",
+                    new Date().toISOString(),
+                  );
+                } catch {
+                  // A post-write transport error may mean the result is already durable.
+                }
+                return {
+                  status: 500,
+                  headers: {},
+                  body: { error: "exact_settlement_recovery_required" },
+                };
+              }
+            }
             return this.#commitExactResponse(
               verified,
               handlerResult,
@@ -637,6 +722,45 @@ export class DirectModeServer {
     return this.#config.store.loadExactSettlementAttempt(attempt.transactionId);
   }
 
+  /**
+   * Supplies an operator-confirmed handler result after an accepted payment
+   * whose application outcome was uncertain. The payer's identical retry then
+   * completes the atomic payment/response commit without rerunning the handler.
+   */
+  async recoverExactHandler(
+    transactionId: Hash32Hex,
+    handlerResult: ProtectedHandlerResult,
+  ): Promise<ExactSettlementAttemptRecord> {
+    const attempt =
+      await this.#config.store.loadExactSettlementAttempt(transactionId);
+    if (
+      !attempt ||
+      attempt.status !== "accepted" ||
+      !attempt.handlerStartedAt ||
+      attempt.handlerResult
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact handler is not awaiting operator recovery",
+      );
+    }
+    const chargedAmount = handlerResult.chargedAmount ?? attempt.amount;
+    if (chargedAmount !== attempt.amount) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_settlement_response",
+        "exact handler recovery amount must equal the accepted amount",
+      );
+    }
+    await this.#config.store.recordExactHandlerResult(
+      transactionId,
+      { ...handlerResult, chargedAmount },
+      new Date().toISOString(),
+    );
+    return (await this.#config.store.loadExactSettlementAttempt(
+      transactionId,
+    ))!;
+  }
+
   async reconcileExactHead(
     headId: Hash32Hex,
     candidateTransactionIds: readonly Hash32Hex[] = [],
@@ -678,12 +802,13 @@ export class DirectModeServer {
     );
     const observedAt = new Date().toISOString();
     if (result.status === "unknown") {
-      await this.#config.store.markExactHeadUnavailable(
-        head.headId,
-        result.reason,
-        observedAt,
-      );
-      return (await this.#config.store.loadExactHead(head.headId))!;
+      return (
+        await this.#config.store.markExactHeadUnavailable({
+          ...exactHeadUnavailableSnapshot(head),
+          reason: result.reason,
+          observedAt,
+        })
+      ).head;
     }
     if (result.status === "current") {
       if (
@@ -692,11 +817,12 @@ export class DirectModeServer {
         result.scriptPublicKey.toLowerCase() !==
           head.scriptPublicKey.toLowerCase()
       ) {
-        await this.#config.store.markExactHeadUnavailable(
-          head.headId,
-          "trusted current-head evidence does not match durable state",
+        const unavailable = await this.#config.store.markExactHeadUnavailable({
+          ...exactHeadUnavailableSnapshot(head),
+          reason: "trusted current-head evidence does not match durable state",
           observedAt,
-        );
+        });
+        if (!unavailable.applied) return unavailable.head;
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "trusted current-head evidence does not match durable state",
@@ -708,11 +834,12 @@ export class DirectModeServer {
     try {
       assertExactHeadLineageResult(head, result.steps);
     } catch (error) {
-      await this.#config.store.markExactHeadUnavailable(
-        head.headId,
-        "trusted external-head evidence failed lineage validation",
+      const unavailable = await this.#config.store.markExactHeadUnavailable({
+        ...exactHeadUnavailableSnapshot(head),
+        reason: "trusted external-head evidence failed lineage validation",
         observedAt,
-      );
+      });
+      if (!unavailable.applied) return unavailable.head;
       throw error;
     }
     return this.#config.store.applyExactHeadLineage({
@@ -3405,6 +3532,18 @@ function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
     left.txid.toLowerCase() === right.txid.toLowerCase() &&
     left.index === right.index
   );
+}
+
+function exactHeadUnavailableSnapshot(head: ExactHeadRecord) {
+  if (head.status === "retired")
+    throw new Error("retired exact head cannot be marked unavailable");
+  return {
+    headId: head.headId,
+    expectedVersion: head.version,
+    expectedOutpoint: head.currentOutpoint,
+    expectedAmount: head.currentAmount,
+    expectedStatus: head.status,
+  } as const;
 }
 
 function scriptPublicKeyHash(scriptPublicKey: string): string {

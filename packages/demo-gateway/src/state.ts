@@ -7,10 +7,13 @@ import type {
   ExactSettlementCommit,
   ExactHeadRecord,
   ExactHeadLineageApply,
+  ExactHeadUnavailableApply,
+  ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
+  ProtectedHandlerResult,
   ServerChannelRecord,
   ServerStateStore,
   SettlementCommit,
@@ -80,6 +83,8 @@ export type GatewayStateMethod =
   | "recordExactSettlementBroadcast"
   | "acceptExactSettlement"
   | "beginExactHandler"
+  | "recordExactHandlerResult"
+  | "markExactHandlerRecoveryRequired"
   | "abandonExactSettlement"
   | "markExactHeadUnavailable"
   | "applyExactHeadLineage"
@@ -329,6 +334,51 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
+  async recordExactHandlerResult(
+    transactionId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      assertExactHandlerResultTransition(attempt, result, completedAt);
+      if (attempt.handlerResult) {
+        if (stableJson(attempt.handlerResult) !== stableJson(result))
+          throw new Error("exact handler result conflicts with durable state");
+        return;
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        handlerResult: clone(result),
+        handlerCompletedAt: completedAt,
+        recoveryReason: undefined,
+        updatedAt: completedAt,
+      });
+    });
+  }
+
+  async markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (
+        attempt.status !== "accepted" ||
+        !attempt.handlerStartedAt ||
+        attempt.handlerResult
+      ) {
+        throw new Error("exact handler is not awaiting recovery");
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        recoveryReason: reason,
+        updatedAt: observedAt,
+      });
+    });
+  }
+
   async abandonExactSettlement(
     transactionId: string,
     reason: string,
@@ -354,21 +404,29 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async markExactHeadUnavailable(
-    headId: string,
-    reason: string,
-    observedAt: string,
-  ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const head = await txn.get<ExactHeadRecord>(exactHeadKey(headId));
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    return this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
       if (!head) throw new Error("exact head was not found");
       if (head.status === "retired")
         throw new Error("retired exact head cannot be marked unavailable");
-      await txn.put(exactHeadKey(head.headId), {
+      if (
+        head.version !== input.expectedVersion ||
+        !sameOutpoint(head.currentOutpoint, input.expectedOutpoint) ||
+        head.currentAmount !== input.expectedAmount ||
+        head.status !== input.expectedStatus
+      ) {
+        return { applied: false, head: clone(head) };
+      }
+      const unavailable = {
         ...head,
         status: "unavailable",
-        unavailableReason: reason,
-        updatedAt: observedAt,
-      });
+        unavailableReason: input.reason,
+        updatedAt: input.observedAt,
+      } as const;
+      await txn.put(exactHeadKey(head.headId), unavailable);
+      return { applied: true, head: clone(unavailable) };
     });
   }
 
@@ -434,7 +492,11 @@ export class GatewayLedger implements ServerStateStore {
         exactAttemptKey(payment.transactionId),
       );
       if (attempt) {
-        if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
+        if (
+          attempt.status !== "accepted" ||
+          !attempt.handlerStartedAt ||
+          !attempt.handlerResult
+        )
           throw new Error("exact settlement attempt is not ready to apply");
         await txn.put(exactAttemptKey(payment.transactionId), {
           ...attempt,
@@ -747,6 +809,30 @@ export async function dispatchGatewayState(
       );
       return ledger.beginExactHandler(payload.transactionId, payload.startedAt);
     }
+    case "recordExactHandlerResult": {
+      const payload = readPayload<{
+        transactionId: string;
+        result: ProtectedHandlerResult;
+        completedAt: string;
+      }>(request);
+      return ledger.recordExactHandlerResult(
+        payload.transactionId,
+        payload.result,
+        payload.completedAt,
+      );
+    }
+    case "markExactHandlerRecoveryRequired": {
+      const payload = readPayload<{
+        transactionId: string;
+        reason: string;
+        observedAt: string;
+      }>(request);
+      return ledger.markExactHandlerRecoveryRequired(
+        payload.transactionId,
+        payload.reason,
+        payload.observedAt,
+      );
+    }
     case "abandonExactSettlement": {
       const payload = readPayload<{
         transactionId: string;
@@ -760,15 +846,8 @@ export async function dispatchGatewayState(
       );
     }
     case "markExactHeadUnavailable": {
-      const payload = readPayload<{
-        headId: string;
-        reason: string;
-        observedAt: string;
-      }>(request);
       return ledger.markExactHeadUnavailable(
-        payload.headId,
-        payload.reason,
-        payload.observedAt,
+        readPayload<{ input: ExactHeadUnavailableApply }>(request).input,
       );
     }
     case "applyExactHeadLineage":
@@ -1018,4 +1097,45 @@ function stableJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
     .join(",")}}`;
+}
+
+function assertExactHandlerResultTransition(
+  attempt: ExactSettlementAttemptRecord,
+  result: ProtectedHandlerResult,
+  completedAt: string,
+): void {
+  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
+    throw new Error("exact handler has not started on an accepted settlement");
+  if (Number.isNaN(Date.parse(completedAt)))
+    throw new Error("exact handler completion time must be an ISO date string");
+  if (
+    result.status !== undefined &&
+    (!Number.isInteger(result.status) ||
+      result.status < 100 ||
+      result.status > 599)
+  ) {
+    throw new Error("exact handler status is invalid");
+  }
+  if (
+    result.headers &&
+    Object.values(result.headers).some((value) => typeof value !== "string")
+  ) {
+    throw new Error("exact handler headers are invalid");
+  }
+  if (result.headers && Object.keys(result.headers).length > 64)
+    throw new Error("exact handler has too many response headers");
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(result);
+  } catch {
+    throw new Error("exact handler result must be JSON serializable");
+  }
+  if (new TextEncoder().encode(serialized).byteLength > 256 * 1024)
+    throw new Error("exact handler result exceeds the durable size limit");
+  if (
+    result.chargedAmount !== undefined &&
+    result.chargedAmount !== attempt.amount
+  ) {
+    throw new Error("exact handler charge must equal the accepted amount");
+  }
 }

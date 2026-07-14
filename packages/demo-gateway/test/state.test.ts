@@ -192,6 +192,11 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.beginExactHandler(TX, "2026-07-07T00:00:05.000Z"),
     ).resolves.toBe(false);
+    await ledger.recordExactHandlerResult(
+      TX,
+      { body: "download", chargedAmount: "20000000" },
+      "2026-07-07T00:00:05.000Z",
+    );
     await ledger.commitExactPayment({
       payment: exactPayment({
         transactionId: TX,
@@ -202,6 +207,7 @@ describe("gateway durable ledger", () => {
     await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
       handlerStartedAt: "2026-07-07T00:00:04.000Z",
+      handlerResult: { body: "download", chargedAmount: "20000000" },
     });
   });
 
@@ -222,11 +228,17 @@ describe("gateway durable ledger", () => {
       status: "available",
       claimTransactionId: undefined,
     });
-    await ledger.markExactHeadUnavailable(
-      HEAD_ID,
-      "successor lineage unavailable",
-      "2026-07-07T00:00:03.000Z",
-    );
+    await expect(
+      ledger.markExactHeadUnavailable({
+        headId: HEAD_ID,
+        expectedVersion: "0",
+        expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+        expectedAmount: "100000000",
+        expectedStatus: "available",
+        reason: "successor lineage unavailable",
+        observedAt: "2026-07-07T00:00:03.000Z",
+      }),
+    ).resolves.toMatchObject({ applied: true });
     await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "unavailable",
       unavailableReason: "successor lineage unavailable",

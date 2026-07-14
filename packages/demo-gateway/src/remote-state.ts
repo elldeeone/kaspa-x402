@@ -5,10 +5,13 @@ import type {
   ExactSettlementCommit,
   ExactHeadRecord,
   ExactHeadLineageApply,
+  ExactHeadUnavailableApply,
+  ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
+  ProtectedHandlerResult,
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
@@ -123,6 +126,30 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("beginExactHandler", { transactionId, startedAt });
   }
 
+  recordExactHandlerResult(
+    transactionId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    return this.#call("recordExactHandlerResult", {
+      transactionId,
+      result,
+      completedAt,
+    });
+  }
+
+  markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("markExactHandlerRecoveryRequired", {
+      transactionId,
+      reason,
+      observedAt,
+    });
+  }
+
   abandonExactSettlement(
     transactionId: string,
     reason: string,
@@ -136,15 +163,9 @@ export class RemoteGatewayState implements GatewayStateClient {
   }
 
   markExactHeadUnavailable(
-    headId: string,
-    reason: string,
-    observedAt: string,
-  ): Promise<void> {
-    return this.#call("markExactHeadUnavailable", {
-      headId,
-      reason,
-      observedAt,
-    });
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    return this.#call("markExactHeadUnavailable", { input });
   }
 
   applyExactHeadLineage(

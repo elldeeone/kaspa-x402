@@ -132,16 +132,23 @@ KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
   npm run demo:exact-heads -- register --file heads.json
 ```
 
+The admin helper accepts the bearer token only through
+`KASPA_X402_DEMO_ADMIN_TOKEN`; command-line token arguments are rejected because
+process arguments may be visible to other users. It also refuses non-loopback
+plain HTTP so the bearer token is never sent over an unencrypted remote link.
+
 Check availability with:
 
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-heads -- stats
 ```
 
-The Worker checks every available additive head against the accepted address
-UTXO set before issuing a paid challenge. A missing or conflicting outpoint is
-marked unavailable. If an external transaction legitimately advanced that
-head, restore it only with the complete ordered lineage:
+The Worker checks only a bounded selected additive head against the accepted
+address UTXO set before issuing a challenge. Anonymous request work does not
+scan the full inventory. A missing or conflicting selected outpoint is marked
+unavailable only if the durable version/outpoint/amount/status still match the
+checked snapshot. If an external transaction legitimately advanced that head,
+restore it only with the complete ordered lineage:
 
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> \

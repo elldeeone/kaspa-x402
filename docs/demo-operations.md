@@ -108,10 +108,12 @@ outpoint, verifies a same-script successor whose delta equals the exact price,
 and advances that same durable lineage. Stale competing clients receive a fresh
 402 against the current head.
 
-Before each additive offer, the Worker confirms that the durable current
-outpoint remains in the accepted address UTXO set. A missing or conflicting
-head becomes unavailable. If a known external transaction advanced it, provide
-the complete ordered accepted lineage to recover it:
+Before each additive offer, the Worker confirms only the selected durable
+current outpoint against the accepted address UTXO set. It makes at most two
+bounded candidate attempts, independent of total head inventory. A missing or
+conflicting selected head becomes unavailable. Full-pool checks are operator
+work, not anonymous request work. If a known external transaction advanced a
+head, provide the complete ordered accepted lineage to recover it:
 
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
@@ -252,23 +254,26 @@ resource. In default `standard-native` mode it needs no admin state. In
 KASPA_X402_RPC_URL=<tn10-rpc-url> \
 KASPA_X402_FUNDING_WALLET=wallet-key:/path/to/testnet-key \
 KASPA_X402_KASPA_WASM_MODULE=/path/to/kaspa.js \
+KASPA_X402_EXPECTED_GATEWAY_ORIGIN=https://demo.kaspa-x402.org \
+KASPA_X402_EXPECTED_EXACT_PROFILE=standard-native \
+KASPA_X402_EXPECTED_EXACT_AMOUNT=20000000 \
+KASPA_X402_EXPECTED_EXACT_PAY_TO=<expected-merchant-address> \
 KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
   npm run proof:hosted-exact
 ```
 
 Set `KASPA_X402_EXACT_PROFILE=additive` and
+`KASPA_X402_EXPECTED_EXACT_PROFILE=additive`, then provide
 `KASPA_X402_DEMO_ADMIN_TOKEN=<token>` to exercise the optional head profile.
+The additive proof derives and pins the locally created head address when an
+explicit expected payTo is absent. The proof refuses to sign if the gateway
+origin, resource, profile, amount, recipient, or network differs from the
+operator pins.
 
-For alpha.6 and later, also confirm that observe-only `exact-transfer` evidence
-is rejected and does not return protected content.
-
-For alpha.6 KIP-10 exact deployments, advertise `exact` only after the gateway
-can reserve a borrow outpoint, return the reservation fields in
-`PaymentRequired.extra`, verify the signed transaction artifact, submit it
-through the configured TN10 PNN/WSS endpoints, observe accepted finality, and
-consume the reservation. If the gateway does not have that settlement path,
-exact must remain unavailable and hosted canaries should cover
-`batch-settlement` only.
+Also confirm that legacy observe-only `exact-transfer` evidence is rejected and
+does not return protected content. Alpha.6/alpha.7 reservation and borrow
+instructions are historical only; alpha.8 uses standard-native by default and
+reusable additive heads when explicitly enabled.
 
 ## Durable State Policy
 

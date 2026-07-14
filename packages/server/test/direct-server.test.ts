@@ -370,6 +370,47 @@ describe("direct-mode server", () => {
     expect(heads[0]?.claimTransactionId).toBeUndefined();
   });
 
+  it("reconciles only bounded selected heads before an additive offer", async () => {
+    let reconciliations = 0;
+    const setup = await makeAdditiveServer({
+      reconcileExactHeadOnOffer: true,
+      exactHeadReconciler: {
+        reconcileExactHead() {
+          reconciliations += 1;
+          return { status: "unknown", reason: "head not found" } as const;
+        },
+      },
+    });
+    for (let index = 1; index < 64; index += 1) {
+      const id = index.toString(16).padStart(64, "0");
+      await setup.store.registerExactHead(
+        exactHead({
+          headId: id,
+          currentOutpoint: { txid: id, index: 0 },
+          scriptPublicKey: setup.head.scriptPublicKey,
+          redeemScript: setup.head.redeemScript,
+        }),
+      );
+    }
+
+    const response = await setup.server.handlePaidRequest(
+      {
+        url: `${RESOURCE.url}?bounded-reconciliation=1`,
+        resource: RESOURCE,
+        paymentScheme: "exact",
+      },
+      async () => ({ body: "unreachable" }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(reconciliations).toBe(2);
+    expect(
+      (await setup.store.listExactHeads()).filter(
+        (head) => head.status === "available",
+      ),
+    ).toHaveLength(62);
+  });
+
   it("allows one conflicting additive head spend and refreshes the losing challenge", async () => {
     const setup = await makeAdditiveServer({
       exactTransactionVerifier: {
@@ -879,7 +920,7 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
-  it("fails closed instead of re-running protected work after an exact commit failure", async () => {
+  it("resumes a durable handler result without re-running protected work after an exact commit failure", async () => {
     const store = new FailingExactCommitStore(1);
     const setup = makeServer({ requirePaymentIdentifier: true, store });
     const requestHash = "12".repeat(32);
@@ -915,19 +956,63 @@ describe("direct-mode server", () => {
     );
 
     expect(first.status).toBe(500);
-    expect(second.status).toBe(503);
-    expect(second.body).toEqual({
-      error: "exact_settlement_recovery_required",
-    });
+    expect(second.status).toBe(200);
+    expect(second.body).toBe("download");
     expect(handlerInvocations).toBe(1);
     expect(externalEffects).toBe(1);
-    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
+    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeDefined();
     await expect(
       store.loadExactSettlementAttempt(EXACT_TX_ID),
     ).resolves.toMatchObject({
-      status: "accepted",
+      status: "applied",
       handlerStartedAt: expect.any(String),
+      handlerCompletedAt: expect.any(String),
+      handlerResult: { body: "download" },
     });
+  });
+
+  it("requires explicit recovery after an uncertain exact handler outcome", async () => {
+    const setup = makeServer();
+    const requestHash = "12".repeat(32);
+    const payment = makeExactPayment(setup, { requestHash });
+    let handlerInvocations = 0;
+    const request = requestWithPayment(payment, {
+      paymentScheme: "exact",
+      requestHash,
+    });
+
+    const first = await setup.server.handlePaidRequest(request, async () => {
+      handlerInvocations += 1;
+      throw new Error("application outcome unknown");
+    });
+    const blocked = await setup.server.handlePaidRequest(request, async () => {
+      handlerInvocations += 1;
+      return { body: "must not run" };
+    });
+
+    expect(first.status).toBe(500);
+    expect(blocked).toMatchObject({
+      status: 503,
+      body: { error: "exact_settlement_recovery_required" },
+    });
+    expect(handlerInvocations).toBe(1);
+    await expect(
+      setup.server.recoverExactHandler(EXACT_TX_ID, { body: "recovered" }),
+    ).resolves.toMatchObject({
+      status: "accepted",
+      handlerResult: { body: "recovered", chargedAmount: "100" },
+    });
+
+    const recovered = await setup.server.handlePaidRequest(
+      request,
+      async () => {
+        handlerInvocations += 1;
+        return { body: "must not run" };
+      },
+    );
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toBe("recovered");
+    expect(handlerInvocations).toBe(1);
   });
 
   it("rejects an exact authorization replayed against a different request", async () => {

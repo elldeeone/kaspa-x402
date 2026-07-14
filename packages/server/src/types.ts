@@ -196,6 +196,22 @@ export interface ExactHeadLineageApply {
   observedAt: string;
 }
 
+/** Snapshot-guarded fail-closed transition for untrusted or incomplete head evidence. */
+export interface ExactHeadUnavailableApply {
+  headId: Hash32Hex;
+  expectedVersion: SompiString;
+  expectedOutpoint: FundingOutpoint;
+  expectedAmount: SompiString;
+  expectedStatus: Exclude<ExactHeadStatus, "retired">;
+  reason: string;
+  observedAt: string;
+}
+
+export interface ExactHeadUnavailableResult {
+  applied: boolean;
+  head: ExactHeadRecord;
+}
+
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
   profile: ExactProfile;
@@ -353,6 +369,8 @@ export interface ExactSettlementAttemptRecord {
   updatedAt: string;
   finality?: SettlementFinality;
   handlerStartedAt?: string;
+  handlerResult?: ProtectedHandlerResult;
+  handlerCompletedAt?: string;
   head?: ExactSettlementHeadClaim;
   recoveryReason?: string;
 }
@@ -456,6 +474,18 @@ export interface ExactHeadStore {
     transactionId: Hash32Hex,
     startedAt: string,
   ): Promise<boolean>;
+  /** Persists protected work before the payment/response commit so retries can resume safely. */
+  recordExactHandlerResult(
+    transactionId: Hash32Hex,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void>;
+  /** Records an uncertain handler outcome that requires explicit operator recovery. */
+  markExactHandlerRecoveryRequired(
+    transactionId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
   /** Releases only a not-yet-accepted attempt after trusted negative reconciliation. */
   abandonExactSettlement(
     transactionId: Hash32Hex,
@@ -464,10 +494,8 @@ export interface ExactHeadStore {
   ): Promise<void>;
   /** Fail closed when trusted successor lineage cannot be established. */
   markExactHeadUnavailable(
-    headId: Hash32Hex,
-    reason: string,
-    observedAt: string,
-  ): Promise<void>;
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult>;
   /** Atomically applies a fully verified external successor chain from the expected head snapshot. */
   applyExactHeadLineage(input: ExactHeadLineageApply): Promise<ExactHeadRecord>;
 }
@@ -587,6 +615,8 @@ export interface DirectModeServerConfig {
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
+  /** Reconciles only the selected additive head before advertising it. */
+  reconcileExactHeadOnOffer?: boolean;
   /** Exact wire profile offered by this server. Defaults to standard-native. */
   exactProfile?: ExactProfile;
   minimumExactAdditiveThresholdSompi?: SompiString;

@@ -137,9 +137,7 @@ export async function handleGatewayRequest(
     );
   }
 
-  const exactAvailable =
-    profile === "exact" ? await hostedExactAvailable(config, state) : false;
-  if (profile === "exact" && !exactAvailable) {
+  if (profile === "exact" && !hostedExactConfigured(config)) {
     return json(
       { ok: false, error: "exact_unavailable" },
       { status: 503, headers: corsHeaders(config) },
@@ -148,27 +146,13 @@ export async function handleGatewayRequest(
 
   let gateway: { server: DirectModeServer };
   try {
-    gateway = await createGateway(config, state, {
-      reconcileAvailableExactHeads:
-        profile === "exact" && config.exactProfile === "additive",
-    });
+    gateway = await createGateway(config, state);
   } catch (error) {
     return json(
       { ok: false, error: errorMessage(error) },
       { status: 503, headers: corsHeaders(config) },
     );
   }
-  if (
-    profile === "exact" &&
-    config.exactProfile === "additive" &&
-    !(await hostedExactAvailable(config, state))
-  ) {
-    return json(
-      { ok: false, error: "exact_unavailable" },
-      { status: 503, headers: corsHeaders(config) },
-    );
-  }
-
   const resource = resourceFor(url, profile);
   const unsupported = gatewayUnsupportedPaymentResponse(
     request,
@@ -185,7 +169,7 @@ export async function handleGatewayRequest(
   context.waitUntil(
     state.incrementMetric(`requests_${profileMetric(profile)}`),
   );
-  const result = await gateway.server.handlePaidRequest(
+  let result = await gateway.server.handlePaidRequest(
     {
       method: request.method,
       url: url.toString(),
@@ -223,6 +207,21 @@ export async function handleGatewayRequest(
       chargedAmount: payment.accepted.amount,
     }),
   );
+
+  if (
+    profile === "exact" &&
+    config.exactProfile === "additive" &&
+    result.status === 503 &&
+    (result.body as { error?: unknown } | undefined)?.error ===
+      "invalid_payload" &&
+    !(await hostedExactAvailable(config, state))
+  ) {
+    result = {
+      status: 503,
+      headers: {},
+      body: { ok: false, error: "exact_unavailable" },
+    };
+  }
 
   if (result.status === 402)
     context.waitUntil(
@@ -366,11 +365,18 @@ async function hostedExactAvailable(
   config: GatewayConfig,
   state: GatewayStateClient,
 ): Promise<boolean> {
-  if (!config.hostedExactSettlementEnabled) return false;
+  if (!hostedExactConfigured(config)) return false;
   if (config.exactProfile === "standard-native") return true;
-  if (config.chainBroadcastMode !== "pnn") return false;
   const stats = await exactHeadStats(state);
   return stats.available > 0;
+}
+
+function hostedExactConfigured(config: GatewayConfig): boolean {
+  return (
+    config.hostedExactSettlementEnabled &&
+    (config.exactProfile === "standard-native" ||
+      config.chainBroadcastMode === "pnn")
+  );
 }
 
 function gatewaySupportedKinds(
@@ -412,7 +418,6 @@ function gatewaySupportedKinds(
 async function createGateway(
   config: GatewayConfig,
   state: GatewayStateClient,
-  options: { reconcileAvailableExactHeads?: boolean } = {},
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
@@ -473,16 +478,11 @@ async function createGateway(
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
     exactHeadReconciler: new RestExactHeadReconciler(rest),
+    reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     requirePaymentIdentifier: false,
   });
-  if (options.reconcileAvailableExactHeads) {
-    for (const head of await state.listExactHeads()) {
-      if (head.status === "available")
-        await server.reconcileExactHead(head.headId);
-    }
-  }
   return { server };
 }
 
@@ -586,6 +586,30 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.beginExactHandler(transactionId, startedAt);
   }
 
+  recordExactHandlerResult(
+    transactionId: string,
+    result: Parameters<ServerStateStore["recordExactHandlerResult"]>[1],
+    completedAt: string,
+  ) {
+    return this.#inner.recordExactHandlerResult(
+      transactionId,
+      result,
+      completedAt,
+    );
+  }
+
+  markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.markExactHandlerRecoveryRequired(
+      transactionId,
+      reason,
+      observedAt,
+    );
+  }
+
   abandonExactSettlement(
     transactionId: string,
     reason: string,
@@ -598,8 +622,10 @@ class AddressRecordingStore implements ServerStateStore {
     );
   }
 
-  markExactHeadUnavailable(headId: string, reason: string, observedAt: string) {
-    return this.#inner.markExactHeadUnavailable(headId, reason, observedAt);
+  markExactHeadUnavailable(
+    input: Parameters<ServerStateStore["markExactHeadUnavailable"]>[0],
+  ) {
+    return this.#inner.markExactHeadUnavailable(input);
   }
 
   applyExactHeadLineage(
