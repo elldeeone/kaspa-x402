@@ -1,0 +1,421 @@
+{
+  "version": "0.1.0-alpha.7",
+  "sourceState": "locked",
+  "dirtyInputs": [],
+  "contentLock": "site/releases/v0.1.0-alpha.7.json",
+  "snapshotScope": "schemas, specs, selected docs, vectors, package metadata, and release metadata",
+  "activeAlphaOnlyRoutes": [
+    "/",
+    "/demo/",
+    "/assets/",
+    "/vendor/",
+    "/site-manifest.json",
+    "/releases/"
+  ],
+  "unversionedRoutes": "active alpha; not part of the immutable release snapshot",
+  "npmInstall": [
+    "@kaspa-x402/core@alpha",
+    "@kaspa-x402/covenant@alpha",
+    "@kaspa-x402/client@alpha",
+    "@kaspa-x402/server@alpha"
+  ],
+  "artifacts": [
+    {
+      "source": "schemas/payment-required.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/payment-required.schema.json",
+      "bytes": 4135,
+      "sha256": "b1fd38bd85dfc3e81d6006c53776c3aaf72b5c74e93ca5fa65c72e0651212ad3"
+    },
+    {
+      "source": "schemas/payment-payload.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/payment-payload.schema.json",
+      "bytes": 2965,
+      "sha256": "339b233c6d1381eb29428e59902f6e07ecf525123d716318b6746300f16b281c"
+    },
+    {
+      "source": "schemas/settlement-response.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/settlement-response.schema.json",
+      "bytes": 6085,
+      "sha256": "9098f76c832d9a4c0eb04465033d52543c4ef2ec3be8fa576c549445b6e9ff3e"
+    },
+    {
+      "source": "schemas/kaspa-requirements-extra.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/kaspa-requirements-extra.schema.json",
+      "bytes": 12915,
+      "sha256": "d4363fa0027a881f05a5638bcdce31385d00abde68cee351922f648e3745430f"
+    },
+    {
+      "source": "schemas/kaspa-payment-payload.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/kaspa-payment-payload.schema.json",
+      "bytes": 6502,
+      "sha256": "49c773efe8575a4cb88151f4994b4718b7b6d7457ed594ef33ba7103435887d1"
+    },
+    {
+      "source": "schemas/kaspa-batch-extra.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/kaspa-batch-extra.schema.json",
+      "bytes": 6298,
+      "sha256": "4f8a7570ce2a91661a529ee475a6a31147f933ca234876433e11d8e0235b7241"
+    },
+    {
+      "source": "schemas/payment-identifier.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/payment-identifier.schema.json",
+      "bytes": 474,
+      "sha256": "2a918aa3da7563f81f1de7a264729dc00ca0bb77559933c201efcc060b947cdb"
+    },
+    {
+      "source": "schemas/channel-state.schema.json",
+      "target": "v0.1.0-alpha.7/schemas/channel-state.schema.json",
+      "bytes": 3269,
+      "sha256": "fec2637619739ecf15a19723c65b18c28b80d4897d04b19b40502891ef971335"
+    },
+    {
+      "source": "spec/kaspa-x402-v1.md",
+      "target": "v0.1.0-alpha.7/spec/kaspa-x402-v1.md",
+      "bytes": 11213,
+      "sha256": "b8915178e0175ad8d9b22174567d081cf924000a18a84020046899b3ebe99861"
+    },
+    {
+      "source": "spec/kaspa-exact-v1.md",
+      "target": "v0.1.0-alpha.7/spec/kaspa-exact-v1.md",
+      "bytes": 12590,
+      "sha256": "1fe7fb7cfaf6bd65f085c16fb96f05295bc043c07a60b8679e90e56c377a19eb"
+    },
+    {
+      "source": "spec/kaspa-batch-settlement-v1.md",
+      "target": "v0.1.0-alpha.7/spec/kaspa-batch-settlement-v1.md",
+      "bytes": 27944,
+      "sha256": "21cb5c5f1598d85fc05f98765295afe32b43b9874b001b40582412f358d52bd1"
+    },
+    {
+      "source": "spec/http-profile.md",
+      "target": "v0.1.0-alpha.7/spec/http-profile.md",
+      "bytes": 2331,
+      "sha256": "03d82accecead317a52245860bf35c8157e8275faee8de3b4f5167991a94c361"
+    },
+    {
+      "source": "spec/mcp-profile.md",
+      "target": "v0.1.0-alpha.7/spec/mcp-profile.md",
+      "bytes": 3113,
+      "sha256": "78bbf94b8f1d992df76668a0ae8c85c8aa860bdefeae517b4c800da719bfc0eb"
+    },
+    {
+      "source": "spec/facilitator-profile.md",
+      "target": "v0.1.0-alpha.7/spec/facilitator-profile.md",
+      "bytes": 4638,
+      "sha256": "8f57dd1d99e51322ec873707052d3e18f407463f0f9873fd852437a9a6e299d4"
+    },
+    {
+      "source": "spec/errors.md",
+      "target": "v0.1.0-alpha.7/spec/errors.md",
+      "bytes": 1790,
+      "sha256": "89527fc4e426b38de3fad3d82192505a3e2e547d91ac1f249652d62361fb3f18"
+    },
+    {
+      "source": "spec/live-covenant-proof-harness.md",
+      "target": "v0.1.0-alpha.7/spec/live-covenant-proof-harness.md",
+      "bytes": 4153,
+      "sha256": "9ec525fc547deb7504345e42eb97ddd24c2461cd96680852ecdc1721e6fd119b"
+    },
+    {
+      "source": "spec/transaction-v1-plan.md",
+      "target": "v0.1.0-alpha.7/spec/transaction-v1-plan.md",
+      "bytes": 3792,
+      "sha256": "e63bf1c3877abd365abdba0222e219708785ea7ebf98da976c35bc1647937d1e"
+    },
+    {
+      "source": "docs/public-proposal.md",
+      "target": "v0.1.0-alpha.7/docs/public-proposal.md",
+      "bytes": 3319,
+      "sha256": "c03b054092dad080e021f0cccbf5d9406a1f72f76c1cddbe4e48a452cac859bf"
+    },
+    {
+      "source": "docs/adoption-examples.md",
+      "target": "v0.1.0-alpha.7/docs/adoption-examples.md",
+      "bytes": 1840,
+      "sha256": "05c6a4d94506732d7687b6272e95b8c00c54bc19bdb37d71d980ff7a5c4f40c9"
+    },
+    {
+      "source": "docs/live-testnet-report.md",
+      "target": "v0.1.0-alpha.7/docs/live-testnet-report.md",
+      "bytes": 4268,
+      "sha256": "ccb0759c33027b9efdcc320b5cade6890581a488289cea1716dd2452b0157450"
+    },
+    {
+      "source": "docs/live-testnet-proof.md",
+      "target": "v0.1.0-alpha.7/docs/live-testnet-proof.md",
+      "bytes": 2505,
+      "sha256": "d3db4469ccbf1e7182fd2e2a14ff8f6bd3bcc82297906513ad817b82f5f37a1b"
+    },
+    {
+      "source": "docs/review-closure-ledger.md",
+      "target": "v0.1.0-alpha.7/docs/review-closure-ledger.md",
+      "bytes": 4192,
+      "sha256": "66af7b9a3ac9d3c6314a5d92d6a67d10ac6c6f7f4757a21c4e46bbbe1280415c"
+    },
+    {
+      "source": "docs/security-threat-model.md",
+      "target": "v0.1.0-alpha.7/docs/security-threat-model.md",
+      "bytes": 4887,
+      "sha256": "5c131fee40d8a55799fb530a4823099aa083b75ff9765f4f567448569678c204"
+    },
+    {
+      "source": "docs/mainnet-readiness.md",
+      "target": "v0.1.0-alpha.7/docs/mainnet-readiness.md",
+      "bytes": 2671,
+      "sha256": "f2ea12488e3b8dbcfad6fa3fdb0b44eb948942bbc26e5c20fc91fd8b21063402"
+    },
+    {
+      "source": "docs/versioning-policy.md",
+      "target": "v0.1.0-alpha.7/docs/versioning-policy.md",
+      "bytes": 2540,
+      "sha256": "f00eaf71905046b8669a1993fba3c735c1a3b740c0f19ca9258d71838dd30a5a"
+    },
+    {
+      "source": "docs/native-profile-boundary.md",
+      "target": "v0.1.0-alpha.7/docs/native-profile-boundary.md",
+      "bytes": 4910,
+      "sha256": "18348e5ee82db3275fed0642c3945e4f5190ffb3945ab6f7ea3beca61de40687"
+    },
+    {
+      "source": "docs/server-store-contract.md",
+      "target": "v0.1.0-alpha.7/docs/server-store-contract.md",
+      "bytes": 2349,
+      "sha256": "3b3074c5b2148c311aa6bcba4d02bfdb8a0a1a0b9c2270b3d36cacf08662b334"
+    },
+    {
+      "source": "docs/server-runtime-lock-contract.md",
+      "target": "v0.1.0-alpha.7/docs/server-runtime-lock-contract.md",
+      "bytes": 1188,
+      "sha256": "52779c495192797ec5c646ce40ffeb30edd043ecfb026b2591d4671ef6c2a6d8"
+    },
+    {
+      "source": "vectors/README.md",
+      "target": "v0.1.0-alpha.7/vectors/README.md",
+      "bytes": 2397,
+      "sha256": "10f21407e1bacc03866061ffaf531069e21d479182a7cac77ce79350cdd54499"
+    },
+    {
+      "source": "vectors/channel-id/base.json",
+      "target": "v0.1.0-alpha.7/vectors/channel-id/base.json",
+      "bytes": 1621,
+      "sha256": "d23d557420d9c69f54c26e4c7f711e3779bbf023e5128b45856872543733483f"
+    },
+    {
+      "source": "vectors/negative/accepted-not-offered.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/accepted-not-offered.json",
+      "bytes": 2623,
+      "sha256": "5d042d6bde5dc740c8856ea89ea66d0f83d4c53f35cd29f6d07678c7d24318a4"
+    },
+    {
+      "source": "vectors/negative/amount-overflow.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/amount-overflow.json",
+      "bytes": 719,
+      "sha256": "a92c98eff8293cb69a50ade53e65bee51d3e7163946349359d341f1a57c3e19c"
+    },
+    {
+      "source": "vectors/negative/deposit-success-missing-commitment.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/deposit-success-missing-commitment.json",
+      "bytes": 593,
+      "sha256": "ba3c0d327a260e7773a7737c8a222cc54e1989845275b179bb0533e4a52f402e"
+    },
+    {
+      "source": "vectors/negative/deposit-success-with-amount.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/deposit-success-with-amount.json",
+      "bytes": 721,
+      "sha256": "ccb6cb05b50b0b1e6f54404d1360a8b7c65eb7f193012ebbdd4b9ed9d9144ba3"
+    },
+    {
+      "source": "vectors/negative/empty-success-with-amount.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/empty-success-with-amount.json",
+      "bytes": 1167,
+      "sha256": "ac1a1981b4bd44cfe3d77b6cfb2521ea851157edccbbcbc7c829b2ffc8844b48"
+    },
+    {
+      "source": "vectors/negative/empty-success-without-commitment.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/empty-success-without-commitment.json",
+      "bytes": 410,
+      "sha256": "a9613bcc8245286dc8f6b4042092681d1d9dbae5debc11451e1032e29f6607e7"
+    },
+    {
+      "source": "vectors/negative/exact-reservation-partial-terms.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/exact-reservation-partial-terms.json",
+      "bytes": 685,
+      "sha256": "17016ea5c08b88c468ddfd8430182a2accef0f1610fb9bdf1beb03563c4ab80c"
+    },
+    {
+      "source": "vectors/negative/exact-transaction-missing-reservation.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/exact-transaction-missing-reservation.json",
+      "bytes": 748,
+      "sha256": "6feaa22591e10dfe31c181c58f3201ad4817cc16f55a3f459652f92692fb0657"
+    },
+    {
+      "source": "vectors/negative/exact-transaction-missing-transaction.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/exact-transaction-missing-transaction.json",
+      "bytes": 350,
+      "sha256": "4c1bfa46fa59765c1575c0a9c54894e7a2bf44be9dad819d71cc9b05083414e5"
+    },
+    {
+      "source": "vectors/negative/exact-transfer-unsupported.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/exact-transfer-unsupported.json",
+      "bytes": 1313,
+      "sha256": "f47260fad3f3e7771fd262f2d4bbeef9a46ce841c9f9250579b659eabfbfc547"
+    },
+    {
+      "source": "vectors/negative/float-amount.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/float-amount.json",
+      "bytes": 713,
+      "sha256": "6d57f07ebdc6aa92611f69f9814b44b7918e7bc9152c92ebdcbc81514b78ad44"
+    },
+    {
+      "source": "vectors/negative/hex-key-too-short.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/hex-key-too-short.json",
+      "bytes": 835,
+      "sha256": "62f24fbcd0dce46aa3589873940543f402ce6c7c26689ed865eea092f7c4e615"
+    },
+    {
+      "source": "vectors/negative/invalid-asset.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/invalid-asset.json",
+      "bytes": 695,
+      "sha256": "55be0e6cbb6649815765028fca0ea7eecf81467a55dece47432c52ee0829c117"
+    },
+    {
+      "source": "vectors/negative/missing-payment-identifier.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/missing-payment-identifier.json",
+      "bytes": 3280,
+      "sha256": "e0ff63a120bad6b986b040e51d2520fa2f9d9a25f68df4d3b00accb0cf58eb46"
+    },
+    {
+      "source": "vectors/negative/non-colon-network.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/non-colon-network.json",
+      "bytes": 731,
+      "sha256": "81197d24880b52cd49362868c5107e06e164bf0a69fe8afe9ece4cd112e5a850"
+    },
+    {
+      "source": "vectors/negative/outpoint-index-overflow.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/outpoint-index-overflow.json",
+      "bytes": 931,
+      "sha256": "81b629b952154470298672ac54d2ab3dad406bd8311153d30b9f6b6857dcb8af"
+    },
+    {
+      "source": "vectors/negative/payment-identifier-conflict.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/payment-identifier-conflict.json",
+      "bytes": 708,
+      "sha256": "f09eb00cc1ba1d4bd2e5471038f722f844a7133ad70fdef2b8a41b537416a968"
+    },
+    {
+      "source": "vectors/negative/scheme-payload-mismatch.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/scheme-payload-mismatch.json",
+      "bytes": 1329,
+      "sha256": "c94c419382621e7ca6c8023334c57e63fd4a59ab80b2ac8cddaa8ba1650df772"
+    },
+    {
+      "source": "vectors/negative/settlement-success-missing-amount.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/settlement-success-missing-amount.json",
+      "bytes": 661,
+      "sha256": "a82865750495846398a3dde52125392cd839740ba4b0845da20e325a9925a8f6"
+    },
+    {
+      "source": "vectors/negative/txid-wrong-length.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/txid-wrong-length.json",
+      "bytes": 836,
+      "sha256": "f6f60b9daae416613a75413f965837d59decf2b1ff49af131dda8d04c142ccaa"
+    },
+    {
+      "source": "vectors/negative/voucher-signature-wrong-length.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/voucher-signature-wrong-length.json",
+      "bytes": 790,
+      "sha256": "23122691eedbbe63349d8f1307111ee7b1efd148aaa2ac3b10129a45ad435b70"
+    },
+    {
+      "source": "vectors/negative/wrong-binding.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/wrong-binding.json",
+      "bytes": 938,
+      "sha256": "e5d69bb8bc8295ba28aea93c99c6d93b941b207f7e72ffbe6cf03baea2e14278"
+    },
+    {
+      "source": "vectors/negative/wrong-scheme.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/wrong-scheme.json",
+      "bytes": 719,
+      "sha256": "73668e17dbaadd60fc01e7eaae6ff234b080e138fc4379f7a81dfde9dc0319b2"
+    },
+    {
+      "source": "vectors/negative/wrong-x402-version.json",
+      "target": "v0.1.0-alpha.7/vectors/negative/wrong-x402-version.json",
+      "bytes": 705,
+      "sha256": "3033e412dcf08f6cfac7fad544f0b1ed576c803be04510516c2e77b56af8f087"
+    },
+    {
+      "source": "vectors/settlement-response/claim-success.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/claim-success.json",
+      "bytes": 1296,
+      "sha256": "5138602a4c1242052251e8dd6bbcbb58dca0a3830d7efb08561f09533ec5fc30"
+    },
+    {
+      "source": "vectors/settlement-response/corrective-402.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/corrective-402.json",
+      "bytes": 1958,
+      "sha256": "53469818212c01e6dc7b160204ccf58d60f7d3837b8089e0c8263fef2a9b1207"
+    },
+    {
+      "source": "vectors/settlement-response/deposit-voucher-success.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/deposit-voucher-success.json",
+      "bytes": 1217,
+      "sha256": "bcaf1f5cdd58d3dbedccfe7584d12ee3f0c95078a1410f309d768544ec138e31"
+    },
+    {
+      "source": "vectors/settlement-response/failure.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/failure.json",
+      "bytes": 326,
+      "sha256": "5549227a11dffd22e15dbd85bce69db9f84a9c97ccf1d84dd8e1f56e9ea21b00"
+    },
+    {
+      "source": "vectors/settlement-response/refund-success.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/refund-success.json",
+      "bytes": 632,
+      "sha256": "a49ae9b155a96735502ae68494825f72d18908968cf98ab03b5a669bdc39742b"
+    },
+    {
+      "source": "vectors/settlement-response/voucher-only-success.json",
+      "target": "v0.1.0-alpha.7/vectors/settlement-response/voucher-only-success.json",
+      "bytes": 1212,
+      "sha256": "0c5c87f71a76cd8776a72046852fe8604a69457ab8293f246c534ecc0032688c"
+    },
+    {
+      "source": "vectors/tx-v1/batch-claim.json",
+      "target": "v0.1.0-alpha.7/vectors/tx-v1/batch-claim.json",
+      "bytes": 11240,
+      "sha256": "1706d925441e102db28f1279641f6a79bf18197c120b5fdd744dabd47b28f005"
+    },
+    {
+      "source": "vectors/tx-v1/batch-refund.json",
+      "target": "v0.1.0-alpha.7/vectors/tx-v1/batch-refund.json",
+      "bytes": 9421,
+      "sha256": "4dec767a34e3e644b3b71827f103ceed46d94535bf413b41fc3e2cbdf551493e"
+    },
+    {
+      "source": "vectors/tx-v1/plan.json",
+      "target": "v0.1.0-alpha.7/vectors/tx-v1/plan.json",
+      "bytes": 772,
+      "sha256": "32742a56fb7a301b1ec6003c2769d12aee2870cf0bbba9eb8dbea0018f5cd6d6"
+    },
+    {
+      "source": "vectors/voucher/full-outpoint-binding.json",
+      "target": "v0.1.0-alpha.7/vectors/voucher/full-outpoint-binding.json",
+      "bytes": 4981,
+      "sha256": "b2f3c2bd7320b55bfa5766fe1f01ab075581e0135a4eab0dadffd8883dd5d117"
+    },
+    {
+      "source": "vectors/x402-http/batch-voucher.json",
+      "target": "v0.1.0-alpha.7/vectors/x402-http/batch-voucher.json",
+      "bytes": 6436,
+      "sha256": "72c88f0e0beb6b6c2f84ff9b8cd22479b545eadfa3f00cb501998900f10f470f"
+    },
+    {
+      "source": "vectors/x402-http/exact-transaction.json",
+      "target": "v0.1.0-alpha.7/vectors/x402-http/exact-transaction.json",
+      "bytes": 7162,
+      "sha256": "15b5a878df6453d456b06b36bab3e17f872430bb744efd716a8008a0fbe17a9f"
+    }
+  ],
+  "contentSha256": "96e6382bace2d41c6de45db64f8d93450f0dfd6329f822c85d24e5d3dcf470e1"
+}

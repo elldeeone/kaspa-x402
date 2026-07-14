@@ -1,0 +1,26 @@
+{
+  "kind": "negative",
+  "name": "amount-overflow",
+  "description": "Amounts must fit in the digest's le64 field.",
+  "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
+  "expectedError": "invalid_kaspa_x402_amount",
+  "value": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/download.bin"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "18446744073709551616",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v1"
+        }
+      }
+    ]
+  }
+}

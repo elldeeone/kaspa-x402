@@ -1,0 +1,19 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/payment-identifier.schema.json",
+  "title": "Kaspa x402 Payment Identifier Extension Info",
+  "type": "object",
+  "required": ["required"],
+  "properties": {
+    "required": {
+      "type": "boolean"
+    },
+    "id": {
+      "type": "string",
+      "minLength": 16,
+      "maxLength": 128,
+      "pattern": "^[A-Za-z0-9_-]+$"
+    }
+  },
+  "additionalProperties": true
+}
