@@ -38,8 +38,17 @@
       "profile": "additive",
       "transaction": "{\"transaction\":\"signed-kip10-additive\"}",
       "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
-      "paymentOutputIndex": 0
+      "paymentOutputIndex": 0,
+      "requestHash": "9292929292929292929292929292929292929292929292929292929292929292",
+      "authorization": {
+        "version": "kaspa-x402-exact-request-authorization-v1",
+        "inputIndex": 1,
+        "expiresAt": "2099-01-01T00:00:00.000Z",
+        "digest": "9393939393939393939393939393939393939393939393939393939393939393",
+        "signature": "94949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494949494"
+      }
     }
   },
-  "expectedError": "invalid_kaspa_x402_payload"
+  "expectedError": "invalid_kaspa_x402_payload",
+  "expectedMissingProperty": "challengeId"
 }

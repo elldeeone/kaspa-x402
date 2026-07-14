@@ -174,6 +174,9 @@ function validateLiveProofResult(result, flows) {
       `live proof result failed validation: ${errors.join("; ")}`,
     );
 
+  require(result.node?.networkId ===
+    "testnet-10", "node.networkId", "must be testnet-10");
+
   for (const flow of flows) {
     require(result.requiredFlowStatus?.[flow] ===
       "passed", `requiredFlowStatus.${flow}`, "must be passed");

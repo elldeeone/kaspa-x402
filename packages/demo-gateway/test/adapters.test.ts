@@ -66,6 +66,37 @@ describe("KaspaRestClient", () => {
     expect(health.virtualDaaScore).toBe("123");
     expect(calls).toEqual([globalThis]);
   });
+
+  it("bounds REST response bytes and address UTXO entries", async () => {
+    const oversized = new KaspaRestClient("https://api.example.test", {
+      maxResponseBytes: 32,
+      fetch: vi.fn(
+        async () =>
+          new Response(
+            JSON.stringify({
+              networkName: "kaspa-testnet-10",
+              virtualDaaScore: "123",
+            }),
+          ),
+      ) as typeof fetch,
+    });
+    await expect(oversized.health()).rejects.toThrow("exceeds 32 bytes");
+
+    const entry = {
+      outpoint: { transactionId: "aa".repeat(32), index: 0 },
+      utxoEntry: {
+        amount: "1000",
+        scriptPublicKey: { scriptPublicKey: "20" + "bb".repeat(32) },
+      },
+    };
+    const tooMany = new KaspaRestClient("https://api.example.test", {
+      maxUtxosPerAddress: 1,
+      fetch: vi.fn(async () => Response.json([entry, entry])) as typeof fetch,
+    });
+    await expect(tooMany.getUtxosForAddress("kaspatest:qtest")).rejects.toThrow(
+      "exceeds 1 entries",
+    );
+  });
 });
 
 describe("RestKaspaChainProvider", () => {
@@ -719,6 +750,7 @@ describe("RestExactTransactionVerifier", () => {
       }),
     ).rejects.toThrow("request authorization signature is invalid");
 
+    const readsBeforeInvalidSignature = fetchMock.mock.calls.length;
     const invalidSignature = JSON.parse(artifact) as {
       inputs: Array<{ signatureScript: string }>;
     };
@@ -735,6 +767,7 @@ describe("RestExactTransactionVerifier", () => {
         transaction: JSON.stringify(invalidSignature),
       }),
     ).rejects.toThrow("standard-native funding signature is invalid");
+    expect(fetchMock).toHaveBeenCalledTimes(readsBeforeInvalidSignature);
 
     const forgedUtxo = JSON.parse(artifact) as {
       inputs: Array<{ utxo: { scriptPublicKey: string } }>;
@@ -746,7 +779,7 @@ describe("RestExactTransactionVerifier", () => {
         transaction: JSON.stringify(forgedUtxo),
       }),
     ).rejects.toThrow(
-      "standard-native embedded UTXO evidence does not match trusted chain state",
+      "standard-native funding input must be a version-0 Schnorr P2PK script",
     );
 
     const wrongStorageMass = JSON.parse(artifact) as { storageMass: string };
@@ -1041,9 +1074,7 @@ describe("RestExactTransactionVerifier", () => {
         ...request,
         transaction: JSON.stringify(forgedUtxo),
       }),
-    ).rejects.toThrow(
-      "embedded payer UTXO evidence does not match trusted chain state",
-    );
+    ).rejects.toThrow("additive exact payer signature is invalid");
 
     const invalidSignature = structuredClone(artifactObject);
     const signature = Uint8Array.from(

@@ -2,6 +2,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
+import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -625,11 +626,7 @@ function dirtyPublishableInputs() {
     .filter(Boolean)
     .map((line) => line.slice(3).trim())
     .map((file) => file.replace(/^"|"$/g, ""))
-    .filter(
-      (file) =>
-        inputs.has(file) ||
-        [...inputs].some((input) => file.startsWith(`${input}/`)),
-    )
+    .filter((file) => isPublishableDirtyPath(file, inputs, RELEASE_LOCK_DIR))
     .sort();
 }
 

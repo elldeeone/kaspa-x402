@@ -99,6 +99,10 @@ export async function runLiveProof(context) {
   try {
     await rpc.connect({ timeoutDuration: 15_000, retries: 2 });
     const serverInfo = await rpc.getServerInfo();
+    if (String(serverInfo.networkId) !== "testnet-10")
+      throw new Error(
+        `configured live-proof node reports ${String(serverInfo.networkId)} instead of testnet-10`,
+      );
     if (!serverInfo.isSynced)
       throw new Error("configured testnet node reports unsynced");
     if (!serverInfo.hasUtxoIndex)

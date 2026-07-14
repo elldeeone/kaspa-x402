@@ -575,6 +575,20 @@ function validateVector(ajv, file, vector, rootDir = root) {
         `${file}:${vector.name}`,
         vector.expectedError,
       );
+      if (vector.expectedMissingProperty) {
+        const validate = ajv.getSchema(vector.schema);
+        validate(vector.value);
+        const matched = validate.errors?.some(
+          (error) =>
+            error.keyword === "required" &&
+            error.params?.missingProperty === vector.expectedMissingProperty,
+        );
+        if (!matched) {
+          throw new Error(
+            `${file}: expected missing property ${vector.expectedMissingProperty}`,
+          );
+        }
+      }
       break;
     }
     case "semantic-negative": {

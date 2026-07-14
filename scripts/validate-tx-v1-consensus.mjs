@@ -31,16 +31,31 @@ const cargoHome = path.resolve(
 );
 const cargoEnvironment = isolatedCargoEnvironment(cargoHome);
 const options = parseArgs(process.argv.slice(2));
-const kaspaRoot = path.resolve(
+const kaspaRootInput =
   options.kaspaRoot ??
-    process.env.KASPA_X402_KASPA_CONSENSUS_ROOT ??
-    process.env.KASPA_CONSENSUS_ROOT ??
-    "",
-);
+  process.env.KASPA_X402_KASPA_CONSENSUS_ROOT ??
+  process.env.KASPA_CONSENSUS_ROOT ??
+  "";
+const kaspaRoot = path.resolve(kaspaRootInput || ".");
 
-if (!kaspaRoot || kaspaRoot === process.cwd()) {
+if (!kaspaRootInput) {
   fail(
     "Set KASPA_X402_KASPA_CONSENSUS_ROOT or pass --kaspa-root <path> to a canonical Kaspa checkout.",
+  );
+}
+
+const canonicalKaspaRoot = fs.realpathSync(kaspaRoot);
+const gitTopLevel = fs.realpathSync(
+  run("git", [
+    "-C",
+    canonicalKaspaRoot,
+    "rev-parse",
+    "--show-toplevel",
+  ]).stdout.trim(),
+);
+if (canonicalKaspaRoot !== gitTopLevel) {
+  fail(
+    `Kaspa checkout root must equal its Git top-level: selected ${canonicalKaspaRoot}, top-level ${gitTopLevel}.`,
   );
 }
 
@@ -64,6 +79,39 @@ if (actualCommit !== EXPECTED_COMMIT && !options.allowDifferentSource) {
 const dirtySourceEntries = gitStatusEntries(kaspaRoot).filter(
   (entry) => entry.status !== "??" || isConsensusSourcePath(entry.path),
 );
+const specialIndexEntries = run("git", [
+  "-C",
+  kaspaRoot,
+  "ls-files",
+  "-v",
+  "--",
+  ...CONSENSUS_SOURCE_PATHS,
+])
+  .stdout.split(/\r?\n/)
+  .filter(Boolean)
+  .filter((entry) => !entry.startsWith("H "));
+if (specialIndexEntries.length > 0 && !options.allowDifferentSource) {
+  fail(
+    `Kaspa checkout uses hidden or special index state in consensus validation scope:\n${specialIndexEntries.join("\n")}`,
+  );
+}
+const ignoredSourceEntries = run("git", [
+  "-C",
+  kaspaRoot,
+  "ls-files",
+  "--others",
+  "--ignored",
+  "--exclude-standard",
+  "--",
+  ...CONSENSUS_SOURCE_PATHS,
+])
+  .stdout.split(/\r?\n/)
+  .filter(Boolean);
+if (ignoredSourceEntries.length > 0 && !options.allowDifferentSource) {
+  fail(
+    `Kaspa checkout has ignored files in consensus validation scope:\n${ignoredSourceEntries.join("\n")}`,
+  );
+}
 if (dirtySourceEntries.length > 0 && !options.allowDifferentSource) {
   fail(
     `Kaspa checkout has local changes in pinned consensus validation scope:\n${dirtySourceEntries

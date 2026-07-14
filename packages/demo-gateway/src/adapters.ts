@@ -52,7 +52,14 @@ const MAX_SAFE_TRANSACTION_ARTIFACT_CHARS = 128 * 1024;
 const MAX_SAFE_TRANSACTION_INPUTS = 16;
 const MAX_SAFE_TRANSACTION_OUTPUTS = 64;
 const MAX_SAFE_TRANSACTION_FEE_SOMPI = 100_000_000n;
+const MAX_KASPA_REST_RESPONSE_BYTES = 512 * 1024;
+const MAX_KASPA_REST_UTXOS_PER_ADDRESS = 512;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
+
+type TrustedInputReadCache = {
+  transactions: Map<string, Promise<RestTransaction | null>>;
+  utxosByAddress: Map<string, Promise<ChainUtxo[]>>;
+};
 
 type PnnRpc = {
   connect(): Promise<void>;
@@ -747,13 +754,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         "additive exact transaction id does not match canonical fields",
       );
 
-    const accepted = await this.#client.getTransaction(transaction.id);
-    const finality = accepted?.is_accepted ? "accepted" : undefined;
-    if (accepted?.is_accepted)
-      assertChainTransactionMatchesSafe(accepted, transaction);
-    if (!finality && Date.parse(head.expiresAt) <= Date.now())
-      throw invalidTransaction("additive exact challenge has expired");
-
     const headInput = transaction.inputs[0]!;
     if (
       !sameOutpoint(
@@ -781,20 +781,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         "additive exact head input does not select the canonical KIP-10 borrower branch",
       );
     }
-    const trustedHead = await this.#trustedInput(
-      headInput,
-      request.network,
-      finality === "accepted",
-    );
-    if (
-      trustedHead.amount !== head.headAmount ||
-      trustedHead.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()
-    ) {
-      throw invalidTransaction(
-        "additive exact head challenge does not match trusted chain state",
-      );
-    }
-
     const successor = transaction.outputs[0]!;
     if (successor.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()) {
       throw invalidTransaction(
@@ -810,6 +796,43 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
       );
     }
 
+    // Reject forged funding signatures before any attacker-amplified chain
+    // reads. The embedded UTXOs are not trusted for value, but they are the
+    // canonical sighash inputs and can safely prove signature invalidity.
+    const fundingEvidence = new Map<
+      number,
+      ReturnType<typeof transactionV1SchnorrSignatureEvidence>
+    >();
+    for (let index = 1; index < transaction.inputs.length; index += 1) {
+      const evidence = transactionV1SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence))
+        throw invalidTransaction("additive exact payer signature is invalid");
+      fundingEvidence.set(index, evidence);
+    }
+
+    const accepted = await this.#client.getTransaction(transaction.id);
+    const finality = accepted?.is_accepted ? "accepted" : undefined;
+    if (accepted?.is_accepted)
+      assertChainTransactionMatchesSafe(accepted, transaction);
+    if (!finality && Date.parse(head.expiresAt) <= Date.now())
+      throw invalidTransaction("additive exact challenge has expired");
+
+    const readCache = trustedInputReadCache();
+    const trustedHead = await this.#trustedInput(
+      headInput,
+      request.network,
+      finality === "accepted",
+      readCache,
+    );
+    if (
+      trustedHead.amount !== head.headAmount ||
+      trustedHead.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "additive exact head challenge does not match trusted chain state",
+      );
+    }
+
     const payerScripts = new Set<string>();
     for (let index = 1; index < transaction.inputs.length; index += 1) {
       const input = transaction.inputs[index]!;
@@ -817,6 +840,7 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         input,
         request.network,
         finality === "accepted",
+        readCache,
       );
       if (
         trusted.amount !== input.utxo.amount ||
@@ -826,9 +850,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
           "additive exact embedded payer UTXO evidence does not match trusted chain state",
         );
       }
-      const evidence = transactionV1SchnorrSignatureEvidence(reference, index);
-      if (!verifyKaspaSchnorrDigest(evidence))
-        throw invalidTransaction("additive exact payer signature is invalid");
       payerScripts.add(trusted.scriptPublicKey);
     }
     if (
@@ -839,10 +860,13 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         "additive exact request authorization must select a payer input",
       );
     }
-    const authorizationEvidence = transactionV1SchnorrSignatureEvidence(
-      reference,
+    const authorizationEvidence = fundingEvidence.get(
       request.authorization.inputIndex,
     );
+    if (!authorizationEvidence)
+      throw invalidTransaction(
+        "additive exact request authorization input is not signed",
+      );
     const requestAuthorization = verifyExactRequestAuthorization(
       request,
       transactionId,
@@ -905,18 +929,29 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         "standard-native merchant output must equal the accepted amount",
       );
 
+    const fundingEvidence = transaction.inputs.map((_, index) => {
+      const evidence = exactV0SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence))
+        throw invalidTransaction(
+          "standard-native funding signature is invalid",
+        );
+      return evidence;
+    });
+
     const accepted = await this.#client.getTransaction(transaction.id);
     const finality = accepted?.is_accepted ? "accepted" : undefined;
     if (accepted?.is_accepted)
       assertChainTransactionMatchesSafe(accepted, transaction);
 
     const payerScripts = new Set<string>();
+    const readCache = trustedInputReadCache();
     for (let index = 0; index < transaction.inputs.length; index += 1) {
       const input = transaction.inputs[index]!;
       const previous = await this.#trustedInput(
         input,
         request.network,
         finality === "accepted",
+        readCache,
       );
       if (
         previous.amount !== input.utxo.amount ||
@@ -926,11 +961,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
           "standard-native embedded UTXO evidence does not match trusted chain state",
         );
       }
-      const evidence = exactV0SchnorrSignatureEvidence(reference, index);
-      if (!verifyKaspaSchnorrDigest(evidence))
-        throw invalidTransaction(
-          "standard-native funding signature is invalid",
-        );
       payerScripts.add(previous.scriptPublicKey);
     }
     if (
@@ -941,10 +971,12 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         "standard-native request authorization input is outside the transaction",
       );
     }
-    const authorizationEvidence = exactV0SchnorrSignatureEvidence(
-      reference,
-      request.authorization.inputIndex,
-    );
+    const authorizationEvidence =
+      fundingEvidence[request.authorization.inputIndex];
+    if (!authorizationEvidence)
+      throw invalidTransaction(
+        "standard-native request authorization input is not signed",
+      );
     const requestAuthorization = verifyExactRequestAuthorization(
       request,
       transactionId,
@@ -984,8 +1016,15 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     input: SafeTransactionInput,
     network: NetworkId,
     acceptedCandidateSpendsInput: boolean,
+    cache: TrustedInputReadCache,
   ): Promise<{ amount: string; scriptPublicKey: string }> {
-    const previous = await this.#client.getTransaction(input.transactionId);
+    const transactionKey = input.transactionId.toLowerCase();
+    let previousRead = cache.transactions.get(transactionKey);
+    if (!previousRead) {
+      previousRead = this.#client.getTransaction(transactionKey);
+      cache.transactions.set(transactionKey, previousRead);
+    }
+    const previous = await previousRead;
     if (!previous?.is_accepted || !Array.isArray(previous.outputs)) {
       throw invalidTransaction(
         "standard-native input origin is not accepted chain state",
@@ -1009,7 +1048,12 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     };
     if (acceptedCandidateSpendsInput) return trusted;
     const address = addressForScriptPublicKey(trusted.scriptPublicKey, network);
-    const unspent = (await this.#client.getUtxosForAddress(address)).some(
+    let utxoRead = cache.utxosByAddress.get(address);
+    if (!utxoRead) {
+      utxoRead = this.#client.getUtxosForAddress(address);
+      cache.utxosByAddress.set(address, utxoRead);
+    }
+    const unspent = (await utxoRead).some(
       (utxo) =>
         sameOutpoint(utxo.outpoint, {
           txid: input.transactionId,
@@ -1090,12 +1134,21 @@ function verifyExactRequestAuthorization(
   };
 }
 
+function trustedInputReadCache(): TrustedInputReadCache {
+  return {
+    transactions: new Map(),
+    utxosByAddress: new Map(),
+  };
+}
+
 export class KaspaRestClient {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
   readonly #timeoutMs: number;
   readonly #acceptanceTimeoutMs: number;
   readonly #acceptancePollMs: number;
+  readonly #maxResponseBytes: number;
+  readonly #maxUtxosPerAddress: number;
 
   constructor(
     baseUrl: string,
@@ -1104,6 +1157,8 @@ export class KaspaRestClient {
       timeoutMs?: number;
       acceptanceTimeoutMs?: number;
       acceptancePollMs?: number;
+      maxResponseBytes?: number;
+      maxUtxosPerAddress?: number;
     } = {},
   ) {
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
@@ -1112,6 +1167,20 @@ export class KaspaRestClient {
     this.#timeoutMs = options.timeoutMs ?? 8_000;
     this.#acceptanceTimeoutMs = options.acceptanceTimeoutMs ?? 60_000;
     this.#acceptancePollMs = options.acceptancePollMs ?? 1_000;
+    this.#maxResponseBytes =
+      options.maxResponseBytes ?? MAX_KASPA_REST_RESPONSE_BYTES;
+    this.#maxUtxosPerAddress =
+      options.maxUtxosPerAddress ?? MAX_KASPA_REST_UTXOS_PER_ADDRESS;
+    if (
+      !Number.isSafeInteger(this.#maxResponseBytes) ||
+      this.#maxResponseBytes <= 0
+    )
+      throw new Error("maxResponseBytes must be a positive safe integer");
+    if (
+      !Number.isSafeInteger(this.#maxUtxosPerAddress) ||
+      this.#maxUtxosPerAddress <= 0
+    )
+      throw new Error("maxUtxosPerAddress must be a positive safe integer");
   }
 
   async health(): Promise<{
@@ -1141,6 +1210,12 @@ export class KaspaRestClient {
     const utxos = await this.#json<RestUtxo[]>(
       `/addresses/${encodeURIComponent(address)}/utxos`,
     );
+    if (!Array.isArray(utxos))
+      throw invalidTransaction("Kaspa REST UTXO response must be an array");
+    if (utxos.length > this.#maxUtxosPerAddress)
+      throw invalidTransaction(
+        `Kaspa REST UTXO response exceeds ${this.#maxUtxosPerAddress} entries`,
+      );
     return utxos.map((utxo) => ({
       outpoint: {
         txid: String(utxo.outpoint.transactionId).toLowerCase(),
@@ -1249,7 +1324,10 @@ export class KaspaRestClient {
         signal: controller.signal,
       });
       if (response.status === 404) throw new RestNotFoundError(path);
-      const text = await response.text();
+      const text = await readBoundedResponseText(
+        response,
+        this.#maxResponseBytes,
+      );
       const body = parseJson(text);
       if (!response.ok) {
         const detail =
@@ -1268,6 +1346,42 @@ export class KaspaRestClient {
 }
 
 class RestNotFoundError extends Error {}
+
+async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/.test(declaredLength) &&
+    Number(declaredLength) > maxBytes
+  ) {
+    throw invalidTransaction(`Kaspa REST response exceeds ${maxBytes} bytes`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw invalidTransaction(`Kaspa REST response exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 type RestBlockdag = {
   networkName: string;

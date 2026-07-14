@@ -104,6 +104,7 @@ type NegativeVector =
       schema: string;
       value: unknown;
       expectedError: string;
+      expectedMissingProperty?: string;
     }
   | {
       kind: "semantic-negative";
@@ -690,10 +691,23 @@ describe("negative vectors", () => {
       const vector = readJson<NegativeVector>(file);
 
       if (vector.kind === "negative") {
-        expectFailureCode(
-          validateSchemaById(vector.schema, vector.value),
-          vector.expectedError,
-        );
+        const validation = validateSchemaById(vector.schema, vector.value);
+        expectFailureCode(validation, vector.expectedError);
+        if (vector.expectedMissingProperty) {
+          expect(validation.ok).toBe(false);
+          if (!validation.ok) {
+            expect(validation.error.details).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  keyword: "required",
+                  params: expect.objectContaining({
+                    missingProperty: vector.expectedMissingProperty,
+                  }),
+                }),
+              ]),
+            );
+          }
+        }
         return;
       }
 
