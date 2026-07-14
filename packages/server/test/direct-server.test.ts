@@ -65,6 +65,7 @@ const TOP_UP_TX = "99".repeat(32);
 const CLAIM_TX = "55".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_HEAD_ID = "89".repeat(32);
+const MCP_AUDIENCE = "https://mcp.example.test";
 const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 const RESOURCE = { url: "https://api.example.test/data" };
 
@@ -286,6 +287,7 @@ describe("direct-mode server", () => {
     const result = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "75",
@@ -316,6 +318,7 @@ describe("direct-mode server", () => {
     const result = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "20000000",
@@ -542,6 +545,7 @@ describe("direct-mode server", () => {
     const result = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "75",
@@ -573,6 +577,7 @@ describe("direct-mode server", () => {
       scheme: "exact",
     });
     const requestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "same" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
@@ -588,6 +593,7 @@ describe("direct-mode server", () => {
     const first = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "100",
@@ -602,6 +608,7 @@ describe("direct-mode server", () => {
     const second = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "100",
@@ -619,6 +626,69 @@ describe("direct-mode server", () => {
     expect(executions).toBe(1);
   });
 
+  it("rejects one exact MCP authorization at another server audience", async () => {
+    const serverA = makeServer({ amount: "100" });
+    const serverB = makeServer({ amount: "100" });
+    const audienceA = "https://mcp-a.example.test";
+    const audienceB = "https://mcp-b.example.test";
+    const required = serverA.server.buildPaymentRequired({
+      resource: { url: "mcp://server-a/download" },
+      amount: "100",
+      scheme: "exact",
+    });
+    const requestHash = mcpToolCallFingerprint({
+      audience: audienceA,
+      toolName: "download",
+      arguments: { id: "cross-server" },
+      accepted: required.accepts[0] as ExactPaymentRequirements,
+    });
+    const payment = makeExactPayment(serverA, { requestHash });
+    const params = {
+      name: "download",
+      arguments: { id: "cross-server" },
+      _meta: { [MCP_PAYMENT_META_KEY]: payment },
+    };
+    let executionsA = 0;
+    let executionsB = 0;
+
+    const first = await handlePaidMcpToolCall(
+      serverA.server,
+      {
+        audience: audienceA,
+        name: "download",
+        resource: { url: "mcp://server-a/download" },
+        amount: "100",
+        scheme: "exact",
+      },
+      params,
+      async () => {
+        executionsA += 1;
+        return { result: { content: [{ type: "text", text: "paid A" }] } };
+      },
+    );
+    const replay = await handlePaidMcpToolCall(
+      serverB.server,
+      {
+        audience: audienceB,
+        name: "download",
+        resource: { url: "mcp://server-b/download" },
+        amount: "100",
+        scheme: "exact",
+      },
+      params,
+      async () => {
+        executionsB += 1;
+        return { result: { content: [{ type: "text", text: "paid B" }] } };
+      },
+    );
+
+    expect(first.content?.[0]?.text).toBe("paid A");
+    expect(replay.isError).toBe(true);
+    expect(readMcpPaymentRequired(replay)).toBeDefined();
+    expect(executionsA).toBe(1);
+    expect(executionsB).toBe(0);
+  });
+
   it("returns a fresh MCP challenge when payer authorization targets another call", async () => {
     const setup = makeServer({ amount: "100" });
     const firstRequired = setup.server.buildPaymentRequired({
@@ -627,6 +697,7 @@ describe("direct-mode server", () => {
       scheme: "exact",
     });
     const firstHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "first" },
       accepted: firstRequired.accepts[0] as ExactPaymentRequirements,
@@ -636,6 +707,7 @@ describe("direct-mode server", () => {
     await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "100",
@@ -653,6 +725,7 @@ describe("direct-mode server", () => {
     const replay = await handlePaidMcpToolCall(
       setup.server,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "100",
@@ -679,6 +752,7 @@ describe("direct-mode server", () => {
       scheme: "exact",
     });
     const requestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "fail" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
@@ -704,6 +778,7 @@ describe("direct-mode server", () => {
     const result = await handlePaidMcpToolCall(
       fakeServer,
       {
+        audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
         amount: "100",

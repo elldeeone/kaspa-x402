@@ -633,9 +633,11 @@ describe("RestExactTransactionVerifier", () => {
         );
       }
       throw new Error(`unexpected REST request ${url.pathname}`);
-    }) as typeof fetch;
+    });
     const verifier = new RestExactTransactionVerifier(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", {
+        fetch: fetchMock as typeof fetch,
+      }),
     );
     const payTo = addressForScriptPublicKey(
       merchant.scriptPublicKey,
@@ -670,6 +672,39 @@ describe("RestExactTransactionVerifier", () => {
         address: payTo,
       },
     });
+
+    const duplicateInput = JSON.parse(artifact) as {
+      inputs: Array<Record<string, unknown>>;
+    };
+    duplicateInput.inputs.push(structuredClone(duplicateInput.inputs[0]!));
+    const readsBeforeDuplicate = fetchMock.mock.calls.length;
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(duplicateInput),
+      }),
+    ).rejects.toThrow("duplicate input outpoint");
+    expect(fetchMock).toHaveBeenCalledTimes(readsBeforeDuplicate);
+
+    const excessiveInputs = JSON.parse(artifact) as {
+      inputs: Array<{
+        previousOutpoint: { transactionId: string; index: number };
+      }>;
+    };
+    excessiveInputs.inputs = Array.from({ length: 17 }, (_, index) => ({
+      ...structuredClone(excessiveInputs.inputs[0]!),
+      previousOutpoint: {
+        transactionId: index.toString(16).padStart(64, "0"),
+        index,
+      },
+    }));
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(excessiveInputs),
+      }),
+    ).rejects.toThrow("too many inputs");
+    expect(fetchMock).toHaveBeenCalledTimes(readsBeforeDuplicate);
 
     await expect(
       verifier.verifyExactPayment({

@@ -17,6 +17,7 @@ import type {
 } from "@kaspa-x402/server";
 import type {
   GatewayCanaryReport,
+  ExactHeadStats,
   GatewayStateClient,
   GatewayStateMethod,
   GatewayStateRequest,
@@ -75,6 +76,10 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   listExactHeads(): Promise<ExactHeadRecord[]> {
     return this.#call("listExactHeads");
+  }
+
+  exactHeadStats(): Promise<ExactHeadStats> {
+    return this.#call("exactHeadStats");
   }
 
   selectExactHead(

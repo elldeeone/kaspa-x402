@@ -24,6 +24,11 @@ PAYMENT-SIGNATURE: base64(PaymentPayload)
 
 The retry must select exactly one `PaymentRequirements` entry from the server's `accepts` array. Servers must reject a retry when the selected `accepted` object changes network, asset, amount, recipient, binding, or other critical fields.
 
+Paid clients MUST reject HTTP redirects for both the initial challenge request
+and the paid retry. They MUST also verify that the response effective URL is
+identical to the requested URL before signing or accepting settlement. A signed
+`PAYMENT-SIGNATURE` header must never be forwarded to a redirect target.
+
 ## Payment Response
 
 Servers return the x402 v2 `SettlementResponse` in:

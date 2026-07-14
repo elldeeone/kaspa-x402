@@ -8,6 +8,12 @@ MCP tools should advertise the cheapest safe scheme for the tool call. Fixed-pri
 
 MCP servers must treat paid tool execution as a single idempotent operation. A retry with the same payment identifier and same tool-call fingerprint should return the cached paid result, not execute the tool again.
 
+Every MCP integration MUST configure a canonical server audience, such as the
+authenticated MCP server origin or service URI. The server supplies this value
+from trusted configuration; it MUST NOT accept an audience chosen by tool-call
+arguments or untrusted payment metadata. Clients MUST pin the same audience for
+the server they are calling.
+
 ## Payment Required
 
 An unpaid tool call returns a tool result with:
@@ -53,9 +59,17 @@ The `PaymentRequired` value should include the settlement failure reason in `err
 
 MCP helpers should derive the payment request fingerprint from:
 
+- the canonical MCP server audience;
 - tool name;
 - canonical tool arguments;
 - selected `PaymentRequirements`.
+
+The audience prevents one server from accepting an exact authorization created
+for an otherwise identical tool and payment offer on another server. Changing
+the audience MUST change the fingerprint and invalidate the request
+authorization. The current fingerprint domain is
+`kaspa:x402:mcp-tool-call:v2`; v1 fingerprints without an audience are not
+accepted by this profile.
 
 Scheme-specific payment identity is enforced by the normal payment payload hash and settlement scope:
 

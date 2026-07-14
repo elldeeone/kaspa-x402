@@ -33,4 +33,39 @@ export function assertHostedOfferPinned(header, expected) {
       })}`,
     );
   }
+  if (expected.profile === "additive") {
+    const head = expected.head;
+    if (
+      !head ||
+      accepted.extra.headId !== head.headId ||
+      accepted.extra.headVersion !== head.version ||
+      accepted.extra.headAmount !== head.currentAmount ||
+      accepted.extra.headScriptPublicKey !== head.scriptPublicKey ||
+      accepted.extra.headRedeemScript !== head.redeemScript ||
+      accepted.extra.additiveThresholdSompi !==
+        head.additiveThresholdSompi ||
+      accepted.extra.expectedHeadOutpoint?.txid !==
+        head.currentOutpoint.txid ||
+      accepted.extra.expectedHeadOutpoint?.index !== head.currentOutpoint.index
+    ) {
+      throw new Error(
+        "hosted additive offer does not match the freshly registered head snapshot",
+      );
+    }
+  }
+}
+
+export function assertHostedSettlementHeadPinned(extension, head) {
+  if (
+    !extension ||
+    extension.exactProfile !== "additive" ||
+    extension.headId !== head.headId ||
+    extension.headVersion !== head.version ||
+    extension.headOutpoint?.txid !== head.currentOutpoint.txid ||
+    extension.headOutpoint?.index !== head.currentOutpoint.index
+  ) {
+    throw new Error(
+      "hosted additive settlement does not advance the freshly registered head lineage",
+    );
+  }
 }

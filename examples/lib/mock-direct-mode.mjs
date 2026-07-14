@@ -112,7 +112,7 @@ export function createMockPaidFetch(server) {
         chargedAmount: route.chargedAmount,
       }),
     );
-    return new MockResponse(response.status, response.headers, response.body);
+    return new MockResponse(response.status, response.headers, response.body, url);
   };
 }
 
@@ -137,10 +137,12 @@ export function mockSignature(digest) {
 }
 
 export class MockResponse {
-  constructor(status, headers, body) {
+  constructor(status, headers, body, url) {
     this.status = status;
     this.headers = new MockHeaders(headers);
     this.body = body;
+    this.url = url;
+    this.redirected = false;
   }
 
   async json() {

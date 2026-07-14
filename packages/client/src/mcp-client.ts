@@ -17,6 +17,8 @@ export type McpToolCaller = (
 ) => Promise<McpToolResult> | McpToolResult;
 
 export interface PaidMcpToolCallOptions {
+  /** Authenticated MCP server identity approved by the payer. */
+  audience: string;
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
   origin?: string;
@@ -33,7 +35,7 @@ export async function paidMcpToolCall(
   client: DirectModeClient,
   callTool: McpToolCaller,
   params: McpToolCallParams,
-  options: PaidMcpToolCallOptions = {},
+  options: PaidMcpToolCallOptions,
 ): Promise<PaidMcpToolCallResult> {
   if (
     options.maxPaymentRetries !== undefined &&
@@ -53,13 +55,14 @@ export async function paidMcpToolCall(
   const requestHash =
     options.requestHash ??
     mcpToolCallFingerprint({
+      audience: options.audience,
       toolName: params.name,
       arguments: params.arguments,
       accepted: parsed.accepted,
     });
   const payment = await client.createPayment(header, {
     url: paymentRequired.resource.url,
-    origin: options.origin ?? `mcp://tool/${params.name}`,
+    origin: options.origin ?? options.audience,
     paymentIdentifier: options.paymentIdentifier,
     requestHash,
   });

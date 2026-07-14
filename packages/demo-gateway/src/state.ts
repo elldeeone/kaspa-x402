@@ -52,6 +52,11 @@ type RateRecord = {
 
 export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
 
+export type ExactHeadStats = Record<
+  "total" | "available" | "claimed" | "unavailable" | "retired",
+  number
+>;
+
 export interface GatewayCanaryCheck {
   name: string;
   status: GatewayCanaryCheckStatus;
@@ -77,6 +82,7 @@ export type GatewayStateMethod =
   | "registerExactHead"
   | "loadExactHead"
   | "listExactHeads"
+  | "exactHeadStats"
   | "selectExactHead"
   | "claimExactSettlement"
   | "loadExactSettlementAttempt"
@@ -194,7 +200,7 @@ export class GatewayLedger implements ServerStateStore {
         if (sameOutpoint(current.currentOutpoint, record.currentOutpoint))
           throw new Error("exact head outpoint is already registered");
       }
-      await txn.put(exactHeadKey(record.headId), clone(record));
+      await putExactHead(txn, undefined, record);
       return clone(record);
     });
   }
@@ -213,6 +219,14 @@ export class GatewayLedger implements ServerStateStore {
     )
       .map(clone)
       .sort((left, right) => left.headId.localeCompare(right.headId));
+  }
+
+  async exactHeadStats(): Promise<ExactHeadStats> {
+    return this.#storage.transaction(async (txn) => {
+      const stats = await loadOrRebuildExactHeadStats(txn);
+      await txn.put(exactHeadStatsKey(), stats);
+      return clone(stats);
+    });
   }
 
   async selectExactHead(
@@ -251,7 +265,7 @@ export class GatewayLedger implements ServerStateStore {
         );
         if (!head)
           throw new Error("exact head changed before settlement claim");
-        await txn.put(exactHeadKey(head.headId), claimExactHead(head, attempt));
+        await putExactHead(txn, head, claimExactHead(head, attempt));
       } else if (attempt.head) {
         throw new Error("standard-native exact settlement cannot claim a head");
       }
@@ -303,8 +317,9 @@ export class GatewayLedger implements ServerStateStore {
           throw new Error(
             "exact head was not found during settlement acceptance",
           );
-        await txn.put(
-          exactHeadKey(head.headId),
+        await putExactHead(
+          txn,
+          head,
           acceptExactHead(head, attempt, observedAt),
         );
       }
@@ -393,8 +408,9 @@ export class GatewayLedger implements ServerStateStore {
           exactHeadKey(attempt.head.headId),
         );
         if (head)
-          await txn.put(
-            exactHeadKey(head.headId),
+          await putExactHead(
+            txn,
+            head,
             releaseExactHeadClaim(head, attempt, observedAt),
           );
       }
@@ -425,7 +441,7 @@ export class GatewayLedger implements ServerStateStore {
         unavailableReason: input.reason,
         updatedAt: input.observedAt,
       } as const;
-      await txn.put(exactHeadKey(head.headId), unavailable);
+      await putExactHead(txn, head, unavailable);
       return { applied: true, head: clone(unavailable) };
     });
   }
@@ -437,7 +453,7 @@ export class GatewayLedger implements ServerStateStore {
       const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
       if (!head) throw new Error("exact head was not found");
       const advanced = applyExactHeadLineageRecord(head, input);
-      await txn.put(exactHeadKey(advanced.headId), advanced);
+      await putExactHead(txn, head, advanced);
       return clone(advanced);
     });
   }
@@ -702,6 +718,7 @@ export class DurableGatewayLockManager implements ChannelLockManager {
 }
 
 export type GatewayStateClient = ServerStateStore & {
+  exactHeadStats(): Promise<ExactHeadStats>;
   acquireLock(
     key: string,
     token: string,
@@ -767,6 +784,8 @@ export async function dispatchGatewayState(
       );
     case "listExactHeads":
       return ledger.listExactHeads();
+    case "exactHeadStats":
+      return ledger.exactHeadStats();
     case "selectExactHead":
       return ledger.selectExactHead(
         readPayload<{ request: ExactHeadSelectionRequest }>(request).request,
@@ -1022,6 +1041,48 @@ function exactPaymentKey(transactionId: string): string {
 
 function exactHeadKey(headId: string): string {
   return `exact-head:${headId.toLowerCase()}`;
+}
+
+function exactHeadStatsKey(): string {
+  return "exact-head-stats";
+}
+
+async function putExactHead(
+  txn: GatewayTransaction,
+  previous: ExactHeadRecord | undefined,
+  next: ExactHeadRecord,
+): Promise<void> {
+  const stats = await loadOrRebuildExactHeadStats(txn);
+  if (!previous) {
+    stats.total += 1;
+    stats[next.status] += 1;
+  } else if (previous.status !== next.status) {
+    stats[previous.status] -= 1;
+    stats[next.status] += 1;
+  }
+  await txn.put(exactHeadKey(next.headId), clone(next));
+  await txn.put(exactHeadStatsKey(), stats);
+}
+
+async function loadOrRebuildExactHeadStats(
+  txn: GatewayTransaction,
+): Promise<ExactHeadStats> {
+  const stored = await txn.get<ExactHeadStats>(exactHeadStatsKey());
+  if (stored) return clone(stored);
+  const stats: ExactHeadStats = {
+    total: 0,
+    available: 0,
+    claimed: 0,
+    unavailable: 0,
+    retired: 0,
+  };
+  for (const head of (
+    await txn.list<ExactHeadRecord>({ prefix: "exact-head:" })
+  ).values()) {
+    stats.total += 1;
+    stats[head.status] += 1;
+  }
+  return stats;
 }
 
 function exactAttemptKey(transactionId: string): string {

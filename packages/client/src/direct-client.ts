@@ -50,6 +50,7 @@ import {
   type FetchLike,
   type HeadersInitLike,
   type HttpRequestInitLike,
+  type HttpResponseLike,
   type PaidFetchResult,
   type ParsedPaymentRequired,
   type PaymentRequestContext,
@@ -169,7 +170,9 @@ export class DirectModeClient {
     init: HttpRequestInitLike = {},
   ): Promise<PaidFetchResult> {
     const fetch = this.#options.fetch ?? globalFetchLike();
-    const firstResponse = await fetch(input, init);
+    const requestInit = { ...init, redirect: "error" as const };
+    const firstResponse = await fetch(input, requestInit);
+    assertPaidFetchResponseTarget(firstResponse, input, "payment challenge");
     if (firstResponse.status !== 402) {
       return { response: firstResponse };
     }
@@ -190,7 +193,7 @@ export class DirectModeClient {
       body: init.body,
     });
     const retryInit: HttpRequestInitLike = {
-      ...init,
+      ...requestInit,
       headers: withHeader(
         init.headers,
         PAYMENT_SIGNATURE_HEADER,
@@ -198,6 +201,7 @@ export class DirectModeClient {
       ),
     };
     const retryResponse = await fetch(input, retryInit);
+    assertPaidFetchResponseTarget(retryResponse, input, "paid retry");
     if (retryResponse.status === 402) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
@@ -1678,6 +1682,30 @@ function globalFetchLike(): FetchLike {
     );
   }
   return candidate as unknown as FetchLike;
+}
+
+function assertPaidFetchResponseTarget(
+  response: HttpResponseLike,
+  requestedUrl: string,
+  stage: string,
+): void {
+  let expected: URL;
+  let effective: URL;
+  try {
+    expected = new URL(requestedUrl);
+    effective = new URL(response.url);
+  } catch {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `${stage} did not expose a valid effective response URL`,
+    );
+  }
+  if (response.redirected || effective.href !== expected.href) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `${stage} redirected away from the authorized request URL`,
+    );
+  }
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

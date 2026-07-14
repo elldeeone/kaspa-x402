@@ -101,6 +101,13 @@ describe("gateway durable ledger", () => {
         version: "0",
       }),
     ]);
+    await expect(ledger.exactHeadStats()).resolves.toEqual({
+      total: 2,
+      available: 2,
+      claimed: 0,
+      unavailable: 0,
+      retired: 0,
+    });
   });
 
   it("atomically persists a verified external head lineage", async () => {

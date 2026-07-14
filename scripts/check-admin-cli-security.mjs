@@ -39,4 +39,20 @@ const argvSecret = spawnSync(
 assert.notEqual(argvSecret.status, 0);
 assert.match(argvSecret.stderr, /--admin-token is not accepted/);
 
+const argvEqualsSecret = spawnSync(
+  process.execPath,
+  [
+    "scripts/demo-exact-heads.mjs",
+    "stats",
+    "--admin-token=must-not-be-used",
+  ],
+  {
+    cwd: root,
+    encoding: "utf8",
+    env: { ...process.env, KASPA_X402_DEMO_ADMIN_TOKEN: "" },
+  },
+);
+assert.notEqual(argvEqualsSecret.status, 0);
+assert.match(argvEqualsSecret.stderr, /--admin-token is not accepted/);
+
 console.log("admin CLI transport and secret handling ok");

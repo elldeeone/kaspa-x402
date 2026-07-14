@@ -341,6 +341,11 @@ Before protected work executes, the server or facilitator MUST:
 12. For additive, validate the still-live challenge and atomically claim the
     exact expected head/version before protected work.
 
+Facilitator `/verify` and `/settle` requests MUST carry the resource server's
+independently computed `requestHash`. A facilitator MUST NOT infer that value
+from `PaymentPayload.payload.requestHash`; the embedded value is evidence to
+compare, not an independent statement of the requested resource.
+
 No public or adapter-supplied transaction identifier, UTXO value, UTXO script,
 mass, fee, or finality assertion is authoritative merely because it is present
 in JSON.

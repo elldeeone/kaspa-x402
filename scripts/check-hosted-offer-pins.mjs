@@ -2,7 +2,10 @@
 import assert from "node:assert/strict";
 
 import { encodePaymentRequiredHeader } from "@kaspa-x402/core";
-import { assertHostedOfferPinned } from "./hosted-offer-pins.mjs";
+import {
+  assertHostedOfferPinned,
+  assertHostedSettlementHeadPinned,
+} from "./hosted-offer-pins.mjs";
 
 const exactUrl = "https://demo.kaspa-x402.org/exact";
 const payTo =
@@ -56,5 +59,85 @@ for (const mutation of [
     assertHostedOfferPinned(encodePaymentRequiredHeader(changed), expected),
   );
 }
+
+const head = {
+  headId: "22".repeat(32),
+  version: "0",
+  currentOutpoint: { txid: "33".repeat(32), index: 0 },
+  currentAmount: "100000000",
+  scriptPublicKey: `0000aa20${"44".repeat(32)}87`,
+  redeemScript: `6320${"55".repeat(32)}ac67b9bfb9c388b9c2048096980094b9bea268`,
+  additiveThresholdSompi: "10000000",
+};
+const additiveRequired = {
+  ...required,
+  accepts: [
+    {
+      ...required.accepts[0],
+      extra: {
+        ...required.accepts[0].extra,
+        profile: "additive",
+        templateId: "kaspa-x402-kip10-additive-v1",
+        paymentOutputIndex: 0,
+        payToScriptPublicKey: head.scriptPublicKey,
+        headId: head.headId,
+        headVersion: head.version,
+        expectedHeadOutpoint: head.currentOutpoint,
+        headAmount: head.currentAmount,
+        headScriptPublicKey: head.scriptPublicKey,
+        headRedeemScript: head.redeemScript,
+        additiveThresholdSompi: head.additiveThresholdSompi,
+        challengeId: "66".repeat(32),
+        challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    },
+  ],
+};
+const additiveExpected = { ...expected, profile: "additive", head };
+assert.doesNotThrow(() =>
+  assertHostedOfferPinned(
+    encodePaymentRequiredHeader(additiveRequired),
+    additiveExpected,
+  ),
+);
+assert.throws(() =>
+  assertHostedOfferPinned(
+    encodePaymentRequiredHeader({
+      ...additiveRequired,
+      accepts: [
+        {
+          ...additiveRequired.accepts[0],
+          extra: {
+            ...additiveRequired.accepts[0].extra,
+            headId: "77".repeat(32),
+          },
+        },
+      ],
+    }),
+    additiveExpected,
+  ),
+);
+assert.doesNotThrow(() =>
+  assertHostedSettlementHeadPinned(
+    {
+      exactProfile: "additive",
+      headId: head.headId,
+      headVersion: head.version,
+      headOutpoint: head.currentOutpoint,
+    },
+    head,
+  ),
+);
+assert.throws(() =>
+  assertHostedSettlementHeadPinned(
+    {
+      exactProfile: "additive",
+      headId: head.headId,
+      headVersion: "1",
+      headOutpoint: head.currentOutpoint,
+    },
+    head,
+  ),
+);
 
 console.log("hosted exact offer pins ok");

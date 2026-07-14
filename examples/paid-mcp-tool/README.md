@@ -22,6 +22,7 @@ function quoteArgs(value: unknown): { symbol: string } {
 const result = await handlePaidMcpToolCall(
   directModeServer,
   {
+    audience: "https://mcp.example.test",
     name: "quote",
     resource: { url: "mcp://tool/quote", description: "Paid quote tool", mimeType: "application/json" },
     amount: "100000",
@@ -50,7 +51,10 @@ const paid = await paidMcpToolCall(
   directModeClient,
   (nextParams) => mcpClient.callTool(nextParams),
   { name: "quote", arguments: { symbol: "KAS" } },
-  { paymentIdentifier: "pay_example_0001" },
+  {
+    audience: "https://mcp.example.test",
+    paymentIdentifier: "pay_example_0001",
+  },
 );
 
 console.log(paid.result._meta?.["x402/payment-response"]);

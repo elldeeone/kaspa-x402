@@ -7,7 +7,12 @@ const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const MAX_RESPONSE_BYTES = 256 * 1024;
 
 async function main() {
-  if (process.argv.includes("--admin-token")) {
+  if (
+    process.argv.some(
+      (argument) =>
+        argument === "--admin-token" || argument.startsWith("--admin-token="),
+    )
+  ) {
     throw new Error(
       "--admin-token is not accepted because process arguments are observable; set KASPA_X402_DEMO_ADMIN_TOKEN instead.",
     );

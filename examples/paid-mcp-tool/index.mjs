@@ -3,11 +3,13 @@ import { handlePaidMcpToolCall } from "@kaspa-x402/server";
 import { createMockDirectModeEnvironment } from "../lib/mock-direct-mode.mjs";
 
 const { client, server } = createMockDirectModeEnvironment();
+const audience = "https://mcp.example.test";
 
 async function callTool(params) {
   return handlePaidMcpToolCall(
     server,
     {
+      audience,
       name: "quote",
       resource: {
         url: "mcp://tool/quote",
@@ -44,6 +46,7 @@ const paid = await paidMcpToolCall(
     },
   },
   {
+    audience,
     paymentIdentifier: "mcp_quote_payment_1",
   },
 );

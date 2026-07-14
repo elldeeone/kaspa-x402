@@ -254,12 +254,17 @@ export interface HeaderBag {
 export interface HttpResponseLike {
   status: number;
   headers: HeaderBag;
+  /** Effective response URL. Fetch adapters must expose this so paid flows can reject redirects. */
+  url: string;
+  /** True when the adapter followed a redirect. Paid flows require this to remain false. */
+  redirected: boolean;
 }
 
 export interface HttpRequestInitLike {
   headers?: HeadersInitLike;
   method?: string;
   body?: unknown;
+  redirect?: "error";
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
   [key: string]: unknown;

@@ -29,6 +29,7 @@ import {
 
 describe("MCP hybrid settlement failure E2E", () => {
   it("round-trips through client retry handling and server MCP conversion", async () => {
+    const audience = "https://mcp.example.test";
     const required = makeExactRequired();
     const settlementFailure: SettlementResponse = {
       success: false,
@@ -80,6 +81,7 @@ describe("MCP hybrid settlement failure E2E", () => {
         handlePaidMcpToolCall(
           server as never,
           {
+            audience,
             name: "download",
             resource: { url: "mcp://tool/download" },
             amount: "100",
@@ -93,10 +95,12 @@ describe("MCP hybrid settlement failure E2E", () => {
           }),
         ),
       { name: "download", arguments: { id: "hybrid-fail" } },
+      { audience },
     );
     const challenge = readMcpPaymentRequired(result.result);
     const settlement = readMcpPaymentResponse(result.result);
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience,
       toolName: "download",
       arguments: { id: "hybrid-fail" },
       accepted: required.accepts[0] as ExactPaymentRequirements,

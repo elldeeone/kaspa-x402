@@ -28,7 +28,10 @@ import {
   kip10AdditiveScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
-import { assertHostedOfferPinned } from "./hosted-offer-pins.mjs";
+import {
+  assertHostedOfferPinned,
+  assertHostedSettlementHeadPinned,
+} from "./hosted-offer-pins.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
@@ -211,6 +214,7 @@ async function runHostedExactProof(input) {
       amount: input.expectedExactAmount,
       payTo: expectedPayTo,
       network: input.network,
+      ...(additiveHead ? { head: additiveHead.record } : {}),
     });
     const paymentIdentifier = `hosted-exact-${Date.now()}-${crypto.randomBytes(4).toString("hex")}`;
     const payment = await client.createPayment(required, {
@@ -272,6 +276,9 @@ async function runHostedExactProof(input) {
           )
         : undefined;
     const extra = readKaspaSettlementExtension(settlement);
+    if (additiveHead) {
+      assertHostedSettlementHeadPinned(extra, additiveHead.record);
+    }
     const observedPayment = await waitForAddressOutpoint({
       rpc,
       address: payment.paymentPayload.accepted.payTo,
@@ -731,7 +738,7 @@ async function fundKip10Head(input) {
 }
 
 async function fetchPaymentRequired(url) {
-  const response = await fetch(url);
+  const response = await fetch(url, { redirect: "error" });
   if (response.status !== 402)
     throw new Error(
       `${url} expected 402, got ${response.status}: ${await response.text()}`,
@@ -745,6 +752,7 @@ async function submitPayment(url, paymentPayload, { expectStatus, label }) {
   const header = encodePaymentSignatureHeader(paymentPayload);
   const response = await fetch(url, {
     method: "GET",
+    redirect: "error",
     headers: { [PAYMENT_SIGNATURE_HEADER]: header },
   });
   const text = await response.text();
@@ -762,12 +770,14 @@ async function gatewayFetch(input, init = {}) {
     method: init.method,
     body: init.body,
     headers: init.headers,
+    redirect: "error",
   });
 }
 
 async function gatewayAdminRequest(baseUrl, pathName, adminToken, init = {}) {
   const response = await fetch(new URL(pathName, baseUrl), {
     ...init,
+    redirect: "error",
     headers: {
       authorization: `Bearer ${adminToken}`,
       accept: "application/json",

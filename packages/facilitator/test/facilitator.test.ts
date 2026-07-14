@@ -182,34 +182,48 @@ describe("direct-mode facilitator", () => {
     await expect(store.listExactHeads()).resolves.toEqual([]);
   });
 
-  it("honors embedded request hashes for exact-transaction facilitator requests", async () => {
+  it("does not alias an omitted exact request hash to a settled resource", async () => {
     const { facilitator, server, store } = makeFacilitator();
     const paymentPayload = makeExactTransactionPayment(server);
     const paymentRequirements = paymentPayload.accepted;
+    const original = await facilitator.settle({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    });
+    const otherResource = { url: "https://api.example.test/other" };
 
     const verify = await facilitator.verify({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements,
-      resource: RESOURCE,
+      resource: otherResource,
     });
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements,
-      resource: RESOURCE,
+      resource: otherResource,
     });
 
-    expect(verify).toMatchObject({
-      isValid: true,
-      payer: "kaspatest:refund",
-    });
-    expect(settlement).toMatchObject({
+    expect(original).toMatchObject({
       success: true,
       transaction: EXACT_TX_ID,
-      network: "kaspa:testnet-10",
-      amount: "100",
-      payer: "kaspatest:refund",
+    });
+    expect(verify).toEqual({
+      isValid: false,
+      invalidReason: "invalid_payload",
+    });
+    expect(settlement).toMatchObject({
+      success: false,
+      transaction: "",
+      errorReason: "invalid_payload",
+    });
+    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toMatchObject({
+      requestFingerprint: REQUEST_HASH,
+      settlement: { success: true, transaction: EXACT_TX_ID },
     });
   });
 
@@ -226,6 +240,7 @@ describe("direct-mode facilitator", () => {
       paymentPayload,
       paymentRequirements,
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
 
     expect(verify.isValid).toBe(false);
@@ -311,6 +326,7 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
         },
+        requestHash: REQUEST_HASH,
       },
     });
 
@@ -347,6 +363,7 @@ describe("direct-mode facilitator", () => {
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
 
     expect(settlement).toMatchObject({
@@ -379,12 +396,14 @@ describe("direct-mode facilitator", () => {
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
 
     expect(facilitator.supported().kinds).toEqual([]);
@@ -818,6 +837,7 @@ describe("direct-mode facilitator", () => {
         x402Version: X402_VERSION,
         paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
         paymentRequirements,
+        requestHash: REQUEST_HASH,
       },
     });
 
@@ -845,6 +865,7 @@ describe("direct-mode facilitator", () => {
         x402Version: X402_VERSION,
         paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
         paymentRequirements,
+        requestHash: REQUEST_HASH,
       },
     });
 
@@ -872,6 +893,7 @@ describe("direct-mode facilitator", () => {
         x402Version: X402_VERSION,
         paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
         paymentRequirements,
+        requestHash: REQUEST_HASH,
       },
     });
 

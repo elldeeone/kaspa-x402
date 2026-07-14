@@ -544,6 +544,10 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.listExactHeads();
   }
 
+  exactHeadStats() {
+    return this.#inner.exactHeadStats();
+  }
+
   selectExactHead(request: Parameters<ServerStateStore["selectExactHead"]>[0]) {
     return this.#inner.selectExactHead(request);
   }
@@ -1055,18 +1059,7 @@ async function exactHeadStats(
 ): Promise<
   Record<"total" | "available" | "claimed" | "unavailable" | "retired", number>
 > {
-  const stats = {
-    total: 0,
-    available: 0,
-    claimed: 0,
-    unavailable: 0,
-    retired: 0,
-  };
-  for (const head of await state.listExactHeads()) {
-    stats.total += 1;
-    stats[head.status] += 1;
-  }
-  return stats;
+  return state.exactHeadStats();
 }
 
 async function dispatchCanaryRequest(

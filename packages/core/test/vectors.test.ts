@@ -17,6 +17,7 @@ import {
   isKaspaX402Network,
   mcpPaymentRequiredResult,
   mcpSettlementFailureResult,
+  mcpToolCallFingerprint,
   MCP_PAYMENT_RESPONSE_META_KEY,
   narrowPaymentRequiredEnvelope,
   paymentIdentifierExtension,
@@ -400,6 +401,31 @@ describe("x402 HTTP vectors", () => {
 });
 
 describe("MCP helpers", () => {
+  it("binds tool-call fingerprints to the configured server audience", () => {
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    const input = {
+      toolName: "download",
+      arguments: { id: "same-object" },
+      accepted: vector.paymentRequired.accepts[0]!,
+    };
+
+    const serverA = mcpToolCallFingerprint({
+      ...input,
+      audience: "https://mcp-a.example.test",
+    });
+    const serverB = mcpToolCallFingerprint({
+      ...input,
+      audience: "https://mcp-b.example.test",
+    });
+
+    expect(serverA).not.toBe(serverB);
+    expect(() => mcpToolCallFingerprint({ ...input, audience: "" })).toThrow(
+      "audience",
+    );
+  });
+
   it("only parses payment requirements from error tool results", () => {
     const vector = readJson<HttpVector>(
       "vectors/x402-http/exact-transaction.json",

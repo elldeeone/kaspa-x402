@@ -2753,8 +2753,12 @@ function facilitatorRequestFingerprint(
   if (options.requestHash !== undefined)
     return normalizedFacilitatorRequestHash(options.requestHash);
   const payload = options.paymentPayload.payload;
-  if (payload.type === "exact-transaction" && payload.requestHash)
-    return payload.requestHash.toLowerCase();
+  if (payload.type === "exact-transaction") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "exact facilitator requests require an independently computed requestHash",
+    );
+  }
   return sha256Hex(
     stableStringify({
       scope: "kaspa:x402:facilitator-request:v1",

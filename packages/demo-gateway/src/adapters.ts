@@ -49,7 +49,7 @@ type SleepLike = (ms: number) => Promise<void>;
 
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const MAX_SAFE_TRANSACTION_ARTIFACT_CHARS = 128 * 1024;
-const MAX_SAFE_TRANSACTION_INPUTS = 64;
+const MAX_SAFE_TRANSACTION_INPUTS = 16;
 const MAX_SAFE_TRANSACTION_OUTPUTS = 64;
 const MAX_SAFE_TRANSACTION_FEE_SOMPI = 100_000_000n;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
@@ -1489,6 +1489,16 @@ function parseSafeTransactionArtifact(
   const inputs = inputValues.map((input, index) =>
     parseSafeInput(input, index),
   );
+  const seenInputs = new Set<string>();
+  for (const input of inputs) {
+    const key = `${input.transactionId.toLowerCase()}:${input.index}`;
+    if (seenInputs.has(key)) {
+      throw invalidTransaction(
+        "exact transaction contains a duplicate input outpoint",
+      );
+    }
+    seenInputs.add(key);
+  }
   const outputs = outputValues.map((output, index) =>
     parseSafeOutput(output, index),
   );

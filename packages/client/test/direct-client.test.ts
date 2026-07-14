@@ -65,6 +65,7 @@ const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_HEAD_ID = "89".repeat(32);
 const EXACT_CHALLENGE_ID = "8a".repeat(32);
+const MCP_AUDIENCE = "https://mcp.example.test";
 const STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY = `0000${sha256Hex("kaspatest:payout")}`;
 const ADDITIVE_HEAD_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({
   ownerPublicKey: SERVER_KEY,
@@ -1082,6 +1083,64 @@ describe("direct-mode client", () => {
     expect(result.settlement?.channel!.chargedCumulativeAmount).toBe("100");
   });
 
+  it("rejects redirected payment challenges before signing", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fetch: async (_input, init) => {
+        expect(init?.redirect).toBe("error");
+        return response(
+          402,
+          {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          },
+          "https://attacker.example/payment",
+          true,
+        );
+      },
+    });
+
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow("redirected away from the authorized request URL");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects a changed effective URL on the paid retry", async () => {
+    const provider = new FakeFundingProvider();
+    let attempts = 0;
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fetch: async (_input, init) => {
+        attempts += 1;
+        expect(init?.redirect).toBe("error");
+        if (attempts === 1) {
+          return response(402, {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          });
+        }
+        return response(
+          200,
+          {},
+          "https://attacker.example/payment",
+          true,
+        );
+      },
+    });
+
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow("redirected away from the authorized request URL");
+    expect(attempts).toBe(2);
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
   it("requires explicit requestHash for paidFetch bodies outside the JSON canonicalization profile", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({
@@ -1092,7 +1151,7 @@ describe("direct-mode client", () => {
           "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
             makeExactRequired({ amount: "100" }),
           ),
-        }),
+        }, "https://api.example.test/variable"),
     });
 
     await expect(
@@ -1107,6 +1166,7 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const required = makeExactRequired({ amount: "100" });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "alpha" },
       accepted: required.accepts[0]!,
@@ -1130,6 +1190,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "alpha" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(attempts).toBe(2);
@@ -1150,6 +1211,7 @@ describe("direct-mode client", () => {
       network: "kaspa:mainnet",
     });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "mainnet" },
       accepted: required.accepts[0]!,
@@ -1172,6 +1234,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "mainnet" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.payment?.accepted.network).toBe("kaspa:mainnet");
@@ -1195,6 +1258,7 @@ describe("direct-mode client", () => {
       ],
     };
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "scheme-policy" },
       accepted: exactRequired.accepts[0]!,
@@ -1216,6 +1280,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "scheme-policy" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.payment?.accepted.scheme).toBe("exact");
@@ -1227,6 +1292,7 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const required = makeExactRequired({ amount: "100" });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "fallback" },
       accepted: required.accepts[0]!,
@@ -1252,6 +1318,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "fallback" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.result.content?.[0]?.text).toBe("fallback paid");
@@ -1284,6 +1351,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "fail" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.result.isError).toBe(true);
@@ -1320,6 +1388,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "hybrid-fail" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(calls).toBe(2);
@@ -1348,6 +1417,7 @@ describe("direct-mode client", () => {
           });
         },
         { name: "download", arguments: { id: "corrective" } },
+        { audience: MCP_AUDIENCE },
       ),
     ).rejects.toThrow("new explicit payment authorization");
 
@@ -1839,10 +1909,14 @@ function channelState(
 function response(
   status: number,
   headers: Record<string, string>,
+  url = "https://api.example.test/data",
+  redirected = false,
 ): HttpResponseLike {
   return {
     status,
     headers: new TestHeaders(headers),
+    url,
+    redirected,
   };
 }
 
