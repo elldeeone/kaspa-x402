@@ -3,8 +3,10 @@ import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
   ExactBorrowReservationRequest,
+  ExactHeadRecord,
   ExactPaymentRecord,
   ExactReservationRecord,
+  ExactSettlementAttemptRecord,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   SettlementCommit,
@@ -23,6 +25,7 @@ const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
 const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
 const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(KIP10_REDEEM_SCRIPT));
+const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
   it("commits exact transaction ids once while allowing identical retries", async () => {
@@ -73,6 +76,81 @@ describe("gateway durable ledger", () => {
     });
     await expect(ledger.consumeExactReservation(TX, "aa".repeat(32))).rejects.toThrow("different transaction");
     await expect(ledger.saveExactReservation(first)).rejects.toThrow("already consumed");
+  });
+
+  it("selects durable additive heads without consuming unanswered challenges", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerExactHead(exactHead());
+    await ledger.registerExactHead(
+      exactHead({ headId: "91".repeat(32), currentOutpoint: { txid: "92".repeat(32), index: 0 } }),
+    );
+
+    for (let index = 0; index < 1_000; index += 1) {
+      await expect(ledger.selectExactHead(exactHeadSelection(index % 2 === 0 ? "00".repeat(32) : "ff".repeat(32)))).resolves.toBeDefined();
+    }
+
+    await expect(ledger.listExactHeads()).resolves.toEqual([
+      expect.objectContaining({ headId: HEAD_ID, status: "available", version: "0" }),
+      expect.objectContaining({ headId: "91".repeat(32), status: "available", version: "0" }),
+    ]);
+  });
+
+  it("atomically advances one additive head winner and opens its handler once", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerExactHead(exactHead());
+    const attempt = exactSettlementAttempt();
+
+    await expect(ledger.claimExactSettlement(attempt)).resolves.toMatchObject({ created: true });
+    await expect(ledger.claimExactSettlement({ ...attempt, createdAt: "2026-07-07T00:00:01.000Z" })).resolves.toMatchObject({
+      created: false,
+    });
+    await expect(
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          head: {
+            ...attempt.head!,
+            successor: { ...attempt.head!.successor, outpoint: { txid: OTHER_TX, index: 0 } },
+          },
+        }),
+      ),
+    ).rejects.toThrow("head changed");
+    await expect(ledger.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
+
+    await ledger.recordExactSettlementBroadcast(TX, "broadcast", "2026-07-07T00:00:02.000Z");
+    await ledger.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:03.000Z");
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "available",
+      version: "1",
+      currentOutpoint: { txid: TX, index: 0 },
+      currentAmount: "120000000",
+      lastTransactionId: TX,
+    });
+    await expect(ledger.beginExactHandler(TX, "2026-07-07T00:00:04.000Z")).resolves.toBe(true);
+    await expect(ledger.beginExactHandler(TX, "2026-07-07T00:00:05.000Z")).resolves.toBe(false);
+    await ledger.commitExactPayment({
+      payment: exactPayment({ transactionId: TX, paymentOutputIndex: 0, amount: "20000000" }),
+    });
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      status: "applied",
+      handlerStartedAt: "2026-07-07T00:00:04.000Z",
+    });
+  });
+
+  it("releases rejected attempts and fails uncertain heads closed", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerExactHead(exactHead());
+    await ledger.claimExactSettlement(exactSettlementAttempt());
+    await ledger.abandonExactSettlement(TX, "trusted node rejected transaction", "2026-07-07T00:00:02.000Z");
+
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({ status: "available", claimTransactionId: undefined });
+    await ledger.markExactHeadUnavailable(HEAD_ID, "successor lineage unavailable", "2026-07-07T00:00:03.000Z");
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "unavailable",
+      unavailableReason: "successor lineage unavailable",
+    });
+    await expect(ledger.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
   });
 
   it("leases exact inventory and retires expired unpaid reservations", async () => {
@@ -356,6 +434,66 @@ function exactReservation(overrides: Partial<ExactReservationRecord> = {}): Exac
     paymentOutputIndex: 0,
     status: "reserved",
     reservedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function exactHead(overrides: Partial<ExactHeadRecord> = {}): ExactHeadRecord {
+  return {
+    headId: HEAD_ID,
+    network: "kaspa:testnet-10",
+    payTo: "kaspatest:head",
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    currentOutpoint: { txid: FUNDING_TX, index: 0 },
+    currentAmount: "100000000",
+    scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    redeemScript: KIP10_REDEEM_SCRIPT,
+    additiveThresholdSompi: "10000000",
+    version: "0",
+    status: "available",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function exactHeadSelection(selectionKey = "00".repeat(32)) {
+  return {
+    network: "kaspa:testnet-10" as const,
+    amount: "20000000",
+    payTo: "kaspatest:head",
+    payToScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    minimumAdditiveThresholdSompi: "10000000",
+    selectionKey,
+  };
+}
+
+function exactSettlementAttempt(overrides: Partial<ExactSettlementAttemptRecord> = {}): ExactSettlementAttemptRecord {
+  return {
+    transactionId: TX,
+    profile: "additive",
+    amount: "20000000",
+    paymentOutputIndex: 0,
+    requestFingerprint: REQUEST,
+    paymentRequirementsHash: REQUIREMENTS,
+    paymentPayloadHash: PAYLOAD,
+    payToScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    transaction: "signed-additive-transaction",
+    status: "pending",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    head: {
+      headId: HEAD_ID,
+      expectedVersion: "0",
+      expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+      expectedAmount: "100000000",
+      successor: {
+        outpoint: { txid: TX, index: 0 },
+        amount: "120000000",
+        scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+      },
+    },
     ...overrides,
   };
 }

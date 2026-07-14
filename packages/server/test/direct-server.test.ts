@@ -15,6 +15,7 @@ import {
   readMcpPaymentRequired,
   readMcpPaymentResponse,
   sha256Hex,
+  stableStringify,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
@@ -25,7 +26,13 @@ import {
   type PaymentPayload,
   type SettlementResponse,
 } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import {
+  buildKip10AdditiveRedeemScript,
+  deriveEscrowAddress,
+  escrowScriptPublicKey,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
   MemoryServerChannelStore,
@@ -38,6 +45,8 @@ import {
   type ClaimAttemptRecord,
   type DirectModeServerConfig,
   type ExactBorrowReservation,
+  type ExactHeadChallenge,
+  type ExactHeadRecord,
   type ExactSettlementCommit,
   type ServerChainProvider,
   type ServerChannelRecord,
@@ -54,6 +63,7 @@ const TOP_UP_TX = "99".repeat(32);
 const CLAIM_TX = "55".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_RESERVATION_ID = "88".repeat(32);
+const EXACT_HEAD_ID = "89".repeat(32);
 const EXACT_TRANSACTION_ARTIFACT = "{\"transaction\":\"signed-kip10-exact\"}";
 const RESOURCE = { url: "https://api.example.test/data" };
 
@@ -152,7 +162,8 @@ describe("direct-mode server", () => {
     const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
     expect(required.accepts[0]?.scheme).toBe("exact");
     expect(required.accepts[0]?.amount).toBe("75");
-    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v2");
+    expect(required.accepts[0]?.extra.profile).toBe("standard-native");
   });
 
   it("offers standard-native exact by default without allocating reservation state", async () => {
@@ -200,7 +211,7 @@ describe("direct-mode server", () => {
     const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
     expect(required.accepts.map((requirement) => requirement.scheme)).toEqual(["exact", "batch-settlement"]);
     expect(required.accepts.map((requirement) => requirement.amount)).toEqual(["75", "75"]);
-    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v2");
     expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v1");
   });
 
@@ -227,20 +238,13 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
-  it("includes KIP-10 reservation terms in unpaid MCP exact challenges", async () => {
-    const setup = makeServer({
-      amount: "100",
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-        },
-      },
-    });
+  it("includes reusable KIP-10 head terms without consuming state in unpaid MCP exact challenges", async () => {
+    const setup = await makeAdditiveServer();
     let executed = false;
 
     const result = await handlePaidMcpToolCall(
       setup.server,
-      { name: "download", resource: { url: "mcp://tool/download" }, amount: "75", scheme: "exact" },
+      { name: "download", resource: { url: "mcp://tool/download" }, amount: "20000000", scheme: "exact" },
       { name: "download", arguments: { id: "alpha" } },
       async () => {
         executed = true;
@@ -253,22 +257,80 @@ describe("direct-mode server", () => {
     expect(result.isError).toBe(true);
     expect(accepted?.scheme).toBe("exact");
     expect(accepted?.extra.templateId).toBe("kaspa-x402-kip10-additive-v1");
-    expect(accepted?.extra.reservationId).toBe(EXACT_RESERVATION_ID);
+    expect(accepted?.extra.binding).toBe("kaspa-exact-v2");
+    expect(accepted?.extra.profile).toBe("additive");
+    expect(accepted?.extra.headId).toBe(EXACT_HEAD_ID);
+    expect(accepted?.extra.challengeId).toMatch(/^[0-9a-f]{64}$/);
     expect(executed).toBe(false);
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({ status: "reserved" });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available", version: "0" });
   });
 
-  it("rejects exact reservation offers below the configured additive threshold", async () => {
-    const setup = makeServer({
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({
-            borrowScriptPublicKey: request.payToScriptPublicKey,
-            additiveThresholdSompi: "1",
-          });
+  it("issues one thousand unanswered additive 402s without leasing or retiring a head", async () => {
+    const setup = await makeAdditiveServer();
+
+    for (let index = 0; index < 1_000; index += 1) {
+      const response = await setup.server.handlePaidRequest(
+        { url: `${RESOURCE.url}?offer=${index}`, resource: RESOURCE, paymentScheme: "exact" },
+        async () => ({ body: "unreachable" }),
+      );
+      expect(response.status).toBe(402);
+    }
+
+    const heads = await setup.store.listExactHeads();
+    expect(heads).toEqual([expect.objectContaining({ headId: EXACT_HEAD_ID, status: "available", version: "0" })]);
+    expect(heads[0]?.claimTransactionId).toBeUndefined();
+  });
+
+  it("allows one conflicting additive head spend and refreshes the losing challenge", async () => {
+    const setup = await makeAdditiveServer({
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          const transactionId = request.transaction as Hash32Hex;
+          const head = request.head!;
+          return {
+            transactionId,
+            paymentOutput: { amount: request.amount, scriptPublicKey: request.payToScriptPublicKey },
+            continuation: {
+              outpoint: { txid: transactionId, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
+            },
+            finality: "accepted",
+          };
         },
       },
     });
+    const unpaid = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      async () => ({ body: "unreachable" }),
+    );
+    const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
+    const first = makeAdditivePayment(accepted);
+    const second = makeAdditivePayment(accepted);
+    if (first.payload.type !== "exact-transaction" || second.payload.type !== "exact-transaction") throw new Error("expected exact payloads");
+    first.payload.transaction = EXACT_TX_ID;
+    second.payload.transaction = CLAIM_TX;
+    let executions = 0;
+    const handler = () => {
+      executions += 1;
+      return { body: "winner" };
+    };
+
+    const [left, right] = await Promise.all([
+      setup.server.handlePaidRequest(requestWithPayment(first, { paymentScheme: "exact", requestHash: "a1".repeat(32) }), handler),
+      setup.server.handlePaidRequest(requestWithPayment(second, { paymentScheme: "exact", requestHash: "a2".repeat(32) }), handler),
+    ]);
+
+    expect([left.status, right.status].sort()).toEqual([200, 402]);
+    expect(executions).toBe(1);
+    const loser = left.status === 402 ? left : right;
+    const refreshed = decodePaymentRequiredHeader(loser.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
+    expect(refreshed.extra.headVersion).toBe("1");
+    expect(refreshed.extra.expectedHeadOutpoint?.txid).toBe(left.status === 200 ? EXACT_TX_ID : CLAIM_TX);
+  });
+
+  it("does not select additive heads below the configured threshold", async () => {
+    const setup = await makeAdditiveServer({}, { additiveThresholdSompi: "1" });
 
     const response = await setup.server.handlePaidRequest({ url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" }, async () => ({
       body: "unreachable",
@@ -276,19 +338,25 @@ describe("direct-mode server", () => {
 
     expect(response.status).toBe(503);
     expect(response.body).toEqual({ error: "invalid_payload" });
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available" });
   });
 
-  it("rejects explicit exact reservations below the configured additive threshold", () => {
-    const setup = makeServer();
+  it("rejects explicit additive heads below the configured threshold", () => {
+    const setup = makeServer({ exactProfile: "additive" });
+    const head = exactHead({
+      redeemScript: buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "1" }),
+      additiveThresholdSompi: "1",
+    });
+    head.scriptPublicKey = serializedScriptPublicKey(payToScriptHashScript(head.redeemScript));
 
     expect(() =>
       setup.server.buildPaymentRequired({
         resource: RESOURCE,
         scheme: "exact",
-        exactReservation: exactReservation({ additiveThresholdSompi: "1" }),
+        amount: "20000000",
+        exactHead: exactHeadChallenge(head),
       }),
-    ).toThrow("exact reservation additive threshold is below server minimum");
+    ).toThrow("configured head threshold");
   });
 
   it("rejects invalid MCP payment metadata without executing the tool", async () => {
@@ -314,7 +382,7 @@ describe("direct-mode server", () => {
 
   it("returns cached MCP paid results for idempotent retries", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact", exactReservation: exactReservation() });
+    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
     const requestHash = mcpToolCallFingerprint({
       toolName: "download",
       arguments: { id: "same" },
@@ -350,7 +418,7 @@ describe("direct-mode server", () => {
 
   it("returns terminal MCP errors without a new payment challenge", async () => {
     const setup = makeServer({ amount: "100" });
-    const firstRequired = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact", exactReservation: exactReservation() });
+    const firstRequired = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
     const firstHash = mcpToolCallFingerprint({
       toolName: "download",
       arguments: { id: "first" },
@@ -382,7 +450,7 @@ describe("direct-mode server", () => {
 
   it("returns hybrid MCP settlement failures without exposing paid tool output", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact", exactReservation: exactReservation() });
+    const required = setup.server.buildPaymentRequired({ resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" });
     const requestHash = mcpToolCallFingerprint({
       toolName: "download",
       arguments: { id: "fail" },
@@ -560,7 +628,7 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
-  it("lets application outbox state prevent duplicate exact side effects after commit failure", async () => {
+  it("fails closed instead of re-running protected work after an exact commit failure", async () => {
     const store = new FailingExactCommitStore(1);
     const setup = makeServer({ requirePaymentIdentifier: true, store });
     const requestHash = "12".repeat(32);
@@ -584,11 +652,15 @@ describe("direct-mode server", () => {
     const second = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), handler);
 
     expect(first.status).toBe(500);
-    expect(second.status).toBe(200);
-    expect(second.body).toBe("download");
-    expect(handlerInvocations).toBe(2);
+    expect(second.status).toBe(503);
+    expect(second.body).toEqual({ error: "exact_settlement_recovery_required" });
+    expect(handlerInvocations).toBe(1);
     expect(externalEffects).toBe(1);
-    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeTruthy();
+    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
+    await expect(store.loadExactSettlementAttempt(EXACT_TX_ID)).resolves.toMatchObject({
+      status: "accepted",
+      handlerStartedAt: expect.any(String),
+    });
   });
 
   it("rejects exact transaction replay against a different request", async () => {
@@ -684,22 +756,23 @@ describe("direct-mode server", () => {
     await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
   });
 
-  it("settles exact-transaction payloads by broadcasting reserved KIP-10 artifacts before the handler", async () => {
+  it("claims, broadcasts, and advances a reusable KIP-10 head before the handler", async () => {
     const verificationRequests: unknown[] = [];
-    const setup = makeServer({
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-        },
-      },
+    const setup = await makeAdditiveServer({
       exactTransactionVerifier: {
         verifyExactPayment(request) {
           verificationRequests.push(request);
+          const head = request.head!;
           return {
             transactionId: EXACT_TX_ID,
             paymentOutput: {
               amount: request.amount,
               scriptPublicKey: request.payToScriptPublicKey,
+            },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
             },
             payerAddress: "kaspatest:refund",
           };
@@ -715,19 +788,10 @@ describe("direct-mode server", () => {
     const accepted = required.accepts[0] as ExactPaymentRequirements;
     expect(accepted.extra.templateId).toBe("kaspa-x402-kip10-additive-v1");
     expect(accepted.extra.transactionEncoding).toBe("kaspa-sdk-safe-json-v2.0.0");
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({ status: "reserved" });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available", version: "0" });
 
     let handlerSawBroadcast = false;
-    const payment: PaymentPayload = {
-      x402Version: X402_VERSION,
-      accepted,
-      payload: {
-        type: "exact-transaction",
-        transaction: EXACT_TRANSACTION_ARTIFACT,
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        paymentOutputIndex: 0,
-      },
-    };
+    const payment = makeAdditivePayment(accepted);
     const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => {
       handlerSawBroadcast = setup.chain.sentTransactions.includes(EXACT_TRANSACTION_ARTIFACT);
       return { body: "download" };
@@ -739,7 +803,7 @@ describe("direct-mode server", () => {
     expect(verificationRequests[0]).toMatchObject({
       transaction: EXACT_TRANSACTION_ARTIFACT,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      reservation: { reservationId: EXACT_RESERVATION_ID },
+      head: { headId: EXACT_HEAD_ID, headVersion: "0" },
     });
     const settlement = decodePaymentResponseHeader(response.headers[PAYMENT_RESPONSE_HEADER]);
     const extra = readKaspaSettlementExtension(settlement)!;
@@ -748,31 +812,32 @@ describe("direct-mode server", () => {
       paymentOutputIndex: 0,
       finality: "accepted",
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      templateId: "kaspa-x402-kip10-additive-v1",
-      reservationId: EXACT_RESERVATION_ID,
-      borrowOutpoint: { txid: FUNDING_TX, index: 2 },
+      exactProfile: "additive",
     });
     await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toMatchObject({ transactionId: EXACT_TX_ID, paymentOutputIndex: 0 });
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({
-      status: "consumed",
-      transactionId: EXACT_TX_ID,
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({
+      status: "available",
+      version: "1",
+      currentOutpoint: { txid: EXACT_TX_ID, index: 0 },
+      currentAmount: "120000000",
     });
   });
 
   it("does not rebroadcast exact-transaction payloads already observed by the verifier", async () => {
-    const setup = makeServer({
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-        },
-      },
+    const setup = await makeAdditiveServer({
       exactTransactionVerifier: {
         verifyExactPayment(request) {
+          const head = request.head!;
           return {
             transactionId: EXACT_TX_ID,
             paymentOutput: {
               amount: request.amount,
               scriptPublicKey: request.payToScriptPublicKey,
+            },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
             },
             finality: "accepted",
             payerAddress: "kaspatest:refund",
@@ -786,16 +851,7 @@ describe("direct-mode server", () => {
       body: "unreachable",
     }));
     const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
-    const payment: PaymentPayload = {
-      x402Version: X402_VERSION,
-      accepted,
-      payload: {
-        type: "exact-transaction",
-        transaction: EXACT_TRANSACTION_ARTIFACT,
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        paymentOutputIndex: 0,
-      },
-    };
+    const payment = makeAdditivePayment(accepted);
     let executions = 0;
 
     const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => {
@@ -812,22 +868,14 @@ describe("direct-mode server", () => {
     expect(readKaspaSettlementExtension(settlement)).toMatchObject({
       paymentOutputIndex: 0,
       finality: "accepted",
-      reservationId: EXACT_RESERVATION_ID,
+      exactProfile: "additive",
     });
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({
-      status: "consumed",
-      transactionId: EXACT_TX_ID,
-    });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ version: "1", lastTransactionId: EXACT_TX_ID });
   });
 
-  it("rejects exact-transfer payloads for reserved KIP-10 exact offers", async () => {
+  it("rejects exact-transfer payloads for additive head challenges without mutating the head", async () => {
     const verificationRequests: unknown[] = [];
-    const setup = makeServer({
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-        },
-      },
+    const setup = await makeAdditiveServer({
       exactTransactionVerifier: {
         verifyExactPayment(request) {
           verificationRequests.push(request);
@@ -868,28 +916,24 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
     expect(verificationRequests).toHaveLength(0);
     await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({ status: "reserved" });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available", version: "0" });
   });
 
   it("does not run exact-transaction handlers when broadcast stays below observable finality", async () => {
-    let reservations = 0;
-    const setup = makeServer({
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          reservations += 1;
-          return exactReservation({
-            reservationId: reservations === 1 ? EXACT_RESERVATION_ID : "89".repeat(32),
-            borrowScriptPublicKey: request.payToScriptPublicKey,
-          });
-        },
-      },
+    const setup = await makeAdditiveServer({
       exactTransactionVerifier: {
         verifyExactPayment(request) {
+          const head = request.head!;
           return {
             transactionId: EXACT_TX_ID,
             paymentOutput: {
               amount: request.amount,
               scriptPublicKey: request.payToScriptPublicKey,
+            },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
             },
           };
         },
@@ -902,16 +946,7 @@ describe("direct-mode server", () => {
       body: "unreachable",
     }));
     const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
-    const payment: PaymentPayload = {
-      x402Version: X402_VERSION,
-      accepted,
-      payload: {
-        type: "exact-transaction",
-        transaction: EXACT_TRANSACTION_ARTIFACT,
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        paymentOutputIndex: 0,
-      },
-    };
+    const payment = makeAdditivePayment(accepted);
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => {
@@ -919,30 +954,33 @@ describe("direct-mode server", () => {
       return { body: "download" };
     });
 
-    expect(response.status).toBe(402);
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "exact_settlement_recovery_required" });
     expect(executed).toBe(false);
     expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
     await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
-    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({ status: "reserved" });
-    const corrective = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
-    expect((corrective.accepts[0] as ExactPaymentRequirements).extra.reservationId).toBe(EXACT_RESERVATION_ID);
-    expect(reservations).toBe(1);
+    await expect(setup.store.loadExactSettlementAttempt(EXACT_TX_ID)).resolves.toMatchObject({ status: "broadcast", finality: "broadcast" });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "claimed", claimTransactionId: EXACT_TX_ID });
   });
 
-  it("refreshes expired exact reservations in corrective responses", async () => {
+  it("refreshes expired additive head challenges without retiring the head", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     try {
-      let reservations = 0;
-      const setup = makeServer({
-        exactReservationProvider: {
-          reserveExactPayment(request) {
-            reservations += 1;
-            return exactReservation({
-              reservationId: reservations === 1 ? EXACT_RESERVATION_ID : "89".repeat(32),
-              borrowScriptPublicKey: request.payToScriptPublicKey,
-              expiresAt: reservations === 1 ? "2026-01-01T00:00:01.000Z" : "2026-01-01T00:01:00.000Z",
-            });
+      const setup = await makeAdditiveServer({
+        maxTimeoutSeconds: 1,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            const head = request.head!;
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: { amount: request.amount, scriptPublicKey: request.payToScriptPublicKey },
+              continuation: {
+                outpoint: { txid: EXACT_TX_ID, index: 0 },
+                amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+                scriptPublicKey: head.headScriptPublicKey,
+              },
+            };
           },
         },
       });
@@ -951,16 +989,7 @@ describe("direct-mode server", () => {
         body: "unreachable",
       }));
       const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
-      const payment: PaymentPayload = {
-        x402Version: X402_VERSION,
-        accepted,
-        payload: {
-          type: "exact-transaction",
-          transaction: EXACT_TRANSACTION_ARTIFACT,
-          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-          paymentOutputIndex: 0,
-        },
-      };
+      const payment = makeAdditivePayment(accepted);
       vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
 
       const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => ({
@@ -970,29 +999,31 @@ describe("direct-mode server", () => {
       expect(response.status).toBe(402);
       expect(setup.chain.sentTransactions).toEqual([]);
       const corrective = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
-      expect((corrective.accepts[0] as ExactPaymentRequirements).extra.reservationId).toBe("89".repeat(32));
-      expect(reservations).toBe(2);
-      await expect(setup.store.loadExactReservation("89".repeat(32))).resolves.toMatchObject({ status: "reserved" });
+      const refreshed = corrective.accepts[0] as ExactPaymentRequirements;
+      expect(refreshed.extra.headId).toBe(EXACT_HEAD_ID);
+      expect(refreshed.extra.challengeId).not.toBe(accepted.extra.challengeId);
+      await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available", version: "0" });
     } finally {
       vi.useRealTimers();
     }
   });
 
   it("returns cached idempotent responses for exact-transaction retries", async () => {
-    const setup = makeServer({
+    const setup = await makeAdditiveServer({
       requirePaymentIdentifier: true,
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-        },
-      },
       exactTransactionVerifier: {
         verifyExactPayment(request) {
+          const head = request.head!;
           return {
             transactionId: EXACT_TX_ID,
             paymentOutput: {
               amount: request.amount,
               scriptPublicKey: request.payToScriptPublicKey,
+            },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
             },
             payerAddress: "kaspatest:refund",
           };
@@ -1007,15 +1038,7 @@ describe("direct-mode server", () => {
     }));
     const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
     const payment: PaymentPayload = {
-      x402Version: X402_VERSION,
-      accepted,
-      payload: {
-        type: "exact-transaction",
-        transaction: EXACT_TRANSACTION_ARTIFACT,
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        paymentOutputIndex: 0,
-        requestHash,
-      },
+      ...makeAdditivePayment(accepted, { requestHash }),
       ...paymentIdentifierExtension(paymentIdentifier),
     };
     let executions = 0;
@@ -1036,49 +1059,17 @@ describe("direct-mode server", () => {
     expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
   });
 
-  it("returns cached exact-transaction replays after reservation expiry", async () => {
+  it("returns cached accepted exact replays after challenge expiry", async () => {
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
     try {
-      const setup = makeServer({
-        exactReservationProvider: {
-          reserveExactPayment(request) {
-            return exactReservation({
-              borrowScriptPublicKey: request.payToScriptPublicKey,
-              expiresAt: "2026-01-01T00:00:01.000Z",
-            });
-          },
-        },
-        exactTransactionVerifier: {
-          verifyExactPayment(request) {
-            return {
-              transactionId: EXACT_TX_ID,
-              paymentOutput: {
-                amount: request.amount,
-                scriptPublicKey: request.payToScriptPublicKey,
-              },
-              payerAddress: "kaspatest:refund",
-            };
-          },
-        },
-      });
-      setup.chain.sendTransactionId = EXACT_TX_ID;
+      const setup = await makeAdditiveServer({ maxTimeoutSeconds: 1 });
       const requestHash = "ab".repeat(32);
       const unpaid = await setup.server.handlePaidRequest({ url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" }, async () => ({
         body: "unreachable",
       }));
       const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
-      const payment: PaymentPayload = {
-        x402Version: X402_VERSION,
-        accepted,
-        payload: {
-          type: "exact-transaction",
-          transaction: EXACT_TRANSACTION_ARTIFACT,
-          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-          paymentOutputIndex: 0,
-          requestHash,
-        },
-      };
+      const payment = makeAdditivePayment(accepted, { requestHash });
       let executions = 0;
 
       const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), async () => {
@@ -1095,79 +1086,73 @@ describe("direct-mode server", () => {
       expect(second.status).toBe(200);
       expect(second.body).toBe("cached");
       expect(executions).toBe(1);
-      expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
+      expect(setup.chain.sentTransactions).toEqual([]);
     } finally {
       vi.useRealTimers();
     }
   });
 
-  it("recovers exact-transaction retries after broadcast succeeds but exact commit fails", async () => {
-    const store = new FailingExactCommitStore(1);
-    const setup = makeServer({
-      store,
-      exactReservationProvider: {
-        reserveExactPayment(request) {
-          return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
+  it("does not rebroadcast or run protected work after an ambiguous exact broadcast", async () => {
+    const setup = await makeAdditiveServer({
+      exactSettlementReconciler: {
+        reconcileExactSettlement(attempt) {
+          return {
+            status: "accepted",
+            transactionId: attempt.transactionId,
+            finality: "accepted",
+            paymentOutput: { amount: attempt.amount, scriptPublicKey: attempt.payToScriptPublicKey },
+            continuation: attempt.head!.successor,
+          };
         },
       },
       exactTransactionVerifier: {
         verifyExactPayment(request) {
+          const head = request.head!;
           return {
             transactionId: EXACT_TX_ID,
-            paymentOutput: {
-              amount: request.amount,
-              scriptPublicKey: request.payToScriptPublicKey,
+            paymentOutput: { amount: request.amount, scriptPublicKey: request.payToScriptPublicKey },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
             },
-            payerAddress: "kaspatest:refund",
           };
         },
       },
     });
-    setup.chain.sendTransactionId = EXACT_TX_ID;
+    setup.chain.sendFailure = new Error("ambiguous transport failure");
     const requestHash = "ac".repeat(32);
     const unpaid = await setup.server.handlePaidRequest({ url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" }, async () => ({
       body: "unreachable",
     }));
     const accepted = decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts[0] as ExactPaymentRequirements;
-    const payment: PaymentPayload = {
-      x402Version: X402_VERSION,
-      accepted,
-      payload: {
-        type: "exact-transaction",
-        transaction: EXACT_TRANSACTION_ARTIFACT,
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        paymentOutputIndex: 0,
-        requestHash,
-      },
-    };
-    const outbox = new Map<string, { body: string }>();
+    const payment = makeAdditivePayment(accepted, { requestHash });
     let handlerInvocations = 0;
-    let externalEffects = 0;
-    const handler = ({ requestFingerprint }: { requestFingerprint: Hash32Hex }) => {
+    const handler = () => {
       handlerInvocations += 1;
-      const cached = outbox.get(requestFingerprint);
-      if (cached) return cached;
-      externalEffects += 1;
-      const result = { body: "download" };
-      outbox.set(requestFingerprint, result);
-      return result;
+      return { body: "recovered" };
     };
 
     const first = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), handler);
-    setup.chain.sendFailure = new Error("already submitted");
     const second = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact", requestHash }), handler);
 
-    expect(first.status).toBe(500);
-    expect(second.status).toBe(200);
-    expect(second.body).toBe("download");
-    expect(handlerInvocations).toBe(2);
-    expect(externalEffects).toBe(1);
+    expect(first).toMatchObject({ status: 503, body: { error: "exact_settlement_recovery_required" } });
+    expect(second).toMatchObject({ status: 503, body: { error: "exact_settlement_recovery_required" } });
+    expect(handlerInvocations).toBe(0);
     expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
-    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toBeTruthy();
-    await expect(store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toMatchObject({
-      status: "consumed",
-      transactionId: EXACT_TX_ID,
-    });
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
+    await expect(setup.store.loadExactSettlementAttempt(EXACT_TX_ID)).resolves.toMatchObject({ status: "pending" });
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "claimed", claimTransactionId: EXACT_TX_ID });
+
+    await expect(setup.server.reconcileExactSettlement(EXACT_TX_ID)).resolves.toMatchObject({ status: "accepted", finality: "accepted" });
+    const recovered = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      handler,
+    );
+    expect(recovered).toMatchObject({ status: 200, body: "recovered" });
+    expect(handlerInvocations).toBe(1);
+    expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
+    await expect(setup.store.loadExactHead(EXACT_HEAD_ID)).resolves.toMatchObject({ status: "available", version: "1" });
   });
 
   it("returns a controlled 402 when request fingerprinting needs an explicit hash", async () => {
@@ -2297,12 +2282,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         };
       },
     },
-    exactProfile: "additive",
-    exactReservationProvider: {
-      reserveExactPayment(request) {
-        return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-      },
-    },
+    exactProfile: "standard-native",
     ...overrides,
   });
   return {
@@ -2317,27 +2297,135 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
   };
 }
 
+async function makeAdditiveServer(
+  overrides: Partial<DirectModeServerConfig> = {},
+  headOverrides: Partial<ExactHeadRecord> = {},
+) {
+  const threshold = headOverrides.additiveThresholdSompi ?? "10000000";
+  const redeemScript =
+    headOverrides.redeemScript ?? buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: threshold });
+  const scriptPublicKey = headOverrides.scriptPublicKey ?? serializedScriptPublicKey(payToScriptHashScript(redeemScript));
+  const fallbackCodec = new FakeAddressCodec();
+  const addressCodec: AddressCodec = {
+    scriptPublicKeyForAddress(address, network) {
+      return address === "kaspatest:payout" ? scriptPublicKey : fallbackCodec.scriptPublicKeyForAddress(address, network);
+    },
+    encodeScriptAddress(input) {
+      return fallbackCodec.encodeScriptAddress(input);
+    },
+  };
+  const defaultVerifier = {
+    verifyExactPayment(request: Parameters<NonNullable<DirectModeServerConfig["exactTransactionVerifier"]>["verifyExactPayment"]>[0]) {
+      const head = request.head!;
+      return {
+        transactionId: EXACT_TX_ID,
+        paymentOutput: { amount: request.amount, scriptPublicKey: request.payToScriptPublicKey },
+        continuation: {
+          outpoint: { txid: EXACT_TX_ID, index: 0 },
+          amount: (BigInt(head.headAmount) + BigInt(request.amount)).toString(),
+          scriptPublicKey: head.headScriptPublicKey,
+        },
+        finality: "accepted" as const,
+        payerAddress: "kaspatest:refund",
+      };
+    },
+  };
+  const setup = makeServer({
+    ...overrides,
+    amount: overrides.amount ?? "20000000",
+    exactProfile: "additive",
+    addressCodec,
+    exactTransactionVerifier: overrides.exactTransactionVerifier ?? defaultVerifier,
+  });
+  const head = exactHead({
+    scriptPublicKey,
+    redeemScript,
+    additiveThresholdSompi: threshold,
+    ...headOverrides,
+  });
+  await setup.store.registerExactHead(head);
+  return { ...setup, head };
+}
+
+function exactHead(overrides: Partial<ExactHeadRecord> = {}): ExactHeadRecord {
+  const redeemScript = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
+  return {
+    headId: EXACT_HEAD_ID,
+    network: "kaspa:testnet-10",
+    payTo: "kaspatest:payout",
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    currentOutpoint: { txid: FUNDING_TX, index: 0 },
+    currentAmount: "100000000",
+    scriptPublicKey: serializedScriptPublicKey(payToScriptHashScript(redeemScript)),
+    redeemScript,
+    additiveThresholdSompi: "10000000",
+    version: "0",
+    status: "available",
+    createdAt: "2026-07-01T00:00:00.000Z",
+    updatedAt: "2026-07-01T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function exactHeadChallenge(record: ExactHeadRecord, amount = "20000000"): ExactHeadChallenge {
+  const expiresAt = "2099-01-01T00:00:00.000Z";
+  const unsigned: Omit<ExactHeadChallenge, "challengeId"> = {
+    headId: record.headId,
+    headVersion: record.version,
+    templateId: record.templateId,
+    transactionEncoding: record.transactionEncoding,
+    expectedHeadOutpoint: record.currentOutpoint,
+    headAmount: record.currentAmount,
+    headScriptPublicKey: record.scriptPublicKey,
+    headRedeemScript: record.redeemScript,
+    additiveThresholdSompi: record.additiveThresholdSompi,
+    paymentOutputIndex: 0,
+    expiresAt,
+  };
+  return {
+    ...unsigned,
+    challengeId: sha256Hex(
+      stableStringify({
+        scope: "kaspa:x402:additive-head-challenge:v1",
+        network: record.network,
+        payTo: record.payTo,
+        amount,
+        ...unsigned,
+      }),
+    ),
+  };
+}
+
+function makeAdditivePayment(accepted: ExactPaymentRequirements, options: { requestHash?: Hash32Hex } = {}): PaymentPayload {
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "exact-transaction",
+      profile: "additive",
+      challengeId: accepted.extra.challengeId,
+      transaction: EXACT_TRANSACTION_ARTIFACT,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+      ...(options.requestHash ? { requestHash: options.requestHash } : {}),
+    },
+  };
+}
+
 function makeExactPayment(
   setup: ReturnType<typeof makeServer>,
   options: { paymentIdentifier?: string; transactionId?: Hash32Hex; paymentOutputIndex?: number; requestHash?: Hash32Hex } = {},
 ): PaymentPayload {
   const paymentOutputIndex = options.paymentOutputIndex ?? 0;
-  const reservation = exactReservation({
-    paymentOutputIndex,
-    ...(paymentOutputIndex === 0 ? {} : { reservationId: `${String(80 + paymentOutputIndex).padStart(2, "0")}`.repeat(32) }),
-  });
-  void setup.store.saveExactReservation({
-    ...reservation,
-    status: "reserved",
-    reservedAt: new Date("2026-07-01T00:00:00.000Z").toISOString(),
-  });
-  const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", exactReservation: reservation });
+  const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
   return {
     x402Version: X402_VERSION,
     accepted,
     payload: {
       type: "exact-transaction",
+      profile: "standard-native",
       payerAddress: "kaspatest:refund",
       transaction: options.transactionId ?? EXACT_TRANSACTION_ARTIFACT,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",

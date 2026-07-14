@@ -10,10 +10,23 @@ import type {
   ExactPaymentRecord,
   ExactReservationRecord,
   ExactSettlementCommit,
+  ExactHeadRecord,
+  ExactHeadSelectionRequest,
+  ExactSettlementAttemptRecord,
+  ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   ServerStateStore,
   SettlementCommit,
+} from "@kaspa-x402/server";
+import {
+  acceptExactHead,
+  claimExactHead,
+  exactHeadMatchesSelection,
+  exactSettlementAttemptsMatch,
+  normalizeExactHeadRecord,
+  normalizeExactSettlementAttempt,
+  releaseExactHeadClaim,
 } from "@kaspa-x402/server";
 
 type GatewayTransaction = {
@@ -93,6 +106,17 @@ export type GatewayStateMethod =
   | "loadCommitment"
   | "loadPaymentIdentifier"
   | "loadExactPayment"
+  | "registerExactHead"
+  | "loadExactHead"
+  | "listExactHeads"
+  | "selectExactHead"
+  | "claimExactSettlement"
+  | "loadExactSettlementAttempt"
+  | "recordExactSettlementBroadcast"
+  | "acceptExactSettlement"
+  | "beginExactHandler"
+  | "abandonExactSettlement"
+  | "markExactHeadUnavailable"
   | "saveExactReservation"
   | "loadExactReservation"
   | "consumeExactReservation"
@@ -160,6 +184,123 @@ export class GatewayLedger implements ServerStateStore {
     return cloneOrUndefined(await this.#storage.get<ExactPaymentRecord>(exactPaymentKey(transactionId)));
   }
 
+  async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
+    const record = normalizeExactHeadRecord(input);
+    return this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<ExactHeadRecord>(exactHeadKey(record.headId));
+      if (existing) {
+        if (stableJson(existing) !== stableJson(record)) throw new Error("exact head id is already registered for different state");
+        return clone(existing);
+      }
+      const heads = await txn.list<ExactHeadRecord>({ prefix: "exact-head:" });
+      for (const current of heads.values()) {
+        if (sameOutpoint(current.currentOutpoint, record.currentOutpoint)) throw new Error("exact head outpoint is already registered");
+      }
+      await txn.put(exactHeadKey(record.headId), clone(record));
+      return clone(record);
+    });
+  }
+
+  async loadExactHead(headId: string): Promise<ExactHeadRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<ExactHeadRecord>(exactHeadKey(headId)));
+  }
+
+  async listExactHeads(): Promise<ExactHeadRecord[]> {
+    return Array.from((await this.#storage.list<ExactHeadRecord>({ prefix: "exact-head:" })).values())
+      .map(clone)
+      .sort((left, right) => left.headId.localeCompare(right.headId));
+  }
+
+  async selectExactHead(request: ExactHeadSelectionRequest): Promise<ExactHeadRecord | undefined> {
+    const candidates = (await this.listExactHeads())
+      .filter((head) => exactHeadMatchesSelection(head, request))
+      .sort((left, right) => left.headId.localeCompare(right.headId));
+    if (candidates.length === 0) return undefined;
+    const index = Number(BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length));
+    return clone(candidates[index]!);
+  }
+
+  async claimExactSettlement(input: ExactSettlementAttemptRecord): Promise<ExactSettlementClaimResult> {
+    const attempt = normalizeExactSettlementAttempt(input);
+    return this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<ExactSettlementAttemptRecord>(exactAttemptKey(attempt.transactionId));
+      if (existing) {
+        if (!exactSettlementAttemptsMatch(existing, attempt)) throw new Error("exact transaction is already claimed for a different request");
+        return { attempt: clone(existing), created: false };
+      }
+      if (attempt.profile === "additive") {
+        if (!attempt.head) throw new Error("additive exact settlement requires a head claim");
+        const head = await txn.get<ExactHeadRecord>(exactHeadKey(attempt.head.headId));
+        if (!head) throw new Error("exact head changed before settlement claim");
+        await txn.put(exactHeadKey(head.headId), claimExactHead(head, attempt));
+      } else if (attempt.head) {
+        throw new Error("standard-native exact settlement cannot claim a head");
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), clone(attempt));
+      return { attempt: clone(attempt), created: true };
+    });
+  }
+
+  async loadExactSettlementAttempt(transactionId: string): Promise<ExactSettlementAttemptRecord | undefined> {
+    return cloneOrUndefined(await this.#storage.get<ExactSettlementAttemptRecord>(exactAttemptKey(transactionId)));
+  }
+
+  async recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: "broadcast" | "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "accepted" || attempt.status === "applied") return;
+      await txn.put(exactAttemptKey(attempt.transactionId), { ...attempt, status: "broadcast", finality, updatedAt: observedAt });
+    });
+  }
+
+  async acceptExactSettlement(transactionId: string, finality: "accepted" | "confirmed", observedAt: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "applied") return;
+      if (attempt.head) {
+        const head = await txn.get<ExactHeadRecord>(exactHeadKey(attempt.head.headId));
+        if (!head) throw new Error("exact head was not found during settlement acceptance");
+        await txn.put(exactHeadKey(head.headId), acceptExactHead(head, attempt, observedAt));
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), { ...attempt, status: "accepted", finality, updatedAt: observedAt });
+    });
+  }
+
+  async beginExactHandler(transactionId: string, startedAt: string): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status !== "accepted" || attempt.handlerStartedAt) return false;
+      await txn.put(exactAttemptKey(attempt.transactionId), { ...attempt, handlerStartedAt: startedAt, updatedAt: startedAt });
+      return true;
+    });
+  }
+
+  async abandonExactSettlement(transactionId: string, reason: string, observedAt: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "accepted" || attempt.status === "applied") throw new Error("accepted exact settlement cannot be abandoned");
+      if (attempt.head) {
+        const head = await txn.get<ExactHeadRecord>(exactHeadKey(attempt.head.headId));
+        if (head) await txn.put(exactHeadKey(head.headId), releaseExactHeadClaim(head, attempt, observedAt));
+      }
+      await txn.delete(exactAttemptKey(attempt.transactionId));
+      void reason;
+    });
+  }
+
+  async markExactHeadUnavailable(headId: string, reason: string, observedAt: string): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(headId));
+      if (!head) throw new Error("exact head was not found");
+      if (head.status === "retired") throw new Error("retired exact head cannot be marked unavailable");
+      await txn.put(exactHeadKey(head.headId), { ...head, status: "unavailable", unavailableReason: reason, updatedAt: observedAt });
+    });
+  }
+
   async commitSettlement(record: SettlementCommit): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const current = await txn.get<ServerChannelRecord>(channelKey(record.expected.channelId));
@@ -188,6 +329,15 @@ export class GatewayLedger implements ServerStateStore {
         return;
       }
       if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      const attempt = await txn.get<ExactSettlementAttemptRecord>(exactAttemptKey(payment.transactionId));
+      if (attempt) {
+        if (attempt.status !== "accepted" || !attempt.handlerStartedAt) throw new Error("exact settlement attempt is not ready to apply");
+        await txn.put(exactAttemptKey(payment.transactionId), {
+          ...attempt,
+          status: "applied",
+          updatedAt: new Date().toISOString(),
+        });
+      }
       if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
       await txn.put(exactPaymentKey(payment.transactionId), payment);
     });
@@ -493,6 +643,38 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
       return ledger.loadPaymentIdentifier(readPayload<{ id: string }>(request).id);
     case "loadExactPayment":
       return ledger.loadExactPayment(readPayload<{ transactionId: string }>(request).transactionId);
+    case "registerExactHead":
+      return ledger.registerExactHead(readPayload<{ record: ExactHeadRecord }>(request).record);
+    case "loadExactHead":
+      return ledger.loadExactHead(readPayload<{ headId: string }>(request).headId);
+    case "listExactHeads":
+      return ledger.listExactHeads();
+    case "selectExactHead":
+      return ledger.selectExactHead(readPayload<{ request: ExactHeadSelectionRequest }>(request).request);
+    case "claimExactSettlement":
+      return ledger.claimExactSettlement(readPayload<{ record: ExactSettlementAttemptRecord }>(request).record);
+    case "loadExactSettlementAttempt":
+      return ledger.loadExactSettlementAttempt(readPayload<{ transactionId: string }>(request).transactionId);
+    case "recordExactSettlementBroadcast": {
+      const payload = readPayload<{ transactionId: string; finality: "broadcast" | "accepted" | "confirmed"; observedAt: string }>(request);
+      return ledger.recordExactSettlementBroadcast(payload.transactionId, payload.finality, payload.observedAt);
+    }
+    case "acceptExactSettlement": {
+      const payload = readPayload<{ transactionId: string; finality: "accepted" | "confirmed"; observedAt: string }>(request);
+      return ledger.acceptExactSettlement(payload.transactionId, payload.finality, payload.observedAt);
+    }
+    case "beginExactHandler": {
+      const payload = readPayload<{ transactionId: string; startedAt: string }>(request);
+      return ledger.beginExactHandler(payload.transactionId, payload.startedAt);
+    }
+    case "abandonExactSettlement": {
+      const payload = readPayload<{ transactionId: string; reason: string; observedAt: string }>(request);
+      return ledger.abandonExactSettlement(payload.transactionId, payload.reason, payload.observedAt);
+    }
+    case "markExactHeadUnavailable": {
+      const payload = readPayload<{ headId: string; reason: string; observedAt: string }>(request);
+      return ledger.markExactHeadUnavailable(payload.headId, payload.reason, payload.observedAt);
+    }
     case "saveExactReservation":
       return ledger.saveExactReservation(readPayload<{ record: ExactReservationRecord }>(request).record);
     case "loadExactReservation":
@@ -623,6 +805,14 @@ function exactPaymentKey(transactionId: string): string {
   return `exact:${transactionId.toLowerCase()}`;
 }
 
+function exactHeadKey(headId: string): string {
+  return `exact-head:${headId.toLowerCase()}`;
+}
+
+function exactAttemptKey(transactionId: string): string {
+  return `exact-attempt:${transactionId.toLowerCase()}`;
+}
+
 function exactReservationKey(reservationId: string): string {
   return `exact-reservation:${reservationId.toLowerCase()}`;
 }
@@ -673,6 +863,16 @@ function clone<T>(value: T): T {
 
 function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : clone(value);
+}
+
+async function requireExactAttempt(txn: GatewayTransaction, transactionId: string): Promise<ExactSettlementAttemptRecord> {
+  const attempt = await txn.get<ExactSettlementAttemptRecord>(exactAttemptKey(transactionId));
+  if (!attempt) throw new Error("exact settlement attempt was not found");
+  return attempt;
+}
+
+function sameOutpoint(left: { txid: string; index: number }, right: { txid: string; index: number }): boolean {
+  return left.txid.toLowerCase() === right.txid.toLowerCase() && left.index === right.index;
 }
 
 function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {

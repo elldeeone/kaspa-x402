@@ -1,4 +1,13 @@
 import { parseSompiString, type Hash32Hex } from "@kaspa-x402/core";
+import {
+  acceptExactHead,
+  claimExactHead,
+  exactHeadMatchesSelection as sharedExactHeadMatchesSelection,
+  exactSettlementAttemptsMatch,
+  normalizeExactHeadRecord,
+  normalizeExactSettlementAttempt,
+  releaseExactHeadClaim,
+} from "./exact-heads.js";
 import type {
   BatchCommitmentRecord,
   ChannelLockManager,
@@ -6,6 +15,10 @@ import type {
   ExactReservationRecord,
   ExactPaymentRecord,
   ExactSettlementCommit,
+  ExactHeadRecord,
+  ExactHeadSelectionRequest,
+  ExactSettlementAttemptRecord,
+  ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   ServerStateStore,
@@ -17,6 +30,8 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
   readonly #exactReservations = new Map<Hash32Hex, ExactReservationRecord>();
+  readonly #exactHeads = new Map<Hash32Hex, ExactHeadRecord>();
+  readonly #exactAttempts = new Map<Hash32Hex, ExactSettlementAttemptRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
@@ -98,6 +113,17 @@ export class MemoryServerChannelStore implements ServerStateStore {
       }
       this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
     }
+    const attempt = this.#exactAttempts.get(payment.transactionId.toLowerCase());
+    if (attempt) {
+      if (attempt.status !== "accepted" || !attempt.handlerStartedAt) {
+        throw new Error("exact settlement attempt is not ready to apply");
+      }
+      this.#exactAttempts.set(payment.transactionId, {
+        ...attempt,
+        status: "applied",
+        updatedAt: new Date().toISOString(),
+      });
+    }
     this.#exactPayments.set(key, payment);
   }
 
@@ -131,6 +157,116 @@ export class MemoryServerChannelStore implements ServerStateStore {
       throw new Error("exact reservation was already consumed by a different transaction");
     }
     this.#exactReservations.set(reservationId, { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
+  }
+
+  async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
+    const record = normalizeExactHeadRecord(input);
+    const existing = this.#exactHeads.get(record.headId);
+    if (existing) {
+      if (stableJson(existing) !== stableJson(record)) throw new Error("exact head id is already registered for different state");
+      return clone(existing);
+    }
+    for (const current of this.#exactHeads.values()) {
+      if (sameOutpoint(current.currentOutpoint, record.currentOutpoint)) {
+        throw new Error("exact head outpoint is already registered");
+      }
+    }
+    this.#exactHeads.set(record.headId, clone(record));
+    return clone(record);
+  }
+
+  async loadExactHead(headId: Hash32Hex): Promise<ExactHeadRecord | undefined> {
+    const record = this.#exactHeads.get(headId.toLowerCase());
+    return record ? clone(record) : undefined;
+  }
+
+  async listExactHeads(): Promise<ExactHeadRecord[]> {
+    return Array.from(this.#exactHeads.values()).map(clone).sort((left, right) => left.headId.localeCompare(right.headId));
+  }
+
+  async selectExactHead(request: ExactHeadSelectionRequest): Promise<ExactHeadRecord | undefined> {
+    const candidates = Array.from(this.#exactHeads.values())
+      .filter((head) => sharedExactHeadMatchesSelection(head, request))
+      .sort((left, right) => left.headId.localeCompare(right.headId));
+    if (candidates.length === 0) return undefined;
+    const index = Number(BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length));
+    return clone(candidates[index]!);
+  }
+
+  async claimExactSettlement(input: ExactSettlementAttemptRecord): Promise<ExactSettlementClaimResult> {
+    const attempt = normalizeExactSettlementAttempt(input);
+    const existing = this.#exactAttempts.get(attempt.transactionId);
+    if (existing) {
+      if (!exactSettlementAttemptsMatch(existing, attempt)) throw new Error("exact transaction is already claimed for a different request");
+      return { attempt: clone(existing), created: false };
+    }
+    if (attempt.profile === "additive") {
+      if (!attempt.head) throw new Error("additive exact settlement requires a head claim");
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (!head) throw new Error("exact head changed before settlement claim");
+      this.#exactHeads.set(head.headId, claimExactHead(head, attempt));
+    } else if (attempt.head) {
+      throw new Error("standard-native exact settlement cannot claim a head");
+    }
+    this.#exactAttempts.set(attempt.transactionId, clone(attempt));
+    return { attempt: clone(attempt), created: true };
+  }
+
+  async loadExactSettlementAttempt(transactionId: Hash32Hex): Promise<ExactSettlementAttemptRecord | undefined> {
+    const attempt = this.#exactAttempts.get(transactionId.toLowerCase());
+    return attempt ? clone(attempt) : undefined;
+  }
+
+  async recordExactSettlementBroadcast(transactionId: Hash32Hex, finality: import("./types.js").SettlementFinality, observedAt: string): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "accepted" || attempt.status === "applied") return;
+    this.#exactAttempts.set(attempt.transactionId, { ...attempt, status: "broadcast", finality, updatedAt: observedAt });
+  }
+
+  async acceptExactSettlement(
+    transactionId: Hash32Hex,
+    finality: "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "applied") return;
+    if (attempt.head) {
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (!head) throw new Error("exact head was not found during settlement acceptance");
+      this.#exactHeads.set(head.headId, acceptExactHead(head, attempt, observedAt));
+    }
+    this.#exactAttempts.set(attempt.transactionId, { ...attempt, status: "accepted", finality, updatedAt: observedAt });
+  }
+
+  async beginExactHandler(transactionId: Hash32Hex, startedAt: string): Promise<boolean> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status !== "accepted" || attempt.handlerStartedAt) return false;
+    this.#exactAttempts.set(attempt.transactionId, { ...attempt, handlerStartedAt: startedAt, updatedAt: startedAt });
+    return true;
+  }
+
+  async abandonExactSettlement(transactionId: Hash32Hex, reason: string, observedAt: string): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "accepted" || attempt.status === "applied") throw new Error("accepted exact settlement cannot be abandoned");
+    if (attempt.head) {
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (head) this.#exactHeads.set(head.headId, releaseExactHeadClaim(head, attempt, observedAt));
+    }
+    this.#exactAttempts.delete(attempt.transactionId);
+    void reason;
+  }
+
+  async markExactHeadUnavailable(headId: Hash32Hex, reason: string, observedAt: string): Promise<void> {
+    const head = this.#exactHeads.get(headId.toLowerCase());
+    if (!head) throw new Error("exact head was not found");
+    if (head.status === "retired") throw new Error("retired exact head cannot be marked unavailable");
+    this.#exactHeads.set(head.headId, { ...head, status: "unavailable", unavailableReason: reason, updatedAt: observedAt });
+  }
+
+  #requireExactAttempt(transactionId: Hash32Hex): ExactSettlementAttemptRecord {
+    const attempt = this.#exactAttempts.get(transactionId.toLowerCase());
+    if (!attempt) throw new Error("exact settlement attempt was not found");
+    return attempt;
   }
 
   #assertPaymentIdentifierAvailable(paymentIdentifier: PaymentIdentifierRecord): void {
@@ -231,6 +367,10 @@ function exactPaymentKey(transactionId: Hash32Hex): string {
 function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
   const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
   return terms;
+}
+
+function sameOutpoint(left: { txid: string; index: number }, right: { txid: string; index: number }): boolean {
+  return left.txid.toLowerCase() === right.txid.toLowerCase() && left.index === right.index;
 }
 
 function stableJson(value: unknown): string {

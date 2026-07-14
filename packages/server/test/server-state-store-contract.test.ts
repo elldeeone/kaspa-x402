@@ -1,13 +1,17 @@
 import { describe, expect, it } from "vitest";
 
 import type { SettlementResponse } from "@kaspa-x402/core";
+import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
   MemoryServerChannelStore,
+  exactHeadManifest,
   type BatchCommitmentRecord,
   type ClaimAttemptRecord,
   type ExactPaymentRecord,
   type ExactReservationRecord,
   type ExactSettlementCommit,
+  type ExactHeadRecord,
+  type ExactSettlementAttemptRecord,
   type PaymentIdentifierRecord,
   type ServerChannelRecord,
   type ServerStateStore,
@@ -24,6 +28,9 @@ const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
 const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
+const HEAD_ID = "90".repeat(32);
+const HEAD_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "91".repeat(32), amount: "10000000" });
+const HEAD_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(HEAD_REDEEM_SCRIPT));
 
 type StoreFactory = {
   name: string;
@@ -46,6 +53,22 @@ for (const factory of storeFactories) {
     defineStoreContract(factory);
   });
 }
+
+describe("exact head manifest", () => {
+  it("exports an independently auditable public lineage without custody material", () => {
+    const manifest = exactHeadManifest(exactHead());
+    expect(manifest).toMatchObject({
+      format: "kaspa-x402-exact-head-manifest-v1",
+      headId: HEAD_ID,
+      ownerPublicKey: "91".repeat(32),
+      additiveThresholdSompi: "10000000",
+      currentOutpoint: { txid: FUNDING_TX, index: 0 },
+      currentAmount: "100000000",
+      version: "0",
+    });
+    expect(JSON.stringify(manifest)).not.toContain("private");
+  });
+});
 
 function defineStoreContract(factory: StoreFactory): void {
   it("consumes exact transaction ids once while allowing identical retries", async () => {
@@ -115,6 +138,84 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(store.saveExactReservation(first)).rejects.toThrow("already consumed");
   });
 
+  it("selects reusable additive heads without consuming unanswered challenges", async () => {
+    const store = await factory.create();
+    await store.registerExactHead(exactHead());
+    await store.registerExactHead(
+      exactHead({
+        headId: "92".repeat(32),
+        currentOutpoint: { txid: "93".repeat(32), index: 0 },
+      }),
+    );
+
+    for (let index = 0; index < 1_000; index += 1) {
+      await expect(store.selectExactHead(exactHeadSelection(index % 2 === 0 ? "00".repeat(32) : "ff".repeat(32)))).resolves.toBeDefined();
+    }
+    await expect(store.listExactHeads()).resolves.toEqual([
+      expect.objectContaining({ headId: HEAD_ID, status: "available", version: "0" }),
+      expect.objectContaining({ headId: "92".repeat(32), status: "available", version: "0" }),
+    ]);
+  });
+
+  it("claims one additive head winner, advances by compare-and-swap, and prevents handler replay", async () => {
+    let store = await factory.create();
+    await store.registerExactHead(exactHead());
+    const attempt = exactSettlementAttempt();
+
+    await expect(store.claimExactSettlement(attempt)).resolves.toMatchObject({ created: true });
+    await expect(store.claimExactSettlement({ ...attempt, createdAt: "2026-07-07T00:00:01.000Z" })).resolves.toMatchObject({
+      created: false,
+    });
+    await expect(
+      store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          head: {
+            ...attempt.head!,
+            successor: { ...attempt.head!.successor, outpoint: { txid: OTHER_TX, index: 0 } },
+          },
+        }),
+      ),
+    ).rejects.toThrow("head changed");
+    await expect(store.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
+
+    await store.recordExactSettlementBroadcast(TX, "broadcast", "2026-07-07T00:00:02.000Z");
+    await store.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:03.000Z");
+    await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "available",
+      version: "1",
+      currentOutpoint: { txid: TX, index: 0 },
+      currentAmount: "120000000",
+      lastTransactionId: TX,
+    });
+    await expect(store.beginExactHandler(TX, "2026-07-07T00:00:04.000Z")).resolves.toBe(true);
+    await expect(store.beginExactHandler(TX, "2026-07-07T00:00:05.000Z")).resolves.toBe(false);
+    await store.commitExactPayment({ payment: exactPayment({ transactionId: TX, paymentOutputIndex: 0 }) });
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({ status: "applied", handlerStartedAt: "2026-07-07T00:00:04.000Z" });
+
+    if (store instanceof DurableMockServerChannelStore) {
+      store = await store.restart();
+      await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({ version: "1", currentOutpoint: { txid: TX, index: 0 } });
+      await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({ status: "applied" });
+    }
+  });
+
+  it("releases only unaccepted attempts and can fail a head closed", async () => {
+    const store = await factory.create();
+    await store.registerExactHead(exactHead());
+    await store.claimExactSettlement(exactSettlementAttempt());
+    await store.abandonExactSettlement(TX, "trusted node rejected transaction", "2026-07-07T00:00:02.000Z");
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({ status: "available", claimTransactionId: undefined });
+
+    await store.markExactHeadUnavailable(HEAD_ID, "successor lineage unavailable", "2026-07-07T00:00:03.000Z");
+    await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "unavailable",
+      unavailableReason: "successor lineage unavailable",
+    });
+    await expect(store.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
+  });
+
   it("applies batch settlement only when the channel snapshot still matches", async () => {
     const store = await factory.create([channel()]);
     const staleCommit = settlementCommit(channel(), { chargedCumulativeAmount: "100" });
@@ -160,6 +261,13 @@ type DurableMockOperation =
   | { type: "commitExactPayment"; record: ExactSettlementCommit }
   | { type: "saveExactReservation"; record: ExactReservationRecord }
   | { type: "consumeExactReservation"; reservationId: string; transactionId: string }
+  | { type: "registerExactHead"; record: ExactHeadRecord }
+  | { type: "claimExactSettlement"; record: ExactSettlementAttemptRecord }
+  | { type: "recordExactSettlementBroadcast"; transactionId: string; finality: "broadcast" | "accepted" | "confirmed"; observedAt: string }
+  | { type: "acceptExactSettlement"; transactionId: string; finality: "accepted" | "confirmed"; observedAt: string }
+  | { type: "beginExactHandler"; transactionId: string; startedAt: string }
+  | { type: "abandonExactSettlement"; transactionId: string; reason: string; observedAt: string }
+  | { type: "markExactHeadUnavailable"; headId: string; reason: string; observedAt: string }
   | { type: "saveClaimAttempt"; record: ClaimAttemptRecord }
   | { type: "applyClaimAttempt"; channel: ServerChannelRecord; attempt: ClaimAttemptRecord }
   | { type: "abandonClaimAttempt"; attemptId: string; reason?: string };
@@ -223,6 +331,52 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     );
   }
 
+  async registerExactHead(record: ExactHeadRecord): Promise<ExactHeadRecord> {
+    const registered = await super.registerExactHead(record);
+    if (!this.#hydrating) this.#journal.operations.push(clone({ type: "registerExactHead", record }));
+    return registered;
+  }
+
+  async claimExactSettlement(record: ExactSettlementAttemptRecord) {
+    const result = await super.claimExactSettlement(record);
+    if (!this.#hydrating && result.created) this.#journal.operations.push(clone({ type: "claimExactSettlement", record }));
+    return result;
+  }
+
+  async recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: "broadcast" | "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    await this.#write({ type: "recordExactSettlementBroadcast", transactionId, finality, observedAt }, () =>
+      super.recordExactSettlementBroadcast(transactionId, finality, observedAt),
+    );
+  }
+
+  async acceptExactSettlement(transactionId: string, finality: "accepted" | "confirmed", observedAt: string): Promise<void> {
+    await this.#write({ type: "acceptExactSettlement", transactionId, finality, observedAt }, () =>
+      super.acceptExactSettlement(transactionId, finality, observedAt),
+    );
+  }
+
+  async beginExactHandler(transactionId: string, startedAt: string): Promise<boolean> {
+    const started = await super.beginExactHandler(transactionId, startedAt);
+    if (!this.#hydrating && started) this.#journal.operations.push(clone({ type: "beginExactHandler", transactionId, startedAt }));
+    return started;
+  }
+
+  async abandonExactSettlement(transactionId: string, reason: string, observedAt: string): Promise<void> {
+    await this.#write({ type: "abandonExactSettlement", transactionId, reason, observedAt }, () =>
+      super.abandonExactSettlement(transactionId, reason, observedAt),
+    );
+  }
+
+  async markExactHeadUnavailable(headId: string, reason: string, observedAt: string): Promise<void> {
+    await this.#write({ type: "markExactHeadUnavailable", headId, reason, observedAt }, () =>
+      super.markExactHeadUnavailable(headId, reason, observedAt),
+    );
+  }
+
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#write({ type: "saveClaimAttempt", record }, () => super.saveClaimAttempt(record));
   }
@@ -259,6 +413,27 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
         return;
       case "consumeExactReservation":
         await super.consumeExactReservation(operation.reservationId, operation.transactionId);
+        return;
+      case "registerExactHead":
+        await super.registerExactHead(operation.record);
+        return;
+      case "claimExactSettlement":
+        await super.claimExactSettlement(operation.record);
+        return;
+      case "recordExactSettlementBroadcast":
+        await super.recordExactSettlementBroadcast(operation.transactionId, operation.finality, operation.observedAt);
+        return;
+      case "acceptExactSettlement":
+        await super.acceptExactSettlement(operation.transactionId, operation.finality, operation.observedAt);
+        return;
+      case "beginExactHandler":
+        await super.beginExactHandler(operation.transactionId, operation.startedAt);
+        return;
+      case "abandonExactSettlement":
+        await super.abandonExactSettlement(operation.transactionId, operation.reason, operation.observedAt);
+        return;
+      case "markExactHeadUnavailable":
+        await super.markExactHeadUnavailable(operation.headId, operation.reason, operation.observedAt);
         return;
       case "saveClaimAttempt":
         await super.saveClaimAttempt(operation.record);
@@ -350,6 +525,7 @@ function settlementCommit(previous: ServerChannelRecord, next: Partial<ServerCha
 
 function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPaymentRecord {
   return {
+    profile: "additive",
     transactionId: TX,
     paymentOutputIndex: 1,
     requestFingerprint: REQUEST,
@@ -359,6 +535,66 @@ function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPayment
     finality: "accepted",
     settlement: settlement(),
     response: response(),
+    ...overrides,
+  };
+}
+
+function exactHead(overrides: Partial<ExactHeadRecord> = {}): ExactHeadRecord {
+  return {
+    headId: HEAD_ID,
+    network: "kaspa:testnet-10",
+    payTo: "kaspatest:head",
+    templateId: "kaspa-x402-kip10-additive-v1",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    currentOutpoint: { txid: FUNDING_TX, index: 0 },
+    currentAmount: "100000000",
+    scriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+    redeemScript: HEAD_REDEEM_SCRIPT,
+    additiveThresholdSompi: "10000000",
+    version: "0",
+    status: "available",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
+  };
+}
+
+function exactHeadSelection(selectionKey = "00".repeat(32)) {
+  return {
+    network: "kaspa:testnet-10" as const,
+    amount: "20000000",
+    payTo: "kaspatest:head",
+    payToScriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+    minimumAdditiveThresholdSompi: "10000000",
+    selectionKey,
+  };
+}
+
+function exactSettlementAttempt(overrides: Partial<ExactSettlementAttemptRecord> = {}): ExactSettlementAttemptRecord {
+  return {
+    transactionId: TX,
+    profile: "additive",
+    amount: "20000000",
+    paymentOutputIndex: 0,
+    requestFingerprint: REQUEST,
+    paymentRequirementsHash: REQUIREMENTS,
+    paymentPayloadHash: PAYLOAD,
+    payToScriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+    transaction: "signed-additive-transaction",
+    status: "pending",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    head: {
+      headId: HEAD_ID,
+      expectedVersion: "0",
+      expectedOutpoint: { txid: FUNDING_TX, index: 0 },
+      expectedAmount: "100000000",
+      successor: {
+        outpoint: { txid: TX, index: 0 },
+        amount: "120000000",
+        scriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
+      },
+    },
     ...overrides,
   };
 }

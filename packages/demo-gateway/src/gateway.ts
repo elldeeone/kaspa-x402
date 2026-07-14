@@ -384,6 +384,58 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.loadExactPayment(transactionId);
   }
 
+  registerExactHead(record: Parameters<ServerStateStore["registerExactHead"]>[0]) {
+    return this.#inner.registerExactHead(record);
+  }
+
+  loadExactHead(headId: string) {
+    return this.#inner.loadExactHead(headId);
+  }
+
+  listExactHeads() {
+    return this.#inner.listExactHeads();
+  }
+
+  selectExactHead(request: Parameters<ServerStateStore["selectExactHead"]>[0]) {
+    return this.#inner.selectExactHead(request);
+  }
+
+  claimExactSettlement(record: Parameters<ServerStateStore["claimExactSettlement"]>[0]) {
+    return this.#inner.claimExactSettlement(record);
+  }
+
+  loadExactSettlementAttempt(transactionId: string) {
+    return this.#inner.loadExactSettlementAttempt(transactionId);
+  }
+
+  recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: Parameters<ServerStateStore["recordExactSettlementBroadcast"]>[1],
+    observedAt: string,
+  ) {
+    return this.#inner.recordExactSettlementBroadcast(transactionId, finality, observedAt);
+  }
+
+  acceptExactSettlement(
+    transactionId: string,
+    finality: Parameters<ServerStateStore["acceptExactSettlement"]>[1],
+    observedAt: string,
+  ) {
+    return this.#inner.acceptExactSettlement(transactionId, finality, observedAt);
+  }
+
+  beginExactHandler(transactionId: string, startedAt: string) {
+    return this.#inner.beginExactHandler(transactionId, startedAt);
+  }
+
+  abandonExactSettlement(transactionId: string, reason: string, observedAt: string) {
+    return this.#inner.abandonExactSettlement(transactionId, reason, observedAt);
+  }
+
+  markExactHeadUnavailable(headId: string, reason: string, observedAt: string) {
+    return this.#inner.markExactHeadUnavailable(headId, reason, observedAt);
+  }
+
   commitSettlement(record: Parameters<ServerStateStore["commitSettlement"]>[0]) {
     return this.#inner.commitSettlement(record);
   }

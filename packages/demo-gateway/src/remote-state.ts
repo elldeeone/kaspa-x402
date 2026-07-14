@@ -6,6 +6,10 @@ import type {
   ExactPaymentRecord,
   ExactReservationRecord,
   ExactSettlementCommit,
+  ExactHeadRecord,
+  ExactHeadSelectionRequest,
+  ExactSettlementAttemptRecord,
+  ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   SettlementCommit,
@@ -55,6 +59,54 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   loadExactPayment(transactionId: string): Promise<ExactPaymentRecord | undefined> {
     return this.#call("loadExactPayment", { transactionId });
+  }
+
+  registerExactHead(record: ExactHeadRecord): Promise<ExactHeadRecord> {
+    return this.#call("registerExactHead", { record });
+  }
+
+  loadExactHead(headId: string): Promise<ExactHeadRecord | undefined> {
+    return this.#call("loadExactHead", { headId });
+  }
+
+  listExactHeads(): Promise<ExactHeadRecord[]> {
+    return this.#call("listExactHeads");
+  }
+
+  selectExactHead(request: ExactHeadSelectionRequest): Promise<ExactHeadRecord | undefined> {
+    return this.#call("selectExactHead", { request });
+  }
+
+  claimExactSettlement(record: ExactSettlementAttemptRecord): Promise<ExactSettlementClaimResult> {
+    return this.#call("claimExactSettlement", { record });
+  }
+
+  loadExactSettlementAttempt(transactionId: string): Promise<ExactSettlementAttemptRecord | undefined> {
+    return this.#call("loadExactSettlementAttempt", { transactionId });
+  }
+
+  recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: "broadcast" | "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("recordExactSettlementBroadcast", { transactionId, finality, observedAt });
+  }
+
+  acceptExactSettlement(transactionId: string, finality: "accepted" | "confirmed", observedAt: string): Promise<void> {
+    return this.#call("acceptExactSettlement", { transactionId, finality, observedAt });
+  }
+
+  beginExactHandler(transactionId: string, startedAt: string): Promise<boolean> {
+    return this.#call("beginExactHandler", { transactionId, startedAt });
+  }
+
+  abandonExactSettlement(transactionId: string, reason: string, observedAt: string): Promise<void> {
+    return this.#call("abandonExactSettlement", { transactionId, reason, observedAt });
+  }
+
+  markExactHeadUnavailable(headId: string, reason: string, observedAt: string): Promise<void> {
+    return this.#call("markExactHeadUnavailable", { headId, reason, observedAt });
   }
 
   commitSettlement(record: SettlementCommit): Promise<void> {
