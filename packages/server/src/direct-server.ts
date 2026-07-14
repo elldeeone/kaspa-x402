@@ -683,6 +683,15 @@ export class DirectModeServer {
       return undefined;
     }
     if (
+      !exactFinalityMeets(result.finality, attempt.requiredFinality) ||
+      !exactFinalityMeets(result.finality, this.#config.acceptedFinality)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact reconciliation did not reach the stored finality requirement",
+      );
+    }
+    if (
       result.paymentOutput.amount !== attempt.amount ||
       result.paymentOutput.scriptPublicKey.toLowerCase() !==
         attempt.payToScriptPublicKey.toLowerCase()
@@ -1958,6 +1967,10 @@ export class DirectModeServer {
       requestAuthorizationId: verified.requestAuthorizationId,
       payToScriptPublicKey: verified.accepted.extra.payToScriptPublicKey!,
       transaction: verified.transaction,
+      // The route matcher already requires the advertised exact finality to
+      // equal this configured threshold. Persist that immutable value so
+      // recovery cannot later weaken it.
+      requiredFinality: this.#config.acceptedFinality,
       status: "pending",
       createdAt: now,
       updatedAt: now,
@@ -2007,6 +2020,21 @@ export class DirectModeServer {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "accepted exact settlement is missing durable finality",
+        );
+      }
+      if (
+        !exactFinalityMeets(
+          claim.attempt.finality,
+          claim.attempt.requiredFinality,
+        ) ||
+        !exactFinalityMeets(
+          claim.attempt.finality,
+          this.#config.acceptedFinality,
+        )
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted exact settlement is below the required finality",
         );
       }
       return { ...verified, finality: claim.attempt.finality };

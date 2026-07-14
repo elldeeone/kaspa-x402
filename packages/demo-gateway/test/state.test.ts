@@ -70,7 +70,8 @@ describe("gateway durable ledger", () => {
   });
 
   it("selects durable additive heads without consuming unanswered challenges", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
     await ledger.registerExactHead(exactHead());
     await ledger.registerExactHead(
       exactHead({
@@ -78,6 +79,7 @@ describe("gateway durable ledger", () => {
         currentOutpoint: { txid: "92".repeat(32), index: 0 },
       }),
     );
+    storage.listRequests.length = 0;
 
     for (let index = 0; index < 1_000; index += 1) {
       await expect(
@@ -88,6 +90,18 @@ describe("gateway durable ledger", () => {
         ),
       ).resolves.toBeDefined();
     }
+    expect(storage.listRequests).toHaveLength(1_000);
+    expect(storage.listRequests).toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          prefix: expect.stringMatching(/^exact-head-select:/),
+          limit: 32,
+        }),
+      ]),
+    );
+    expect(
+      storage.listRequests.some((request) => request.prefix === "exact-head:"),
+    ).toBe(false);
 
     await expect(ledger.listExactHeads()).resolves.toEqual([
       expect.objectContaining({
@@ -373,6 +387,12 @@ describe("gateway durable ledger", () => {
 
 class FakeStorage implements GatewayStorage {
   #values = new Map<string, unknown>();
+  readonly listRequests: Array<{
+    prefix?: string;
+    start?: string;
+    end?: string;
+    limit?: number;
+  }> = [];
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
     return cloneOrUndefined(this.#values.get(key) as T | undefined);
@@ -387,12 +407,22 @@ class FakeStorage implements GatewayStorage {
   }
 
   async list<T = unknown>(options: {
-    prefix: string;
+    prefix?: string;
+    start?: string;
+    end?: string;
+    limit?: number;
   }): Promise<Map<string, T>> {
+    this.listRequests.push({ ...options });
     const result = new Map<string, T>();
-    for (const [key, value] of this.#values) {
-      if (key.startsWith(options.prefix))
-        result.set(key, structuredClone(value) as T);
+    const entries = Array.from(this.#values.entries()).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    for (const [key, value] of entries) {
+      if (options.prefix && !key.startsWith(options.prefix)) continue;
+      if (options.start && key < options.start) continue;
+      if (options.end && key >= options.end) continue;
+      result.set(key, structuredClone(value) as T);
+      if (options.limit !== undefined && result.size >= options.limit) break;
     }
     return result;
   }
@@ -547,6 +577,7 @@ function exactSettlementAttempt(
     requestAuthorizationId: "17".repeat(32),
     payToScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
+    requiredFinality: "accepted",
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",

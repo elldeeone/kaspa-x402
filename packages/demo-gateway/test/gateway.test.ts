@@ -584,12 +584,21 @@ class FakeStorage implements GatewayStorage {
   }
 
   async list<T = unknown>(options: {
-    prefix: string;
+    prefix?: string;
+    start?: string;
+    end?: string;
+    limit?: number;
   }): Promise<Map<string, T>> {
     const result = new Map<string, T>();
-    for (const [key, value] of this.#values) {
-      if (key.startsWith(options.prefix))
-        result.set(key, structuredClone(value) as T);
+    const entries = Array.from(this.#values.entries()).sort(([left], [right]) =>
+      left.localeCompare(right),
+    );
+    for (const [key, value] of entries) {
+      if (options.prefix && !key.startsWith(options.prefix)) continue;
+      if (options.start && key < options.start) continue;
+      if (options.end && key >= options.end) continue;
+      result.set(key, structuredClone(value) as T);
+      if (options.limit !== undefined && result.size >= options.limit) break;
     }
     return result;
   }

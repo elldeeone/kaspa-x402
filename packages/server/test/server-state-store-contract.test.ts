@@ -935,6 +935,7 @@ function exactSettlementAttempt(
     requestAuthorizationId: "17".repeat(32),
     payToScriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
+    requiredFinality: "accepted",
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",

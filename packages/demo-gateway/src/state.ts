@@ -33,7 +33,12 @@ type GatewayTransaction = {
   get<T = unknown>(key: string): Promise<T | undefined>;
   put<T = unknown>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean | void>;
-  list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>>;
+  list<T = unknown>(options: {
+    prefix?: string;
+    start?: string;
+    end?: string;
+    limit?: number;
+  }): Promise<Map<string, T>>;
 };
 
 export type GatewayStorage = GatewayTransaction & {
@@ -193,6 +198,9 @@ export class GatewayLedger implements ServerStateStore {
           throw new Error(
             "exact head id is already registered for different state",
           );
+        // Re-registering an unchanged pre-alpha.8 head also repairs its
+        // bounded selection index without changing the head itself.
+        await putExactHead(txn, existing, existing);
         return clone(existing);
       }
       const heads = await txn.list<ExactHeadRecord>({ prefix: "exact-head:" });
@@ -232,14 +240,29 @@ export class GatewayLedger implements ServerStateStore {
   async selectExactHead(
     request: ExactHeadSelectionRequest,
   ): Promise<ExactHeadRecord | undefined> {
-    const candidates = (await this.listExactHeads())
-      .filter((head) => exactHeadMatchesSelection(head, request))
-      .sort((left, right) => left.headId.localeCompare(right.headId));
-    if (candidates.length === 0) return undefined;
-    const index = Number(
-      BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length),
-    );
-    return clone(candidates[index]!);
+    return this.#storage.transaction(async (txn) => {
+      const range = exactHeadSelectionIndexRange(request);
+      const indexed = await txn.list<ExactHeadSelectionIndexRecord>({
+        prefix: range.prefix,
+        start: range.start,
+        end: range.end,
+        limit: EXACT_HEAD_SELECTION_WINDOW,
+      });
+      const candidates: ExactHeadRecord[] = [];
+      for (const entry of indexed.values()) {
+        const head = await txn.get<ExactHeadRecord>(
+          exactHeadKey(entry.headId),
+        );
+        if (head && exactHeadMatchesSelection(head, request)) {
+          candidates.push(head);
+        }
+      }
+      if (candidates.length === 0) return undefined;
+      const index = Number(
+        BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length),
+      );
+      return clone(candidates[index]!);
+    });
   }
 
   async claimExactSettlement(
@@ -1047,6 +1070,61 @@ function exactHeadStatsKey(): string {
   return "exact-head-stats";
 }
 
+const EXACT_HEAD_SELECTION_WINDOW = 32;
+
+type ExactHeadSelectionIndexRecord = {
+  headId: string;
+};
+
+function exactHeadSelectionIndexPrefix(head: {
+  network: string;
+  payTo: string;
+  scriptPublicKey: string;
+}): string {
+  const cohort = sha256Hex(
+    JSON.stringify([
+      head.network,
+      head.payTo,
+      head.scriptPublicKey.toLowerCase(),
+    ]),
+  );
+  return `exact-head-select:${cohort}:`;
+}
+
+function exactHeadThresholdKey(value: string): string {
+  const encoded = parseSompiString(value).toString(16);
+  if (encoded.length > 16)
+    throw new Error("exact head selection amount exceeds uint64");
+  return encoded.padStart(16, "0");
+}
+
+function exactHeadSelectionIndexKey(head: ExactHeadRecord): string {
+  return `${exactHeadSelectionIndexPrefix(head)}${exactHeadThresholdKey(
+    head.additiveThresholdSompi,
+  )}:${head.headId.toLowerCase()}`;
+}
+
+function exactHeadSelectionIndexRange(request: ExactHeadSelectionRequest): {
+  prefix: string;
+  start: string;
+  end: string;
+} {
+  const prefix = exactHeadSelectionIndexPrefix({
+    network: request.network,
+    payTo: request.payTo,
+    scriptPublicKey: request.payToScriptPublicKey,
+  });
+  return {
+    prefix,
+    start: `${prefix}${exactHeadThresholdKey(
+      request.minimumAdditiveThresholdSompi,
+    )}:`,
+    // Durable Object list ranges are end-exclusive. `;` sorts directly after
+    // the `:` separator, so all head ids at the maximum threshold are included.
+    end: `${prefix}${exactHeadThresholdKey(request.amount)};`,
+  };
+}
+
 async function putExactHead(
   txn: GatewayTransaction,
   previous: ExactHeadRecord | undefined,
@@ -1060,7 +1138,16 @@ async function putExactHead(
     stats[previous.status] -= 1;
     stats[next.status] += 1;
   }
+  if (previous?.status === "available") {
+    await txn.delete(exactHeadSelectionIndexKey(previous));
+  }
   await txn.put(exactHeadKey(next.headId), clone(next));
+  if (next.status === "available") {
+    await txn.put<ExactHeadSelectionIndexRecord>(
+      exactHeadSelectionIndexKey(next),
+      { headId: next.headId.toLowerCase() },
+    );
+  }
   await txn.put(exactHeadStatsKey(), stats);
 }
 

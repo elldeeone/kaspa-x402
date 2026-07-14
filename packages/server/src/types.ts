@@ -364,6 +364,8 @@ export interface ExactSettlementAttemptRecord {
   requestAuthorizationId: Hash32Hex;
   payToScriptPublicKey: ByteHex;
   transaction: PreparedTransaction;
+  /** Immutable finality threshold advertised for this signed payment attempt. */
+  requiredFinality: "accepted" | "confirmed";
   status: ExactSettlementAttemptStatus;
   createdAt: string;
   updatedAt: string;

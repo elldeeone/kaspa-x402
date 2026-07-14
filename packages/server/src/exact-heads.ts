@@ -142,6 +142,12 @@ export function normalizeExactSettlementAttempt(
     throw new Error("exact settlement amount must be positive");
   if (typeof input.transaction !== "string" || input.transaction.length === 0)
     throw new Error("exact settlement transaction is required");
+  if (
+    input.requiredFinality !== "accepted" &&
+    input.requiredFinality !== "confirmed"
+  ) {
+    throw new Error("exact settlement required finality is invalid");
+  }
   if (!/^(?:[0-9a-fA-F]{2})+$/.test(input.payToScriptPublicKey)) {
     throw new Error(
       "exact settlement payTo script public key must be byte hex",

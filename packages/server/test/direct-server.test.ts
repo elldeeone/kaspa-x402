@@ -1696,14 +1696,16 @@ describe("direct-mode server", () => {
     }
   });
 
-  it("does not rebroadcast or run protected work after an ambiguous exact broadcast", async () => {
+  it("does not recover an ambiguous exact settlement below its durable finality threshold", async () => {
+    let reconciledFinality: "accepted" | "confirmed" = "accepted";
     const setup = await makeAdditiveServer({
+      acceptedFinality: "confirmed",
       exactSettlementReconciler: {
         reconcileExactSettlement(attempt) {
           return {
             status: "accepted",
             transactionId: attempt.transactionId,
-            finality: "accepted",
+            finality: reconciledFinality,
             paymentOutput: {
               amount: attempt.amount,
               scriptPublicKey: attempt.payToScriptPublicKey,
@@ -1787,7 +1789,17 @@ describe("direct-mode server", () => {
 
     await expect(
       setup.server.reconcileExactSettlement(EXACT_TX_ID),
-    ).resolves.toMatchObject({ status: "accepted", finality: "accepted" });
+    ).rejects.toThrow("stored finality requirement");
+    await expect(
+      setup.store.loadExactSettlementAttempt(EXACT_TX_ID),
+    ).resolves.toMatchObject({
+      status: "pending",
+      requiredFinality: "confirmed",
+    });
+    reconciledFinality = "confirmed";
+    await expect(
+      setup.server.reconcileExactSettlement(EXACT_TX_ID),
+    ).resolves.toMatchObject({ status: "accepted", finality: "confirmed" });
     const recovered = await setup.server.handlePaidRequest(
       requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
       handler,
