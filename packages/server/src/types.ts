@@ -81,6 +81,21 @@ export interface ExactBorrowContinuation {
   scriptPublicKey: ByteHex;
 }
 
+export interface ExactHeadChallenge {
+  headId: Hash32Hex;
+  headVersion: SompiString;
+  templateId: ExactAdditiveTemplateId;
+  transactionEncoding: ExactTransactionEncoding;
+  expectedHeadOutpoint: FundingOutpoint;
+  headAmount: SompiString;
+  headScriptPublicKey: ByteHex;
+  headRedeemScript: ByteHex;
+  additiveThresholdSompi: SompiString;
+  paymentOutputIndex: 0;
+  challengeId: Hash32Hex;
+  expiresAt: string;
+}
+
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
   profile: ExactProfile;
@@ -92,6 +107,7 @@ export interface ExactTransactionVerificationRequest {
   payToScriptPublicKey: ByteHex;
   requiredFinality: "accepted" | "confirmed";
   requestHash?: Hash32Hex;
+  head?: ExactHeadChallenge;
   reservation?: ExactBorrowReservation;
 }
 

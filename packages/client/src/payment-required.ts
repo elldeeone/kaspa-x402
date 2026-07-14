@@ -14,6 +14,7 @@ import {
   type PaymentScheme,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
+import { parseKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import type { ParsedPaymentRequired } from "./types.js";
 
 export interface ParsePaymentRequiredOptions {
@@ -133,6 +134,53 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact v2 requirements must bind transaction encoding and payTo script");
     }
     if (extra.profile === "standard-native") return;
+    if (
+      extra.templateId !== "kaspa-x402-kip10-additive-v1" ||
+      !isFundingOutpoint(extra.expectedHeadOutpoint) ||
+      typeof extra.headId !== "string" ||
+      typeof extra.headVersion !== "string" ||
+      typeof extra.headAmount !== "string" ||
+      typeof extra.headScriptPublicKey !== "string" ||
+      typeof extra.headRedeemScript !== "string" ||
+      typeof extra.additiveThresholdSompi !== "string" ||
+      typeof extra.challengeId !== "string" ||
+      typeof extra.challengeExpiresAt !== "string" ||
+      extra.paymentOutputIndex !== 0
+    ) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact head challenge terms are incomplete");
+    }
+    parseSompiString(extra.headVersion);
+    if (parseSompiString(extra.headAmount) <= 0n) {
+      throw new KaspaX402Error("invalid_kaspa_x402_amount", "additive exact head amount must be positive");
+    }
+    const threshold = parseSompiString(extra.additiveThresholdSompi);
+    if (threshold <= 0n || parseSompiString(accepted.amount) < threshold) {
+      throw new KaspaX402Error("invalid_kaspa_x402_amount", "additive exact amount must meet the positive head threshold");
+    }
+    if (!/^[0-9a-fA-F]{64}$/.test(extra.headId) || !/^[0-9a-fA-F]{64}$/.test(extra.challengeId)) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact head and challenge ids must be 32-byte hex");
+    }
+    const expiresAt = Date.parse(extra.challengeExpiresAt);
+    if (Number.isNaN(expiresAt) || expiresAt <= Date.now()) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact challenge expiry must be a future ISO date string");
+    }
+    try {
+      const template = parseKip10AdditiveRedeemScript(extra.headRedeemScript);
+      const expectedScript = serializedScriptPublicKey(payToScriptHashScript(extra.headRedeemScript)).toLowerCase();
+      if (
+        template.amount !== extra.additiveThresholdSompi ||
+        expectedScript !== extra.headScriptPublicKey.toLowerCase() ||
+        expectedScript !== extra.payToScriptPublicKey.toLowerCase()
+      ) {
+        throw new Error("head challenge script terms do not match");
+      }
+    } catch {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact challenge must bind the canonical KIP-10 script, threshold, head, and payTo script",
+      );
+    }
+    return;
   }
   const hasReservation =
     extra.templateId !== undefined ||

@@ -6,8 +6,11 @@ import { blake2b } from "@noble/hashes/blake2.js";
 import {
   buildKip10AdditiveBorrowSignatureScript,
   buildKip10AdditiveRedeemScript,
+  calculateKaspaStorageMass,
   payToScriptHashScript,
   serializedScriptPublicKey,
+  transactionV1Id,
+  type TxV1ReferenceTransaction,
 } from "@kaspa-x402/covenant";
 import {
   KaspaPnnClient,
@@ -475,6 +478,195 @@ describe("RestExactTransactionVerifier", () => {
     });
   });
 
+  it("verifies the corrected additive vector as an exact head delta without a second merchant output", async () => {
+    const vector = JSON.parse(
+      await fs.promises.readFile(
+        fileURLToPath(new URL("../../../vectors/exact/consensus-profiles.json", import.meta.url).toString()),
+        "utf8",
+      ),
+    ) as {
+      expected: {
+        additive: {
+          amount: string;
+          transactionId: string;
+          transaction: {
+            version: 1;
+            inputs: Array<{
+              previousOutpoint: { txid: string; index: number };
+              signatureScript: string;
+              sequence: string;
+              computeBudget: number;
+              utxo: { amount: string; scriptPublicKey: string };
+            }>;
+            outputs: Array<{ amount: string; scriptPublicKey: string; covenant: null }>;
+            lockTime: string;
+            subnetworkId: string;
+            gas: string;
+            payload: string;
+            storageMass: string;
+          };
+        };
+      };
+    };
+    const additive = vector.expected.additive;
+    const artifactObject: AdditiveSafeArtifact = {
+      id: additive.transactionId,
+      ...additive.transaction,
+      inputs: additive.transaction.inputs.map(({ previousOutpoint, ...entry }) => ({
+        ...entry,
+        previousOutpoint: { transactionId: previousOutpoint.txid, index: previousOutpoint.index },
+        sigOpCount: 0,
+      })),
+      outputs: additive.transaction.outputs.map(({ amount, ...output }) => ({ ...output, value: amount })),
+    };
+    const artifact = JSON.stringify(artifactObject);
+    const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
+      const url = new URL(request.toString());
+      const input = additive.transaction.inputs.find((candidate) => url.pathname === `/transactions/${candidate.previousOutpoint.txid}`);
+      if (input) {
+        return Response.json({
+          transaction_id: input.previousOutpoint.txid,
+          is_accepted: true,
+          outputs: [
+            {
+              index: input.previousOutpoint.index,
+              amount: input.utxo.amount,
+              script_public_key: input.utxo.scriptPublicKey.slice(4),
+            },
+          ],
+        });
+      }
+      if (url.pathname.startsWith("/transactions/")) {
+        return new Response(JSON.stringify({ detail: "Transaction not found" }), { status: 404 });
+      }
+      if (url.pathname.startsWith("/addresses/") && url.pathname.endsWith("/utxos")) {
+        const address = decodeURIComponent(url.pathname.slice("/addresses/".length, -"/utxos".length));
+        const matched = additive.transaction.inputs.find(
+          (candidate) => addressForScriptPublicKey(candidate.utxo.scriptPublicKey, "kaspa:testnet-10") === address,
+        );
+        if (!matched) throw new Error(`unexpected UTXO address ${address}`);
+        return Response.json([
+          {
+            outpoint: { transactionId: matched.previousOutpoint.txid, index: matched.previousOutpoint.index },
+            utxoEntry: {
+              amount: matched.utxo.amount,
+              scriptPublicKey: { scriptPublicKey: matched.utxo.scriptPublicKey.slice(4) },
+            },
+          },
+        ]);
+      }
+      throw new Error(`unexpected REST request ${url.pathname}`);
+    }) as typeof fetch;
+    const verifier = new RestExactTransactionVerifier(new KaspaRestClient("https://api.example.test", { fetch: fetchMock }));
+    const headInput = additive.transaction.inputs[0]!;
+    const redeemScript = headInput.signatureScript.slice(4);
+    const payTo = addressForScriptPublicKey(headInput.utxo.scriptPublicKey, "kaspa:testnet-10");
+
+    await expect(
+      verifier.verifyExactPayment({
+        network: "kaspa:testnet-10",
+        profile: "additive",
+        transaction: artifact,
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        paymentOutputIndex: 0,
+        amount: additive.amount,
+        payTo,
+        payToScriptPublicKey: headInput.utxo.scriptPublicKey,
+        requiredFinality: "accepted",
+        head: {
+          headId: "90".repeat(32),
+          headVersion: "0",
+          templateId: "kaspa-x402-kip10-additive-v1",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          expectedHeadOutpoint: headInput.previousOutpoint,
+          headAmount: headInput.utxo.amount,
+          headScriptPublicKey: headInput.utxo.scriptPublicKey,
+          headRedeemScript: redeemScript,
+          additiveThresholdSompi: "10000000",
+          paymentOutputIndex: 0,
+          challengeId: "91".repeat(32),
+          expiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      }),
+    ).resolves.toMatchObject({
+      transactionId: additive.transactionId,
+      paymentOutput: { amount: additive.amount, scriptPublicKey: headInput.utxo.scriptPublicKey, address: payTo },
+      continuation: {
+        outpoint: { txid: additive.transactionId, index: 0 },
+        amount: additive.transaction.outputs[0]!.amount,
+        scriptPublicKey: headInput.utxo.scriptPublicKey,
+      },
+    });
+    expect(additive.transaction.outputs.filter((output) => output.scriptPublicKey === headInput.utxo.scriptPublicKey)).toHaveLength(1);
+
+    const request = {
+      network: "kaspa:testnet-10",
+      profile: "additive",
+      transaction: artifact,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+      amount: additive.amount,
+      payTo,
+      payToScriptPublicKey: headInput.utxo.scriptPublicKey,
+      requiredFinality: "accepted",
+      head: {
+        headId: "90".repeat(32),
+        headVersion: "0",
+        templateId: "kaspa-x402-kip10-additive-v1",
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        expectedHeadOutpoint: headInput.previousOutpoint,
+        headAmount: headInput.utxo.amount,
+        headScriptPublicKey: headInput.utxo.scriptPublicKey,
+        headRedeemScript: redeemScript,
+        additiveThresholdSompi: "10000000",
+        paymentOutputIndex: 0,
+        challengeId: "91".repeat(32),
+        expiresAt: "2099-01-01T00:00:00.000Z",
+      },
+    } as const;
+
+    const excessiveDelta = structuredClone(artifactObject);
+    excessiveDelta.outputs[0]!.value = (BigInt(excessiveDelta.outputs[0]!.value) + 1n).toString();
+    excessiveDelta.outputs[1]!.value = (BigInt(excessiveDelta.outputs[1]!.value) - 1n).toString();
+    refreshAdditiveArtifact(excessiveDelta);
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(excessiveDelta) })).rejects.toThrow(
+      "successor delta must equal the advertised amount",
+    );
+
+    const duplicateMerchantBenefit = structuredClone(artifactObject);
+    duplicateMerchantBenefit.outputs.push({ value: "1", scriptPublicKey: headInput.utxo.scriptPublicKey, covenant: null });
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(duplicateMerchantBenefit) })).rejects.toThrow(
+      "permits only the successor and optional payer change",
+    );
+
+    const overbudget = structuredClone(artifactObject);
+    overbudget.inputs[0]!.computeBudget = 1;
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(overbudget) })).rejects.toThrow(
+      "input 0 compute budget must be 0",
+    );
+
+    const wrongMass = structuredClone(artifactObject);
+    wrongMass.storageMass = (BigInt(wrongMass.storageMass) + 1n).toString();
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(wrongMass) })).rejects.toThrow(
+      "storage mass does not match contextual KIP-9 mass",
+    );
+
+    const forgedUtxo = structuredClone(artifactObject);
+    forgedUtxo.inputs[1]!.utxo.amount = (BigInt(forgedUtxo.inputs[1]!.utxo.amount) + 1n).toString();
+    refreshAdditiveArtifact(forgedUtxo);
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(forgedUtxo) })).rejects.toThrow(
+      "embedded payer UTXO evidence does not match trusted chain state",
+    );
+
+    const invalidSignature = structuredClone(artifactObject);
+    const signature = Uint8Array.from(Buffer.from(invalidSignature.inputs[1]!.signatureScript, "hex"));
+    signature[1] ^= 1;
+    invalidSignature.inputs[1]!.signatureScript = Buffer.from(signature).toString("hex");
+    await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(invalidSignature) })).rejects.toThrow(
+      "payer signature is invalid",
+    );
+  });
+
   it("verifies the committed KIP-10 exact HTTP vector", async () => {
     const vector = JSON.parse(
       await fs.promises.readFile(
@@ -892,6 +1084,67 @@ function exactTransactionFixture() {
       ],
     },
   };
+}
+
+type AdditiveSafeArtifact = {
+  id: string;
+  version: 1;
+  inputs: Array<{
+    previousOutpoint: { transactionId: string; index: number };
+    signatureScript: string;
+    sequence: string;
+    sigOpCount: number;
+    computeBudget: number;
+    utxo: { amount: string; scriptPublicKey: string };
+  }>;
+  outputs: Array<{ value: string; scriptPublicKey: string; covenant: null }>;
+  lockTime: string;
+  subnetworkId: string;
+  gas: string;
+  storageMass: string;
+  payload: string;
+};
+
+function refreshAdditiveArtifact(artifact: AdditiveSafeArtifact): void {
+  artifact.storageMass = calculateKaspaStorageMass({
+    inputs: artifact.inputs.map((input) => ({
+      amount: input.utxo.amount,
+      scriptPublicKey: input.utxo.scriptPublicKey,
+      hasCovenant: false,
+    })),
+    outputs: artifact.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      hasCovenant: false,
+    })),
+  }).toString();
+  const reference: TxV1ReferenceTransaction = {
+    version: 1,
+    inputs: artifact.inputs.map((input) => ({
+      previousOutpoint: { txid: input.previousOutpoint.transactionId, index: input.previousOutpoint.index },
+      signatureScript: input.signatureScript,
+      sequence: input.sequence,
+      computeBudget: input.computeBudget,
+      utxo: {
+        amount: input.utxo.amount,
+        scriptPublicKey: input.utxo.scriptPublicKey,
+        blockDaaScore: "0",
+        isCoinbase: false,
+      },
+    })),
+    outputs: artifact.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant,
+    })),
+    lockTime: artifact.lockTime,
+    subnetworkId: artifact.subnetworkId,
+    gas: artifact.gas,
+    payload: artifact.payload,
+    mass: artifact.storageMass,
+    estimatedSerializedSize: 0,
+  };
+  artifact.id = transactionV1Id(reference);
 }
 
 function offlineExactVerifier(): RestExactTransactionVerifier {

@@ -409,6 +409,12 @@ export class DirectModeClient {
     ) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements must include transaction encoding and payTo script");
     }
+    if (accepted.extra.binding === "kaspa-exact-v2" && payToScriptPublicKey) {
+      const expectedPayToScript = this.#options.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
+      if (expectedPayToScript.toLowerCase() !== payToScriptPublicKey.toLowerCase()) {
+        throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payTo address does not match the advertised payment script");
+      }
+    }
     const exactRequest: ExactPaymentRequest = {
       network: accepted.network,
       profile,
@@ -420,14 +426,19 @@ export class DirectModeClient {
       requiredFinality: accepted.extra.finality,
       fundingSource: this.#options.fundingPolicy?.requiredSource,
     };
+    const head = exactHeadHint(accepted);
     const reservation = exactReservationHint(accepted);
     let exact: ExactTransactionPaymentResult;
     let payload: PaymentPayload["payload"];
     let payerAddress: string | undefined;
-    if (profile === "additive" && !reservation) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "legacy additive exact requirements must include KIP-10 reservation terms");
+    if (profile === "additive" && !head && !reservation) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact requirements must include head challenge terms");
     }
-    const transactionExact = await this.#createExactTransaction({ ...exactRequest, ...(reservation ? { reservation } : {}) });
+    const transactionExact = await this.#createExactTransaction({
+      ...exactRequest,
+      ...(head ? { head } : {}),
+      ...(reservation ? { reservation } : {}),
+    });
     this.#assertExactResult(transactionExact);
     const identity = transactionExact.payerAddress ? undefined : await this.#options.fundingProvider.getPublicIdentity();
     payerAddress = transactionExact.payerAddress ?? identity?.address;
@@ -438,6 +449,7 @@ export class DirectModeClient {
       transaction: transactionExact.transaction,
       transactionEncoding: transactionExact.transactionEncoding,
       paymentOutputIndex: transactionExact.paymentOutputIndex,
+      ...(head ? { challengeId: head.challengeId } : {}),
       ...(context.requestHash ? { requestHash: context.requestHash } : {}),
     };
     exact = transactionExact;
@@ -640,7 +652,7 @@ function supportsRequirementForClient(options: DirectModeClientOptions, requirem
   if (requirement.scheme !== "exact") return true;
   if (!options.fundingProvider.payExactTransaction) return false;
   const profile = exactProfile(requirement);
-  return profile === "standard-native" || Boolean(exactReservationHint(requirement));
+  return profile === "standard-native" || Boolean(exactHeadHint(requirement) ?? exactReservationHint(requirement));
 }
 
 function buildPaymentPayload(
@@ -753,6 +765,36 @@ function exactReservationHint(accepted: ExactPaymentRequirements): ExactPaymentR
     paymentOutputIndex: extra.paymentOutputIndex,
     reservationId: extra.reservationId,
     ...(typeof extra.reservationExpiresAt === "string" ? { reservationExpiresAt: extra.reservationExpiresAt } : {}),
+  };
+}
+
+function exactHeadHint(accepted: ExactPaymentRequirements): ExactPaymentRequest["head"] | undefined {
+  const extra = accepted.extra;
+  if (
+    extra.binding !== "kaspa-exact-v2" ||
+    extra.profile !== "additive" ||
+    !extra.expectedHeadOutpoint ||
+    typeof extra.headId !== "string" ||
+    typeof extra.headVersion !== "string" ||
+    typeof extra.headAmount !== "string" ||
+    typeof extra.headScriptPublicKey !== "string" ||
+    typeof extra.headRedeemScript !== "string" ||
+    typeof extra.additiveThresholdSompi !== "string" ||
+    typeof extra.challengeId !== "string" ||
+    typeof extra.challengeExpiresAt !== "string"
+  ) {
+    return undefined;
+  }
+  return {
+    headId: extra.headId,
+    headVersion: extra.headVersion,
+    expectedHeadOutpoint: extra.expectedHeadOutpoint,
+    headAmount: extra.headAmount,
+    headScriptPublicKey: extra.headScriptPublicKey,
+    headRedeemScript: extra.headRedeemScript,
+    additiveThresholdSompi: extra.additiveThresholdSompi,
+    challengeId: extra.challengeId,
+    challengeExpiresAt: extra.challengeExpiresAt,
   };
 }
 

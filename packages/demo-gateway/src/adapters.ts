@@ -20,8 +20,11 @@ import {
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
+  transactionV1Id,
+  transactionV1SchnorrSignatureEvidence,
   type DeriveEscrowAddressInput,
   type ExactV0ReferenceTransaction,
+  type TxV1ReferenceTransaction,
 } from "@kaspa-x402/covenant";
 import { addressForScriptPublicKey, encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
 
@@ -430,8 +433,11 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     if (request.profile === "standard-native") {
       return this.#verifyStandardNative(request);
     }
+    if (request.head) {
+      return this.#verifyAdditiveHead(request);
+    }
     if (!request.reservation) {
-      throw invalidTransaction("hosted exact verification requires KIP-10 reservation terms");
+      throw invalidTransaction("additive exact verification requires head challenge terms");
     }
     const transaction = parseSafeTransactionArtifact(request.transaction);
     assertExactTransactionEnvelope(transaction, this.#maxFeeSompi);
@@ -499,6 +505,92 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         outpoint: { txid: transaction.id, index: borrowInputIndex },
         amount: continuation.value,
         scriptPublicKey: continuation.scriptPublicKey,
+      },
+      ...(finality ? { finality } : {}),
+    };
+  }
+
+  async #verifyAdditiveHead(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
+    const head = request.head!;
+    if (request.paymentOutputIndex !== 0 || head.paymentOutputIndex !== 0) {
+      throw invalidTransaction("additive exact successor must remain at output index 0");
+    }
+    if (request.payToScriptPublicKey.toLowerCase() !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction("additive exact payTo script must identify the head script");
+    }
+    const template = parseKip10AdditiveRedeemScript(head.headRedeemScript);
+    if (template.amount !== head.additiveThresholdSompi || BigInt(head.additiveThresholdSompi) <= 0n) {
+      throw invalidTransaction("additive exact KIP-10 threshold does not match the positive head threshold");
+    }
+    if (BigInt(request.amount) < BigInt(head.additiveThresholdSompi)) {
+      throw invalidTransaction("additive exact payment is below the head threshold");
+    }
+    const expectedHeadScript = serializedScriptPublicKey(payToScriptHashScript(head.headRedeemScript)).toLowerCase();
+    if (expectedHeadScript !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction("additive exact redeem script does not derive the advertised head script");
+    }
+
+    const transaction = parseSafeTransactionArtifact(request.transaction);
+    assertAdditiveTransactionEnvelope(transaction, this.#maxFeeSompi);
+    const reference = exactV1ReferenceTransaction(transaction);
+    const transactionId = transactionV1Id(reference);
+    if (transaction.id !== transactionId) throw invalidTransaction("additive exact transaction id does not match canonical fields");
+
+    const accepted = await this.#client.getTransaction(transaction.id);
+    const finality = accepted?.is_accepted ? "accepted" : undefined;
+    if (accepted?.is_accepted) assertChainTransactionMatchesSafe(accepted, transaction);
+    if (!finality && Date.parse(head.expiresAt) <= Date.now()) throw invalidTransaction("additive exact challenge has expired");
+
+    const headInput = transaction.inputs[0]!;
+    if (!sameOutpoint({ txid: headInput.transactionId, index: headInput.index }, head.expectedHeadOutpoint)) {
+      throw invalidTransaction("additive exact transaction does not spend the expected head outpoint at input 0");
+    }
+    if (headInput.utxo.amount !== head.headAmount || headInput.utxo.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction("additive exact embedded head evidence does not match challenge terms");
+    }
+    if (headInput.signatureScript !== buildKip10AdditiveBorrowSignatureScript(head.headRedeemScript)) {
+      throw invalidTransaction("additive exact head input does not select the canonical KIP-10 borrower branch");
+    }
+    const trustedHead = await this.#trustedInput(headInput, request.network, finality === "accepted");
+    if (trustedHead.amount !== head.headAmount || trustedHead.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction("additive exact head challenge does not match trusted chain state");
+    }
+
+    const successor = transaction.outputs[0]!;
+    if (successor.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction("additive exact successor script does not match the head");
+    }
+    if (BigInt(successor.value) !== BigInt(head.headAmount) + BigInt(request.amount)) {
+      throw invalidTransaction("additive exact successor delta must equal the advertised amount");
+    }
+
+    const payerScripts = new Set<string>();
+    for (let index = 1; index < transaction.inputs.length; index += 1) {
+      const input = transaction.inputs[index]!;
+      const trusted = await this.#trustedInput(input, request.network, finality === "accepted");
+      if (trusted.amount !== input.utxo.amount || trusted.scriptPublicKey !== input.utxo.scriptPublicKey) {
+        throw invalidTransaction("additive exact embedded payer UTXO evidence does not match trusted chain state");
+      }
+      const evidence = transactionV1SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence)) throw invalidTransaction("additive exact payer signature is invalid");
+      payerScripts.add(trusted.scriptPublicKey);
+    }
+    const change = transaction.outputs[1];
+    if (change && !payerScripts.has(change.scriptPublicKey)) {
+      throw invalidTransaction("additive exact change output is not controlled by a verified payer input");
+    }
+
+    return {
+      transactionId,
+      paymentOutput: {
+        amount: request.amount,
+        scriptPublicKey: successor.scriptPublicKey,
+        address: request.payTo,
+      },
+      continuation: {
+        outpoint: { txid: transactionId, index: 0 },
+        amount: successor.value,
+        scriptPublicKey: successor.scriptPublicKey,
       },
       ...(finality ? { finality } : {}),
     };
@@ -973,6 +1065,44 @@ function assertStandardNativeTransactionEnvelope(transaction: SafeTransaction, m
   if (fee > maxFeeSompi) throw invalidTransaction("standard-native transaction fee exceeds the configured maximum");
 }
 
+function assertAdditiveTransactionEnvelope(transaction: SafeTransaction, maxFeeSompi: bigint): void {
+  if (transaction.version !== 1) throw invalidTransaction("additive exact transaction version must be 1");
+  if ((transaction.lockTime ?? "0") !== "0") throw invalidTransaction("additive exact transaction lockTime must be 0");
+  if ((transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID) {
+    throw invalidTransaction("additive exact transaction must use the native subnetwork");
+  }
+  if ((transaction.gas ?? "0") !== "0") throw invalidTransaction("additive exact transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "") throw invalidTransaction("additive exact transaction payload must be empty");
+  if (transaction.inputs.length < 2) throw invalidTransaction("additive exact requires the head input and payer funding inputs");
+  if (transaction.outputs.length < 1 || transaction.outputs.length > 2) {
+    throw invalidTransaction("additive exact permits only the successor and optional payer change");
+  }
+  for (const [index, input] of transaction.inputs.entries()) {
+    if (input.sigOpCount !== 0) throw invalidTransaction(`additive exact input ${index} sigOpCount must be 0`);
+    const expectedBudget = index === 0 ? 0 : 10;
+    if (input.computeBudget !== expectedBudget) {
+      throw invalidTransaction(`additive exact input ${index} compute budget must be ${expectedBudget}`);
+    }
+    if (!input.utxo.scriptPublicKey.startsWith("0000")) throw invalidTransaction(`additive exact input ${index} script version must be 0`);
+  }
+  for (const [index, output] of transaction.outputs.entries()) {
+    if (!output.scriptPublicKey.startsWith("0000")) throw invalidTransaction(`additive exact output ${index} script version must be 0`);
+    if (output.covenant !== null) throw invalidTransaction(`additive exact output ${index} cannot carry a covenant`);
+  }
+  if (transaction.storageMass === undefined) throw invalidTransaction("additive exact transaction must commit contextual storage mass");
+  const storageMass = calculateKaspaStorageMass({
+    inputs: transaction.inputs.map((input) => ({ amount: input.utxo.amount, scriptPublicKey: input.utxo.scriptPublicKey, hasCovenant: false })),
+    outputs: transaction.outputs.map((output) => ({ amount: output.value, scriptPublicKey: output.scriptPublicKey, hasCovenant: false })),
+  });
+  if (BigInt(transaction.storageMass) !== storageMass) {
+    throw invalidTransaction("additive exact transaction storage mass does not match contextual KIP-9 mass");
+  }
+  const inputAmount = transaction.inputs.reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
+  const outputAmount = transaction.outputs.reduce((total, output) => total + BigInt(output.value), 0n);
+  if (outputAmount > inputAmount) throw invalidTransaction("additive exact outputs exceed input amounts");
+  if (inputAmount - outputAmount > maxFeeSompi) throw invalidTransaction("additive exact transaction fee exceeds the configured maximum");
+}
+
 function exactV0ReferenceTransaction(transaction: SafeTransaction): ExactV0ReferenceTransaction {
   if (transaction.version !== 0) throw invalidTransaction("standard-native transaction version must be 0");
   return {
@@ -994,6 +1124,41 @@ function exactV0ReferenceTransaction(transaction: SafeTransaction): ExactV0Refer
     gas: transaction.gas ?? "0",
     payload: transaction.payload ?? "",
     ...(transaction.storageMass !== undefined ? { storageMass: transaction.storageMass } : {}),
+  };
+}
+
+function exactV1ReferenceTransaction(transaction: SafeTransaction): TxV1ReferenceTransaction {
+  if (transaction.version !== 1 || transaction.storageMass === undefined) {
+    throw invalidTransaction("additive exact transaction must be version 1 with contextual storage mass");
+  }
+  return {
+    version: 1,
+    inputs: transaction.inputs.map((input, index) => {
+      if (input.computeBudget === undefined) throw invalidTransaction(`additive exact input ${index} is missing compute budget`);
+      return {
+        previousOutpoint: { txid: input.transactionId, index: input.index },
+        signatureScript: input.signatureScript,
+        sequence: input.sequence,
+        computeBudget: input.computeBudget,
+        utxo: {
+          amount: input.utxo.amount,
+          scriptPublicKey: input.utxo.scriptPublicKey,
+          blockDaaScore: "0",
+          isCoinbase: false,
+        },
+      };
+    }),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant,
+    })),
+    lockTime: transaction.lockTime ?? "0",
+    subnetworkId: transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID,
+    gas: transaction.gas ?? "0",
+    payload: transaction.payload ?? "",
+    mass: transaction.storageMass,
+    estimatedSerializedSize: 0,
   };
 }
 

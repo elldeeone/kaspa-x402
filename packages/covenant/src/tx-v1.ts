@@ -123,6 +123,13 @@ export interface TxV1SighashDebug extends TxV1DigestDebug {
   hashType: "all";
 }
 
+export interface TxV1SignatureEvidence {
+  publicKey: string;
+  signature: string;
+  hashType: 1;
+  digest: string;
+}
+
 export interface BatchClaimTxV1Artifact {
   format: "kaspa-x402-tx-v1-reference-v1";
   kind: "batch-claim";
@@ -185,6 +192,35 @@ export interface BatchClaimTransactionBuilder {
 
 export interface BatchRefundTransactionBuilder {
   buildBatchRefundTxV1(input: BatchRefundTxV1Input): BatchRefundTxV1Artifact;
+}
+
+/** Recomputes Rusty Kaspa's version-1 transaction ID. */
+export function transactionV1Id(transaction: TxV1ReferenceTransaction): string {
+  return buildDigestDebug(transaction).txid.digest;
+}
+
+/** Recomputes the version-1 Schnorr SIGHASH_ALL digest for a P2PK input. */
+export function transactionV1SchnorrSignatureEvidence(
+  transaction: TxV1ReferenceTransaction,
+  inputIndex: number,
+): TxV1SignatureEvidence {
+  const input = transaction.inputs[inputIndex];
+  if (!input) throw new Error("sighash input index is out of range");
+  const signatureScript = hexToBytes(input.signatureScript, undefined, "signatureScript");
+  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65 || signatureScript[65] !== SIG_HASH_ALL) {
+    throw new Error("transaction-v1 P2PK input must use a canonical 65-byte Schnorr SIGHASH_ALL push");
+  }
+  const scriptPublicKey = parseSerializedScriptPublicKey(input.utxo.scriptPublicKey, "inputScriptPublicKey");
+  const script = hexToBytes(scriptPublicKey.script, undefined, "inputScriptPublicKey.script");
+  if (scriptPublicKey.version !== 0 || script.byteLength !== 34 || script[0] !== 32 || script[33] !== 0xac) {
+    throw new Error("transaction-v1 funding input must be a version-0 Schnorr P2PK script");
+  }
+  return {
+    publicKey: bytesToHex(script.slice(1, 33)),
+    signature: bytesToHex(signatureScript.slice(1, 65)),
+    hashType: SIG_HASH_ALL,
+    digest: blake2bKeyed("TransactionSigningHash", writeSighashAllPreimage(transaction, inputIndex)),
+  };
 }
 
 const FORMAT = "kaspa-x402-tx-v1-reference-v1" as const;

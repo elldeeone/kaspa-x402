@@ -24,6 +24,7 @@ import type {
   PaymentScheme,
   SettlementResponse,
 } from "@kaspa-x402/core";
+import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import {
   DirectModeClient,
   MemoryChannelStore,
@@ -57,6 +58,11 @@ const FUNDING_TX = "55".repeat(32);
 const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_RESERVATION_ID = "88".repeat(32);
+const EXACT_HEAD_ID = "89".repeat(32);
+const EXACT_CHALLENGE_ID = "8a".repeat(32);
+const STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY = `0000${sha256Hex("kaspatest:payout")}`;
+const ADDITIVE_HEAD_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: SERVER_KEY, amount: "10000000" });
+const ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(ADDITIVE_HEAD_REDEEM_SCRIPT));
 const EXACT_TRANSACTION_ARTIFACT = "{\"transaction\":\"signed-kip10-exact\"}";
 
 describe("direct-mode client", () => {
@@ -200,7 +206,7 @@ describe("direct-mode client", () => {
       expect.objectContaining({
         profile: "standard-native",
         amount: "20000000",
-        payToScriptPublicKey: "0000" + "ab".repeat(34),
+        payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
         reservation: undefined,
       }),
     ]);
@@ -212,6 +218,70 @@ describe("direct-mode client", () => {
     });
   });
 
+  it("creates a corrected additive exact transaction from non-exclusive head challenge terms", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeAdditiveExactRequired({ amount: "20000000" });
+
+    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
+      url: "https://api.example.test/file",
+      requestHash: "97".repeat(32),
+    });
+
+    expect(provider.exactPayments).toEqual([
+      expect.objectContaining({
+        profile: "additive",
+        amount: "20000000",
+        payToScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+        reservation: undefined,
+        head: {
+          headId: EXACT_HEAD_ID,
+          headVersion: "7",
+          expectedHeadOutpoint: { txid: FUNDING_TX, index: 0 },
+          headAmount: "100000000",
+          headScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          headRedeemScript: ADDITIVE_HEAD_REDEEM_SCRIPT,
+          additiveThresholdSompi: "10000000",
+          challengeId: EXACT_CHALLENGE_ID,
+          challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      }),
+    ]);
+    expect(payment.paymentPayload.payload).toMatchObject({
+      type: "exact-transaction",
+      profile: "additive",
+      challengeId: EXACT_CHALLENGE_ID,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+    });
+  });
+
+  it("rejects additive offers below their head threshold before invoking the funding adapter", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(makeAdditiveExactRequired({ amount: "9999999" })), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow("must meet the positive head threshold");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects additive offers whose advertised head is not the canonical KIP-10 script", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeAdditiveExactRequired({ amount: "20000000" });
+    (required.accepts[0] as ExactPaymentRequirements).extra.headRedeemScript = "51";
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(required), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow("must bind the canonical KIP-10 script");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
   it("rejects zero-value standard-native exact offers", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
@@ -221,6 +291,20 @@ describe("direct-mode client", () => {
         url: "https://api.example.test/file",
       }),
     ).rejects.toThrow("exact payment amount must be positive");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects v2 exact offers whose payTo address and payment script disagree", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeStandardExactRequired({ amount: "20000000" });
+    (required.accepts[0] as ExactPaymentRequirements).extra.payToScriptPublicKey = `0000${"ff".repeat(32)}`;
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(required), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow("payTo address does not match the advertised payment script");
     expect(provider.exactPayments).toHaveLength(0);
   });
 
@@ -1415,7 +1499,42 @@ function makeStandardExactRequired(input: { amount: string; network?: NetworkId 
           profile: "standard-native",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-          payToScriptPublicKey: "0000" + "ab".repeat(34),
+          payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
+        },
+      } satisfies ExactPaymentRequirements,
+    ],
+  };
+}
+
+function makeAdditiveExactRequired(input: { amount: string; network?: NetworkId }): PaymentRequired {
+  return {
+    x402Version: X402_VERSION,
+    resource: { url: "https://api.example.test/file" },
+    accepts: [
+      {
+        scheme: "exact",
+        network: input.network ?? "kaspa:testnet-10",
+        amount: input.amount,
+        asset: "KAS",
+        payTo: "kaspatest:head",
+        maxTimeoutSeconds: 60,
+        extra: {
+          binding: "kaspa-exact-v2",
+          profile: "additive",
+          finality: "accepted",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          payToScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          templateId: "kaspa-x402-kip10-additive-v1",
+          headId: EXACT_HEAD_ID,
+          headVersion: "7",
+          expectedHeadOutpoint: { txid: FUNDING_TX, index: 0 },
+          headAmount: "100000000",
+          headScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          headRedeemScript: ADDITIVE_HEAD_REDEEM_SCRIPT,
+          additiveThresholdSompi: "10000000",
+          paymentOutputIndex: 0,
+          challengeId: EXACT_CHALLENGE_ID,
+          challengeExpiresAt: "2099-01-01T00:00:00.000Z",
         },
       } satisfies ExactPaymentRequirements,
     ],
@@ -1548,6 +1667,7 @@ class FakeFundingProvider implements FundingProvider {
     payTo: string;
     payToScriptPublicKey?: string;
     requestHash?: string;
+    head?: ExactPaymentRequest["head"];
     reservation?: ExactPaymentRequest["reservation"];
   }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
@@ -1603,6 +1723,7 @@ class FakeFundingProvider implements FundingProvider {
       payTo: request.payTo,
       payToScriptPublicKey: request.payToScriptPublicKey,
       ...(request.requestHash ? { requestHash: request.requestHash } : {}),
+      ...(request.head ? { head: request.head } : {}),
       reservation: request.reservation,
     });
     if (this.exactMode === "artifactless") {
@@ -1665,6 +1786,7 @@ class FakeSigner {
 
 class FakeAddressCodec implements AddressCodec {
   scriptPublicKeyForAddress(address: string): string {
+    if (address === "kaspatest:head") return ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY;
     return `0000${sha256Hex(address)}`;
   }
 

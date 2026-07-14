@@ -8,7 +8,10 @@ import {
   exactV0SchnorrSignatureEvidence,
   exactV0TransactionId,
   hexToBytes,
+  transactionV1Id,
+  transactionV1SchnorrSignatureEvidence,
   type ExactV0ReferenceTransaction,
+  type TxV1ReferenceTransaction,
 } from "../src/index.js";
 
 describe("standard-native exact v0 consensus hashes", () => {
@@ -30,6 +33,51 @@ describe("standard-native exact v0 consensus hashes", () => {
     expect(
       schnorr.verify(hexToBytes(evidence.signature), hexToBytes(evidence.digest), hexToBytes(evidence.publicKey)),
     ).toBe(true);
+  });
+
+  it("matches the corrected additive version-1 transaction id and payer signature", () => {
+    const vector = JSON.parse(
+      fs.readFileSync(new URL("../../../vectors/exact/consensus-profiles.json", import.meta.url), "utf8"),
+    ) as {
+      expected: {
+        additive: {
+          transactionId: string;
+          estimatedSerializedSize: number;
+          transaction: {
+            storageMass: string;
+            inputs: Array<{
+              previousOutpoint: { txid: string; index: number };
+              signatureScript: string;
+              sequence: string;
+              computeBudget: number;
+              utxo: { amount: string; scriptPublicKey: string; blockDaaScore: string; isCoinbase: false };
+            }>;
+            outputs: TxV1ReferenceTransaction["outputs"];
+            lockTime: string;
+            subnetworkId: string;
+            gas: string;
+            payload: string;
+          };
+        };
+      };
+    };
+    const additive = vector.expected.additive;
+    const transaction: TxV1ReferenceTransaction = {
+      version: 1,
+      inputs: additive.transaction.inputs,
+      outputs: additive.transaction.outputs,
+      lockTime: additive.transaction.lockTime,
+      subnetworkId: additive.transaction.subnetworkId,
+      gas: additive.transaction.gas,
+      payload: additive.transaction.payload,
+      mass: additive.transaction.storageMass,
+      estimatedSerializedSize: additive.estimatedSerializedSize,
+    };
+
+    expect(transactionV1Id(transaction)).toBe(additive.transactionId);
+    const evidence = transactionV1SchnorrSignatureEvidence(transaction, 1);
+    expect(schnorr.verify(hexToBytes(evidence.signature), hexToBytes(evidence.digest), hexToBytes(evidence.publicKey))).toBe(true);
+    expect(() => transactionV1SchnorrSignatureEvidence(transaction, 0)).toThrow("canonical 65-byte Schnorr");
   });
 
   it("matches Rusty Kaspa contextual storage mass for both exact profiles", () => {

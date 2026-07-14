@@ -68,6 +68,17 @@ export interface ExactPaymentRequest {
   requestHash?: Hash32Hex;
   requiredFinality?: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
+  head?: {
+    headId: Hash32Hex;
+    headVersion: SompiString;
+    expectedHeadOutpoint: FundingOutpoint;
+    headAmount: SompiString;
+    headScriptPublicKey: ByteHex;
+    headRedeemScript: ByteHex;
+    additiveThresholdSompi: SompiString;
+    challengeId: Hash32Hex;
+    challengeExpiresAt: string;
+  };
   reservation?: Pick<
     ExactPaymentRequirements["extra"],
     | "templateId"
@@ -84,6 +95,7 @@ export interface ExactPaymentRequest {
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
+  head?: NonNullable<ExactPaymentRequest["head"]>;
   reservation?: NonNullable<ExactPaymentRequest["reservation"]>;
 }
 
