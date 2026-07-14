@@ -32,22 +32,43 @@ const specFiles = SPEC_FILES;
 const docFiles = PUBLIC_DOC_FILES;
 const releaseDocFiles = RELEASE_DOC_FILES;
 const htmlSourceFiles = new Set([...specFiles, ...docFiles]);
-const vectorFiles = trackedFiles("vectors").filter((file) => file.endsWith(".json") || file.endsWith(".md"));
-const siteScriptFiles = ["scripts/site-build.mjs", "scripts/site-check.mjs", "scripts/site-config.mjs", "scripts/site-serve.mjs"];
+const vectorFiles = trackedFiles("vectors").filter(
+  (file) => file.endsWith(".json") || file.endsWith(".md"),
+);
+const siteScriptFiles = [
+  "scripts/site-build.mjs",
+  "scripts/site-check.mjs",
+  "scripts/site-config.mjs",
+  "scripts/site-serve.mjs",
+];
 const packages = readPackages();
-const repositoryUrl = normalizeRepositoryUrl(readJson("package.json").repository?.url);
-const releaseVersion = packages.find((pkg) => pkg.name === "@kaspa-x402/core")?.version ?? "0.1.0-alpha.1";
+const repositoryUrl = normalizeRepositoryUrl(
+  readJson("package.json").repository?.url,
+);
+const releaseVersion =
+  packages.find((pkg) => pkg.name === "@kaspa-x402/core")?.version ??
+  "0.1.0-alpha.1";
 const releasePath = `v${releaseVersion}`;
 const releaseEntries = buildReleaseEntries();
 const commit = git(["rev-parse", "HEAD"]);
 const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
 const sourceState = dirtyInputs.length > 0 ? "working-tree-dirty" : "git-head";
-const releaseSnapshotScope = "schemas, specs, selected docs, vectors, package metadata, and release metadata";
-const activeAlphaOnlyRoutes = ["/", "/demo/", "/assets/", "/vendor/", "/site-manifest.json", "/releases/"];
+const releaseSnapshotScope =
+  "schemas, specs, selected docs, vectors, package metadata, and release metadata";
+const activeAlphaOnlyRoutes = [
+  "/",
+  "/demo/",
+  "/assets/",
+  "/vendor/",
+  "/site-manifest.json",
+  "/releases/",
+];
 
 if (requireClean && dirtyInputs.length > 0) {
-  throw new Error(`site build requires clean publishable inputs: ${dirtyInputs.join(", ")}`);
+  throw new Error(
+    `site build requires clean publishable inputs: ${dirtyInputs.join(", ")}`,
+  );
 }
 
 fs.rmSync(outDir, { recursive: true, force: true });
@@ -95,7 +116,11 @@ function writeHomePage() {
   "scheme": "exact",
   "network": "kaspa:<network>",
   "asset": "KAS",
-  "amount": "<sompi>"
+  "amount": "<sompi>",
+  "extra": {
+    "binding": "kaspa-exact-v2",
+    "profile": "standard-native"
+  }
 }`;
   const batchSnippet = `{
   "scheme": "batch-settlement",
@@ -119,7 +144,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is a live <code>kaspa:testnet-10</code> integration deployment, paid-canary proven for ${escapeHtml(releaseVersion)}. Exact remains funded-inventory gated; current Worker and transaction evidence are recorded in the <a href="/docs/testnet-gateway/">gateway reference</a>.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.7 deployment until the alpha.8 source is merged and explicitly deployed. The <a href="/docs/testnet-gateway/">gateway reference</a> separates deployed evidence from current source semantics.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -143,7 +168,7 @@ function writeHomePage() {
 
     <h2>The two profiles</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
-    <p><code>exact</code> — fixed-price one-shot native transfer. The current alpha uses KIP-10 transaction artifacts for reservation-backed direct exact settlement, with merchant-owned borrow UTXOs and a policy-bounded additive threshold. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
+    <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated or variable-cost requests against escrow/channel state. Spec: <a href="/spec/kaspa-batch-settlement-v1/">kaspa-batch-settlement-v1</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -169,7 +194,12 @@ function writeHomePage() {
 
 function writeSchemasPage() {
   const rows = schemaFiles.map((file) =>
-    annotatedRow(`/${file}`, path.basename(file), ARTIFACT_NOTES[file], sha256File(path.join(root, file))),
+    annotatedRow(
+      `/${file}`,
+      path.basename(file),
+      ARTIFACT_NOTES[file],
+      sha256File(path.join(root, file)),
+    ),
   );
   writeHtml(
     "schemas/index.html",
@@ -189,7 +219,12 @@ function writeSchemasPage() {
 
 function writeSpecsPage() {
   const rows = specFiles.map((file) =>
-    annotatedRow(`/${htmlRoute(file)}/`, path.basename(file, ".md"), ARTIFACT_NOTES[file], sha256File(path.join(root, file))),
+    annotatedRow(
+      `/${htmlRoute(file)}/`,
+      path.basename(file, ".md"),
+      ARTIFACT_NOTES[file],
+      sha256File(path.join(root, file)),
+    ),
   );
   writeHtml(
     "spec/index.html",
@@ -210,7 +245,12 @@ function writeSpecsPage() {
 function writeDocsPage() {
   const sections = DOC_GROUPS.map((group) => {
     const rows = group.files.map((file) =>
-      annotatedRow(`/${htmlRoute(file)}/`, path.basename(file, ".md"), ARTIFACT_NOTES[file], sha256File(path.join(root, file))),
+      annotatedRow(
+        `/${htmlRoute(file)}/`,
+        path.basename(file, ".md"),
+        ARTIFACT_NOTES[file],
+        sha256File(path.join(root, file)),
+      ),
     );
     return `<h2>${escapeHtml(group.title)}</h2>\n    ${annotatedTable("Document", rows)}`;
   }).join("\n    ");
@@ -254,13 +294,27 @@ function writeVectorsPage() {
     .map(({ dir, note }) => {
       const rows = grouped
         .get(dir)
-        .map((file) => annotatedRow(`/${file}`, file.split("/").slice(2).join("/"), "", sha256File(path.join(root, file))));
+        .map((file) =>
+          annotatedRow(
+            `/${file}`,
+            file.split("/").slice(2).join("/"),
+            "",
+            sha256File(path.join(root, file)),
+          ),
+        );
       return `<h2><code>${escapeHtml(dir)}/</code></h2>
     ${note ? `<p>${inlineMarkdown(note, "")}</p>` : ""}
     ${annotatedTable("File", rows, { notes: false })}`;
     })
     .join("\n    ");
-  const otherRows = rootFiles.map((file) => annotatedRow(`/${file}`, path.basename(file), "", sha256File(path.join(root, file))));
+  const otherRows = rootFiles.map((file) =>
+    annotatedRow(
+      `/${file}`,
+      path.basename(file),
+      "",
+      sha256File(path.join(root, file)),
+    ),
+  );
   writeHtml(
     "vectors/index.html",
     layout(
@@ -282,7 +336,9 @@ function writeReleasesPage() {
   const rows = releaseEntries
     .map((entry) => {
       const path = `v${entry.version}`;
-      const hash = entry.contentSha256 ? `<code>${escapeHtml(entry.contentSha256.slice(0, 16))}</code>` : "active build";
+      const hash = entry.contentSha256
+        ? `<code>${escapeHtml(entry.contentSha256.slice(0, 16))}</code>`
+        : "active build";
       return `<tr><td><code>${escapeHtml(entry.version)}</code></td><td><a href="/${path}/"><code>/${path}/</code></a></td><td><a href="/${path}/release.json"><code>release.json</code></a></td><td>${hash}</td></tr>`;
     })
     .join("");
@@ -328,7 +384,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is paid-canary proven for the current alpha; see the <a href="/docs/testnet-gateway/">gateway reference</a> for its Worker, transaction, and inventory status.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.7 deployment until the alpha.8 cutover; see the <a href="/docs/testnet-gateway/">gateway reference</a> for deployed and source status.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -395,7 +451,6 @@ function writeDemoPage() {
         <label>Finality
           <select id="demo-finality">
             <option value="accepted">accepted</option>
-            <option value="mempool">mempool</option>
             <option value="confirmed">confirmed</option>
           </select>
         </label>
@@ -489,7 +544,8 @@ function writePnnSpikeJson() {
     },
     browser: {
       status: "covered by check:browser-demo",
-      connection: "Public wss endpoint list; resolver lookup covered by the Node smoke script",
+      connection:
+        "Public wss endpoint list; resolver lookup covered by the Node smoke script",
       verifiedCapabilities: [
         "sdk initialization",
         "throwaway testnet key generation",
@@ -499,10 +555,15 @@ function writePnnSpikeJson() {
         "DAA score",
         "transaction status lookup missing-entry path",
       ],
-      constraints: ["testnet-only", "no implicit key persistence", "manual transaction broadcast only"],
+      constraints: [
+        "testnet-only",
+        "no implicit key persistence",
+        "manual transaction broadcast only",
+      ],
     },
     worker: {
-      status: "live alpha.7 Worker deployment at https://demo.kaspa-x402.org; funded paid canaries recorded",
+      status:
+        "live alpha.7 Worker deployment at https://demo.kaspa-x402.org; alpha.8 source not yet deployed",
       verifiedCapabilities: [
         "REST chain health",
         "Durable Object state",
@@ -518,8 +579,15 @@ function writePnnSpikeJson() {
       ],
     },
     packageBoundary: {
-      browserSafeToday: ["static schemas", "browser SDK", "browser-native header encoder"],
-      needsAdapter: ["@kaspa-x402/core header helpers currently use Buffer", "@kaspa-x402/core hashing helpers currently use node:crypto"],
+      browserSafeToday: [
+        "static schemas",
+        "browser SDK",
+        "browser-native header encoder",
+      ],
+      needsAdapter: [
+        "@kaspa-x402/core header helpers currently use Buffer",
+        "@kaspa-x402/core hashing helpers currently use node:crypto",
+      ],
     },
   });
 }
@@ -539,7 +607,9 @@ function annotatedRow(href, label, note, sha256) {
 }
 
 function annotatedTable(artifactHeading, rows, { notes = true } = {}) {
-  const headers = notes ? [artifactHeading, "Purpose", "SHA-256 prefix"] : [artifactHeading, "SHA-256 prefix"];
+  const headers = notes
+    ? [artifactHeading, "Purpose", "SHA-256 prefix"]
+    : [artifactHeading, "SHA-256 prefix"];
   const body = rows
     .map((row) => {
       const cells = notes ? row.cells : [row.cells[0], row.cells[2]];
@@ -568,8 +638,15 @@ function copyCollection(files, routeRoot) {
 }
 
 function releaseArtifacts(copiedArtifacts) {
-  const releaseSources = new Set([...schemaFiles, ...specFiles, ...releaseDocFiles, ...vectorFiles]);
-  return copiedArtifacts.filter((artifact) => releaseSources.has(artifact.source));
+  const releaseSources = new Set([
+    ...schemaFiles,
+    ...specFiles,
+    ...releaseDocFiles,
+    ...vectorFiles,
+  ]);
+  return copiedArtifacts.filter((artifact) =>
+    releaseSources.has(artifact.source),
+  );
 }
 
 function copyStaticAssets() {
@@ -610,10 +687,18 @@ function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
   });
   const contentSha256 = releaseContentHash(lockedRelease);
   if (!releaseLock && (requireClean || dirtyInputs.length === 0)) {
-    throw new Error(`release ${releaseVersion} is missing a content lock in ${RELEASE_LOCK_DIR}`);
+    throw new Error(
+      `release ${releaseVersion} is missing a content lock in ${RELEASE_LOCK_DIR}`,
+    );
   }
-  if (releaseLock && releaseLock.contentSha256 !== contentSha256 && (requireClean || dirtyInputs.length === 0)) {
-    throw new Error(`release ${releaseVersion} content differs from ${releaseLock.path}; bump the package version or update the release lock`);
+  if (
+    releaseLock &&
+    releaseLock.contentSha256 !== contentSha256 &&
+    (requireClean || dirtyInputs.length === 0)
+  ) {
+    throw new Error(
+      `release ${releaseVersion} content differs from ${releaseLock.path}; bump the package version or update the release lock`,
+    );
   }
 
   const release = {
@@ -630,7 +715,9 @@ function copyStoredReleaseSnapshots() {
     if (snapshotPath === releasePath) continue;
     const source = path.join(root, RELEASE_SNAPSHOT_DIR, snapshotPath);
     if (!fs.existsSync(source)) {
-      throw new Error(`release ${entry.version} is locked but missing ${RELEASE_SNAPSHOT_DIR}/${snapshotPath}`);
+      throw new Error(
+        `release ${entry.version} is locked but missing ${RELEASE_SNAPSHOT_DIR}/${snapshotPath}`,
+      );
     }
     const target = path.join(outDir, snapshotPath);
     fs.rmSync(target, { recursive: true, force: true });
@@ -645,7 +732,8 @@ function releaseMetadata(releaseLock, releaseArtifacts, releaseProvenance) {
     contentLock: releaseLock?.path,
     snapshotScope: releaseSnapshotScope,
     activeAlphaOnlyRoutes,
-    unversionedRoutes: "active alpha; not part of the immutable release snapshot",
+    unversionedRoutes:
+      "active alpha; not part of the immutable release snapshot",
     npmInstall: releaseNpmInstall(),
     artifacts: releaseArtifacts,
   };
@@ -683,14 +771,28 @@ function writeManifest(copiedArtifacts, vectorIndex) {
       metadata: `/v${entry.version}/release.json`,
       contentSha256: entry.contentSha256,
     })),
-    schemas: schemaFiles.map((file) => ({ path: `/${file}`, sha256: sha256File(path.join(root, file)) })),
-    specs: specFiles.map((file) => ({ path: `/${htmlRoute(file)}/`, source: `/${file}` })),
-    docs: docFiles.map((file) => ({ path: `/${htmlRoute(file)}/`, source: `/${file}` })),
+    schemas: schemaFiles.map((file) => ({
+      path: `/${file}`,
+      sha256: sha256File(path.join(root, file)),
+    })),
+    specs: specFiles.map((file) => ({
+      path: `/${htmlRoute(file)}/`,
+      source: `/${file}`,
+    })),
+    docs: docFiles.map((file) => ({
+      path: `/${htmlRoute(file)}/`,
+      source: `/${file}`,
+    })),
     vectors: vectorIndex,
     packages,
     siteAssets: [
       artifactRecord("site/src/styles.css", "assets/styles.css"),
-      ...SITE_ASSET_FILES.map((file) => artifactRecord(file, path.relative(SITE_SRC, file).replaceAll(path.sep, "/"))),
+      ...SITE_ASSET_FILES.map((file) =>
+        artifactRecord(
+          file,
+          path.relative(SITE_SRC, file).replaceAll(path.sep, "/"),
+        ),
+      ),
     ],
     artifacts: copiedArtifacts,
   });
@@ -733,8 +835,12 @@ function artifactRecord(source, target) {
 }
 
 function siteAssetRecords(prefix) {
-  return SITE_ASSET_FILES.filter((file) => file.startsWith(prefix)).map((file) =>
-    artifactRecord(file, path.relative(SITE_SRC, file).replaceAll(path.sep, "/")),
+  return SITE_ASSET_FILES.filter((file) => file.startsWith(prefix)).map(
+    (file) =>
+      artifactRecord(
+        file,
+        path.relative(SITE_SRC, file).replaceAll(path.sep, "/"),
+      ),
   );
 }
 
@@ -870,7 +976,9 @@ function markdownToHtml(markdown, sourceDir) {
       closeList();
       closeParagraph();
       const level = heading[1].length;
-      out.push(`<h${level}>${inlineMarkdown(heading[2], sourceDir)}</h${level}>`);
+      out.push(
+        `<h${level}>${inlineMarkdown(heading[2], sourceDir)}</h${level}>`,
+      );
       continue;
     }
     const bullet = /^-\s+(.+)$/.exec(line);
@@ -884,7 +992,10 @@ function markdownToHtml(markdown, sourceDir) {
       continue;
     }
     if (inList) {
-      out[out.length - 1] = out[out.length - 1].replace(/<\/li>$/, ` ${inlineMarkdown(line.trim(), sourceDir)}</li>`);
+      out[out.length - 1] = out[out.length - 1].replace(
+        /<\/li>$/,
+        ` ${inlineMarkdown(line.trim(), sourceDir)}</li>`,
+      );
       continue;
     }
     paragraphLines.push(inlineMarkdown(line, sourceDir));
@@ -900,7 +1011,13 @@ function markdownToHtml(markdown, sourceDir) {
 function markdownTableToHtml(lines) {
   const rows = lines
     .filter((line) => !/^\|\s*-/.test(line))
-    .map((line) => line.trim().slice(1, -1).split("|").map((cell) => inlineMarkdown(cell.trim(), "")));
+    .map((line) =>
+      line
+        .trim()
+        .slice(1, -1)
+        .split("|")
+        .map((cell) => inlineMarkdown(cell.trim(), "")),
+    );
   if (rows.length === 0) return "";
   const [head, ...body] = rows;
   const thead = `<thead><tr>${head.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead>`;
@@ -911,7 +1028,11 @@ function markdownTableToHtml(lines) {
 function inlineMarkdown(value, sourceDir) {
   return escapeHtml(value)
     .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_match, label, href) => `<a href="${escapeAttribute(rewriteMarkdownHref(href, sourceDir))}">${label}</a>`);
+    .replace(
+      /\[([^\]]+)\]\(([^)]+)\)/g,
+      (_match, label, href) =>
+        `<a href="${escapeAttribute(rewriteMarkdownHref(href, sourceDir))}">${label}</a>`,
+    );
 }
 
 function rewriteMarkdownHref(href, sourceDir) {
@@ -919,7 +1040,8 @@ function rewriteMarkdownHref(href, sourceDir) {
   const [target, suffix = ""] = href.split(/(?=#)/, 2);
   if (target.endsWith(".md")) {
     const normalized = path.posix.normalize(`${sourceDir}/${target}`);
-    if (htmlSourceFiles.has(normalized)) return `/${htmlRoute(normalized)}/${suffix}`;
+    if (htmlSourceFiles.has(normalized))
+      return `/${htmlRoute(normalized)}/${suffix}`;
     return `/${normalized}${suffix}`;
   }
   return href;
@@ -927,7 +1049,10 @@ function rewriteMarkdownHref(href, sourceDir) {
 
 function artifactTable(artifacts) {
   const rows = artifacts
-    .map((artifact) => `<tr><td><a href="/${artifact.target}"><code>${escapeHtml(artifact.target)}</code></a></td><td><code>${artifact.sha256.slice(0, 16)}</code></td></tr>`)
+    .map(
+      (artifact) =>
+        `<tr><td><a href="/${artifact.target}"><code>${escapeHtml(artifact.target)}</code></a></td><td><code>${artifact.sha256.slice(0, 16)}</code></td></tr>`,
+    )
     .join("");
   return `<div class="table-wrap"><table><thead><tr><th>Artifact</th><th>SHA-256 prefix</th></tr></thead><tbody>${rows}</tbody></table></div>`;
 }
@@ -1057,7 +1182,8 @@ function readPackages() {
   );
   return SITE_PACKAGE_NAMES.map((name) => {
     const pkg = packagesByName.get(name);
-    if (pkg === undefined) throw new Error(`missing site package metadata: ${name}`);
+    if (pkg === undefined)
+      throw new Error(`missing site package metadata: ${name}`);
     return pkg;
   }).sort((a, b) => a.name.localeCompare(b.name));
 }
@@ -1082,17 +1208,25 @@ function dirtyPublishableInputs() {
     .filter(Boolean)
     .map((line) => line.slice(3).trim())
     .map((file) => file.replace(/^"|"$/g, ""))
-    .filter((file) => inputs.has(file) || [...inputs].some((input) => file.startsWith(`${input}/`)))
+    .filter(
+      (file) =>
+        inputs.has(file) ||
+        [...inputs].some((input) => file.startsWith(`${input}/`)),
+    )
     .sort();
 }
 
 function trackedPackageFiles() {
-  return trackedFiles("packages").filter((file) => file.endsWith("package.json"));
+  return trackedFiles("packages").filter((file) =>
+    file.endsWith("package.json"),
+  );
 }
 
 function sitePackageFiles() {
   const sitePackages = new Set(SITE_PACKAGE_NAMES);
-  return trackedPackageFiles().filter((file) => sitePackages.has(readJson(file).name));
+  return trackedPackageFiles().filter((file) =>
+    sitePackages.has(readJson(file).name),
+  );
 }
 
 function readReleaseLock(version) {
@@ -1139,13 +1273,20 @@ function releaseNpmInstall() {
 function releaseContentHash(lockedRelease) {
   const records = listFiles(`${SITE_DIST}/${releasePath}`)
     .map((file) => path.join(root, file))
-    .map((file) => ({ file, target: path.relative(outDir, file).replaceAll(path.sep, "/") }))
+    .map((file) => ({
+      file,
+      target: path.relative(outDir, file).replaceAll(path.sep, "/"),
+    }))
     .filter(({ target }) => target !== `${releasePath}/release.json`)
     .map(({ file, target }) => fileRecord(target, file));
-  records.push(contentRecord(`${releasePath}/release.json`, jsonText(lockedRelease)));
+  records.push(
+    contentRecord(`${releasePath}/release.json`, jsonText(lockedRelease)),
+  );
   return crypto
     .createHash("sha256")
-    .update(JSON.stringify(records.sort((a, b) => a.target.localeCompare(b.target))))
+    .update(
+      JSON.stringify(records.sort((a, b) => a.target.localeCompare(b.target))),
+    )
     .digest("hex");
 }
 
@@ -1179,7 +1320,9 @@ function trackedFiles(relativeDir) {
     ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
     ...listFiles(relativeDir),
   ]);
-  return [...files].sort();
+  return [...files]
+    .filter((file) => fs.existsSync(path.join(root, file)))
+    .sort();
 }
 
 function listFiles(relativeDir) {
@@ -1238,7 +1381,10 @@ function htmlRoute(file) {
 }
 
 function sha256File(file) {
-  return crypto.createHash("sha256").update(fs.readFileSync(file)).digest("hex");
+  return crypto
+    .createHash("sha256")
+    .update(fs.readFileSync(file))
+    .digest("hex");
 }
 
 function git(args) {

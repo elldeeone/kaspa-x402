@@ -11,6 +11,8 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - builds x402 v2 `PAYMENT-REQUIRED` offers;
 - extracts and validates `PAYMENT-SIGNATURE` retries;
 - verifies exact transaction output amount, pay-to script, transaction id, and finality through an injected verifier;
+- defaults exact offers to `standard-native` and can optionally select, claim,
+  and atomically advance reusable KIP-10 additive heads;
 - verifies funding outpoints, escrow scripts, and cumulative vouchers through injected adapters;
 - serializes per-transaction or per-channel verification, handler execution, and state commit;
 - stores exact transaction replay records before returning protected content;

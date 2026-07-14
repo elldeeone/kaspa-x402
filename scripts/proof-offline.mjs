@@ -12,14 +12,23 @@ import {
   readKaspaSettlementExtension,
   voucherDigest,
 } from "@kaspa-x402/core";
-import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, PAYMENT_SIGNATURE_HEADER } from "@kaspa-x402/client";
+import {
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  PAYMENT_SIGNATURE_HEADER,
+} from "@kaspa-x402/client";
 
 import {
   buildBatchClaimTxV1Artifact,
   buildBatchRefundTxV1Artifact,
   checkEscrowFixtureReproducibility,
 } from "../packages/covenant/dist/index.js";
-import { NETWORK, createMockDirectModeEnvironment, mockRequestHash, paymentRequiredFor } from "../examples/lib/mock-direct-mode.mjs";
+import {
+  NETWORK,
+  createMockDirectModeEnvironment,
+  mockRequestHash,
+  paymentRequiredFor,
+} from "../examples/lib/mock-direct-mode.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = readOptions(process.argv.slice(2));
@@ -54,27 +63,40 @@ try {
 }
 
 async function runExactProof() {
-  const { client, facilitator, server, serverStore } = createMockDirectModeEnvironment();
-  const url = "https://api.example.test/kip10-download";
+  const { client, facilitator, server, serverStore } =
+    createMockDirectModeEnvironment();
+  const url = "https://api.example.test/exact-download";
   const resource = {
     url,
-    description: "Fixed-price KIP-10 file",
+    description: "Fixed-price native KAS file",
     mimeType: "application/octet-stream",
   };
   const amount = "100000";
-  const requestHash = mockRequestHash({ proof: "offline", scheme: "exact", mode: "kip10-transaction", step: "download" });
-  const unpaid = await server.handlePaidRequest({ url, resource, paymentAmount: amount, paymentScheme: "exact" }, async () => ({
-    status: 200,
-    body: { ok: false },
-  }));
+  const requestHash = mockRequestHash({
+    proof: "offline",
+    scheme: "exact",
+    profile: "standard-native",
+    step: "download",
+  });
+  const unpaid = await server.handlePaidRequest(
+    { url, resource, paymentAmount: amount, paymentScheme: "exact" },
+    async () => ({
+      status: 200,
+      body: { ok: false },
+    }),
+  );
   assert.equal(unpaid.status, 402);
   const paymentRequiredHeader = unpaid.headers[PAYMENT_REQUIRED_HEADER];
   assert.ok(paymentRequiredHeader);
   const required = decodePaymentRequiredHeader(paymentRequiredHeader);
   const accepted = required.accepts[0];
   assert.equal(accepted.scheme, "exact");
-  assert.equal(accepted.extra.templateId, "kaspa-x402-kip10-additive-v1");
-  assert.equal(accepted.extra.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
+  assert.equal(accepted.extra.binding, "kaspa-exact-v2");
+  assert.equal(accepted.extra.profile, "standard-native");
+  assert.equal(
+    accepted.extra.transactionEncoding,
+    "kaspa-sdk-safe-json-v2.0.0",
+  );
 
   const payment = await client.createPayment(paymentRequiredHeader, {
     url,
@@ -83,11 +105,14 @@ async function runExactProof() {
   });
   assert.equal(payment.scheme, "exact");
   assert.equal(payment.paymentPayload.payload.type, "exact-transaction");
-  assert.equal(payment.paymentPayload.payload.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
-  check("exact KIP-10 transaction payload creation", {
+  assert.equal(
+    payment.paymentPayload.payload.transactionEncoding,
+    "kaspa-sdk-safe-json-v2.0.0",
+  );
+  check("standard-native exact transaction payload creation", {
+    profile: payment.paymentPayload.payload.profile,
     transactionEncoding: payment.paymentPayload.payload.transactionEncoding,
     paymentOutputIndex: payment.paymentOutputIndex,
-    reservationId: accepted.extra.reservationId,
   });
 
   const verification = await facilitator.verify({
@@ -98,64 +123,93 @@ async function runExactProof() {
     requestHash,
   });
   assert.equal(verification.isValid, true);
-  check("exact KIP-10 server verification", {
+  check("standard-native exact server verification", {
     payer: verification.payer,
-    reservationId: accepted.extra.reservationId,
   });
 
   let executions = 0;
-  const response = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount, requestHash }), async () => {
-    executions += 1;
-    return {
-      status: 200,
-      body: { ok: true, route: "kip10-download" },
-    };
-  });
+  const response = await server.handlePaidRequest(
+    requestWithPayment(payment.paymentPayload, {
+      url,
+      resource,
+      scheme: "exact",
+      amount,
+      requestHash,
+    }),
+    async () => {
+      executions += 1;
+      return {
+        status: 200,
+        body: { ok: true, route: "exact-download" },
+      };
+    },
+  );
   assert.equal(response.status, 200);
   assert.equal(executions, 1);
   const settlement = decodeResponse(response);
   const settlementExtra = readKaspaSettlementExtension(settlement);
   assert.equal(settlement.success, true);
   assert.equal(settlement.amount, amount);
-  assert.equal(settlementExtra?.transactionEncoding, "kaspa-sdk-safe-json-v2.0.0");
-  assert.equal(settlementExtra?.templateId, "kaspa-x402-kip10-additive-v1");
-  assert.equal(settlementExtra?.reservationId, accepted.extra.reservationId);
-  check("exact KIP-10 settlement commit", {
+  assert.equal(
+    settlementExtra?.transactionEncoding,
+    "kaspa-sdk-safe-json-v2.0.0",
+  );
+  assert.equal(settlementExtra?.exactProfile, "standard-native");
+  check("standard-native exact settlement commit", {
     transaction: settlement.transaction,
     amount: settlement.amount,
-    reservationId: settlementExtra?.reservationId,
   });
 
   let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(requestWithPayment(payment.paymentPayload, { url, resource, scheme: "exact", amount, requestHash }), async () => {
-    cachedExecutions += 1;
-    return {
-      status: 200,
-      body: { ok: false, route: "unexpected" },
-    };
-  });
+  const cached = await server.handlePaidRequest(
+    requestWithPayment(payment.paymentPayload, {
+      url,
+      resource,
+      scheme: "exact",
+      amount,
+      requestHash,
+    }),
+    async () => {
+      cachedExecutions += 1;
+      return {
+        status: 200,
+        body: { ok: false, route: "unexpected" },
+      };
+    },
+  );
   assert.equal(cached.status, 200);
   assert.equal(cachedExecutions, 0);
-  assert.equal(cached.body.route, "kip10-download");
-  check("exact KIP-10 payment identifier idempotency", {
+  assert.equal(cached.body.route, "exact-download");
+  check("standard-native exact payment identifier idempotency", {
     status: cached.status,
     handlerExecutions: cachedExecutions,
   });
 
-  const replayUrl = "https://api.example.test/kip10-replay";
+  const replayUrl = "https://api.example.test/exact-replay";
   const replayResource = {
     url: replayUrl,
-    description: "Fixed-price KIP-10 replay source",
+    description: "Fixed-price exact replay source",
     mimeType: "application/octet-stream",
   };
-  const replayRequired = await server.handlePaidRequest({ url: replayUrl, resource: replayResource, paymentAmount: amount, paymentScheme: "exact" }, async () => ({
-    status: 200,
-    body: { ok: false },
-  }));
+  const replayRequired = await server.handlePaidRequest(
+    {
+      url: replayUrl,
+      resource: replayResource,
+      paymentAmount: amount,
+      paymentScheme: "exact",
+    },
+    async () => ({
+      status: 200,
+      body: { ok: false },
+    }),
+  );
   assert.equal(replayRequired.status, 402);
-  const replayPayment = await client.createPayment(replayRequired.headers[PAYMENT_REQUIRED_HEADER], {
-    url: replayUrl,
-  });
+  const replayPayment = await client.createPayment(
+    replayRequired.headers[PAYMENT_REQUIRED_HEADER],
+    {
+      url: replayUrl,
+    },
+  );
   const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
   assert.ok(replayFirstHash);
   const replaySource = await server.handlePaidRequest(
@@ -168,7 +222,7 @@ async function runExactProof() {
     }),
     async () => ({
       status: 200,
-      body: { ok: true, route: "kip10-replay-source" },
+      body: { ok: true, route: "exact-replay-source" },
     }),
   );
   assert.equal(replaySource.status, 200);
@@ -193,43 +247,57 @@ async function runExactProof() {
   assert.equal(replay.status, 402);
   assert.equal(replay.body.error, "invalid_payload");
   assert.equal(replayExecutions, 0);
-  check("exact KIP-10 request-bound replay rejection", {
+  check("standard-native exact request-bound replay rejection", {
     status: replay.status,
     error: replay.body.error,
   });
 
-  const storedReservation = await serverStore.loadExactReservation(accepted.extra.reservationId);
-  assert.equal(storedReservation?.status, "consumed");
-  assert.equal(storedReservation?.transactionId, settlement.transaction);
+  assert.deepEqual(await serverStore.listExactHeads(), []);
   const stored = await serverStore.loadExactPayment(settlement.transaction);
   assert.equal(stored?.amount, amount);
 
   return {
     transaction: settlement.transaction,
     amount: settlement.amount,
+    profile: settlementExtra?.exactProfile,
     transactionEncoding: settlementExtra?.transactionEncoding,
-    reservationStatus: storedReservation?.status,
     idempotentStatus: cached.status,
     replayStatus: replay.status,
   };
 }
 
 async function runBatchProof() {
-  const { client, facilitator, server, serverStore } = createMockDirectModeEnvironment();
+  const { client, facilitator, server, serverStore } =
+    createMockDirectModeEnvironment();
   const url = "https://api.example.test/metered";
   const resource = {
     url,
     description: "Repeated metered call",
     mimeType: "application/json",
   };
-  const firstHash = mockRequestHash({ proof: "offline", scheme: "batch-settlement", step: "deposit" });
-  const secondHash = mockRequestHash({ proof: "offline", scheme: "batch-settlement", step: "voucher" });
-
-  const deposit = await client.createPayment(paymentRequiredFor(server, { resource, amount: "50000", scheme: "batch-settlement" }), {
-    url,
-    paymentIdentifier: "offline-batch-deposit",
-    requestHash: firstHash,
+  const firstHash = mockRequestHash({
+    proof: "offline",
+    scheme: "batch-settlement",
+    step: "deposit",
   });
+  const secondHash = mockRequestHash({
+    proof: "offline",
+    scheme: "batch-settlement",
+    step: "voucher",
+  });
+
+  const deposit = await client.createPayment(
+    paymentRequiredFor(server, {
+      resource,
+      amount: "50000",
+      scheme: "batch-settlement",
+    }),
+    {
+      url,
+      paymentIdentifier: "offline-batch-deposit",
+      requestHash: firstHash,
+    },
+  );
   assert.equal(deposit.scheme, "batch-settlement");
   assert.equal(deposit.openedChannel, true);
   assert.equal(deposit.paymentPayload.payload.type, "deposit-voucher");
@@ -250,30 +318,53 @@ async function runBatchProof() {
     channelId: depositVerify.extra?.channelId,
   });
 
-  const depositResponse = await server.handlePaidRequest(requestWithPayment(deposit.paymentPayload, { url, resource, scheme: "batch-settlement", amount: "50000", requestHash: firstHash }), async () => ({
-    status: 200,
-    body: { ok: true, route: "metered", sequence: 1 },
-    chargedAmount: "50000",
-  }));
+  const depositResponse = await server.handlePaidRequest(
+    requestWithPayment(deposit.paymentPayload, {
+      url,
+      resource,
+      scheme: "batch-settlement",
+      amount: "50000",
+      requestHash: firstHash,
+    }),
+    async () => ({
+      status: 200,
+      body: { ok: true, route: "metered", sequence: 1 },
+      chargedAmount: "50000",
+    }),
+  );
   assert.equal(depositResponse.status, 200);
   const depositSettlement = decodeResponse(depositResponse);
-  const depositSettlementMetadata = requireSettlementMetadata(depositSettlement);
+  const depositSettlementMetadata =
+    requireSettlementMetadata(depositSettlement);
   assert.equal(depositSettlement.success, true);
   assert.equal(depositSettlement.amount, "50000");
   assert.equal(depositSettlementMetadata.chargedAmount, "50000");
-  assert.equal(depositSettlementMetadata.channelState?.chargedCumulativeAmount, "50000");
-  const appliedDeposit = await client.applySettlement(deposit, depositSettlement);
+  assert.equal(
+    depositSettlementMetadata.channelState?.chargedCumulativeAmount,
+    "50000",
+  );
+  const appliedDeposit = await client.applySettlement(
+    deposit,
+    depositSettlement,
+  );
   assert.equal(appliedDeposit.channel?.chargedCumulativeAmount, "50000");
   check("batch deposit settlement", {
     commitmentId: depositSettlementMetadata.commitmentId,
     fundingAmount: depositSettlementMetadata.fundingAmount,
   });
 
-  const voucher = await client.createPayment(paymentRequiredFor(server, { resource, amount: "50000", scheme: "batch-settlement" }), {
-    url,
-    paymentIdentifier: "offline-batch-voucher",
-    requestHash: secondHash,
-  });
+  const voucher = await client.createPayment(
+    paymentRequiredFor(server, {
+      resource,
+      amount: "50000",
+      scheme: "batch-settlement",
+    }),
+    {
+      url,
+      paymentIdentifier: "offline-batch-voucher",
+      requestHash: secondHash,
+    },
+  );
   assert.equal(voucher.scheme, "batch-settlement");
   assert.equal(voucher.openedChannel, false);
   assert.equal(voucher.paymentPayload.payload.type, "voucher");
@@ -296,9 +387,17 @@ async function runBatchProof() {
   });
 
   const underpaidPayload = structuredClone(voucher.paymentPayload);
-  underpaidPayload.payload.voucher = structuredClone(deposit.paymentPayload.payload.voucher);
+  underpaidPayload.payload.voucher = structuredClone(
+    deposit.paymentPayload.payload.voucher,
+  );
   const corrective = await server.handlePaidRequest(
-    requestWithPayment(underpaidPayload, { url, resource, scheme: "batch-settlement", amount: "50000", requestHash: secondHash }),
+    requestWithPayment(underpaidPayload, {
+      url,
+      resource,
+      scheme: "batch-settlement",
+      amount: "50000",
+      requestHash: secondHash,
+    }),
     async () => ({
       status: 200,
       body: { ok: false },
@@ -307,49 +406,84 @@ async function runBatchProof() {
   );
   assert.equal(corrective.status, 402);
   assert.equal(corrective.body.error, "invalid_payment_requirements");
-  const correctiveRequired = decodePaymentRequiredHeader(corrective.headers[PAYMENT_REQUIRED_HEADER]);
+  const correctiveRequired = decodePaymentRequiredHeader(
+    corrective.headers[PAYMENT_REQUIRED_HEADER],
+  );
   const correctiveAccepted = correctiveRequired.accepts[0];
   assert.equal(correctiveAccepted.scheme, "batch-settlement");
-  assert.equal(correctiveAccepted.extra.channelState.channelId, deposit.channel.id);
-  assert.equal(correctiveAccepted.extra.channelState.chargedCumulativeAmount, "50000");
+  assert.equal(
+    correctiveAccepted.extra.channelState.channelId,
+    deposit.channel.id,
+  );
+  assert.equal(
+    correctiveAccepted.extra.channelState.chargedCumulativeAmount,
+    "50000",
+  );
   check("batch corrective 402 channel state", {
     status: corrective.status,
     channelId: correctiveAccepted.extra.channelState.channelId,
-    chargedCumulativeAmount: correctiveAccepted.extra.channelState.chargedCumulativeAmount,
+    chargedCumulativeAmount:
+      correctiveAccepted.extra.channelState.chargedCumulativeAmount,
   });
 
   let executions = 0;
-  const voucherResponse = await server.handlePaidRequest(requestWithPayment(voucher.paymentPayload, { url, resource, scheme: "batch-settlement", amount: "50000", requestHash: secondHash }), async () => {
-    executions += 1;
-    return {
-      status: 200,
-      body: { ok: true, route: "metered", sequence: 2 },
-      chargedAmount: "50000",
-    };
-  });
+  const voucherResponse = await server.handlePaidRequest(
+    requestWithPayment(voucher.paymentPayload, {
+      url,
+      resource,
+      scheme: "batch-settlement",
+      amount: "50000",
+      requestHash: secondHash,
+    }),
+    async () => {
+      executions += 1;
+      return {
+        status: 200,
+        body: { ok: true, route: "metered", sequence: 2 },
+        chargedAmount: "50000",
+      };
+    },
+  );
   assert.equal(voucherResponse.status, 200);
   assert.equal(executions, 1);
   const voucherSettlement = decodeResponse(voucherResponse);
-  const voucherSettlementMetadata = requireSettlementMetadata(voucherSettlement);
+  const voucherSettlementMetadata =
+    requireSettlementMetadata(voucherSettlement);
   assert.equal(voucherSettlement.success, true);
   assert.equal(voucherSettlement.amount, "50000");
-  assert.equal(voucherSettlement.transaction, voucherSettlementMetadata.commitmentId);
+  assert.equal(
+    voucherSettlement.transaction,
+    voucherSettlementMetadata.commitmentId,
+  );
   assert.equal(voucherSettlementMetadata.chargedAmount, "50000");
-  assert.equal(voucherSettlementMetadata.channelState?.chargedCumulativeAmount, "100000");
+  assert.equal(
+    voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
+    "100000",
+  );
   check("batch voucher settlement", {
     commitmentId: voucherSettlementMetadata.commitmentId,
-    chargedCumulativeAmount: voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
+    chargedCumulativeAmount:
+      voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
   });
 
   let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(requestWithPayment(voucher.paymentPayload, { url, resource, scheme: "batch-settlement", amount: "50000", requestHash: secondHash }), async () => {
-    cachedExecutions += 1;
-    return {
-      status: 200,
-      body: { ok: false },
-      chargedAmount: "1",
-    };
-  });
+  const cached = await server.handlePaidRequest(
+    requestWithPayment(voucher.paymentPayload, {
+      url,
+      resource,
+      scheme: "batch-settlement",
+      amount: "50000",
+      requestHash: secondHash,
+    }),
+    async () => {
+      cachedExecutions += 1;
+      return {
+        status: 200,
+        body: { ok: false },
+        chargedAmount: "1",
+      };
+    },
+  );
   assert.equal(cached.status, 200);
   assert.equal(cachedExecutions, 0);
   check("batch payment identifier idempotency", {
@@ -379,14 +513,20 @@ async function runBatchProof() {
   assert.equal(staleReplay.status, 402);
   assert.equal(staleReplay.body.error, "invalid_payment_requirements");
   assert.equal(replayExecutions, 0);
-  const staleReplayRequired = decodePaymentRequiredHeader(staleReplay.headers[PAYMENT_REQUIRED_HEADER]);
+  const staleReplayRequired = decodePaymentRequiredHeader(
+    staleReplay.headers[PAYMENT_REQUIRED_HEADER],
+  );
   const staleReplayAccepted = staleReplayRequired.accepts[0];
   assert.equal(staleReplayAccepted.scheme, "batch-settlement");
-  assert.equal(staleReplayAccepted.extra.channelState.chargedCumulativeAmount, "100000");
+  assert.equal(
+    staleReplayAccepted.extra.channelState.chargedCumulativeAmount,
+    "100000",
+  );
   check("batch corrective stale-voucher handling", {
     status: staleReplay.status,
     error: staleReplay.body.error,
-    chargedCumulativeAmount: staleReplayAccepted.extra.channelState.chargedCumulativeAmount,
+    chargedCumulativeAmount:
+      staleReplayAccepted.extra.channelState.chargedCumulativeAmount,
   });
 
   const channels = await serverStore.listChannels();
@@ -441,6 +581,25 @@ function runTxV1Proof() {
     computeBudget: refund.compute.computeBudget,
   });
 
+  const exactProfiles = readJson(
+    "vectors/exact/consensus-profiles.json",
+  ).expected;
+  assert.equal(exactProfiles.standardNative.profile, "standard-native");
+  assert.equal(exactProfiles.additive.profile, "additive");
+  assert.equal(
+    exactProfiles.standardNative.transaction.outputs[0].amount,
+    exactProfiles.standardNative.amount,
+  );
+  assert.equal(
+    BigInt(exactProfiles.additive.transaction.outputs[0].amount) -
+      BigInt(exactProfiles.additive.transaction.inputs[0].utxo.amount),
+    BigInt(exactProfiles.additive.amount),
+  );
+  check("exact profile consensus vectors", {
+    standardNativeTransactionId: exactProfiles.standardNative.transactionId,
+    additiveTransactionId: exactProfiles.additive.transactionId,
+    merchantGainSompi: exactProfiles.additive.amount,
+  });
 
   return {
     fixtureChecks: fixtureReport.checks.length,
@@ -454,10 +613,17 @@ function runTxV1Proof() {
       refundOutputAmount: refund.fee.refundOutputAmount,
       computeBudget: refund.compute.computeBudget,
     },
+    exactProfiles: {
+      standardNativeTransactionId: exactProfiles.standardNative.transactionId,
+      additiveTransactionId: exactProfiles.additive.transactionId,
+    },
   };
 }
 
-function requestWithPayment(paymentPayload, { url, resource, scheme, amount, requestHash }) {
+function requestWithPayment(
+  paymentPayload,
+  { url, resource, scheme, amount, requestHash },
+) {
   return {
     method: "GET",
     url,

@@ -1,8 +1,9 @@
 # Demo Implementer Guide
 
-Status: alpha, testnet-only guide. The hosted gateway was redeployed and
-paid-canary proven from alpha.7 source on 2026-07-14. It is an integration
-target, not a production or mainnet service.
+Status: alpha, testnet-only guide for the alpha.8 source contract. The hosted
+gateway remains the paid-canary-proven alpha.7 deployment until an explicit
+post-merge alpha.8 cutover. It is an integration target, not a production or
+mainnet service.
 
 ## Start With The Artifacts
 
@@ -56,12 +57,14 @@ Hosted capability, subject to live availability:
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - `scheme: "batch-settlement"`;
-- `scheme: "exact"` only while hosted KIP-10 borrow inventory is available;
+- `scheme: "exact"` under the configured alpha.8 profile. `standard-native`
+  needs no merchant inventory; optional `additive` needs an available reusable
+  KIP-10 head;
 - accepted finality: `accepted`.
 
 No mainnet profile is advertised. If `exact` is absent from `/supported` or
-`/exact` returns `503 exact_unavailable`, the hosted exact inventory is empty or
-the operator has disabled exact settlement; use `batch-settlement` instead.
+`/exact` returns `503 exact_unavailable`, exact settlement is disabled or an
+additive deployment has no available head; use `batch-settlement` instead.
 
 The 2026-07-14 alpha.7 paid canary proved hosted exact, identical replay,
 cross-resource rejection, batch deposit/voucher reuse, stale-voucher rejection,
@@ -76,26 +79,35 @@ Request the protected resource:
 curl -i https://demo.kaspa-x402.org/exact
 ```
 
-Hosted result while exact settlement is disabled or inventory is unavailable:
+Hosted result while exact settlement is disabled or an additive head is
+unavailable:
 
 - HTTP `503`;
 - JSON body with `error: "exact_unavailable"`.
 
-Reservation-enabled expected result:
+Enabled expected result:
 
 - HTTP `402`;
 - `PAYMENT-REQUIRED` response header;
 - a JSON body with `error: "payment_required"`.
 
-Decode the `PAYMENT-REQUIRED` header and select the `exact` offer only when it
-contains buildable KIP-10 reservation terms in `PaymentRequired.extra`: borrow
-outpoint, amount, script public key, redeem script, additive threshold, expected
-payment output index, and reservation id. For the reference alpha, the
-reservation provider should use merchant-owned borrow UTXOs and an
-`additiveThresholdSompi` of at least `10000000` sompi. Build the signed
-SDK-safe JSON transaction artifact and retry with an `exact-transaction`
-payload. The hosted gateway submits that artifact through TN10 PNN/WSS and waits
-for accepted payment evidence before serving the response:
+Decode the `PAYMENT-REQUIRED` header and inspect `extra.profile`.
+`standard-native` is the default: build an ordinary native KAS transaction
+whose canonical payment output transfers exactly the advertised amount to
+`payTo`. For optional `additive`, the offer contains a complete reusable head
+challenge: head id/version, expected outpoint, amount, script public key,
+redeem script, covenant threshold, challenge id, and canonical output index
+zero. Spend that head and create the same-script successor at index zero with:
+
+```text
+successor amount = head amount + advertised exact amount
+```
+
+That successor increase is the entire merchant payment; do not create a second
+merchant payment output. Build the signed SDK-safe JSON transaction artifact
+and retry with an `exact-transaction` payload. The hosted gateway submits that
+artifact through TN10 PNN/WSS and waits for accepted payment evidence before
+serving the response:
 
 ```text
 PAYMENT-SIGNATURE: <base64 x402 PaymentPayload>
@@ -110,7 +122,7 @@ Successful retry result:
 
 Identical retries with the same request and payment evidence should return the
 cached HTTP `200`. Reusing the same exact transaction for a different resource
-must be rejected. If a gateway has no exact reservation provider, clients should
+must be rejected. If an additive gateway has no available head, clients should
 use `batch-settlement` or another server.
 
 The hosted gateway uses REST for read-side evidence and public TN10 PNN/WSS for

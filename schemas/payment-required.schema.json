@@ -71,7 +71,15 @@
     },
     "basePaymentRequirements": {
       "type": "object",
-      "required": ["scheme", "network", "amount", "asset", "payTo", "maxTimeoutSeconds", "extra"],
+      "required": [
+        "scheme",
+        "network",
+        "amount",
+        "asset",
+        "payTo",
+        "maxTimeoutSeconds",
+        "extra"
+      ],
       "properties": {
         "scheme": {
           "enum": ["exact", "batch-settlement"]
@@ -117,7 +125,7 @@
                   "required": ["binding"],
                   "properties": {
                     "binding": {
-                      "enum": ["kaspa-exact-v1", "kaspa-exact-v2"]
+                      "const": "kaspa-exact-v2"
                     }
                   }
                 }

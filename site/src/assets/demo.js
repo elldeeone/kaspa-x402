@@ -67,9 +67,13 @@ bind("demo-import-key", importKey);
 bind("demo-copy-address", () => copyText(ui.address.value, "Address copied."));
 bind("demo-load-utxos", loadUtxos);
 bind("demo-build-offer", buildOffer);
-bind("demo-copy-required", () => copyText(ui.paymentRequiredHeader.value, "PAYMENT-REQUIRED copied."));
+bind("demo-copy-required", () =>
+  copyText(ui.paymentRequiredHeader.value, "PAYMENT-REQUIRED copied."),
+);
 bind("demo-build-payment", buildPaymentRetry);
-bind("demo-copy-signature", () => copyText(ui.paymentSignatureHeader.value, "PAYMENT-SIGNATURE copied."));
+bind("demo-copy-signature", () =>
+  copyText(ui.paymentSignatureHeader.value, "PAYMENT-SIGNATURE copied."),
+);
 bind("demo-check-tx", checkTransactionStatus);
 bind("demo-broadcast-tx", broadcastTransaction);
 bind("demo-narrow-offer", inspectAccepts);
@@ -118,10 +122,18 @@ async function connectRpc() {
       continue;
     }
     setStatus(`Connecting to ${endpoint}...`);
-    const rpc = new RpcClient({ url: endpoint, networkId: NETWORK_ID, encoding: Encoding.Borsh });
+    const rpc = new RpcClient({
+      url: endpoint,
+      networkId: NETWORK_ID,
+      encoding: Encoding.Borsh,
+    });
     try {
       await withTimeout(
-        rpc.connect({ strategy: ConnectStrategy.Fallback, timeoutDuration: CONNECT_TIMEOUT_MS, url: endpoint }),
+        rpc.connect({
+          strategy: ConnectStrategy.Fallback,
+          timeoutDuration: CONNECT_TIMEOUT_MS,
+          url: endpoint,
+        }),
         `connect ${endpoint}`,
       );
       connected = { endpoint, rpc };
@@ -135,12 +147,20 @@ async function connectRpc() {
       }
     }
   }
-  if (!connected) throw new Error(`Could not connect to a testnet endpoint. ${errors.join(" | ")}`);
+  if (!connected)
+    throw new Error(
+      `Could not connect to a testnet endpoint. ${errors.join(" | ")}`,
+    );
   const { endpoint, rpc } = connected;
   state.rpc = rpc;
   state.rpcEndpoint = endpoint;
-  const [info, dag] = await Promise.all([rpc.getServerInfo(), rpc.getBlockDagInfo()]);
-  setStatus(`Connected to ${readField(info, "networkId", "network_id")} at DAA ${readField(dag, "virtualDaaScore", "virtual_daa_score")}.`);
+  const [info, dag] = await Promise.all([
+    rpc.getServerInfo(),
+    rpc.getBlockDagInfo(),
+  ]);
+  setStatus(
+    `Connected to ${readField(info, "networkId", "network_id")} at DAA ${readField(dag, "virtualDaaScore", "virtual_daa_score")}.`,
+  );
   writeJson(ui.rpcOutput, {
     endpoint,
     serverInfo: info,
@@ -163,11 +183,20 @@ function selectedEndpoints() {
   const manual = ui.endpoint.value.trim();
   if (!manual) return PUBLIC_WSS_ENDPOINTS;
   const parsed = new URL(manual);
-  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:") throw new Error("Endpoint override must use ws:// or wss://.");
+  if (parsed.protocol !== "ws:" && parsed.protocol !== "wss:")
+    throw new Error("Endpoint override must use ws:// or wss://.");
   if (PUBLIC_WSS_ENDPOINTS.includes(manual)) return [manual];
   const allowedCustomEndpoint = customEndpointFromQuery();
-  if (!isLocalPreview() || !customEndpointsEnabled() || !allowedCustomEndpoint || manual !== allowedCustomEndpoint || !isLocalEndpointHost(parsed.hostname)) {
-    throw new Error("Custom endpoints require a local preview with ?allow-custom-endpoints=1&endpoint=... and a matching local or private-network host.");
+  if (
+    !isLocalPreview() ||
+    !customEndpointsEnabled() ||
+    !allowedCustomEndpoint ||
+    manual !== allowedCustomEndpoint ||
+    !isLocalEndpointHost(parsed.hostname)
+  ) {
+    throw new Error(
+      "Custom endpoints require a local preview with ?allow-custom-endpoints=1&endpoint=... and a matching local or private-network host.",
+    );
   }
   return [manual];
 }
@@ -198,7 +227,8 @@ async function generateKey() {
 async function importKey() {
   await initializeSdk();
   const value = ui.privateKey.value.trim().toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(value)) throw new Error("Private key must be 64 hex characters.");
+  if (!/^[0-9a-f]{64}$/.test(value))
+    throw new Error("Private key must be 64 hex characters.");
   setKey(new PrivateKey(value));
   setStatus("Imported testnet key into browser memory.");
 }
@@ -233,7 +263,7 @@ function buildOffer() {
     asset: "KAS",
     payTo,
     maxTimeoutSeconds: timeout,
-    extra: profile === "exact" ? exactExtra() : batchExtra(),
+    extra: profile === "exact" ? exactExtra(payTo) : batchExtra(),
   };
   const paymentRequired = {
     x402Version: 2,
@@ -252,31 +282,39 @@ function buildOffer() {
   setStatus(`${profile} offer built.`);
 }
 
-function exactExtra() {
+function exactExtra(payTo) {
+  if (!state.privateKey || ui.address.value !== payTo) {
+    throw new Error(
+      "The browser demo builds standard-native offers for the generated or imported testnet key.",
+    );
+  }
+  const publicKey = state.privateKey.toPublicKey();
+  const xOnly = publicKey.toXOnlyPublicKey();
+  const payToScriptPublicKey = `000020${xOnly.toString()}ac`;
+  xOnly.free();
+  publicKey.free();
   return {
-    binding: "kaspa-exact-v1",
+    binding: "kaspa-exact-v2",
+    profile: "standard-native",
     finality: ui.finality.value,
-    templateId: "kaspa-x402-kip10-additive-v1",
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-    borrowOutpoint: {
-      txid: "11".repeat(32),
-      index: 0,
-    },
-    borrowAmount: canonicalAmount(ui.amount.value, "borrow amount"),
-    borrowScriptPublicKey: "0000" + "ab".repeat(34),
-    borrowRedeemScript: "51",
-    additiveThresholdSompi: "10000000",
-    paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
-    reservationId: "22".repeat(32),
-    reservationExpiresAt: "2099-01-01T00:00:00.000Z",
+    payToScriptPublicKey,
+    paymentOutputIndex: boundedInteger(
+      ui.outputIndex.value,
+      "payment output index",
+    ),
     assetKind: "native",
     assetDecimals: 8,
   };
 }
 
 function batchExtra() {
-  const serverPublicKey = requiredText(ui.serverPublicKey.value, "server public key").toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(serverPublicKey)) throw new Error("Server public key must be 64 hex characters.");
+  const serverPublicKey = requiredText(
+    ui.serverPublicKey.value,
+    "server public key",
+  ).toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(serverPublicKey))
+    throw new Error("Server public key must be 64 hex characters.");
   return {
     binding: "kaspa-escrow-v1",
     templateId: "kaspa-x402-escrow-v1",
@@ -294,11 +332,13 @@ function buildPaymentRetry() {
   if (accepted.scheme !== "exact") {
     throw new Error("The mock retry builder is only for exact offers.");
   }
-  const transactionId = normalizedTxId(requiredText(ui.transactionId.value, "transaction id"));
+  const transactionId = normalizedTxId(
+    requiredText(ui.transactionId.value, "transaction id"),
+  );
   const transactionArtifact =
     ui.transaction.value.trim() ||
     stableStringify({
-      demo: "kaspa-x402-kip10-exact",
+      demo: "kaspa-x402-standard-native-exact",
       transactionIdHint: transactionId,
     });
   const paymentPayload = {
@@ -306,9 +346,13 @@ function buildPaymentRetry() {
     accepted,
     payload: {
       type: "exact-transaction",
+      profile: accepted.extra.profile,
       transaction: transactionArtifact,
       transactionEncoding: accepted.extra.transactionEncoding,
-      paymentOutputIndex: boundedInteger(ui.outputIndex.value, "payment output index"),
+      paymentOutputIndex: boundedInteger(
+        ui.outputIndex.value,
+        "payment output index",
+      ),
       payerAddress: ui.address.value.trim() || undefined,
     },
   };
@@ -331,7 +375,9 @@ function buildPaymentRetry() {
 }
 
 async function checkTransactionStatus() {
-  const txid = normalizedTxId(requiredText(ui.transactionId.value, "transaction id"));
+  const txid = normalizedTxId(
+    requiredText(ui.transactionId.value, "transaction id"),
+  );
   const rpc = await ensureRpc();
   try {
     const entry = await rpc.getMempoolEntry({
@@ -342,7 +388,11 @@ async function checkTransactionStatus() {
     writeJson(ui.paymentOutput, { transactionId: txid, mempoolEntry: entry });
     setStatus("Transaction found in mempool.");
   } catch (error) {
-    writeJson(ui.paymentOutput, { transactionId: txid, status: "not in mempool (may already be accepted)", error: String(error?.message ?? error) });
+    writeJson(ui.paymentOutput, {
+      transactionId: txid,
+      status: "not in mempool (may already be accepted)",
+      error: String(error?.message ?? error),
+    });
     setStatus("Transaction is not in mempool; it may already be accepted.");
   }
 }
@@ -354,33 +404,57 @@ async function broadcastTransaction() {
   if (txHexOrJson.trim().startsWith("{")) {
     transaction = Transaction.deserializeFromSafeJSON(txHexOrJson);
   } else if (/^[0-9a-fA-F]+$/.test(txHexOrJson.trim())) {
-    throw new Error("Broadcast requires a safe JSON transaction object from the SDK. Exact x402 payloads use KIP-10 transaction artifacts, not raw transaction hex.");
+    throw new Error(
+      "Broadcast requires a safe JSON transaction object from the SDK. Exact x402 payloads use KIP-10 transaction artifacts, not raw transaction hex.",
+    );
   } else {
     throw new Error("Broadcast input must be a safe JSON transaction object.");
   }
-  const result = await rpc.submitTransaction({ transaction, allowOrphan: false });
+  const result = await rpc.submitTransaction({
+    transaction,
+    allowOrphan: false,
+  });
   writeJson(ui.paymentOutput, result);
   setStatus("Transaction submitted to the selected testnet endpoint.");
 }
 
 function inspectAccepts() {
-  const parsed = JSON.parse(requiredText(ui.narrowInput.value, "PaymentRequired JSON"));
-  if (parsed.x402Version !== 2 || !parsed.resource || !Array.isArray(parsed.accepts)) {
-    throw new Error("PaymentRequired must include x402Version 2, resource, and accepts.");
+  const parsed = JSON.parse(
+    requiredText(ui.narrowInput.value, "PaymentRequired JSON"),
+  );
+  if (
+    parsed.x402Version !== 2 ||
+    !parsed.resource ||
+    !Array.isArray(parsed.accepts)
+  ) {
+    throw new Error(
+      "PaymentRequired must include x402Version 2, resource, and accepts.",
+    );
   }
   const supported = [];
   const skipped = [];
   for (const entry of parsed.accepts) {
     if (isSupportedRequirement(entry)) supported.push(entry);
-    else skipped.push({ scheme: entry?.scheme, network: entry?.network, asset: entry?.asset, reason: skipReason(entry) });
+    else
+      skipped.push({
+        scheme: entry?.scheme,
+        network: entry?.network,
+        asset: entry?.asset,
+        reason: skipReason(entry),
+      });
   }
   writeJson(ui.narrowOutput, {
     supportedCount: supported.length,
     skippedCount: skipped.length,
-    narrowed: supported.length > 0 ? { ...parsed, accepts: supported } : undefined,
+    narrowed:
+      supported.length > 0 ? { ...parsed, accepts: supported } : undefined,
     skipped,
   });
-  setStatus(supported.length > 0 ? "Compatible Kaspa entries found." : "No compatible Kaspa entries found.");
+  setStatus(
+    supported.length > 0
+      ? "Compatible Kaspa entries found."
+      : "No compatible Kaspa entries found.",
+  );
 }
 
 function isSupportedRequirement(entry) {
@@ -397,34 +471,70 @@ function skipReason(entry) {
   if (!entry || typeof entry !== "object") return "not an object";
   if (entry.network !== NETWORK) return "unsupported network";
   if (entry.asset !== "KAS") return "unsupported asset";
-  if (entry.scheme !== "exact" && entry.scheme !== "batch-settlement") return "unsupported scheme";
+  if (entry.scheme !== "exact" && entry.scheme !== "batch-settlement")
+    return "unsupported scheme";
   if (!isAmount(entry.amount)) return "invalid amount";
   if (!isNonEmptyString(entry.payTo)) return "missing payTo";
   if (!isPositiveUint32(entry.maxTimeoutSeconds)) return "invalid timeout";
-  if (entry.scheme === "exact" && !isExactExtra(entry.extra)) return "invalid exact extra";
-  if (entry.scheme === "batch-settlement" && !isBatchExtra(entry.extra)) return "invalid batch extra";
+  if (entry.scheme === "exact" && !isExactExtra(entry.extra))
+    return "invalid exact extra";
+  if (entry.scheme === "batch-settlement" && !isBatchExtra(entry.extra))
+    return "invalid batch extra";
   return "unsupported binding";
 }
 
 function isExactExtra(extra) {
-  if (!extra || typeof extra !== "object" || extra.binding !== "kaspa-exact-v1") return false;
-  if (extra.finality !== undefined && !["mempool", "accepted", "confirmed"].includes(extra.finality)) return false;
-  if (extra.templateId !== "kaspa-x402-kip10-additive-v1") return false;
+  if (!extra || typeof extra !== "object" || extra.binding !== "kaspa-exact-v2")
+    return false;
+  if (!["standard-native", "additive"].includes(extra.profile)) return false;
+  if (
+    extra.finality !== undefined &&
+    !["accepted", "confirmed"].includes(extra.finality)
+  )
+    return false;
   if (extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0") return false;
-  if (!isOutpoint(extra.borrowOutpoint)) return false;
-  if (!isAmount(extra.borrowAmount)) return false;
-  if (!isSerializedScriptPublicKey(extra.borrowScriptPublicKey)) return false;
-  if (!isHexBytes(extra.borrowRedeemScript)) return false;
-  if (!isAmount(extra.additiveThresholdSompi)) return false;
-  if (!isUint32(extra.paymentOutputIndex)) return false;
-  if (!isHash32(extra.reservationId)) return false;
-  if (extra.assetKind !== undefined && extra.assetKind !== "native") return false;
-  if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8) return false;
+  if (!isSerializedScriptPublicKey(extra.payToScriptPublicKey)) return false;
+  if (
+    extra.paymentOutputIndex !== undefined &&
+    !isUint32(extra.paymentOutputIndex)
+  )
+    return false;
+  if (extra.assetKind !== undefined && extra.assetKind !== "native")
+    return false;
+  if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8)
+    return false;
+  if (extra.profile === "additive") {
+    if (extra.templateId !== "kaspa-x402-kip10-additive-v1") return false;
+    if (!isHash32(extra.headId) || !isAmount(extra.headVersion)) return false;
+    if (!isOutpoint(extra.expectedHeadOutpoint) || !isAmount(extra.headAmount))
+      return false;
+    if (
+      !isSerializedScriptPublicKey(extra.headScriptPublicKey) ||
+      extra.headScriptPublicKey !== extra.payToScriptPublicKey
+    )
+      return false;
+    if (
+      !isHexBytes(extra.headRedeemScript) ||
+      !isAmount(extra.additiveThresholdSompi)
+    )
+      return false;
+    if (
+      !isHash32(extra.challengeId) ||
+      !isNonEmptyString(extra.challengeExpiresAt)
+    )
+      return false;
+    if (extra.paymentOutputIndex !== 0) return false;
+  }
   return true;
 }
 
 function isOutpoint(value) {
-  return Boolean(value && typeof value === "object" && isHash32(value.txid) && isUint32(value.index));
+  return Boolean(
+    value &&
+    typeof value === "object" &&
+    isHash32(value.txid) &&
+    isUint32(value.index),
+  );
 }
 
 function isSerializedScriptPublicKey(value) {
@@ -443,10 +553,17 @@ function isBatchExtra(extra) {
   if (!extra || typeof extra !== "object") return false;
   if (extra.binding !== "kaspa-escrow-v1") return false;
   if (extra.templateId !== "kaspa-x402-escrow-v1") return false;
-  if (typeof extra.serverPublicKey !== "string" || !/^[0-9a-fA-F]{64}$/.test(extra.serverPublicKey)) return false;
-  if (!isAmount(extra.minDepositSompi) || !isAmount(extra.refundTimeoutDaa)) return false;
-  if (extra.assetKind !== undefined && extra.assetKind !== "native") return false;
-  if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8) return false;
+  if (
+    typeof extra.serverPublicKey !== "string" ||
+    !/^[0-9a-fA-F]{64}$/.test(extra.serverPublicKey)
+  )
+    return false;
+  if (!isAmount(extra.minDepositSompi) || !isAmount(extra.refundTimeoutDaa))
+    return false;
+  if (extra.assetKind !== undefined && extra.assetKind !== "native")
+    return false;
+  if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8)
+    return false;
   return true;
 }
 
@@ -519,9 +636,11 @@ function requiredText(value, label) {
 
 function boundedInteger(value, label) {
   const text = String(value).trim();
-  if (!/^(?:0|[1-9][0-9]*)$/.test(text)) throw new Error(`${label} must be an unsigned integer.`);
+  if (!/^(?:0|[1-9][0-9]*)$/.test(text))
+    throw new Error(`${label} must be an unsigned integer.`);
   const number = Number(text);
-  if (!Number.isSafeInteger(number) || number < 0 || number > 4294967295) throw new Error(`${label} is outside uint32 range.`);
+  if (!Number.isSafeInteger(number) || number < 0 || number > 4294967295)
+    throw new Error(`${label} is outside uint32 range.`);
   return number;
 }
 
@@ -545,19 +664,22 @@ function isNonEmptyString(value) {
 
 function canonicalAmount(value, label) {
   const text = String(value).trim();
-  if (!isAmount(text)) throw new Error(`${label} must be a canonical uint64 decimal string.`);
+  if (!isAmount(text))
+    throw new Error(`${label} must be a canonical uint64 decimal string.`);
   return text;
 }
 
 function isAmount(value) {
-  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value)) return false;
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value))
+    return false;
   return BigInt(value) <= UINT64_MAX;
 }
 
 function normalizedTxId(value) {
   if (!value) return "";
   const text = value.toLowerCase();
-  if (!/^[0-9a-f]{64}$/.test(text)) throw new Error("Transaction id must be 64 hex characters.");
+  if (!/^[0-9a-f]{64}$/.test(text))
+    throw new Error("Transaction id must be 64 hex characters.");
   return text;
 }
 
@@ -566,7 +688,11 @@ function withTimeout(promise, label) {
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timed out after ${CONNECT_TIMEOUT_MS}ms`)), CONNECT_TIMEOUT_MS);
+      timer = setTimeout(
+        () =>
+          reject(new Error(`${label} timed out after ${CONNECT_TIMEOUT_MS}ms`)),
+        CONNECT_TIMEOUT_MS,
+      );
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -605,11 +731,16 @@ async function resetDemo() {
 }
 
 function isLocalPreview() {
-  return ["localhost", "127.0.0.1", "::1", ""].includes(location.hostname) || /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(location.hostname);
+  return (
+    ["localhost", "127.0.0.1", "::1", ""].includes(location.hostname) ||
+    /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(location.hostname)
+  );
 }
 
 function customEndpointsEnabled() {
-  return new URLSearchParams(location.search).get("allow-custom-endpoints") === "1";
+  return (
+    new URLSearchParams(location.search).get("allow-custom-endpoints") === "1"
+  );
 }
 
 function customEndpointFromQuery() {
@@ -618,7 +749,10 @@ function customEndpointFromQuery() {
 
 function isLocalEndpointHost(hostname) {
   const clean = hostname.replace(/^\[|\]$/g, "");
-  return ["localhost", "127.0.0.1", "::1"].includes(clean) || /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(clean);
+  return (
+    ["localhost", "127.0.0.1", "::1"].includes(clean) ||
+    /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(clean)
+  );
 }
 
 function disposePrivateKey() {

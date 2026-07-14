@@ -15,27 +15,32 @@ import {
   type NetworkId,
   type PaymentPayload,
 } from "@kaspa-x402/core";
-import { deriveEscrowAddress, escrowScriptPublicKey, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import {
+  deriveEscrowAddress,
+  escrowScriptPublicKey,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
   MemoryServerChannelStore,
   type AddressCodec,
   type ChainUtxo,
   type DirectModeServerConfig,
-  type ExactBorrowReservation,
   type ServerChainProvider,
   type ServerChannelRecord,
   type SettlementFinality,
 } from "@kaspa-x402/server";
-import { DirectModeFacilitator, handleFacilitatorRequest } from "../src/index.js";
+import {
+  DirectModeFacilitator,
+  handleFacilitatorRequest,
+} from "../src/index.js";
 
 const SERVER_KEY = "11".repeat(32);
 const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
-const EXACT_RESERVATION_ID = "88".repeat(32);
-const EXACT_TRANSACTION_ARTIFACT = "{\"transaction\":\"signed-kip10-exact\"}";
+const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
@@ -44,13 +49,24 @@ describe("direct-mode facilitator", () => {
   it("returns supported x402 kinds without hardcoded signer identity", async () => {
     const { facilitator } = makeFacilitator();
 
-    const response = await handleFacilitatorRequest(facilitator, { method: "GET", path: "/supported" });
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "GET",
+      path: "/supported",
+    });
 
     expect(response.status).toBe(200);
     expect(response.body).toMatchObject({
       kinds: [
-        { x402Version: X402_VERSION, scheme: "exact", network: "kaspa:testnet-10" },
-        { x402Version: X402_VERSION, scheme: "batch-settlement", network: "kaspa:testnet-10" },
+        {
+          x402Version: X402_VERSION,
+          scheme: "exact",
+          network: "kaspa:testnet-10",
+        },
+        {
+          x402Version: X402_VERSION,
+          scheme: "batch-settlement",
+          network: "kaspa:testnet-10",
+        },
       ],
       extensions: [],
       signers: {},
@@ -70,7 +86,9 @@ describe("direct-mode facilitator", () => {
     });
     const facilitator = new DirectModeFacilitator({ server });
 
-    const batch = facilitator.supported().kinds.find((kind) => kind.scheme === "batch-settlement");
+    const batch = facilitator
+      .supported()
+      .kinds.find((kind) => kind.scheme === "batch-settlement");
 
     expect(batch?.extra?.modes).toEqual(["verify", "settle"]);
   });
@@ -80,14 +98,25 @@ describe("direct-mode facilitator", () => {
       exactTransactionVerifier: undefined,
     });
 
-    expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual(["batch-settlement"]);
+    expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual([
+      "batch-settlement",
+    ]);
   });
 
   it("rejects mainnet facilitator configs unless explicitly enabled", () => {
-    expect(() => makeFacilitator({ network: "kaspa:mainnet", allowMainnet: true })).toThrow("allowMainnet");
+    expect(() =>
+      makeFacilitator({ network: "kaspa:mainnet", allowMainnet: true }),
+    ).toThrow("allowMainnet");
 
-    const { facilitator } = makeFacilitator({ network: "kaspa:mainnet", allowMainnet: true }, { allowMainnet: true });
-    expect(facilitator.supported().kinds.every((kind) => kind.network === "kaspa:mainnet")).toBe(true);
+    const { facilitator } = makeFacilitator(
+      { network: "kaspa:mainnet", allowMainnet: true },
+      { allowMainnet: true },
+    );
+    expect(
+      facilitator
+        .supported()
+        .kinds.every((kind) => kind.network === "kaspa:mainnet"),
+    ).toBe(true);
   });
 
   it("verifies exact payments with the same payer and metadata as direct verification", async () => {
@@ -95,8 +124,19 @@ describe("direct-mode facilitator", () => {
     const paymentPayload = makeExactPayment(server);
     const paymentRequirements = paymentPayload.accepted;
 
-    const direct = await server.verifyPayment({ paymentPayload, paymentRequirements, resource: RESOURCE, requestHash: REQUEST_HASH });
-    const verify = await facilitator.verify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE, requestHash: REQUEST_HASH });
+    const direct = await server.verifyPayment({
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    });
+    const verify = await facilitator.verify({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    });
 
     expect(verify).toEqual({
       isValid: true,
@@ -105,10 +145,9 @@ describe("direct-mode facilitator", () => {
     });
   });
 
-  it("verifies and settles standard-native exact without reservation state", async () => {
+  it("verifies and settles standard-native exact without head state", async () => {
     const { facilitator, server, store } = makeFacilitator({
       exactProfile: "standard-native",
-      exactReservationProvider: undefined,
     });
     const paymentPayload = makeStandardExactPayment(server);
 
@@ -128,18 +167,34 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(verify).toMatchObject({ isValid: true, payer: "kaspatest:refund" });
-    expect(settlement).toMatchObject({ success: true, transaction: EXACT_TX_ID, amount: "100" });
-    expect(readKaspaSettlementExtension(settlement)?.exactProfile).toBe("standard-native");
-    await expect(store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+    expect(settlement).toMatchObject({
+      success: true,
+      transaction: EXACT_TX_ID,
+      amount: "100",
+    });
+    expect(readKaspaSettlementExtension(settlement)?.exactProfile).toBe(
+      "standard-native",
+    );
+    await expect(store.listExactHeads()).resolves.toEqual([]);
   });
 
   it("honors embedded request hashes for exact-transaction facilitator requests", async () => {
     const { facilitator, server, store } = makeFacilitator();
-    const paymentPayload = await makeExactTransactionPayment(server, store);
+    const paymentPayload = makeExactTransactionPayment(server);
     const paymentRequirements = paymentPayload.accepted;
 
-    const verify = await facilitator.verify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
-    const settlement = await facilitator.settle({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
+    const verify = await facilitator.verify({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+    });
+    const settlement = await facilitator.settle({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+    });
 
     expect(verify).toMatchObject({
       isValid: true,
@@ -157,9 +212,17 @@ describe("direct-mode facilitator", () => {
   it("returns invalid verify responses without mutating settlement state", async () => {
     const { facilitator } = makeFacilitator();
     const paymentPayload = makeExactPayment(makeFacilitator().server);
-    const paymentRequirements = { ...paymentPayload.accepted, amount: "101" } as ExactPaymentRequirements;
+    const paymentRequirements = {
+      ...paymentPayload.accepted,
+      amount: "101",
+    } as ExactPaymentRequirements;
 
-    const verify = await facilitator.verify({ x402Version: X402_VERSION, paymentPayload, paymentRequirements, resource: RESOURCE });
+    const verify = await facilitator.verify({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements,
+      resource: RESOURCE,
+    });
 
     expect(verify.isValid).toBe(false);
     expect(verify.invalidReason).toBe("invalid_payment_requirements");
@@ -190,7 +253,10 @@ describe("direct-mode facilitator", () => {
   it("settles batch deposit vouchers with actual charge below the signed ceiling", async () => {
     const { facilitator, server, chain } = makeFacilitator();
     const paymentPayload = makeDepositPayment(server, chain);
-    const paymentRequirements = { ...paymentPayload.accepted, amount: "70" } as BatchPaymentRequirements;
+    const paymentRequirements = {
+      ...paymentPayload.accepted,
+      amount: "70",
+    } as BatchPaymentRequirements;
 
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
@@ -215,10 +281,17 @@ describe("direct-mode facilitator", () => {
   it("rejects malformed facilitator requests at the HTTP adapter boundary", async () => {
     const { facilitator } = makeFacilitator();
 
-    const response = await handleFacilitatorRequest(facilitator, { method: "POST", path: "/verify", body: { x402Version: X402_VERSION } });
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/verify",
+      body: { x402Version: X402_VERSION },
+    });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_payload" });
+    expect(response.body).toEqual({
+      isValid: false,
+      invalidReason: "invalid_payload",
+    });
   });
 
   it("returns settlement failures for shallow but unusable settlement payloads", async () => {
@@ -257,7 +330,8 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-exact-v1",
+            binding: "kaspa-exact-v2",
+            profile: "standard-native",
             modes: ["verify"],
           },
         },
@@ -289,7 +363,8 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-exact-v1",
+            binding: "kaspa-exact-v2",
+            profile: "standard-native",
           },
         },
       ],
@@ -309,7 +384,10 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(facilitator.supported().kinds).toEqual([]);
-    expect(verification).toEqual({ isValid: false, invalidReason: "unsupported_scheme" });
+    expect(verification).toEqual({
+      isValid: false,
+      invalidReason: "unsupported_scheme",
+    });
     expect(settlement).toMatchObject({
       success: false,
       errorReason: "unsupported_scheme",
@@ -327,7 +405,8 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-exact-v1",
+            binding: "kaspa-exact-v2",
+            profile: "standard-native",
             modes: ["verify", "withdraw"],
           },
         },
@@ -349,7 +428,8 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-exact-v1",
+            binding: "kaspa-exact-v2",
+            profile: "standard-native",
             modes: ["verify", "settle"],
           },
         },
@@ -365,7 +445,9 @@ describe("direct-mode facilitator", () => {
       ],
     });
 
-    expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual(["batch-settlement"]);
+    expect(facilitator.supported().kinds.map((kind) => kind.scheme)).toEqual([
+      "batch-settlement",
+    ]);
   });
 
   it("does not advertise action modes on non-batch custom supported kinds", () => {
@@ -378,7 +460,8 @@ describe("direct-mode facilitator", () => {
           scheme: "exact",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-exact-v1",
+            binding: "kaspa-exact-v2",
+            profile: "standard-native",
             modes: ["verify", "claim", "refund"],
           },
         },
@@ -392,7 +475,9 @@ describe("direct-mode facilitator", () => {
 
   it("uses wrapped server metadata for custom supported kinds", () => {
     const { facilitator } = makeFacilitator();
-    const canonical = facilitator.supported().kinds.find((kind) => kind.scheme === "exact");
+    const canonical = facilitator
+      .supported()
+      .kinds.find((kind) => kind.scheme === "exact");
     const custom = new DirectModeFacilitator({
       server: makeFacilitator().server,
       supportedKinds: [
@@ -628,13 +713,17 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
+    expect(replay).toEqual({
+      isValid: false,
+      invalidReason: "invalid_transaction_state",
+    });
   });
 
   it("checks exact replay after deriving the exact-transaction id", async () => {
     const initial = makeFacilitator();
     const paymentPayload = makeExactPayment(initial.server);
-    if (paymentPayload.payload.type === "exact-transaction") delete paymentPayload.payload.requestHash;
+    if (paymentPayload.payload.type === "exact-transaction")
+      delete paymentPayload.payload.requestHash;
     const settlement = await initial.facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
@@ -667,7 +756,10 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(settlement.success).toBe(true);
-    expect(replay).toEqual({ isValid: false, invalidReason: "invalid_transaction_state" });
+    expect(replay).toEqual({
+      isValid: false,
+      invalidReason: "invalid_transaction_state",
+    });
     expect(verifier).toHaveBeenCalledTimes(1);
   });
 
@@ -687,7 +779,10 @@ describe("direct-mode facilitator", () => {
     });
 
     expect(response.status).toBe(400);
-    expect(response.body).toEqual({ isValid: false, invalidReason: "invalid_payload" });
+    expect(response.body).toEqual({
+      isValid: false,
+      invalidReason: "invalid_payload",
+    });
   });
 
   it("returns settlement failures for unsupported networks", async () => {
@@ -701,7 +796,11 @@ describe("direct-mode facilitator", () => {
     const response = await handleFacilitatorRequest(facilitator, {
       method: "POST",
       path: "/settle",
-      body: { x402Version: X402_VERSION, paymentPayload: { ...paymentPayload, accepted: paymentRequirements }, paymentRequirements },
+      body: {
+        x402Version: X402_VERSION,
+        paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
+        paymentRequirements,
+      },
     });
 
     expect(response.status).toBe(200);
@@ -724,7 +823,11 @@ describe("direct-mode facilitator", () => {
     const response = await handleFacilitatorRequest(facilitator, {
       method: "POST",
       path: "/settle",
-      body: { x402Version: X402_VERSION, paymentPayload: { ...paymentPayload, accepted: paymentRequirements }, paymentRequirements },
+      body: {
+        x402Version: X402_VERSION,
+        paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
+        paymentRequirements,
+      },
     });
 
     expect(response.status).toBe(200);
@@ -747,7 +850,11 @@ describe("direct-mode facilitator", () => {
     const response = await handleFacilitatorRequest(facilitator, {
       method: "POST",
       path: "/settle",
-      body: { x402Version: X402_VERSION, paymentPayload: { ...paymentPayload, accepted: paymentRequirements }, paymentRequirements },
+      body: {
+        x402Version: X402_VERSION,
+        paymentPayload: { ...paymentPayload, accepted: paymentRequirements },
+        paymentRequirements,
+      },
     });
 
     expect(response.status).toBe(200);
@@ -760,7 +867,10 @@ describe("direct-mode facilitator", () => {
   });
 });
 
-function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facilitatorOptions: { allowMainnet?: boolean } = {}) {
+function makeFacilitator(
+  overrides: Partial<DirectModeServerConfig> = {},
+  facilitatorOptions: { allowMainnet?: boolean } = {},
+) {
   const store = overrides.store ?? new MemoryServerChannelStore();
   const chain = new FakeChainProvider();
   const server = new DirectModeServer({
@@ -792,73 +902,35 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
         };
       },
     },
-    exactProfile: "additive",
-    exactReservationProvider: {
-      reserveExactPayment(request) {
-        return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
-      },
-    },
+    exactProfile: "standard-native",
     ...overrides,
   });
-  (server as unknown as { __testChain?: FakeChainProvider }).__testChain = chain;
-  if (!overrides.store && overrides.exactProfile !== "standard-native") {
-    void store.saveExactReservation({
-      ...exactReservation(),
-      status: "reserved",
-      reservedAt: "2026-07-07T00:00:00.000Z",
-    });
-  }
+  (server as unknown as { __testChain?: FakeChainProvider }).__testChain =
+    chain;
   return {
     server,
-    facilitator: new DirectModeFacilitator({ server, allowMainnet: facilitatorOptions.allowMainnet }),
+    facilitator: new DirectModeFacilitator({
+      server,
+      allowMainnet: facilitatorOptions.allowMainnet,
+    }),
     chain,
     store,
   };
 }
 
-async function makeExactTransactionPayment(server: DirectModeServer, store: MemoryServerChannelStore): Promise<PaymentPayload> {
-  const reservation = exactReservation();
-  await store.saveExactReservation({
-    ...reservation,
-    status: "reserved",
-    reservedAt: "2026-07-07T00:00:00.000Z",
-  });
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", exactReservation: reservation });
-  const accepted = required.accepts[0] as ExactPaymentRequirements;
-  return {
-    x402Version: X402_VERSION,
-    accepted,
-    payload: {
-      type: "exact-transaction",
-      payerAddress: "kaspatest:refund",
-      transaction: EXACT_TRANSACTION_ARTIFACT,
-      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      paymentOutputIndex: reservation.paymentOutputIndex,
-      requestHash: REQUEST_HASH,
-    },
-  };
+function makeExactTransactionPayment(server: DirectModeServer): PaymentPayload {
+  return makeStandardExactPayment(server);
 }
 
 function makeExactPayment(server: DirectModeServer): PaymentPayload {
-  const reservation = exactReservation();
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", exactReservation: reservation });
-  const accepted = required.accepts[0] as ExactPaymentRequirements;
-  return {
-    x402Version: X402_VERSION,
-    accepted,
-    payload: {
-      type: "exact-transaction",
-      payerAddress: "kaspatest:refund",
-      transaction: EXACT_TRANSACTION_ARTIFACT,
-      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      paymentOutputIndex: reservation.paymentOutputIndex,
-      requestHash: REQUEST_HASH,
-    },
-  };
+  return makeStandardExactPayment(server);
 }
 
 function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
+  const required = server.buildPaymentRequired({
+    resource: RESOURCE,
+    scheme: "exact",
+  });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
   return {
     x402Version: X402_VERSION,
@@ -875,24 +947,14 @@ function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
   };
 }
 
-function exactReservation(overrides: Partial<ExactBorrowReservation> = {}): ExactBorrowReservation {
-  return {
-    reservationId: EXACT_RESERVATION_ID,
-    templateId: "kaspa-x402-kip10-additive-v1",
-    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-    borrowOutpoint: { txid: FUNDING_TX, index: 2 },
-    borrowAmount: "1000",
-    borrowScriptPublicKey: new FakeAddressCodec().scriptPublicKeyForAddress("kaspatest:payout", "kaspa:testnet-10"),
-    borrowRedeemScript: "51",
-    additiveThresholdSompi: "10000000",
-    paymentOutputIndex: 0,
-    expiresAt: "2099-01-01T00:00:00.000Z",
-    ...overrides,
-  };
-}
-
-function makeDepositPayment(server: DirectModeServer, chain: FakeChainProvider): PaymentPayload {
-  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "batch-settlement" });
+function makeDepositPayment(
+  server: DirectModeServer,
+  chain: FakeChainProvider,
+): PaymentPayload {
+  const required = server.buildPaymentRequired({
+    resource: RESOURCE,
+    scheme: "batch-settlement",
+  });
   const accepted = required.accepts[0] as BatchPaymentRequirements;
   const channelConfig: ChannelConfig = {
     network: accepted.network,
@@ -934,10 +996,27 @@ function makeDepositPayment(server: DirectModeServer, chain: FakeChainProvider):
   };
 }
 
-function deriveEscrow(channelConfig: ChannelConfig): { escrowAddress: string; activeScriptPublicKey: string } {
+function deriveEscrow(channelConfig: ChannelConfig): {
+  escrowAddress: string;
+  activeScriptPublicKey: string;
+} {
   const addressCodec = new FakeAddressCodec();
-  const payoutScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress(channelConfig.payTo, channelConfig.network)));
-  const refundScriptPublicKeyHash = sha256Hex(hexBytes(addressCodec.scriptPublicKeyForAddress(channelConfig.refundAddress, channelConfig.network)));
+  const payoutScriptPublicKeyHash = sha256Hex(
+    hexBytes(
+      addressCodec.scriptPublicKeyForAddress(
+        channelConfig.payTo,
+        channelConfig.network,
+      ),
+    ),
+  );
+  const refundScriptPublicKeyHash = sha256Hex(
+    hexBytes(
+      addressCodec.scriptPublicKeyForAddress(
+        channelConfig.refundAddress,
+        channelConfig.network,
+      ),
+    ),
+  );
   const params = {
     clientPublicKey: channelConfig.clientPublicKey,
     serverPublicKey: channelConfig.serverPublicKey,
@@ -948,12 +1027,19 @@ function deriveEscrow(channelConfig: ChannelConfig): { escrowAddress: string; ac
   };
   const script = escrowScriptPublicKey(params);
   return {
-    escrowAddress: deriveEscrowAddress(params, (input) => addressCodec.encodeScriptAddress(input)),
+    escrowAddress: deriveEscrowAddress(params, (input) =>
+      addressCodec.encodeScriptAddress(input),
+    ),
     activeScriptPublicKey: serializedScriptPublicKey(script),
   };
 }
 
-function signVoucher(input: { network: NetworkId; activeScriptPublicKey: string; outpoint: FundingOutpoint; amount: string }) {
+function signVoucher(input: {
+  network: NetworkId;
+  activeScriptPublicKey: string;
+  outpoint: FundingOutpoint;
+  amount: string;
+}) {
   const digest = voucherDigest(input);
   return {
     amount: input.amount,
@@ -991,7 +1077,9 @@ class FakeChainProvider implements ServerChainProvider {
     return "10";
   }
 
-  async sendTransaction(_transaction: string): Promise<{ transactionId: Hash32Hex; finality: SettlementFinality }> {
+  async sendTransaction(
+    _transaction: string,
+  ): Promise<{ transactionId: Hash32Hex; finality: SettlementFinality }> {
     return { transactionId: EXACT_TX_ID, finality: "accepted" };
   }
 }

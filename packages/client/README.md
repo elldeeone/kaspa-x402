@@ -9,7 +9,9 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
 
 - parses x402 v2 `PAYMENT-REQUIRED` headers;
 - selects supported `exact` and `batch-settlement` Kaspa offers;
-- creates reservation-backed `exact-transaction` retries through an injected funding adapter;
+- creates `kaspa-exact-v2` transaction retries through an injected funding
+  adapter, using default `standard-native` or an advertised reusable
+  KIP-10 `additive` head;
 - opens deposit-voucher channels through an injected funding provider;
 - reuses channels with outpoint-bound cumulative vouchers;
 - verifies `PAYMENT-RESPONSE` transaction, amount, output index, finality, and channel state before advancing local charged amounts;

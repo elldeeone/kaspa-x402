@@ -68,7 +68,6 @@ import {
   type DirectPaymentVerificationOptions,
   type DirectModeServerConfig,
   type ExactPaymentRecord,
-  type ExactBorrowReservation,
   type ExactHeadChallenge,
   type ExactHeadRecord,
   type ExactSettlementAttemptRecord,
@@ -91,16 +90,16 @@ import {
 type ResolvedServerConfig = DirectModeServerConfig &
   Required<
     Pick<
-	      DirectModeServerConfig,
-	      | "asset"
-	      | "templateId"
-	      | "maxTimeoutSeconds"
-	      | "acceptedFinality"
-	      | "exactProfile"
-	      | "minimumExactAdditiveThresholdSompi"
-	      | "minimumRefundLeadDaa"
-	      | "allowRollingRefundTimeoutDaa"
-	      | "lockManager"
+      DirectModeServerConfig,
+      | "asset"
+      | "templateId"
+      | "maxTimeoutSeconds"
+      | "acceptedFinality"
+      | "exactProfile"
+      | "minimumExactAdditiveThresholdSompi"
+      | "minimumRefundLeadDaa"
+      | "allowRollingRefundTimeoutDaa"
+      | "lockManager"
     >
   >;
 
@@ -115,44 +114,52 @@ type PendingExactSettlement = {
   payment: Omit<ExactPaymentRecord, "response">;
 };
 
-type VerifiedExactReservation = ExactBorrowReservation & {
-  consumedTransactionId?: Hash32Hex;
-};
-
 export class DirectModeServer {
   readonly #config: ResolvedServerConfig;
 
   constructor(config: DirectModeServerConfig) {
-	    this.#config = {
-	      asset: "KAS",
-	      templateId: "kaspa-x402-escrow-v1",
-	      maxTimeoutSeconds: 60,
-	      acceptedFinality: "accepted",
-	      exactProfile: "standard-native",
-	      minimumExactAdditiveThresholdSompi: "10000000",
-	      minimumRefundLeadDaa: "1000",
-	      allowRollingRefundTimeoutDaa: false,
-	      lockManager: new MemoryChannelLockManager(),
+    this.#config = {
+      asset: "KAS",
+      templateId: "kaspa-x402-escrow-v1",
+      maxTimeoutSeconds: 60,
+      acceptedFinality: "accepted",
+      exactProfile: "standard-native",
+      minimumExactAdditiveThresholdSompi: "10000000",
+      minimumRefundLeadDaa: "1000",
+      allowRollingRefundTimeoutDaa: false,
+      lockManager: new MemoryChannelLockManager(),
       ...config,
-	    };
-	    assertMainnetAllowed(this.#config.network, this.#config.allowMainnet, "DirectModeServer");
-	    assertRefundPolicyConfig(this.#config);
-	  }
+    };
+    assertMainnetAllowed(
+      this.#config.network,
+      this.#config.allowMainnet,
+      "DirectModeServer",
+    );
+    assertRefundPolicyConfig(this.#config);
+  }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
     return makePaymentRequired(this.#config, options);
   }
 
-  paymentRequiredResponse(options: BuildPaymentRequiredOptions, status = 402): ServerResponse {
+  paymentRequiredResponse(
+    options: BuildPaymentRequiredOptions,
+    status = 402,
+  ): ServerResponse {
     return {
       status,
       headers: {
-        [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(this.buildPaymentRequired(options)),
+        [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(
+          this.buildPaymentRequired(options),
+        ),
       },
     };
   }
 
-  async #paymentRequiredResponse(options: BuildPaymentRequiredOptions, status = 402): Promise<ServerResponse> {
+  async #paymentRequiredResponse(
+    options: BuildPaymentRequiredOptions,
+    status = 402,
+  ): Promise<ServerResponse> {
     let paymentRequired: PaymentRequired;
     try {
       paymentRequired = await this.#buildRuntimePaymentRequired(options);
@@ -161,7 +168,10 @@ export class DirectModeServer {
         status: 503,
         headers: {},
         body: {
-          error: error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "gateway_error",
+          error:
+            error instanceof KaspaX402Error
+              ? toX402ErrorReason(error.code)
+              : "gateway_error",
         },
       };
     }
@@ -173,14 +183,20 @@ export class DirectModeServer {
     };
   }
 
-  async #buildRuntimePaymentRequired(options: BuildPaymentRequiredOptions): Promise<PaymentRequired> {
+  async #buildRuntimePaymentRequired(
+    options: BuildPaymentRequiredOptions,
+  ): Promise<PaymentRequired> {
     if (
       this.#config.exactProfile === "additive" &&
       paymentRequirementSchemes(options).includes("exact") &&
       !options.exactHead
     ) {
       const amount = options.amount ?? this.#config.amount;
-      const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(this.#config.payTo, this.#config.network);
+      const payToScriptPublicKey =
+        this.#config.addressCodec.scriptPublicKeyForAddress(
+          this.#config.payTo,
+          this.#config.network,
+        );
       const selectionKey = sha256Hex(
         stableStringify({
           scope: "kaspa:x402:additive-head-selection:v1",
@@ -195,11 +211,20 @@ export class DirectModeServer {
         amount,
         payTo: this.#config.payTo,
         payToScriptPublicKey,
-        minimumAdditiveThresholdSompi: this.#config.minimumExactAdditiveThresholdSompi,
+        minimumAdditiveThresholdSompi:
+          this.#config.minimumExactAdditiveThresholdSompi,
         selectionKey,
       });
-      if (!head) throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact head is unavailable");
-      const exactHead = makeExactHeadChallenge(head, amount, this.#config.maxTimeoutSeconds);
+      if (!head)
+        throw new KaspaX402Error(
+          "invalid_kaspa_x402_payload",
+          "additive exact head is unavailable",
+        );
+      const exactHead = makeExactHeadChallenge(
+        head,
+        amount,
+        this.#config.maxTimeoutSeconds,
+      );
       return makePaymentRequired(this.#config, { ...options, exactHead });
     }
     if (paymentRequirementSchemes(options).includes("batch-settlement")) {
@@ -233,29 +258,46 @@ export class DirectModeServer {
         },
       });
     }
-    kinds.push(
-      {
-        x402Version: X402_VERSION,
-        scheme: "batch-settlement",
-        network: this.#config.network,
-        extra: {
-          asset: this.#config.asset,
-          binding: "kaspa-escrow-v1",
-          templateId: this.#config.templateId,
-          modes: this.#config.claimBuilder ? ["verify", "settle", "claim"] : ["verify", "settle"],
-        },
+    kinds.push({
+      x402Version: X402_VERSION,
+      scheme: "batch-settlement",
+      network: this.#config.network,
+      extra: {
+        asset: this.#config.asset,
+        binding: "kaspa-escrow-v1",
+        templateId: this.#config.templateId,
+        modes: this.#config.claimBuilder
+          ? ["verify", "settle", "claim"]
+          : ["verify", "settle"],
       },
-    );
+    });
     return kinds;
   }
 
-  async verifyPayment(options: DirectPaymentVerificationOptions): Promise<DirectPaymentVerification> {
+  async verifyPayment(
+    options: DirectPaymentVerificationOptions,
+  ): Promise<DirectPaymentVerification> {
     const resource = options.resource ?? facilitatorResource();
     const paymentPayload = validatedPaymentPayload(options.paymentPayload);
-    const paymentRequired = validatedPaymentRequired(this.#facilitatorPaymentRequired(resource, options.paymentRequirements));
-    const requestFingerprint = facilitatorRequestFingerprint({ ...options, paymentPayload, paymentRequirements: paymentRequired.accepts[0], resource });
-    const payment = await this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
-    await this.#assertVerifyNotReplayed(payment, requestFingerprint, paymentPayload);
+    const paymentRequired = validatedPaymentRequired(
+      this.#facilitatorPaymentRequired(resource, options.paymentRequirements),
+    );
+    const requestFingerprint = facilitatorRequestFingerprint({
+      ...options,
+      paymentPayload,
+      paymentRequirements: paymentRequired.accepts[0],
+      resource,
+    });
+    const payment = await this.#verifyPaymentAgainstRequired(
+      paymentRequired,
+      paymentPayload,
+      requestFingerprint,
+    );
+    await this.#assertVerifyNotReplayed(
+      payment,
+      requestFingerprint,
+      paymentPayload,
+    );
     return {
       payment,
       requestFingerprint,
@@ -263,12 +305,19 @@ export class DirectModeServer {
     };
   }
 
-  async settlePayment(options: DirectPaymentSettlementOptions): Promise<SettlementResponse> {
+  async settlePayment(
+    options: DirectPaymentSettlementOptions,
+  ): Promise<SettlementResponse> {
     const paymentPayload = validatedPaymentPayload(options.paymentPayload);
     const resource = options.resource ?? facilitatorResource();
-    const settlementPaymentRequired = validatedPaymentRequired(this.#facilitatorPaymentRequired(resource, options.paymentRequirements));
+    const settlementPaymentRequired = validatedPaymentRequired(
+      this.#facilitatorPaymentRequired(resource, options.paymentRequirements),
+    );
     const settlementRequirements = settlementPaymentRequired.accepts[0];
-    assertSettlementRequirements(paymentPayload.accepted, settlementRequirements);
+    assertSettlementRequirements(
+      paymentPayload.accepted,
+      settlementRequirements,
+    );
     const requestFingerprint = facilitatorRequestFingerprint({
       ...options,
       paymentPayload,
@@ -285,7 +334,8 @@ export class DirectModeServer {
         paymentScheme: paymentPayload.accepted.scheme,
         requestHash: requestFingerprint,
         headers: {
-          [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),
+          [PAYMENT_SIGNATURE_HEADER]:
+            encodePaymentSignatureHeader(paymentPayload),
         },
       },
       async () => ({
@@ -296,168 +346,313 @@ export class DirectModeServer {
     return settlementFromServerResponse(response, this.#config.network);
   }
 
-  async handlePaidRequest(request: PaidRequest, handler: ProtectedHandler): Promise<ServerResponse> {
+  async handlePaidRequest(
+    request: PaidRequest,
+    handler: ProtectedHandler,
+  ): Promise<ServerResponse> {
     const resource = request.resource ?? { url: request.url };
     const paymentAmount = request.paymentAmount;
     const requiredOptions = paymentRequirementRouteOptions(request);
     const requestedScheme = verificationRequestedScheme(request);
     const paymentHeader = readHeader(request.headers, PAYMENT_SIGNATURE_HEADER);
     if (!paymentHeader) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
+      return this.#paymentRequiredResponse({
+        resource,
+        amount: paymentAmount,
+        ...requiredOptions,
+      });
     }
 
     let paymentPayload: PaymentPayload;
     try {
       paymentPayload = await this.extractPayment(paymentHeader);
     } catch {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
+      return this.#paymentRequiredResponse({
+        resource,
+        amount: paymentAmount,
+        ...requiredOptions,
+      });
     }
     if (!isPaymentSchemeAllowed(request, paymentPayload.accepted.scheme)) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
+      return this.#paymentRequiredResponse({
+        resource,
+        amount: paymentAmount,
+        ...requiredOptions,
+      });
     }
 
     const paymentLockKey = safePaymentLockKey(paymentPayload);
     if (!paymentLockKey) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
+      return this.#paymentRequiredResponse({
+        resource,
+        amount: paymentAmount,
+        ...requiredOptions,
+      });
     }
     const paymentIdentifier = readPaymentIdentifier(paymentPayload);
     if (this.#config.requirePaymentIdentifier && !paymentIdentifier) {
-      return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
+      return this.#paymentRequiredResponse({
+        resource,
+        amount: paymentAmount,
+        ...requiredOptions,
+      });
     }
 
-    const lockManager = this.#config.lockManager ?? new MemoryChannelLockManager();
+    const lockManager =
+      this.#config.lockManager ?? new MemoryChannelLockManager();
     const run = async () =>
       lockManager.runExclusive(paymentLockKey, async () => {
-      let fingerprint: Hash32Hex;
-      try {
-        fingerprint = request.requestHash ?? fingerprintRequest(request, paymentPayload.accepted);
-      } catch {
-        return this.#paymentRequiredResponse({ resource, amount: paymentAmount, ...requiredOptions });
-      }
-      const cached = await this.#checkIdempotency(paymentIdentifier, fingerprint, safePaymentScopeIdHint(paymentPayload), paymentPayload);
-      if (cached) return cached;
-      const batchReplay = await this.#checkBatchReplay(paymentPayload, fingerprint);
-      if (batchReplay) return batchReplay;
+        let fingerprint: Hash32Hex;
+        try {
+          fingerprint =
+            request.requestHash ??
+            fingerprintRequest(request, paymentPayload.accepted);
+        } catch {
+          return this.#paymentRequiredResponse({
+            resource,
+            amount: paymentAmount,
+            ...requiredOptions,
+          });
+        }
+        const cached = await this.#checkIdempotency(
+          paymentIdentifier,
+          fingerprint,
+          safePaymentScopeIdHint(paymentPayload),
+          paymentPayload,
+        );
+        if (cached) return cached;
+        const batchReplay = await this.#checkBatchReplay(
+          paymentPayload,
+          fingerprint,
+        );
+        if (batchReplay) return batchReplay;
 
-      let verified: VerifiedPayment;
-      try {
-        verified = await this.#verifyPayment(paymentPayload, resource, fingerprint, paymentAmount, requestedScheme);
-      } catch (error) {
-        return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, requestedScheme);
-      }
-      const runVerified = async () => {
-        if (verified.scheme === "exact") {
-          const replay = await this.#checkExactReplay(verified, fingerprint);
-          if (replay) return replay;
+        let verified: VerifiedPayment;
+        try {
+          verified = await this.#verifyPayment(
+            paymentPayload,
+            resource,
+            fingerprint,
+            paymentAmount,
+            requestedScheme,
+          );
+        } catch (error) {
+          return this.#correctiveResponse(
+            resource,
+            paymentPayload,
+            error,
+            paymentAmount,
+            requestedScheme,
+          );
+        }
+        const runVerified = async () => {
+          if (verified.scheme === "exact") {
+            const replay = await this.#checkExactReplay(verified, fingerprint);
+            if (replay) return replay;
+            try {
+              const claim = await this.#claimExactSettlement(
+                verified,
+                fingerprint,
+              );
+              verified = await this.#settleExactIfNeeded(verified, claim);
+              const handlerStarted = await this.#config.store.beginExactHandler(
+                verified.transactionId,
+                new Date().toISOString(),
+              );
+              if (!handlerStarted) {
+                return {
+                  status: 503,
+                  headers: {},
+                  body: { error: "exact_settlement_recovery_required" },
+                };
+              }
+            } catch (error) {
+              return this.#settlementCorrectiveResponse(
+                resource,
+                verified,
+                error,
+                paymentAmount,
+                requestedScheme,
+              );
+            }
+          }
+          let handlerResult: ProtectedHandlerResult;
           try {
-            const claim = await this.#claimExactSettlement(verified, fingerprint);
-            verified = await this.#settleExactIfNeeded(verified, claim);
-            const handlerStarted = await this.#config.store.beginExactHandler(verified.transactionId, new Date().toISOString());
-            if (!handlerStarted) {
-              return {
-                status: 503,
-                headers: {},
-                body: { error: "exact_settlement_recovery_required" },
-              };
+            handlerResult = await handler({
+              request,
+              payment: verified,
+              requestFingerprint: fingerprint,
+              paymentIdentifier,
+            });
+          } catch {
+            await this.#preserveLiveDepositTransition(verified);
+            return {
+              status: 500,
+              headers: {},
+            };
+          }
+
+          let chargedAmount: SompiString;
+          try {
+            chargedAmount =
+              handlerResult.chargedAmount ?? verified.accepted.amount;
+            if (
+              parseSompiString(chargedAmount) >
+              parseSompiString(verified.accepted.amount)
+            ) {
+              throw new KaspaX402Error(
+                "invalid_kaspa_settlement_response",
+                "handler charge exceeds accepted amount",
+              );
+            }
+            if (
+              verified.scheme === "exact" &&
+              chargedAmount !== verified.accepted.amount
+            ) {
+              throw new KaspaX402Error(
+                "invalid_kaspa_settlement_response",
+                "exact settlement amount must equal the accepted amount",
+              );
             }
           } catch (error) {
-            return this.#settlementCorrectiveResponse(resource, verified, error, paymentAmount, requestedScheme);
+            await this.#preserveLiveDepositTransition(verified);
+            return this.#correctiveResponse(
+              resource,
+              paymentPayload,
+              error,
+              paymentAmount,
+              requestedScheme,
+            );
           }
-        }
-        let handlerResult: ProtectedHandlerResult;
-        try {
-          handlerResult = await handler({
-            request,
-            payment: verified,
-            requestFingerprint: fingerprint,
+
+          if (verified.scheme === "exact") {
+            return this.#commitExactResponse(
+              verified,
+              handlerResult,
+              chargedAmount,
+              fingerprint,
+              paymentIdentifier,
+            );
+          }
+          return this.#commitBatchResponse(
+            verified,
+            handlerResult,
+            chargedAmount,
+            fingerprint,
             paymentIdentifier,
-          });
-        } catch {
-          await this.#preserveLiveDepositTransition(verified);
-          return {
-            status: 500,
-            headers: {},
-          };
-        }
+          );
+        };
 
-        let chargedAmount: SompiString;
-        try {
-          chargedAmount = handlerResult.chargedAmount ?? verified.accepted.amount;
-          if (parseSompiString(chargedAmount) > parseSompiString(verified.accepted.amount)) {
-            throw new KaspaX402Error("invalid_kaspa_settlement_response", "handler charge exceeds accepted amount");
-          }
-          if (verified.scheme === "exact" && chargedAmount !== verified.accepted.amount) {
-            throw new KaspaX402Error("invalid_kaspa_settlement_response", "exact settlement amount must equal the accepted amount");
-          }
-        } catch (error) {
-          await this.#preserveLiveDepositTransition(verified);
-          return this.#correctiveResponse(resource, paymentPayload, error, paymentAmount, requestedScheme);
-        }
+        if (verified.scheme !== "exact") return runVerified();
+        const verifiedLockKey = exactPaymentScopeId(verified.transactionId);
+        return verifiedLockKey === paymentLockKey
+          ? runVerified()
+          : lockManager.runExclusive(verifiedLockKey, runVerified);
+      });
 
-        if (verified.scheme === "exact") {
-          return this.#commitExactResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
-        }
-        return this.#commitBatchResponse(verified, handlerResult, chargedAmount, fingerprint, paymentIdentifier);
-      };
-
-      if (verified.scheme !== "exact") return runVerified();
-      const verifiedLockKey = exactPaymentScopeId(verified.transactionId);
-      return verifiedLockKey === paymentLockKey ? runVerified() : lockManager.runExclusive(verifiedLockKey, runVerified);
-    });
-
-    return paymentIdentifier ? lockManager.runExclusive(idempotencyLockKey(paymentIdentifier), run) : run();
+    return paymentIdentifier
+      ? lockManager.runExclusive(idempotencyLockKey(paymentIdentifier), run)
+      : run();
   }
 
-  async reconcileExactSettlement(transactionId: Hash32Hex): Promise<ExactSettlementAttemptRecord | undefined> {
-    const attempt = await this.#config.store.loadExactSettlementAttempt(transactionId);
-    if (!attempt) throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement attempt was not found");
-    if (attempt.status === "accepted" || attempt.status === "applied") return attempt;
+  async reconcileExactSettlement(
+    transactionId: Hash32Hex,
+  ): Promise<ExactSettlementAttemptRecord | undefined> {
+    const attempt =
+      await this.#config.store.loadExactSettlementAttempt(transactionId);
+    if (!attempt)
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact settlement attempt was not found",
+      );
+    if (attempt.status === "accepted" || attempt.status === "applied")
+      return attempt;
     if (!this.#config.exactSettlementReconciler) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact settlement reconciler is required");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact settlement reconciler is required",
+      );
     }
-    const result = await this.#config.exactSettlementReconciler.reconcileExactSettlement(attempt);
-    if (result.transactionId.toLowerCase() !== attempt.transactionId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reconciliation transaction id does not match the stored attempt");
+    const result =
+      await this.#config.exactSettlementReconciler.reconcileExactSettlement(
+        attempt,
+      );
+    if (
+      result.transactionId.toLowerCase() !== attempt.transactionId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact reconciliation transaction id does not match the stored attempt",
+      );
     }
     if (result.status === "unknown") return attempt;
     if (result.status === "rejected") {
-      await this.#config.store.abandonExactSettlement(attempt.transactionId, result.reason, new Date().toISOString());
+      await this.#config.store.abandonExactSettlement(
+        attempt.transactionId,
+        result.reason,
+        new Date().toISOString(),
+      );
       return undefined;
     }
     if (
       result.paymentOutput.amount !== attempt.amount ||
-      result.paymentOutput.scriptPublicKey.toLowerCase() !== attempt.payToScriptPublicKey.toLowerCase()
+      result.paymentOutput.scriptPublicKey.toLowerCase() !==
+        attempt.payToScriptPublicKey.toLowerCase()
     ) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reconciliation payment output does not match the stored attempt");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact reconciliation payment output does not match the stored attempt",
+      );
     }
     if (attempt.head) {
       if (
         !result.continuation ||
-        !sameOutpoint(result.continuation.outpoint, attempt.head.successor.outpoint) ||
+        !sameOutpoint(
+          result.continuation.outpoint,
+          attempt.head.successor.outpoint,
+        ) ||
         result.continuation.amount !== attempt.head.successor.amount ||
-        result.continuation.scriptPublicKey.toLowerCase() !== attempt.head.successor.scriptPublicKey.toLowerCase()
+        result.continuation.scriptPublicKey.toLowerCase() !==
+          attempt.head.successor.scriptPublicKey.toLowerCase()
       ) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "exact reconciliation successor does not match the claimed head");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "exact reconciliation successor does not match the claimed head",
+        );
       }
     } else if (result.continuation) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "standard-native exact reconciliation cannot advance an additive head");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "standard-native exact reconciliation cannot advance an additive head",
+      );
     }
-    await this.#config.store.acceptExactSettlement(attempt.transactionId, result.finality, new Date().toISOString());
+    await this.#config.store.acceptExactSettlement(
+      attempt.transactionId,
+      result.finality,
+      new Date().toISOString(),
+    );
     return this.#config.store.loadExactSettlementAttempt(attempt.transactionId);
   }
 
   async listClaimableChannels(): Promise<ServerChannelRecord[]> {
     const channels = await this.#config.store.listChannels();
-    return channels.filter((channel) => channel.status === "active" && activeChargedAmount(channel) > 0n);
+    return channels.filter(
+      (channel) =>
+        channel.status === "active" && activeChargedAmount(channel) > 0n,
+    );
   }
 
   async previewClaim(channelId: Hash32Hex): Promise<ClaimPreview> {
     const channel = await this.#requireChannel(channelId);
     if (channel.status !== "active") {
-      throw new KaspaX402Error("invalid_kaspa_channel_id", "channel is not active");
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "channel is not active",
+      );
     }
     const claimAmount = formatSompiString(activeChargedAmount(channel));
-    const estimatedFee = await this.#config.chainProvider.estimateClaimFee(channel);
+    const estimatedFee =
+      await this.#config.chainProvider.estimateClaimFee(channel);
     const claim = parseSompiString(claimAmount);
     const signed = parseSompiString(channel.signedMaxClaimable);
     const fee = parseSompiString(estimatedFee);
@@ -483,28 +678,49 @@ export class DirectModeServer {
   async executeClaim(channelId: Hash32Hex): Promise<ClaimExecutionResult> {
     return this.#config.lockManager.runExclusive(channelId, async () => {
       if (!this.#config.claimBuilder) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "claim transaction builder is required");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim transaction builder is required",
+        );
       }
       const preview = await this.previewClaim(channelId);
-      const openAttempt = await this.#config.store.loadOpenClaimAttempt(channelId);
+      const openAttempt =
+        await this.#config.store.loadOpenClaimAttempt(channelId);
       if (openAttempt) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "claim attempt is already pending");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim attempt is already pending",
+        );
       }
       if (!preview.claimable) {
-        throw new KaspaX402Error("invalid_kaspa_x402_amount", preview.reason ?? "claim is not economical");
+        throw new KaspaX402Error(
+          "invalid_kaspa_x402_amount",
+          preview.reason ?? "claim is not economical",
+        );
       }
       const claim = await this.#config.claimBuilder.buildClaimTransaction({
         channel: preview.channel,
         claimAmount: preview.claimAmount,
       });
       if (claim.claimAmount !== preview.claimAmount) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "claim transaction amount does not match preview");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim transaction amount does not match preview",
+        );
       }
-      if (!claim.continuationOutpoint || !claim.continuationScriptPublicKey || !claim.continuationFundingAmount) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "claim transaction must provide continuation channel state");
+      if (
+        !claim.continuationOutpoint ||
+        !claim.continuationScriptPublicKey ||
+        !claim.continuationFundingAmount
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim transaction must provide continuation channel state",
+        );
       }
       const expectedContinuationFunding = formatSompiString(
-        parseSompiString(preview.channel.fundingAmount) - parseSompiString(claim.claimAmount),
+        parseSompiString(preview.channel.fundingAmount) -
+          parseSompiString(claim.claimAmount),
       );
       if (claim.continuationFundingAmount !== expectedContinuationFunding) {
         throw new KaspaX402Error(
@@ -513,7 +729,11 @@ export class DirectModeServer {
         );
       }
       const attempt: ClaimAttemptRecord = {
-        attemptId: claimAttemptId(preview.channel, claim.transaction, claim.claimAmount),
+        attemptId: claimAttemptId(
+          preview.channel,
+          claim.transaction,
+          claim.claimAmount,
+        ),
         channelId: preview.channel.channelId,
         activeOutpoint: preview.channel.activeOutpoint,
         activeScriptPublicKey: preview.channel.activeScriptPublicKey,
@@ -522,7 +742,9 @@ export class DirectModeServer {
         chargedCumulativeAmount: preview.channel.chargedCumulativeAmount,
         claimedCumulativeAmount: preview.channel.claimedCumulativeAmount,
         signedMaxClaimable: preview.channel.signedMaxClaimable,
-        ...(preview.channel.voucherSignature ? { voucherSignature: preview.channel.voucherSignature } : {}),
+        ...(preview.channel.voucherSignature
+          ? { voucherSignature: preview.channel.voucherSignature }
+          : {}),
         channelStatus: preview.channel.status,
         transaction: claim.transaction,
         continuationOutpoint: claim.continuationOutpoint,
@@ -531,8 +753,13 @@ export class DirectModeServer {
         status: "pending",
       };
       await this.#config.store.saveClaimAttempt(attempt);
-      const broadcast = await this.#config.chainProvider.sendTransaction(claim.transaction);
-      const accepted = isAcceptedFinality(broadcast.finality, this.#config.acceptedFinality);
+      const broadcast = await this.#config.chainProvider.sendTransaction(
+        claim.transaction,
+      );
+      const accepted = isAcceptedFinality(
+        broadcast.finality,
+        this.#config.acceptedFinality,
+      );
       const broadcastAttempt: ClaimAttemptRecord = {
         ...attempt,
         transactionId: broadcast.transactionId,
@@ -542,10 +769,20 @@ export class DirectModeServer {
       await this.#config.store.saveClaimAttempt(broadcastAttempt);
       let resultFinality = broadcast.finality;
       if (accepted) {
-        if (claim.continuationOutpoint.txid.toLowerCase() !== broadcast.transactionId.toLowerCase()) {
-          throw new KaspaX402Error("invalid_kaspa_outpoint", "continuation outpoint must belong to the accepted claim transaction");
+        if (
+          claim.continuationOutpoint.txid.toLowerCase() !==
+          broadcast.transactionId.toLowerCase()
+        ) {
+          throw new KaspaX402Error(
+            "invalid_kaspa_outpoint",
+            "continuation outpoint must belong to the accepted claim transaction",
+          );
         }
-        const continuation = await this.#verifiedFundingUtxo(claim.continuationOutpoint, claim.continuationScriptPublicKey, claim.continuationFundingAmount);
+        const continuation = await this.#verifiedFundingUtxo(
+          claim.continuationOutpoint,
+          claim.continuationScriptPublicKey,
+          claim.continuationFundingAmount,
+        );
         resultFinality = continuation.finality;
       }
       const updated = accepted
@@ -580,58 +817,125 @@ export class DirectModeServer {
     });
   }
 
-  async abandonClaimAttempt(channelId: Hash32Hex, reason?: string): Promise<void> {
+  async abandonClaimAttempt(
+    channelId: Hash32Hex,
+    reason?: string,
+  ): Promise<void> {
     await this.#config.lockManager.runExclusive(channelId, async () => {
       const attempt = await this.#config.store.loadOpenClaimAttempt(channelId);
       if (!attempt) return;
       if (attempt.status === "accepted") {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted claim attempts must be recovered, not abandoned");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim attempts must be recovered, not abandoned",
+        );
       }
       await this.#config.store.abandonClaimAttempt(attempt.attemptId, reason);
     });
   }
 
-  async recoverAcceptedClaim(channelId: Hash32Hex, input: ClaimRecoveryInput = {}): Promise<ClaimExecutionResult> {
+  async recoverAcceptedClaim(
+    channelId: Hash32Hex,
+    input: ClaimRecoveryInput = {},
+  ): Promise<ClaimExecutionResult> {
     return this.#config.lockManager.runExclusive(channelId, async () => {
       const attempt = await this.#config.store.loadOpenClaimAttempt(channelId);
-      if (!attempt || (attempt.status !== "accepted" && attempt.status !== "broadcast" && attempt.status !== "pending") || (!attempt.transactionId && !input.transactionId)) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted claim attempt was not found");
+      if (
+        !attempt ||
+        (attempt.status !== "accepted" &&
+          attempt.status !== "broadcast" &&
+          attempt.status !== "pending") ||
+        (!attempt.transactionId && !input.transactionId)
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim attempt was not found",
+        );
       }
-      if (attempt.transactionId && input.transactionId && attempt.transactionId.toLowerCase() !== input.transactionId.toLowerCase()) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "claim recovery transaction id does not match recorded broadcast");
+      if (
+        attempt.transactionId &&
+        input.transactionId &&
+        attempt.transactionId.toLowerCase() !==
+          input.transactionId.toLowerCase()
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim recovery transaction id does not match recorded broadcast",
+        );
       }
       const transactionId = attempt.transactionId ?? input.transactionId;
-      const inputFinality = (input as { finality?: SettlementFinality }).finality;
+      const inputFinality = (input as { finality?: SettlementFinality })
+        .finality;
       if (inputFinality === "broadcast") {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted claim recovery needs accepted transaction evidence");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim recovery needs accepted transaction evidence",
+        );
       }
-      const evidenceFinality = inputFinality ?? (attempt.finality === "broadcast" ? undefined : attempt.finality);
+      const evidenceFinality =
+        inputFinality ??
+        (attempt.finality === "broadcast" ? undefined : attempt.finality);
       if (!transactionId || !evidenceFinality) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted claim recovery needs accepted transaction evidence");
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim recovery needs accepted transaction evidence",
+        );
       }
-      if (!attempt.continuationOutpoint || !attempt.continuationScriptPublicKey || !attempt.continuationFundingAmount) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted claim attempt is missing continuation state");
+      if (
+        !attempt.continuationOutpoint ||
+        !attempt.continuationScriptPublicKey ||
+        !attempt.continuationFundingAmount
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim attempt is missing continuation state",
+        );
       }
-      if (attempt.continuationOutpoint.txid.toLowerCase() !== transactionId.toLowerCase()) {
-        throw new KaspaX402Error("invalid_kaspa_outpoint", "continuation outpoint must belong to the accepted claim transaction");
+      if (
+        attempt.continuationOutpoint.txid.toLowerCase() !==
+        transactionId.toLowerCase()
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_outpoint",
+          "continuation outpoint must belong to the accepted claim transaction",
+        );
       }
       const channel = await this.#requireChannel(channelId);
-      if (!sameActiveOutpoint(channel, attempt.activeOutpoint, attempt.activeScriptPublicKey)) {
-        throw new KaspaX402Error("invalid_kaspa_outpoint", "claim attempt does not match active channel");
+      if (
+        !sameActiveOutpoint(
+          channel,
+          attempt.activeOutpoint,
+          attempt.activeScriptPublicKey,
+        )
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_outpoint",
+          "claim attempt does not match active channel",
+        );
       }
       if (
         channel.chargedCumulativeAmount !== attempt.chargedCumulativeAmount ||
         channel.claimedCumulativeAmount !== attempt.claimedCumulativeAmount
       ) {
-        throw new KaspaX402Error("invalid_kaspa_settlement_response", "channel state changed after claim attempt");
+        throw new KaspaX402Error(
+          "invalid_kaspa_settlement_response",
+          "channel state changed after claim attempt",
+        );
       }
-      const continuation = await this.#verifiedFundingUtxo(attempt.continuationOutpoint, attempt.continuationScriptPublicKey, attempt.continuationFundingAmount);
+      const continuation = await this.#verifiedFundingUtxo(
+        attempt.continuationOutpoint,
+        attempt.continuationScriptPublicKey,
+        attempt.continuationFundingAmount,
+      );
       const updated = {
         ...channel,
         activeOutpoint: attempt.continuationOutpoint,
         activeScriptPublicKey: attempt.continuationScriptPublicKey,
         fundingAmount: attempt.continuationFundingAmount,
-        claimedCumulativeAmount: formatSompiString(parseSompiString(attempt.claimedCumulativeAmount) + parseSompiString(attempt.claimAmount)),
+        claimedCumulativeAmount: formatSompiString(
+          parseSompiString(attempt.claimedCumulativeAmount) +
+            parseSompiString(attempt.claimAmount),
+        ),
         signedMaxClaimable: "0",
         voucherSignature: undefined,
       };
@@ -658,8 +962,17 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
   ): Promise<VerifiedPayment> {
-    const paymentRequired = await this.#expectedPaymentRequired(resource, paymentPayload, paymentAmount, requestedScheme);
-    return this.#verifyPaymentAgainstRequired(paymentRequired, paymentPayload, requestFingerprint);
+    const paymentRequired = await this.#expectedPaymentRequired(
+      resource,
+      paymentPayload,
+      paymentAmount,
+      requestedScheme,
+    );
+    return this.#verifyPaymentAgainstRequired(
+      paymentRequired,
+      paymentPayload,
+      requestFingerprint,
+    );
   }
 
   async #verifyPaymentAgainstRequired(
@@ -673,71 +986,122 @@ export class DirectModeServer {
     if (paymentPayload.accepted.scheme === "exact") {
       const payload = paymentPayload.payload;
       if (payload.type !== "exact-transaction") {
-        throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "unsupported exact payment payload type");
+        throw new KaspaX402Error(
+          "invalid_kaspa_payment_payload_type",
+          "unsupported exact payment payload type",
+        );
       }
       return this.#verifyExactPayment(
         paymentRequired,
-        paymentPayload as PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload },
+        paymentPayload as PaymentPayload & {
+          accepted: ExactPaymentRequirements;
+          payload: ExactTransactionPayload;
+        },
         requestFingerprint,
       );
     }
 
     if (paymentPayload.accepted.scheme !== "batch-settlement") {
-      throw new KaspaX402Error("invalid_kaspa_x402_scheme", "server only supports exact and batch-settlement in direct mode");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_scheme",
+        "server only supports exact and batch-settlement in direct mode",
+      );
     }
 
     const accepted = paymentPayload.accepted as BatchPaymentRequirements;
     const payload = paymentPayload.payload;
     if (payload.type === "deposit-voucher") {
-      return this.#verifyDepositVoucher(paymentRequired, paymentPayload, accepted, payload);
+      return this.#verifyDepositVoucher(
+        paymentRequired,
+        paymentPayload,
+        accepted,
+        payload,
+      );
     }
     if (payload.type === "voucher") {
-      return this.#verifyVoucher(paymentRequired, paymentPayload, accepted, payload);
+      return this.#verifyVoucher(
+        paymentRequired,
+        paymentPayload,
+        accepted,
+        payload,
+      );
     }
-    throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "unsupported server payment payload type");
+    throw new KaspaX402Error(
+      "invalid_kaspa_payment_payload_type",
+      "unsupported server payment payload type",
+    );
   }
 
   async #verifyExactPayment(
     paymentRequired: ReturnType<typeof makePaymentRequired>,
-    paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload },
+    paymentPayload: PaymentPayload & {
+      accepted: ExactPaymentRequirements;
+      payload: ExactTransactionPayload;
+    },
     requestFingerprint: Hash32Hex,
   ): Promise<VerifiedExactPayment> {
     const accepted = paymentPayload.accepted;
     const payload = paymentPayload.payload;
     validateExactTerms(this.#config, accepted);
     const profile = exactProfileFromAccepted(accepted);
-    if (
-      (accepted.extra.binding === "kaspa-exact-v2" && payload.profile !== profile) ||
-      (accepted.extra.binding === "kaspa-exact-v1" && payload.profile !== undefined && payload.profile !== "additive")
-    ) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payload profile does not match accepted requirements");
+    if (payload.profile !== profile) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "exact payload profile does not match accepted requirements",
+      );
     }
-    if (payload.requestHash && payload.requestHash.toLowerCase() !== requestFingerprint.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payload requestHash does not match request fingerprint");
+    if (
+      payload.requestHash &&
+      payload.requestHash.toLowerCase() !== requestFingerprint.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "exact payload requestHash does not match request fingerprint",
+      );
     }
     if (!this.#config.exactTransactionVerifier) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction verifier is required");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction verifier is required",
+      );
     }
-    const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
-    const head = profile === "additive" ? await this.#verifiedExactHead(accepted, payload) : undefined;
-    const verification = await this.#config.exactTransactionVerifier.verifyExactPayment({
-      network: accepted.network,
-      profile,
-      transaction: payload.transaction,
-      transactionEncoding: payload.transactionEncoding,
-      paymentOutputIndex: payload.paymentOutputIndex,
-      amount: accepted.amount,
-      payTo: accepted.payTo,
-      payToScriptPublicKey,
-      requiredFinality: this.#config.acceptedFinality,
-      requestHash: requestFingerprint,
-      ...(head ? { head } : {}),
-    });
+    const payToScriptPublicKey =
+      this.#config.addressCodec.scriptPublicKeyForAddress(
+        accepted.payTo,
+        accepted.network,
+      );
+    const head =
+      profile === "additive"
+        ? await this.#verifiedExactHead(accepted, payload)
+        : undefined;
+    const verification =
+      await this.#config.exactTransactionVerifier.verifyExactPayment({
+        network: accepted.network,
+        profile,
+        transaction: payload.transaction,
+        transactionEncoding: payload.transactionEncoding,
+        paymentOutputIndex: payload.paymentOutputIndex,
+        amount: accepted.amount,
+        payTo: accepted.payTo,
+        payToScriptPublicKey,
+        requiredFinality: this.#config.acceptedFinality,
+        requestHash: requestFingerprint,
+        ...(head ? { head } : {}),
+      });
     if (!/^[0-9a-fA-F]{64}$/.test(verification.transactionId)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact verifier returned an invalid transaction id");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact verifier returned an invalid transaction id",
+      );
     }
-    if (verification.finality !== undefined && !isExactFinality(verification.finality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact verifier returned an invalid finality");
+    if (
+      verification.finality !== undefined &&
+      !isExactFinality(verification.finality)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact verifier returned an invalid finality",
+      );
     }
     if (
       head &&
@@ -745,13 +1109,25 @@ export class DirectModeServer {
       verification.finality !== "accepted" &&
       verification.finality !== "confirmed"
     ) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "additive exact head challenge has expired");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact head challenge has expired",
+      );
     }
     if (verification.paymentOutput.amount !== accepted.amount) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment output amount does not match accepted amount");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "exact payment output amount does not match accepted amount",
+      );
     }
-    if (verification.paymentOutput.scriptPublicKey.toLowerCase() !== payToScriptPublicKey.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact payment output script does not match payTo");
+    if (
+      verification.paymentOutput.scriptPublicKey.toLowerCase() !==
+      payToScriptPublicKey.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "exact payment output script does not match payTo",
+      );
     }
     return {
       scheme: "exact",
@@ -764,78 +1140,86 @@ export class DirectModeServer {
       transaction: payload.transaction,
       transactionEncoding: payload.transactionEncoding,
       ...(head ? { head } : {}),
-      ...(verification.continuation ? { continuation: verification.continuation } : {}),
-      ...(verification.payerAddress ? { payerAddress: verification.payerAddress } : {}),
+      ...(verification.continuation
+        ? { continuation: verification.continuation }
+        : {}),
+      ...(verification.payerAddress
+        ? { payerAddress: verification.payerAddress }
+        : {}),
       finality: verification.finality ?? "mempool",
-      ...(verification.finality ? { observedFinality: verification.finality } : {}),
+      ...(verification.finality
+        ? { observedFinality: verification.finality }
+        : {}),
     };
   }
 
-  async #verifiedExactHead(accepted: ExactPaymentRequirements, payload: ExactTransactionPayload): Promise<ExactHeadChallenge> {
+  async #verifiedExactHead(
+    accepted: ExactPaymentRequirements,
+    payload: ExactTransactionPayload,
+  ): Promise<ExactHeadChallenge> {
     const head = exactHeadFromAccepted(accepted);
     if (!head) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact transaction requires complete head challenge terms");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact transaction requires complete head challenge terms",
+      );
     }
     if (payload.challengeId?.toLowerCase() !== head.challengeId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact payload challenge does not match accepted requirements");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact payload challenge does not match accepted requirements",
+      );
     }
-    if (payload.transactionEncoding !== head.transactionEncoding || payload.paymentOutputIndex !== 0) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "additive exact transaction does not match canonical head encoding or output index");
+    if (
+      payload.transactionEncoding !== head.transactionEncoding ||
+      payload.paymentOutputIndex !== 0
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact transaction does not match canonical head encoding or output index",
+      );
     }
     const { challengeId: _challengeId, ...unsigned } = head;
-    const expectedChallengeId = exactHeadChallengeId(accepted.network, accepted.payTo, accepted.amount, unsigned);
+    const expectedChallengeId = exactHeadChallengeId(
+      accepted.network,
+      accepted.payTo,
+      accepted.amount,
+      unsigned,
+    );
     if (expectedChallengeId.toLowerCase() !== head.challengeId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact challenge id does not bind its advertised terms");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact challenge id does not bind its advertised terms",
+      );
     }
     const stored = await this.#config.store.loadExactHead(head.headId);
-    if (!stored || stored.status === "unavailable" || stored.status === "retired") {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "additive exact head is unavailable");
+    if (
+      !stored ||
+      stored.status === "unavailable" ||
+      stored.status === "retired"
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact head is unavailable",
+      );
     }
     if (
       stored.network !== accepted.network ||
       stored.payTo !== accepted.payTo ||
       stored.templateId !== head.templateId ||
       stored.transactionEncoding !== head.transactionEncoding ||
-      stored.scriptPublicKey.toLowerCase() !== head.headScriptPublicKey.toLowerCase() ||
-      stored.redeemScript.toLowerCase() !== head.headRedeemScript.toLowerCase() ||
+      stored.scriptPublicKey.toLowerCase() !==
+        head.headScriptPublicKey.toLowerCase() ||
+      stored.redeemScript.toLowerCase() !==
+        head.headRedeemScript.toLowerCase() ||
       stored.additiveThresholdSompi !== head.additiveThresholdSompi
     ) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "additive exact head does not match durable lineage terms");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact head does not match durable lineage terms",
+      );
     }
     return head;
-  }
-
-  async #verifiedExactReservation(
-    accepted: ExactPaymentRequirements,
-    payload: ExactTransactionPayload,
-  ): Promise<VerifiedExactReservation> {
-    const reservation = exactReservationFromAccepted(accepted);
-    if (!reservation) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact transaction requires reserved KIP-10 outpoint terms");
-    }
-    if (payload.transactionEncoding !== reservation.transactionEncoding) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction encoding does not match reserved terms");
-    }
-    if (payload.paymentOutputIndex !== reservation.paymentOutputIndex) {
-      throw new KaspaX402Error("invalid_kaspa_outpoint", "exact payment output index does not match reserved terms");
-    }
-    const stored = await this.#config.store.loadExactReservation(reservation.reservationId);
-    if (!stored) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation is not available");
-    }
-    if (!sameExactReservation(stored, reservation)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation does not match accepted terms");
-    }
-    if (stored.status === "consumed" && !stored.transactionId) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation is consumed without transaction evidence");
-    }
-    if (stored.status !== "consumed" && reservation.expiresAt && Date.parse(reservation.expiresAt) <= Date.now()) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact reservation has expired");
-    }
-    return {
-      ...reservation,
-      ...(stored.status === "consumed" && stored.transactionId ? { consumedTransactionId: stored.transactionId } : {}),
-    };
   }
 
   async #verifyDepositVoucher(
@@ -847,23 +1231,48 @@ export class DirectModeServer {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
     await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
     if (channelId(payload.channelConfig) !== payload.channelId) {
-      throw new KaspaX402Error("invalid_kaspa_channel_id", "channel id does not match channel config");
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "channel id does not match channel config",
+      );
     }
     const derived = deriveServerEscrow(this.#config, payload.channelConfig);
     if (derived.escrowAddress !== payload.escrowAddress) {
-      throw new KaspaX402Error("invalid_kaspa_x402_binding", "escrow address does not match channel config");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "escrow address does not match channel config",
+      );
     }
-    if (derived.activeScriptPublicKey.toLowerCase() !== payload.activeScriptPublicKey.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_binding", "active script does not match channel config");
+    if (
+      derived.activeScriptPublicKey.toLowerCase() !==
+      payload.activeScriptPublicKey.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "active script does not match channel config",
+      );
     }
-    if (parseSompiString(payload.fundingAmountSompi) < parseSompiString(accepted.extra.minDepositSompi)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "deposit is below the required minimum");
+    if (
+      parseSompiString(payload.fundingAmountSompi) <
+      parseSompiString(accepted.extra.minDepositSompi)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "deposit is below the required minimum",
+      );
     }
 
-    const utxo = await this.#verifiedFundingUtxo(payload.fundingOutpoint, payload.activeScriptPublicKey, payload.fundingAmountSompi);
+    const utxo = await this.#verifiedFundingUtxo(
+      payload.fundingOutpoint,
+      payload.activeScriptPublicKey,
+      payload.fundingAmountSompi,
+    );
     const existing = await this.#config.store.loadChannel(payload.channelId);
     if (existing && existing.status !== "active") {
-      throw new KaspaX402Error("invalid_kaspa_channel_id", "existing channel is not active");
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "existing channel is not active",
+      );
     }
     if (existing) await this.#rejectOpenClaimAttempt(existing.channelId);
     const initial: ServerChannelRecord = {
@@ -875,15 +1284,41 @@ export class DirectModeServer {
       fundingAmount: utxo.amount,
       chargedCumulativeAmount: existing?.chargedCumulativeAmount ?? "0",
       claimedCumulativeAmount: existing?.claimedCumulativeAmount ?? "0",
-      signedMaxClaimable: existing && sameActiveOutpoint(existing, payload.fundingOutpoint, payload.activeScriptPublicKey) ? existing.signedMaxClaimable : "0",
-      voucherSignature: existing && sameActiveOutpoint(existing, payload.fundingOutpoint, payload.activeScriptPublicKey) ? existing.voucherSignature : undefined,
+      signedMaxClaimable:
+        existing &&
+        sameActiveOutpoint(
+          existing,
+          payload.fundingOutpoint,
+          payload.activeScriptPublicKey,
+        )
+          ? existing.signedMaxClaimable
+          : "0",
+      voucherSignature:
+        existing &&
+        sameActiveOutpoint(
+          existing,
+          payload.fundingOutpoint,
+          payload.activeScriptPublicKey,
+        )
+          ? existing.voucherSignature
+          : undefined,
       lastCommitmentId: existing?.lastCommitmentId,
       status: "active",
     };
 
-    if (existing && !sameActiveOutpoint(existing, payload.fundingOutpoint, payload.activeScriptPublicKey)) {
+    if (
+      existing &&
+      !sameActiveOutpoint(
+        existing,
+        payload.fundingOutpoint,
+        payload.activeScriptPublicKey,
+      )
+    ) {
       if (!this.#config.topUpVerifier) {
-        throw new KaspaX402Error("invalid_kaspa_outpoint", "top-up transition verifier is required");
+        throw new KaspaX402Error(
+          "invalid_kaspa_outpoint",
+          "top-up transition verifier is required",
+        );
       }
       const verified = await this.#config.topUpVerifier.verifyTopUp({
         previous: existing,
@@ -891,10 +1326,18 @@ export class DirectModeServer {
         utxo,
         payment: paymentPayload,
       });
-      if (!verified) throw new KaspaX402Error("invalid_kaspa_outpoint", "top-up transition was rejected");
+      if (!verified)
+        throw new KaspaX402Error(
+          "invalid_kaspa_outpoint",
+          "top-up transition was rejected",
+        );
     }
 
-    await this.#verifyVoucherAmountAndSignature(initial, accepted, payload.voucher);
+    await this.#verifyVoucherAmountAndSignature(
+      initial,
+      accepted,
+      payload.voucher,
+    );
     return {
       scheme: "batch-settlement",
       paymentRequired,
@@ -917,17 +1360,40 @@ export class DirectModeServer {
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
     await this.#assertRefundWindow(channel.channelConfig.refundTimeoutDaa);
     if (channel.status !== "active") {
-      throw new KaspaX402Error("invalid_kaspa_channel_id", "channel is not active");
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "channel is not active",
+      );
     }
     await this.#rejectOpenClaimAttempt(channel.channelId);
     if (payload.clientPublicKey !== channel.channelConfig.clientPublicKey) {
-      throw new KaspaX402Error("invalid_kaspa_public_key", "client public key does not match channel");
+      throw new KaspaX402Error(
+        "invalid_kaspa_public_key",
+        "client public key does not match channel",
+      );
     }
-    if (!sameActiveOutpoint(channel, payload.fundingOutpoint, payload.activeScriptPublicKey)) {
-      throw new KaspaX402Error("invalid_kaspa_outpoint", "payment outpoint does not match active channel");
+    if (
+      !sameActiveOutpoint(
+        channel,
+        payload.fundingOutpoint,
+        payload.activeScriptPublicKey,
+      )
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_outpoint",
+        "payment outpoint does not match active channel",
+      );
     }
-    await this.#verifiedFundingUtxo(payload.fundingOutpoint, payload.activeScriptPublicKey, channel.fundingAmount);
-    await this.#verifyVoucherAmountAndSignature(channel, accepted, payload.voucher);
+    await this.#verifiedFundingUtxo(
+      payload.fundingOutpoint,
+      payload.activeScriptPublicKey,
+      channel.fundingAmount,
+    );
+    await this.#verifyVoucherAmountAndSignature(
+      channel,
+      accepted,
+      payload.voucher,
+    );
     return {
       scheme: "batch-settlement",
       paymentRequired,
@@ -940,20 +1406,47 @@ export class DirectModeServer {
     };
   }
 
-  async #verifyVoucherAmountAndSignature(channel: ServerChannelRecord, accepted: BatchPaymentRequirements, voucher: Voucher): Promise<void> {
+  async #verifyVoucherAmountAndSignature(
+    channel: ServerChannelRecord,
+    accepted: BatchPaymentRequirements,
+    voucher: Voucher,
+  ): Promise<void> {
     validateChannelPreVoucherAccounting(channel);
-    const requiredVoucherAmount = maxAmount(channel.signedMaxClaimable, formatSompiString(activeChargedAmount(channel) + parseSompiString(accepted.amount)));
+    const requiredVoucherAmount = maxAmount(
+      channel.signedMaxClaimable,
+      formatSompiString(
+        activeChargedAmount(channel) + parseSompiString(accepted.amount),
+      ),
+    );
     if (voucher.amount !== requiredVoucherAmount) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "voucher amount does not match required cumulative amount");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "voucher amount does not match required cumulative amount",
+      );
     }
-    if (parseSompiString(voucher.amount) > parseSompiString(channel.fundingAmount)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "voucher amount exceeds active funding amount");
+    if (
+      parseSompiString(voucher.amount) > parseSompiString(channel.fundingAmount)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "voucher amount exceeds active funding amount",
+      );
     }
     const reserve = await this.#minimumActiveReserve(channel);
-    if (parseSompiString(voucher.amount) + reserve > parseSompiString(channel.fundingAmount)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "voucher amount does not leave required claim reserve");
+    if (
+      parseSompiString(voucher.amount) + reserve >
+      parseSompiString(channel.fundingAmount)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "voucher amount does not leave required claim reserve",
+      );
     }
-    validateChannelAccounting({ ...channel, signedMaxClaimable: voucher.amount, voucherSignature: voucher.signature });
+    validateChannelAccounting({
+      ...channel,
+      signedMaxClaimable: voucher.amount,
+      voucherSignature: voucher.signature,
+    });
     const input = {
       network: channel.channelConfig.network,
       activeScriptPublicKey: channel.activeScriptPublicKey,
@@ -967,16 +1460,24 @@ export class DirectModeServer {
       preimage: voucherPreimageHex(input),
       voucher,
     });
-    if (!verified) throw new KaspaX402Error("invalid_kaspa_signature", "voucher signature was rejected");
+    if (!verified)
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "voucher signature was rejected",
+      );
   }
 
   async #minimumActiveReserve(channel: ServerChannelRecord): Promise<bigint> {
-    return parseSompiString(await this.#config.chainProvider.estimateClaimFee(channel));
+    return parseSompiString(
+      await this.#config.chainProvider.estimateClaimFee(channel),
+    );
   }
 
   async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
     const timeout = parseSompiString(timeoutDaa);
-    const current = parseSompiString(await this.#config.chainProvider.getVirtualDaaScore());
+    const current = parseSompiString(
+      await this.#config.chainProvider.getVirtualDaaScore(),
+    );
     const lead = parseSompiString(this.#config.minimumRefundLeadDaa);
     if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
       throw new KaspaX402Error(
@@ -1002,23 +1503,49 @@ export class DirectModeServer {
   }
 
   async #rejectOpenClaimAttempt(channelId: Hash32Hex): Promise<void> {
-    const openAttempt = await this.#config.store.loadOpenClaimAttempt(channelId);
+    const openAttempt =
+      await this.#config.store.loadOpenClaimAttempt(channelId);
     if (openAttempt) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "channel has an open claim attempt");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "channel has an open claim attempt",
+      );
     }
   }
 
-  async #verifiedFundingUtxo(outpoint: FundingOutpoint, activeScriptPublicKey: string, fundingAmount: SompiString): Promise<ChainUtxo> {
-    const utxo = await this.#config.chainProvider.getUtxo(outpoint, this.#config.network);
-    if (!utxo) throw new KaspaX402Error("invalid_kaspa_outpoint", "funding outpoint was not found");
+  async #verifiedFundingUtxo(
+    outpoint: FundingOutpoint,
+    activeScriptPublicKey: string,
+    fundingAmount: SompiString,
+  ): Promise<ChainUtxo> {
+    const utxo = await this.#config.chainProvider.getUtxo(
+      outpoint,
+      this.#config.network,
+    );
+    if (!utxo)
+      throw new KaspaX402Error(
+        "invalid_kaspa_outpoint",
+        "funding outpoint was not found",
+      );
     if (!isAcceptedFinality(utxo.finality, this.#config.acceptedFinality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "funding outpoint has not reached required finality");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "funding outpoint has not reached required finality",
+      );
     }
-    if (utxo.scriptPublicKey.toLowerCase() !== activeScriptPublicKey.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_binding", "funding script does not match active script");
+    if (
+      utxo.scriptPublicKey.toLowerCase() !== activeScriptPublicKey.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "funding script does not match active script",
+      );
     }
     if (utxo.amount !== fundingAmount) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "funding amount does not match payment payload");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "funding amount does not match payment payload",
+      );
     }
     return utxo;
   }
@@ -1032,10 +1559,21 @@ export class DirectModeServer {
   ): Promise<ServerResponse> {
     let pending: PendingSettlement;
     try {
-      pending = this.#buildSuccessfulSettlement(verified, chargedAmount, fingerprint, paymentIdentifier);
+      pending = this.#buildSuccessfulSettlement(
+        verified,
+        chargedAmount,
+        fingerprint,
+        paymentIdentifier,
+      );
     } catch (error) {
       await this.#preserveLiveDepositTransition(verified);
-      return this.#correctiveResponse(verified.paymentRequired.resource, verified.paymentPayload, error, verified.accepted.amount, "batch-settlement");
+      return this.#correctiveResponse(
+        verified.paymentRequired.resource,
+        verified.paymentPayload,
+        error,
+        verified.accepted.amount,
+        "batch-settlement",
+      );
     }
     const { channel, settlement } = pending;
     const response: ServerResponse = {
@@ -1063,7 +1601,9 @@ export class DirectModeServer {
               },
             }
           : {}),
-        expected: expectedSettlementChannelState(verified.commitExpectedChannel),
+        expected: expectedSettlementChannelState(
+          verified.commitExpectedChannel,
+        ),
       });
     } catch {
       return {
@@ -1081,12 +1621,18 @@ export class DirectModeServer {
     fingerprint: Hash32Hex,
     paymentIdentifier?: string,
   ): Promise<ServerResponse> {
-    const pending = this.#buildSuccessfulExactSettlement(verified, chargedAmount, fingerprint);
+    const pending = this.#buildSuccessfulExactSettlement(
+      verified,
+      chargedAmount,
+      fingerprint,
+    );
     const response: ServerResponse = {
       status: handlerResult.status ?? 200,
       headers: {
         ...(handlerResult.headers ?? {}),
-        [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(pending.settlement),
+        [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(
+          pending.settlement,
+        ),
       },
       body: handlerResult.body,
     };
@@ -1101,7 +1647,9 @@ export class DirectModeServer {
                 paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
                 response,
                 settlement: pending.settlement,
-                paymentScopeId: safePaymentScopeIdHint(verified.paymentPayload) ?? exactPaymentScopeId(verified.transactionId),
+                paymentScopeId:
+                  safePaymentScopeIdHint(verified.paymentPayload) ??
+                  exactPaymentScopeId(verified.transactionId),
                 transactionId: verified.transactionId,
                 paymentOutputIndex: verified.paymentOutputIndex,
               },
@@ -1117,8 +1665,14 @@ export class DirectModeServer {
     return response;
   }
 
-  async #preserveLiveDepositTransition(verified: VerifiedPayment): Promise<void> {
-    if (verified.scheme !== "batch-settlement" || verified.paymentPayload.payload.type !== "deposit-voucher") return;
+  async #preserveLiveDepositTransition(
+    verified: VerifiedPayment,
+  ): Promise<void> {
+    if (
+      verified.scheme !== "batch-settlement" ||
+      verified.paymentPayload.payload.type !== "deposit-voucher"
+    )
+      return;
     const channel: ServerChannelRecord = {
       ...verified.channel,
       signedMaxClaimable: verified.voucher.amount,
@@ -1134,7 +1688,10 @@ export class DirectModeServer {
     fingerprint: Hash32Hex,
   ): Promise<ExactSettlementClaimResult> {
     if (!verified.transaction) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction artifact is required");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction artifact is required",
+      );
     }
     const now = new Date().toISOString();
     const attempt: ExactSettlementAttemptRecord = {
@@ -1163,14 +1720,19 @@ export class DirectModeServer {
         : {}),
     };
     if (verified.profile === "additive" && !attempt.head) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "additive exact verification did not prove a successor head");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact verification did not prove a successor head",
+      );
     }
     try {
       return await this.#config.store.claimExactSettlement(attempt);
     } catch (error) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
-        error instanceof Error ? error.message : "exact settlement claim failed",
+        error instanceof Error
+          ? error.message
+          : "exact settlement claim failed",
       );
     }
   }
@@ -1180,18 +1742,39 @@ export class DirectModeServer {
     claim: ExactSettlementClaimResult,
   ): Promise<VerifiedExactPayment> {
     if (!verified.transaction) return verified;
-    if (claim.attempt.status === "accepted" || claim.attempt.status === "applied") {
-      if (claim.attempt.finality !== "accepted" && claim.attempt.finality !== "confirmed") {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "accepted exact settlement is missing durable finality");
+    if (
+      claim.attempt.status === "accepted" ||
+      claim.attempt.status === "applied"
+    ) {
+      if (
+        claim.attempt.finality !== "accepted" &&
+        claim.attempt.finality !== "confirmed"
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted exact settlement is missing durable finality",
+        );
       }
       return { ...verified, finality: claim.attempt.finality };
     }
     if (
-      (verified.observedFinality === "accepted" || verified.observedFinality === "confirmed") &&
-      exactFinalityMeets(verified.observedFinality, this.#config.acceptedFinality) &&
-      (!verified.accepted.extra.finality || exactFinalityMeets(verified.observedFinality, verified.accepted.extra.finality))
+      (verified.observedFinality === "accepted" ||
+        verified.observedFinality === "confirmed") &&
+      exactFinalityMeets(
+        verified.observedFinality,
+        this.#config.acceptedFinality,
+      ) &&
+      (!verified.accepted.extra.finality ||
+        exactFinalityMeets(
+          verified.observedFinality,
+          verified.accepted.extra.finality,
+        ))
     ) {
-      await this.#config.store.acceptExactSettlement(verified.transactionId, verified.observedFinality, new Date().toISOString());
+      await this.#config.store.acceptExactSettlement(
+        verified.transactionId,
+        verified.observedFinality,
+        new Date().toISOString(),
+      );
       return { ...verified, finality: verified.observedFinality };
     }
     if (!claim.created) {
@@ -1202,18 +1785,32 @@ export class DirectModeServer {
     }
     let broadcast: TransactionBroadcast;
     try {
-      broadcast = await this.#config.chainProvider.sendTransaction(verified.transaction);
+      broadcast = await this.#config.chainProvider.sendTransaction(
+        verified.transaction,
+      );
     } catch {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "exact settlement broadcast outcome is ambiguous and requires trusted chain reconciliation",
       );
     }
-    if (broadcast.transactionId.toLowerCase() !== verified.transactionId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "broadcast transaction id does not match exact verifier");
+    if (
+      broadcast.transactionId.toLowerCase() !==
+      verified.transactionId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "broadcast transaction id does not match exact verifier",
+      );
     }
-    if (broadcast.finality !== "broadcast" && !isExactFinality(broadcast.finality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach observable finality");
+    if (
+      broadcast.finality !== "broadcast" &&
+      !isExactFinality(broadcast.finality)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction broadcast did not reach observable finality",
+      );
     }
     await this.#config.store.recordExactSettlementBroadcast(
       verified.transactionId,
@@ -1221,16 +1818,38 @@ export class DirectModeServer {
       new Date().toISOString(),
     );
     if (broadcast.finality === "broadcast") {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach required finality");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction broadcast did not reach required finality",
+      );
     }
-    if (!exactFinalityMeets(broadcast.finality, this.#config.acceptedFinality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach required finality");
+    if (
+      !exactFinalityMeets(broadcast.finality, this.#config.acceptedFinality)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction broadcast did not reach required finality",
+      );
     }
-    if (verified.accepted.extra.finality && !exactFinalityMeets(broadcast.finality, verified.accepted.extra.finality)) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach advertised finality");
+    if (
+      verified.accepted.extra.finality &&
+      !exactFinalityMeets(broadcast.finality, verified.accepted.extra.finality)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact transaction broadcast did not reach advertised finality",
+      );
     }
-    await this.#config.store.acceptExactSettlement(broadcast.transactionId, broadcast.finality, new Date().toISOString());
-    return { ...verified, transactionId: broadcast.transactionId, finality: broadcast.finality };
+    await this.#config.store.acceptExactSettlement(
+      broadcast.transactionId,
+      broadcast.finality,
+      new Date().toISOString(),
+    );
+    return {
+      ...verified,
+      transactionId: broadcast.transactionId,
+      finality: broadcast.finality,
+    };
   }
 
   #buildSuccessfulSettlement(
@@ -1239,7 +1858,10 @@ export class DirectModeServer {
     fingerprint: Hash32Hex,
     paymentIdentifier?: string,
   ): PendingSettlement {
-    const chargedCumulativeAmount = formatSompiString(parseSompiString(verified.channel.chargedCumulativeAmount) + parseSompiString(chargedAmount));
+    const chargedCumulativeAmount = formatSompiString(
+      parseSompiString(verified.channel.chargedCumulativeAmount) +
+        parseSompiString(chargedAmount),
+    );
     const commitmentId = batchCommitmentId({
       accepted: verified.accepted,
       channel: verified.channel,
@@ -1265,7 +1887,9 @@ export class DirectModeServer {
       amount: chargedAmount,
       extensions: kaspaSettlementExtensions({
         commitmentId,
-        ...(verified.paymentPayload.payload.type === "deposit-voucher" ? { fundingAmount: channel.fundingAmount } : {}),
+        ...(verified.paymentPayload.payload.type === "deposit-voucher"
+          ? { fundingAmount: channel.fundingAmount }
+          : {}),
         chargedAmount,
         channelState: channelState(channel),
       }),
@@ -1277,7 +1901,9 @@ export class DirectModeServer {
         commitmentId,
         channelId: channel.channelId,
         requestFingerprint: fingerprint,
-        paymentRequirementsHash: bytesToHex(batchPaymentRequirementsHash(verified.accepted)),
+        paymentRequirementsHash: bytesToHex(
+          batchPaymentRequirementsHash(verified.accepted),
+        ),
         activeOutpoint: channel.activeOutpoint,
         activeScriptPublicKey: channel.activeScriptPublicKey,
         voucher: verified.voucher,
@@ -1291,7 +1917,11 @@ export class DirectModeServer {
     };
   }
 
-  #buildSuccessfulExactSettlement(verified: VerifiedExactPayment, chargedAmount: SompiString, fingerprint: Hash32Hex): PendingExactSettlement {
+  #buildSuccessfulExactSettlement(
+    verified: VerifiedExactPayment,
+    chargedAmount: SompiString,
+    fingerprint: Hash32Hex,
+  ): PendingExactSettlement {
     const settlement: SettlementResponse = {
       success: true,
       transaction: verified.transactionId,
@@ -1303,12 +1933,15 @@ export class DirectModeServer {
         paymentOutputIndex: verified.paymentOutputIndex,
         finality: verified.finality,
         requestHash: fingerprint,
-        ...(verified.transactionEncoding ? { transactionEncoding: verified.transactionEncoding } : {}),
-        ...(verified.reservation
+        ...(verified.transactionEncoding
+          ? { transactionEncoding: verified.transactionEncoding }
+          : {}),
+        ...(verified.head
           ? {
-              templateId: verified.reservation.templateId,
-              reservationId: verified.reservation.reservationId,
-              borrowOutpoint: verified.reservation.borrowOutpoint,
+              templateId: verified.head.templateId,
+              headId: verified.head.headId,
+              headVersion: verified.head.headVersion,
+              headOutpoint: verified.head.expectedHeadOutpoint,
             }
           : {}),
       }),
@@ -1323,7 +1956,9 @@ export class DirectModeServer {
         paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
         paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
         amount: chargedAmount,
-        ...(verified.payerAddress ? { payerAddress: verified.payerAddress } : {}),
+        ...(verified.payerAddress
+          ? { payerAddress: verified.payerAddress }
+          : {}),
         finality: verified.finality,
         settlement,
       },
@@ -1337,7 +1972,8 @@ export class DirectModeServer {
     paymentPayload: PaymentPayload,
   ): Promise<ServerResponse | undefined> {
     if (!paymentIdentifier) return undefined;
-    const record = await this.#config.store.loadPaymentIdentifier(paymentIdentifier);
+    const record =
+      await this.#config.store.loadPaymentIdentifier(paymentIdentifier);
     if (!record) return undefined;
     const currentPayloadHash = paymentPayloadHash(paymentPayload);
     const fingerprintMatches = record.fingerprint === fingerprint;
@@ -1352,10 +1988,18 @@ export class DirectModeServer {
     return record.response;
   }
 
-  async #checkExactReplay(verified: VerifiedExactPayment, fingerprint: Hash32Hex): Promise<ServerResponse | undefined> {
-    const record = await this.#config.store.loadExactPayment(verified.transactionId);
+  async #checkExactReplay(
+    verified: VerifiedExactPayment,
+    fingerprint: Hash32Hex,
+  ): Promise<ServerResponse | undefined> {
+    const record = await this.#config.store.loadExactPayment(
+      verified.transactionId,
+    );
     if (!record) return undefined;
-    if (record.requestFingerprint === fingerprint && record.paymentOutputIndex === verified.paymentOutputIndex) {
+    if (
+      record.requestFingerprint === fingerprint &&
+      record.paymentOutputIndex === verified.paymentOutputIndex
+    ) {
       return record.response;
     }
     return {
@@ -1367,34 +2011,69 @@ export class DirectModeServer {
     };
   }
 
-  async #checkBatchReplay(paymentPayload: PaymentPayload, fingerprint: Hash32Hex): Promise<ServerResponse | undefined> {
+  async #checkBatchReplay(
+    paymentPayload: PaymentPayload,
+    fingerprint: Hash32Hex,
+  ): Promise<ServerResponse | undefined> {
     if (paymentPayload.accepted.scheme !== "batch-settlement") return undefined;
     const channelId = safePaymentChannelId(paymentPayload);
     if (!channelId) return undefined;
     const channel = await this.#config.store.loadChannel(channelId);
     if (!channel?.lastCommitmentId) return undefined;
-    const record = await this.#config.store.loadCommitment(channel.lastCommitmentId);
+    const record = await this.#config.store.loadCommitment(
+      channel.lastCommitmentId,
+    );
     if (!record) return undefined;
     const payload = paymentPayload.payload;
-    if (payload.type !== "deposit-voucher" && payload.type !== "voucher") return undefined;
+    if (payload.type !== "deposit-voucher" && payload.type !== "voucher")
+      return undefined;
     if (record.requestFingerprint !== fingerprint) return undefined;
     if (record.channelId !== channelId) return undefined;
-    if (record.paymentRequirementsHash !== bytesToHex(batchPaymentRequirementsHash(paymentPayload.accepted))) return undefined;
-    if (!sameActiveOutpoint({ activeOutpoint: record.activeOutpoint, activeScriptPublicKey: record.activeScriptPublicKey }, payload.fundingOutpoint, payload.activeScriptPublicKey)) {
+    if (
+      record.paymentRequirementsHash !==
+      bytesToHex(batchPaymentRequirementsHash(paymentPayload.accepted))
+    )
+      return undefined;
+    if (
+      !sameActiveOutpoint(
+        {
+          activeOutpoint: record.activeOutpoint,
+          activeScriptPublicKey: record.activeScriptPublicKey,
+        },
+        payload.fundingOutpoint,
+        payload.activeScriptPublicKey,
+      )
+    ) {
       return undefined;
     }
-    if (record.voucher.amount !== payload.voucher.amount || record.voucher.signature !== payload.voucher.signature) return undefined;
+    if (
+      record.voucher.amount !== payload.voucher.amount ||
+      record.voucher.signature !== payload.voucher.signature
+    )
+      return undefined;
     return record.response;
   }
 
-  async #assertVerifyNotReplayed(verified: VerifiedPayment, fingerprint: Hash32Hex, paymentPayload: PaymentPayload): Promise<void> {
+  async #assertVerifyNotReplayed(
+    verified: VerifiedPayment,
+    fingerprint: Hash32Hex,
+    paymentPayload: PaymentPayload,
+  ): Promise<void> {
     if (verified.scheme === "exact") {
-      const record = await this.#config.store.loadExactPayment(verified.transactionId);
+      const record = await this.#config.store.loadExactPayment(
+        verified.transactionId,
+      );
       if (!record) return;
-      if (record.requestFingerprint === fingerprint && record.paymentOutputIndex === verified.paymentOutputIndex) {
+      if (
+        record.requestFingerprint === fingerprint &&
+        record.paymentOutputIndex === verified.paymentOutputIndex
+      ) {
         return;
       }
-      throw new KaspaX402Error("invalid_kaspa_exact_replay", "exact payment was already used for another request");
+      throw new KaspaX402Error(
+        "invalid_kaspa_exact_replay",
+        "exact payment was already used for another request",
+      );
     }
   }
 
@@ -1405,8 +2084,14 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
   ): Promise<ServerResponse> {
-    if (verified.scheme === "exact" && verified.paymentPayload.payload.type === "exact-transaction") {
-      const errorReason = error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "invalid_payload";
+    if (
+      verified.scheme === "exact" &&
+      verified.paymentPayload.payload.type === "exact-transaction"
+    ) {
+      const errorReason =
+        error instanceof KaspaX402Error
+          ? toX402ErrorReason(error.code)
+          : "invalid_payload";
       const message = error instanceof Error ? error.message : "";
       if (!message.includes("exact head changed before settlement claim")) {
         return {
@@ -1424,14 +2109,21 @@ export class DirectModeServer {
       return {
         status: 402,
         headers: {
-          [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(paymentRequired),
+          [PAYMENT_REQUIRED_HEADER]:
+            encodePaymentRequiredHeader(paymentRequired),
         },
         body: {
           error: errorReason,
         },
       };
     }
-    return this.#correctiveResponse(resource, verified.paymentPayload, error, paymentAmount, requestedScheme);
+    return this.#correctiveResponse(
+      resource,
+      verified.paymentPayload,
+      error,
+      paymentAmount,
+      requestedScheme,
+    );
   }
 
   async #correctiveResponse(
@@ -1441,21 +2133,34 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
   ): Promise<ServerResponse> {
-    const errorReason = error instanceof KaspaX402Error ? toX402ErrorReason(error.code) : "invalid_payload";
+    const errorReason =
+      error instanceof KaspaX402Error
+        ? toX402ErrorReason(error.code)
+        : "invalid_payload";
     const channelId = safePaymentChannelId(paymentPayload);
-    const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
+    const channel = channelId
+      ? await this.#config.store.loadChannel(channelId)
+      : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
-    const reusableChannel = activeChannel && (await this.#canReuseCorrectiveChannel(activeChannel)) ? activeChannel : undefined;
-    const scheme = paymentPayload.accepted.scheme === "exact" ? paymentPayload.accepted.scheme : requestedScheme;
-    const exactReservation = paymentPayload.accepted.scheme === "exact" ? exactReservationFromAccepted(paymentPayload.accepted) : undefined;
-    const reusableExactReservation = exactReservation && !shouldRefreshExactReservation(error) ? exactReservation : undefined;
+    const reusableChannel =
+      activeChannel && (await this.#canReuseCorrectiveChannel(activeChannel))
+        ? activeChannel
+        : undefined;
+    const scheme =
+      paymentPayload.accepted.scheme === "exact"
+        ? paymentPayload.accepted.scheme
+        : requestedScheme;
     const paymentRequired = await this.#paymentRequiredResponse({
       resource,
       amount: paymentAmount,
       scheme,
       error: errorReason,
-      ...(reusableExactReservation ? { exactReservation: reusableExactReservation } : {}),
-      ...(reusableChannel ? { channel: reusableChannel, voucherState: latestVoucher(reusableChannel) } : {}),
+      ...(reusableChannel
+        ? {
+            channel: reusableChannel,
+            voucherState: latestVoucher(reusableChannel),
+          }
+        : {}),
     });
     return {
       ...paymentRequired,
@@ -1467,11 +2172,14 @@ export class DirectModeServer {
 
   async #requireChannel(channelId: Hash32Hex): Promise<ServerChannelRecord> {
     const channel = await this.#config.store.loadChannel(channelId);
-    if (!channel) throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
+    if (!channel)
+      throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     return channel;
   }
 
-  async #canReuseCorrectiveChannel(channel: ServerChannelRecord): Promise<boolean> {
+  async #canReuseCorrectiveChannel(
+    channel: ServerChannelRecord,
+  ): Promise<boolean> {
     try {
       await this.#assertRefundWindow(channel.channelConfig.refundTimeoutDaa);
       return true;
@@ -1497,10 +2205,18 @@ export class DirectModeServer {
           ...requiredPaymentIdentifierExtensions(this.#config),
         };
       }
-      return this.#buildRuntimePaymentRequired({ resource, amount: paymentAmount, scheme: "exact" });
+      return this.#buildRuntimePaymentRequired({
+        resource,
+        amount: paymentAmount,
+        scheme: "exact",
+      });
     }
     if (accepted.scheme !== "batch-settlement" || !payloadChannelId) {
-      return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: requestedScheme });
+      return this.buildPaymentRequired({
+        resource,
+        amount: paymentAmount,
+        scheme: requestedScheme,
+      });
     }
     const channel = await this.#config.store.loadChannel(payloadChannelId);
     const acceptedExtra = accepted.extra;
@@ -1519,12 +2235,17 @@ export class DirectModeServer {
           ...requiredPaymentIdentifierExtensions(this.#config),
         };
       }
-      return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "batch-settlement" });
+      return this.buildPaymentRequired({
+        resource,
+        amount: paymentAmount,
+        scheme: "batch-settlement",
+      });
     }
     if (!acceptedExtra.channelState && !acceptedExtra.voucherState) {
       if (
         batchRequirementMatchesRoute(this.#config, accepted, paymentAmount) &&
-        accepted.extra.refundTimeoutDaa === channel.channelConfig.refundTimeoutDaa
+        accepted.extra.refundTimeoutDaa ===
+          channel.channelConfig.refundTimeoutDaa
       ) {
         return {
           x402Version: X402_VERSION,
@@ -1533,7 +2254,12 @@ export class DirectModeServer {
           ...requiredPaymentIdentifierExtensions(this.#config),
         };
       }
-      return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "batch-settlement", channel });
+      return this.buildPaymentRequired({
+        resource,
+        amount: paymentAmount,
+        scheme: "batch-settlement",
+        channel,
+      });
     }
     return this.buildPaymentRequired({
       resource,
@@ -1544,7 +2270,10 @@ export class DirectModeServer {
     });
   }
 
-  #facilitatorPaymentRequired(resource: ResourceInfo, paymentRequirements: PaymentRequirements): PaymentRequired {
+  #facilitatorPaymentRequired(
+    resource: ResourceInfo,
+    paymentRequirements: PaymentRequirements,
+  ): PaymentRequired {
     return {
       x402Version: X402_VERSION,
       resource,
@@ -1554,18 +2283,29 @@ export class DirectModeServer {
   }
 }
 
-function makePaymentRequired(config: ResolvedServerConfig, options: BuildPaymentRequiredOptions): PaymentRequired {
+function makePaymentRequired(
+  config: ResolvedServerConfig,
+  options: BuildPaymentRequiredOptions,
+): PaymentRequired {
   return {
     x402Version: X402_VERSION,
     resource: options.resource,
-    accepts: paymentRequirementSchemes(options).map((scheme) => makeAcceptedRequirement(config, options, scheme)),
+    accepts: paymentRequirementSchemes(options).map((scheme) =>
+      makeAcceptedRequirement(config, options, scheme),
+    ),
     ...(options.error ? { error: options.error } : {}),
     ...requiredPaymentIdentifierExtensions(config),
   };
 }
 
-function makeExactHeadChallenge(head: ExactHeadRecord, amount: SompiString, maxTimeoutSeconds: number): ExactHeadChallenge {
-  const expiresAt = new Date(Date.now() + maxTimeoutSeconds * 1_000).toISOString();
+function makeExactHeadChallenge(
+  head: ExactHeadRecord,
+  amount: SompiString,
+  maxTimeoutSeconds: number,
+): ExactHeadChallenge {
+  const expiresAt = new Date(
+    Date.now() + maxTimeoutSeconds * 1_000,
+  ).toISOString();
   const unsigned: Omit<ExactHeadChallenge, "challengeId"> = {
     headId: head.headId,
     headVersion: head.version,
@@ -1581,7 +2321,12 @@ function makeExactHeadChallenge(head: ExactHeadRecord, amount: SompiString, maxT
   };
   return {
     ...unsigned,
-    challengeId: exactHeadChallengeId(head.network, head.payTo, amount, unsigned),
+    challengeId: exactHeadChallengeId(
+      head.network,
+      head.payTo,
+      amount,
+      unsigned,
+    ),
   };
 }
 
@@ -1610,14 +2355,28 @@ function makeAcceptedRequirement(
   if (scheme === "exact") {
     const amount = options.amount ?? config.amount;
     if (parseSompiString(amount) <= 0n) {
-      throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment amount must be positive");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_amount",
+        "exact payment amount must be positive",
+      );
     }
-    const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(config.payTo, config.network);
+    const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(
+      config.payTo,
+      config.network,
+    );
     if (config.exactProfile === "additive" && !options.exactHead) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact requirements require head terms");
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact requirements require head terms",
+      );
     }
     if (options.exactHead) {
-      assertExactHeadPolicy(options.exactHead, amount, payToScriptPublicKey, config.minimumExactAdditiveThresholdSompi);
+      assertExactHeadPolicy(
+        options.exactHead,
+        amount,
+        payToScriptPublicKey,
+        config.minimumExactAdditiveThresholdSompi,
+      );
     }
     return {
       scheme: "exact",
@@ -1664,35 +2423,60 @@ function makeAcceptedRequirement(
       templateId: config.templateId,
       serverPublicKey: config.serverPublicKey,
       minDepositSompi: config.minDepositSompi,
-      refundTimeoutDaa: options.channel?.channelConfig.refundTimeoutDaa ?? config.refundTimeoutDaa,
+      refundTimeoutDaa:
+        options.channel?.channelConfig.refundTimeoutDaa ??
+        config.refundTimeoutDaa,
       ...(config.claimPolicy ? { claimPolicy: config.claimPolicy } : {}),
-      ...(options.channel ? { channelState: channelState(options.channel) } : {}),
+      ...(options.channel
+        ? { channelState: channelState(options.channel) }
+        : {}),
       ...(options.voucherState ? { voucherState: options.voucherState } : {}),
     },
   };
 }
 
-function paymentRequirementSchemes(options: BuildPaymentRequiredOptions): Array<"exact" | "batch-settlement"> {
-  const schemes = options.schemes && options.schemes.length > 0 ? options.schemes : [options.scheme ?? "batch-settlement"];
+function paymentRequirementSchemes(
+  options: BuildPaymentRequiredOptions,
+): Array<"exact" | "batch-settlement"> {
+  const schemes =
+    options.schemes && options.schemes.length > 0
+      ? options.schemes
+      : [options.scheme ?? "batch-settlement"];
   return [...new Set(schemes)];
 }
 
-function paymentRequirementRouteOptions(request: PaidRequest): Pick<BuildPaymentRequiredOptions, "scheme" | "schemes"> {
-  if (request.paymentSchemes !== undefined) return { schemes: request.paymentSchemes };
+function paymentRequirementRouteOptions(
+  request: PaidRequest,
+): Pick<BuildPaymentRequiredOptions, "scheme" | "schemes"> {
+  if (request.paymentSchemes !== undefined)
+    return { schemes: request.paymentSchemes };
   return { scheme: request.paymentScheme };
 }
 
-function verificationRequestedScheme(request: PaidRequest): "exact" | "batch-settlement" | undefined {
-  if (request.paymentSchemes !== undefined) return request.paymentSchemes.length === 1 ? request.paymentSchemes[0] : undefined;
+function verificationRequestedScheme(
+  request: PaidRequest,
+): "exact" | "batch-settlement" | undefined {
+  if (request.paymentSchemes !== undefined)
+    return request.paymentSchemes.length === 1
+      ? request.paymentSchemes[0]
+      : undefined;
   return request.paymentScheme;
 }
 
-function isPaymentSchemeAllowed(request: PaidRequest, scheme: "exact" | "batch-settlement"): boolean {
-  if (request.paymentSchemes !== undefined) return request.paymentSchemes.includes(scheme);
-  return request.paymentScheme === undefined || request.paymentScheme === scheme;
+function isPaymentSchemeAllowed(
+  request: PaidRequest,
+  scheme: "exact" | "batch-settlement",
+): boolean {
+  if (request.paymentSchemes !== undefined)
+    return request.paymentSchemes.includes(scheme);
+  return (
+    request.paymentScheme === undefined || request.paymentScheme === scheme
+  );
 }
 
-function requiredPaymentIdentifierExtensions(config: Pick<ResolvedServerConfig, "requirePaymentIdentifier">): Pick<PaymentRequired, "extensions"> | Record<string, never> {
+function requiredPaymentIdentifierExtensions(
+  config: Pick<ResolvedServerConfig, "requirePaymentIdentifier">,
+): Pick<PaymentRequired, "extensions"> | Record<string, never> {
   return config.requirePaymentIdentifier
     ? {
         extensions: {
@@ -1708,10 +2492,14 @@ function facilitatorResource(): ResourceInfo {
   return { url: "kaspa-x402:facilitator" };
 }
 
-function facilitatorRequestFingerprint(options: DirectPaymentVerificationOptions): Hash32Hex {
-  if (options.requestHash !== undefined) return normalizedFacilitatorRequestHash(options.requestHash);
+function facilitatorRequestFingerprint(
+  options: DirectPaymentVerificationOptions,
+): Hash32Hex {
+  if (options.requestHash !== undefined)
+    return normalizedFacilitatorRequestHash(options.requestHash);
   const payload = options.paymentPayload.payload;
-  if (payload.type === "exact-transaction" && payload.requestHash) return payload.requestHash.toLowerCase();
+  if (payload.type === "exact-transaction" && payload.requestHash)
+    return payload.requestHash.toLowerCase();
   return sha256Hex(
     stableStringify({
       scope: "kaspa:x402:facilitator-request:v1",
@@ -1723,7 +2511,11 @@ function facilitatorRequestFingerprint(options: DirectPaymentVerificationOptions
 }
 
 function normalizedFacilitatorRequestHash(requestHash: unknown): Hash32Hex {
-  hexToBytes(requestHash, { expectedLength: 32, errorCode: "invalid_kaspa_x402_payload", label: "requestHash" });
+  hexToBytes(requestHash, {
+    expectedLength: 32,
+    errorCode: "invalid_kaspa_x402_payload",
+    label: "requestHash",
+  });
   return (requestHash as string).toLowerCase();
 }
 
@@ -1739,7 +2531,9 @@ function validatedPaymentRequired(paymentRequired: unknown): PaymentRequired {
   return result.value;
 }
 
-function verifiedPaymentSummary(payment: VerifiedPayment): Pick<DirectPaymentVerification, "payer" | "extra"> {
+function verifiedPaymentSummary(
+  payment: VerifiedPayment,
+): Pick<DirectPaymentVerification, "payer" | "extra"> {
   if (payment.scheme === "exact") {
     return {
       ...(payment.payerAddress ? { payer: payment.payerAddress } : {}),
@@ -1757,33 +2551,57 @@ function verifiedPaymentSummary(payment: VerifiedPayment): Pick<DirectPaymentVer
   };
 }
 
-function assertSettlementRequirements(authorized: PaymentRequirements, settlement: PaymentRequirements): void {
+function assertSettlementRequirements(
+  authorized: PaymentRequirements,
+  settlement: PaymentRequirements,
+): void {
   const authorizedComparable = comparableRequirements(authorized);
   const settlementComparable = comparableRequirements(settlement);
-  if (stableStringify(authorizedComparable) !== stableStringify(settlementComparable)) {
-    throw new KaspaX402Error("invalid_kaspa_x402_accepted", "settlement requirements do not match the authorized payment requirements");
+  if (
+    stableStringify(authorizedComparable) !==
+    stableStringify(settlementComparable)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_accepted",
+      "settlement requirements do not match the authorized payment requirements",
+    );
   }
 
   const authorizedAmount = parseSompiString(authorized.amount);
   const settlementAmount = parseSompiString(settlement.amount);
   if (authorized.scheme === "exact" && settlementAmount !== authorizedAmount) {
-    throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact settlement amount must equal the authorized amount");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "exact settlement amount must equal the authorized amount",
+    );
   }
   if (settlementAmount > authorizedAmount) {
-    throw new KaspaX402Error("invalid_kaspa_x402_amount", "settlement amount exceeds the authorized amount");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "settlement amount exceeds the authorized amount",
+    );
   }
 }
 
-function comparableRequirements(requirements: PaymentRequirements): PaymentRequirements {
+function comparableRequirements(
+  requirements: PaymentRequirements,
+): PaymentRequirements {
   return {
     ...requirements,
     amount: "0",
   } as PaymentRequirements;
 }
 
-function settlementFromServerResponse(response: ServerResponse, network: PaymentRequirements["network"]): SettlementResponse {
-  const paymentResponseHeader = readResponseHeader(response.headers, PAYMENT_RESPONSE_HEADER);
-  if (paymentResponseHeader) return decodePaymentResponseHeader(paymentResponseHeader);
+function settlementFromServerResponse(
+  response: ServerResponse,
+  network: PaymentRequirements["network"],
+): SettlementResponse {
+  const paymentResponseHeader = readResponseHeader(
+    response.headers,
+    PAYMENT_RESPONSE_HEADER,
+  );
+  if (paymentResponseHeader)
+    return decodePaymentResponseHeader(paymentResponseHeader);
   return {
     success: false,
     errorReason: errorMessageFromBody(response.body),
@@ -1792,8 +2610,13 @@ function settlementFromServerResponse(response: ServerResponse, network: Payment
   };
 }
 
-function readResponseHeader(headers: Record<string, string>, name: string): string | undefined {
-  const found = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+function readResponseHeader(
+  headers: Record<string, string>,
+  name: string,
+): string | undefined {
+  const found = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  );
   return found?.[1];
 }
 
@@ -1803,41 +2626,95 @@ function errorMessageFromBody(body: unknown): string {
   return "invalid_payload";
 }
 
-function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPaymentRequirements): void {
+function validateExactTerms(
+  config: ResolvedServerConfig,
+  accepted: ExactPaymentRequirements,
+): void {
   if (accepted.network !== config.network) {
-    throw new KaspaX402Error("invalid_kaspa_x402_network", "payment network does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "payment network does not match server config",
+    );
   }
   if (accepted.asset !== "KAS") {
-    throw new KaspaX402Error("invalid_kaspa_x402_asset", "payment asset does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_asset",
+      "payment asset does not match server config",
+    );
   }
   if (accepted.payTo !== config.payTo) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "payTo does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "payTo does not match server config",
+    );
   }
   if (accepted.extra.binding !== "kaspa-exact-v2") {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact binding does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "exact binding does not match server config",
+    );
   }
   if (exactProfileFromAccepted(accepted) !== config.exactProfile) {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact profile does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "exact profile does not match server config",
+    );
   }
-  const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
-  if (accepted.extra.payToScriptPublicKey?.toLowerCase() !== payToScriptPublicKey.toLowerCase()) {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact payTo script does not match server derivation");
+  const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(
+    accepted.payTo,
+    accepted.network,
+  );
+  if (
+    accepted.extra.payToScriptPublicKey?.toLowerCase() !==
+    payToScriptPublicKey.toLowerCase()
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "exact payTo script does not match server derivation",
+    );
   }
   if (parseSompiString(accepted.amount) <= 0n) {
-    throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment amount must be positive");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "exact payment amount must be positive",
+    );
   }
   if (config.exactProfile === "additive") {
     const head = exactHeadFromAccepted(accepted);
-    if (!head) throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact requirements require complete head terms");
-    assertExactHeadPolicy(head, accepted.amount, payToScriptPublicKey, config.minimumExactAdditiveThresholdSompi, true);
+    if (!head)
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact requirements require complete head terms",
+      );
+    assertExactHeadPolicy(
+      head,
+      accepted.amount,
+      payToScriptPublicKey,
+      config.minimumExactAdditiveThresholdSompi,
+      true,
+    );
     const { challengeId: _challengeId, ...unsigned } = head;
-    if (exactHeadChallengeId(accepted.network, accepted.payTo, accepted.amount, unsigned) !== head.challengeId.toLowerCase()) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact challenge id does not bind its advertised terms");
+    if (
+      exactHeadChallengeId(
+        accepted.network,
+        accepted.payTo,
+        accepted.amount,
+        unsigned,
+      ) !== head.challengeId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact challenge id does not bind its advertised terms",
+      );
     }
   }
 }
 
-function exactRequirementMatchesRoute(config: ResolvedServerConfig, accepted: ExactPaymentRequirements, paymentAmount?: SompiString): boolean {
+function exactRequirementMatchesRoute(
+  config: ResolvedServerConfig,
+  accepted: ExactPaymentRequirements,
+  paymentAmount?: SompiString,
+): boolean {
   return (
     accepted.network === config.network &&
     accepted.asset === "KAS" &&
@@ -1850,15 +2727,23 @@ function exactRequirementMatchesRoute(config: ResolvedServerConfig, accepted: Ex
   );
 }
 
-function exactProfileFromAccepted(accepted: ExactPaymentRequirements): "standard-native" | "additive" {
-  if (accepted.extra.binding === "kaspa-exact-v2") {
-    if (accepted.extra.profile === "standard-native" || accepted.extra.profile === "additive") return accepted.extra.profile;
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact v2 requirements must select a profile");
-  }
-  return "additive";
+function exactProfileFromAccepted(
+  accepted: ExactPaymentRequirements,
+): "standard-native" | "additive" {
+  if (
+    accepted.extra.profile === "standard-native" ||
+    accepted.extra.profile === "additive"
+  )
+    return accepted.extra.profile;
+  throw new KaspaX402Error(
+    "invalid_kaspa_x402_payload",
+    "exact v2 requirements must select a profile",
+  );
 }
 
-function exactHeadFromAccepted(accepted: ExactPaymentRequirements): ExactHeadChallenge | undefined {
+function exactHeadFromAccepted(
+  accepted: ExactPaymentRequirements,
+): ExactHeadChallenge | undefined {
   const extra = accepted.extra;
   if (
     extra.binding !== "kaspa-exact-v2" ||
@@ -1894,43 +2779,6 @@ function exactHeadFromAccepted(accepted: ExactPaymentRequirements): ExactHeadCha
   };
 }
 
-function exactReservationFromAccepted(accepted: ExactPaymentRequirements): ExactBorrowReservation | undefined {
-  const extra = accepted.extra;
-  if (
-    extra.templateId !== "kaspa-x402-kip10-additive-v1" ||
-      extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
-      !extra.borrowOutpoint ||
-      typeof extra.borrowAmount !== "string" ||
-      typeof extra.borrowScriptPublicKey !== "string" ||
-      typeof extra.borrowRedeemScript !== "string" ||
-      typeof extra.additiveThresholdSompi !== "string" ||
-      typeof extra.paymentOutputIndex !== "number" ||
-      typeof extra.reservationId !== "string"
-  ) {
-    return undefined;
-  }
-  parseSompiString(extra.borrowAmount);
-  parseSompiString(extra.additiveThresholdSompi);
-  return {
-    reservationId: extra.reservationId,
-    templateId: extra.templateId,
-    transactionEncoding: extra.transactionEncoding,
-    borrowOutpoint: extra.borrowOutpoint,
-    borrowAmount: extra.borrowAmount,
-    borrowScriptPublicKey: extra.borrowScriptPublicKey,
-    borrowRedeemScript: extra.borrowRedeemScript,
-    additiveThresholdSompi: extra.additiveThresholdSompi,
-    paymentOutputIndex: extra.paymentOutputIndex,
-    ...(typeof extra.reservationExpiresAt === "string" ? { expiresAt: extra.reservationExpiresAt } : {}),
-  };
-}
-
-function assertExactReservationPolicy(reservation: ExactBorrowReservation, minimumAdditiveThresholdSompi: SompiString): void {
-  if (parseSompiString(reservation.additiveThresholdSompi) < parseSompiString(minimumAdditiveThresholdSompi)) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation additive threshold is below server minimum");
-  }
-}
-
 function assertExactHeadPolicy(
   head: ExactHeadChallenge,
   amount: SompiString,
@@ -1939,21 +2787,41 @@ function assertExactHeadPolicy(
   allowExpired = false,
 ): void {
   if (head.paymentOutputIndex !== 0) {
-    throw new KaspaX402Error("invalid_kaspa_outpoint", "additive exact successor must remain at output index 0");
+    throw new KaspaX402Error(
+      "invalid_kaspa_outpoint",
+      "additive exact successor must remain at output index 0",
+    );
   }
   const threshold = parseSompiString(head.additiveThresholdSompi);
-  if (threshold < parseSompiString(minimumAdditiveThresholdSompi) || parseSompiString(amount) < threshold) {
-    throw new KaspaX402Error("invalid_kaspa_x402_amount", "additive exact amount does not meet the configured head threshold");
+  if (
+    threshold < parseSompiString(minimumAdditiveThresholdSompi) ||
+    parseSompiString(amount) < threshold
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "additive exact amount does not meet the configured head threshold",
+    );
   }
-  if (parseSompiString(head.headAmount) <= 0n || parseSompiString(head.headVersion) < 0n) {
-    throw new KaspaX402Error("invalid_kaspa_x402_amount", "additive exact head amount and version are invalid");
+  if (
+    parseSompiString(head.headAmount) <= 0n ||
+    parseSompiString(head.headVersion) < 0n
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "additive exact head amount and version are invalid",
+    );
   }
   if (!allowExpired && Date.parse(head.expiresAt) <= Date.now()) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact head challenge has expired");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "additive exact head challenge has expired",
+    );
   }
   try {
     const template = parseKip10AdditiveRedeemScript(head.headRedeemScript);
-    const scriptPublicKey = serializedScriptPublicKey(payToScriptHashScript(head.headRedeemScript)).toLowerCase();
+    const scriptPublicKey = serializedScriptPublicKey(
+      payToScriptHashScript(head.headRedeemScript),
+    ).toLowerCase();
     if (
       template.amount !== head.additiveThresholdSompi ||
       scriptPublicKey !== head.headScriptPublicKey.toLowerCase() ||
@@ -1962,58 +2830,71 @@ function assertExactHeadPolicy(
       throw new Error("head script terms do not match");
     }
   } catch {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "additive exact head must use the canonical configured KIP-10 script");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "additive exact head must use the canonical configured KIP-10 script",
+    );
   }
 }
 
-function shouldRefreshExactReservation(error: unknown): boolean {
-  if (!(error instanceof KaspaX402Error)) return false;
-  return (
-    error.message === "exact reservation is not available" ||
-    error.message === "exact reservation does not match accepted terms" ||
-    error.message === "exact reservation is consumed without transaction evidence" ||
-    error.message === "exact reservation has expired" ||
-    error.message === "exact reservation was already consumed by a different transaction"
-  );
-}
-
-function sameExactReservation(current: ExactBorrowReservation, expected: ExactBorrowReservation): boolean {
-  return (
-    current.reservationId.toLowerCase() === expected.reservationId.toLowerCase() &&
-    current.templateId === expected.templateId &&
-    current.transactionEncoding === expected.transactionEncoding &&
-    current.borrowOutpoint.txid.toLowerCase() === expected.borrowOutpoint.txid.toLowerCase() &&
-    current.borrowOutpoint.index === expected.borrowOutpoint.index &&
-    current.borrowAmount === expected.borrowAmount &&
-    current.borrowScriptPublicKey.toLowerCase() === expected.borrowScriptPublicKey.toLowerCase() &&
-    current.borrowRedeemScript.toLowerCase() === expected.borrowRedeemScript.toLowerCase() &&
-    current.additiveThresholdSompi === expected.additiveThresholdSompi &&
-    current.paymentOutputIndex === expected.paymentOutputIndex &&
-    current.expiresAt === expected.expiresAt
-  );
-}
-
-function validateChannelTerms(config: ResolvedServerConfig, accepted: BatchPaymentRequirements, channelConfig: ChannelConfig): void {
-  if (accepted.network !== config.network || channelConfig.network !== config.network) {
-    throw new KaspaX402Error("invalid_kaspa_x402_network", "payment network does not match server config");
+function validateChannelTerms(
+  config: ResolvedServerConfig,
+  accepted: BatchPaymentRequirements,
+  channelConfig: ChannelConfig,
+): void {
+  if (
+    accepted.network !== config.network ||
+    channelConfig.network !== config.network
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "payment network does not match server config",
+    );
   }
   if (accepted.asset !== "KAS" || channelConfig.asset !== "KAS") {
-    throw new KaspaX402Error("invalid_kaspa_x402_asset", "payment asset does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_asset",
+      "payment asset does not match server config",
+    );
   }
   if (accepted.payTo !== config.payTo || channelConfig.payTo !== config.payTo) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "payTo does not match server config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "payTo does not match server config",
+    );
   }
-  if (accepted.extra.serverPublicKey !== config.serverPublicKey || channelConfig.serverPublicKey !== config.serverPublicKey) {
-    throw new KaspaX402Error("invalid_kaspa_public_key", "server public key does not match server config");
+  if (
+    accepted.extra.serverPublicKey !== config.serverPublicKey ||
+    channelConfig.serverPublicKey !== config.serverPublicKey
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_public_key",
+      "server public key does not match server config",
+    );
   }
-  if (accepted.extra.templateId !== config.templateId || channelConfig.templateId !== config.templateId) {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "template id does not match server config");
+  if (
+    accepted.extra.templateId !== config.templateId ||
+    channelConfig.templateId !== config.templateId
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "template id does not match server config",
+    );
   }
   if (accepted.extra.refundTimeoutDaa !== channelConfig.refundTimeoutDaa) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "refund timeout does not match channel config");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "refund timeout does not match channel config",
+    );
   }
-  if (!config.allowRollingRefundTimeoutDaa && accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "refund timeout does not match server config");
+  if (
+    !config.allowRollingRefundTimeoutDaa &&
+    accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "refund timeout does not match server config",
+    );
   }
 }
 
@@ -2032,10 +2913,12 @@ function batchRequirementMatchesRoute(
     accepted.extra.templateId === config.templateId &&
     accepted.extra.serverPublicKey === config.serverPublicKey &&
     accepted.extra.minDepositSompi === config.minDepositSompi &&
-    ((accepted.extra.claimPolicy === undefined && config.claimPolicy === undefined) ||
+    ((accepted.extra.claimPolicy === undefined &&
+      config.claimPolicy === undefined) ||
       (accepted.extra.claimPolicy !== undefined &&
         config.claimPolicy !== undefined &&
-        stableStringify(accepted.extra.claimPolicy) === stableStringify(config.claimPolicy)))
+        stableStringify(accepted.extra.claimPolicy) ===
+          stableStringify(config.claimPolicy)))
   );
 }
 
@@ -2065,9 +2948,22 @@ function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
   }
 }
 
-function deriveServerEscrow(config: ResolvedServerConfig, channelConfig: ChannelConfig): { escrowAddress: string; activeScriptPublicKey: string } {
-  const payoutScriptPublicKeyHash = scriptPublicKeyHash(config.addressCodec.scriptPublicKeyForAddress(channelConfig.payTo, channelConfig.network));
-  const refundScriptPublicKeyHash = scriptPublicKeyHash(config.addressCodec.scriptPublicKeyForAddress(channelConfig.refundAddress, channelConfig.network));
+function deriveServerEscrow(
+  config: ResolvedServerConfig,
+  channelConfig: ChannelConfig,
+): { escrowAddress: string; activeScriptPublicKey: string } {
+  const payoutScriptPublicKeyHash = scriptPublicKeyHash(
+    config.addressCodec.scriptPublicKeyForAddress(
+      channelConfig.payTo,
+      channelConfig.network,
+    ),
+  );
+  const refundScriptPublicKeyHash = scriptPublicKeyHash(
+    config.addressCodec.scriptPublicKeyForAddress(
+      channelConfig.refundAddress,
+      channelConfig.network,
+    ),
+  );
   const params = {
     clientPublicKey: channelConfig.clientPublicKey,
     serverPublicKey: channelConfig.serverPublicKey,
@@ -2078,7 +2974,9 @@ function deriveServerEscrow(config: ResolvedServerConfig, channelConfig: Channel
   };
   const scriptPublicKey = escrowScriptPublicKey(params);
   return {
-    escrowAddress: deriveEscrowAddress(params, (input) => config.addressCodec.encodeScriptAddress(input)),
+    escrowAddress: deriveEscrowAddress(params, (input) =>
+      config.addressCodec.encodeScriptAddress(input),
+    ),
     activeScriptPublicKey: serializedScriptPublicKey(scriptPublicKey),
   };
 }
@@ -2109,43 +3007,78 @@ function expectedSettlementChannelState(channel: ServerChannelRecord) {
 
 function validateChannelAccounting(channel: ServerChannelRecord): void {
   validateChannelPreVoucherAccounting(channel);
-  const active = parseSompiString(channel.chargedCumulativeAmount) - parseSompiString(channel.claimedCumulativeAmount);
+  const active =
+    parseSompiString(channel.chargedCumulativeAmount) -
+    parseSompiString(channel.claimedCumulativeAmount);
   const funding = parseSompiString(channel.fundingAmount);
   const signed = parseSompiString(channel.signedMaxClaimable);
-  if (active > signed) throw new KaspaX402Error("invalid_kaspa_settlement_response", "active charged amount cannot exceed signed ceiling");
-  if (signed > funding) throw new KaspaX402Error("invalid_kaspa_settlement_response", "signed ceiling cannot exceed funding amount");
+  if (active > signed)
+    throw new KaspaX402Error(
+      "invalid_kaspa_settlement_response",
+      "active charged amount cannot exceed signed ceiling",
+    );
+  if (signed > funding)
+    throw new KaspaX402Error(
+      "invalid_kaspa_settlement_response",
+      "signed ceiling cannot exceed funding amount",
+    );
 }
 
-function validateChannelPreVoucherAccounting(channel: ServerChannelRecord): void {
+function validateChannelPreVoucherAccounting(
+  channel: ServerChannelRecord,
+): void {
   const charged = parseSompiString(channel.chargedCumulativeAmount);
   const claimed = parseSompiString(channel.claimedCumulativeAmount);
   const active = charged - claimed;
   const funding = parseSompiString(channel.fundingAmount);
-  if (claimed > charged) throw new KaspaX402Error("invalid_kaspa_settlement_response", "claimed amount cannot exceed charged amount");
-  if (active > funding) throw new KaspaX402Error("invalid_kaspa_settlement_response", "active charged amount cannot exceed funding amount");
+  if (claimed > charged)
+    throw new KaspaX402Error(
+      "invalid_kaspa_settlement_response",
+      "claimed amount cannot exceed charged amount",
+    );
+  if (active > funding)
+    throw new KaspaX402Error(
+      "invalid_kaspa_settlement_response",
+      "active charged amount cannot exceed funding amount",
+    );
 }
 
-function safePaymentChannelId(paymentPayload: PaymentPayload): Hash32Hex | undefined {
+function safePaymentChannelId(
+  paymentPayload: PaymentPayload,
+): Hash32Hex | undefined {
   const payload = paymentPayload.payload;
-  if ("channelId" in payload && typeof payload.channelId === "string") return payload.channelId;
+  if ("channelId" in payload && typeof payload.channelId === "string")
+    return payload.channelId;
   return undefined;
 }
 
-function safePaymentScopeIdHint(paymentPayload: PaymentPayload): Hash32Hex | undefined {
+function safePaymentScopeIdHint(
+  paymentPayload: PaymentPayload,
+): Hash32Hex | undefined {
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type === "exact-transaction" && typeof payload.transaction === "string" && typeof payload.paymentOutputIndex === "number") {
+  if (
+    payload.type === "exact-transaction" &&
+    typeof payload.transaction === "string" &&
+    typeof payload.paymentOutputIndex === "number"
+  ) {
     return exactTransactionArtifactScopeId(payload.transaction);
   }
   return undefined;
 }
 
-function safePaymentLockKey(paymentPayload: PaymentPayload): Hash32Hex | undefined {
+function safePaymentLockKey(
+  paymentPayload: PaymentPayload,
+): Hash32Hex | undefined {
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
   const payload = paymentPayload.payload;
-  if (payload.type === "exact-transaction" && typeof payload.transaction === "string" && typeof payload.paymentOutputIndex === "number") {
+  if (
+    payload.type === "exact-transaction" &&
+    typeof payload.transaction === "string" &&
+    typeof payload.paymentOutputIndex === "number"
+  ) {
     return exactTransactionArtifactScopeId(payload.transaction);
   }
   return undefined;
@@ -2169,14 +3102,22 @@ function exactTransactionArtifactScopeId(transaction: string): Hash32Hex {
   );
 }
 
-function readHeader(headers: PaidRequest["headers"], name: string): string | undefined {
+function readHeader(
+  headers: PaidRequest["headers"],
+  name: string,
+): string | undefined {
   if (!headers) return undefined;
-  if ("get" in headers && typeof headers.get === "function") return headers.get(name) ?? headers.get(name.toLowerCase()) ?? undefined;
-  const found = Object.entries(headers).find(([key]) => key.toLowerCase() === name.toLowerCase());
+  if ("get" in headers && typeof headers.get === "function")
+    return headers.get(name) ?? headers.get(name.toLowerCase()) ?? undefined;
+  const found = Object.entries(headers).find(
+    ([key]) => key.toLowerCase() === name.toLowerCase(),
+  );
   return found?.[1];
 }
 
-function readPaymentIdentifier(paymentPayload: PaymentPayload): string | undefined {
+function readPaymentIdentifier(
+  paymentPayload: PaymentPayload,
+): string | undefined {
   const paymentIdentifier = paymentPayload.extensions?.["payment-identifier"];
   if (!isRecord(paymentIdentifier)) return undefined;
   const info = paymentIdentifier.info;
@@ -2184,7 +3125,10 @@ function readPaymentIdentifier(paymentPayload: PaymentPayload): string | undefin
   return typeof info.id === "string" ? info.id : undefined;
 }
 
-function fingerprintRequest(request: PaidRequest, accepted: PaymentRequirements): Hash32Hex {
+function fingerprintRequest(
+  request: PaidRequest,
+  accepted: PaymentRequirements,
+): Hash32Hex {
   return sha256Hex(
     stableStringify({
       method: request.method ?? "GET",
@@ -2199,7 +3143,10 @@ function paymentPayloadHash(paymentPayload: PaymentPayload): Hash32Hex {
   return sha256Hex(stableStringify(paymentPayload));
 }
 
-function paymentIdentifierScopeMatches(record: PaymentIdentifierRecord, paymentScopeId: Hash32Hex | undefined): boolean {
+function paymentIdentifierScopeMatches(
+  record: PaymentIdentifierRecord,
+  paymentScopeId: Hash32Hex | undefined,
+): boolean {
   return (
     paymentScopeId === undefined ||
     record.paymentScopeId === paymentScopeId ||
@@ -2218,11 +3165,20 @@ function paymentIdentifierConflictResponse(): ServerResponse {
   };
 }
 
-function normalizeBroadcastFinality(finality: SettlementFinality): SettlementFinality {
-  return finality === "confirmed" ? "confirmed" : finality === "accepted" ? "accepted" : "broadcast";
+function normalizeBroadcastFinality(
+  finality: SettlementFinality,
+): SettlementFinality {
+  return finality === "confirmed"
+    ? "confirmed"
+    : finality === "accepted"
+      ? "accepted"
+      : "broadcast";
 }
 
-function responseWithSettlement(response: ServerResponse, settlement: SettlementResponse): ServerResponse {
+function responseWithSettlement(
+  response: ServerResponse,
+  settlement: SettlementResponse,
+): ServerResponse {
   return {
     ...response,
     headers: {
@@ -2237,10 +3193,19 @@ function idempotencyLockKey(paymentIdentifier: string): Hash32Hex {
 }
 
 function latestVoucher(channel: ServerChannelRecord): Voucher | undefined {
-  return channel.voucherSignature ? { amount: channel.signedMaxClaimable, signature: channel.voucherSignature } : undefined;
+  return channel.voucherSignature
+    ? {
+        amount: channel.signedMaxClaimable,
+        signature: channel.voucherSignature,
+      }
+    : undefined;
 }
 
-function claimAttemptId(channel: ServerChannelRecord, transaction: PreparedTransaction, claimAmount: SompiString): Hash32Hex {
+function claimAttemptId(
+  channel: ServerChannelRecord,
+  transaction: PreparedTransaction,
+  claimAmount: SompiString,
+): Hash32Hex {
   return sha256Hex(
     stableStringify({
       channelId: channel.channelId,
@@ -2257,19 +3222,26 @@ function maxAmount(a: SompiString, b: SompiString): SompiString {
 }
 
 function sameActiveOutpoint(
-  channel: Pick<ServerChannelRecord, "activeOutpoint" | "activeScriptPublicKey">,
+  channel: Pick<
+    ServerChannelRecord,
+    "activeOutpoint" | "activeScriptPublicKey"
+  >,
   outpoint: FundingOutpoint,
   activeScriptPublicKey: string,
 ): boolean {
   return (
     channel.activeOutpoint.txid.toLowerCase() === outpoint.txid.toLowerCase() &&
     channel.activeOutpoint.index === outpoint.index &&
-    channel.activeScriptPublicKey.toLowerCase() === activeScriptPublicKey.toLowerCase()
+    channel.activeScriptPublicKey.toLowerCase() ===
+      activeScriptPublicKey.toLowerCase()
   );
 }
 
 function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
-  return left.txid.toLowerCase() === right.txid.toLowerCase() && left.index === right.index;
+  return (
+    left.txid.toLowerCase() === right.txid.toLowerCase() &&
+    left.index === right.index
+  );
 }
 
 function scriptPublicKeyHash(scriptPublicKey: string): string {
@@ -2288,13 +3260,27 @@ function batchCommitmentId(input: {
     sha256(
       concatBytes([
         sha256("kaspa:x402:batch-commitment:v1"),
-        hexToBytes(input.channel.channelId, { expectedLength: 32, label: "channelId" }),
-        hexToBytes(input.requestFingerprint, { expectedLength: 32, label: "requestFingerprint" }),
+        hexToBytes(input.channel.channelId, {
+          expectedLength: 32,
+          label: "channelId",
+        }),
+        hexToBytes(input.requestFingerprint, {
+          expectedLength: 32,
+          label: "requestFingerprint",
+        }),
         batchPaymentRequirementsHash(input.accepted),
-        hexToBytes(input.channel.activeOutpoint.txid, { expectedLength: 32, label: "activeOutpoint.txid" }),
+        hexToBytes(input.channel.activeOutpoint.txid, {
+          expectedLength: 32,
+          label: "activeOutpoint.txid",
+        }),
         le32(input.channel.activeOutpoint.index),
         le64(input.voucher.amount),
-        sha256(hexToBytes(input.voucher.signature, { expectedLength: 64, label: "voucher.signature" })),
+        sha256(
+          hexToBytes(input.voucher.signature, {
+            expectedLength: 64,
+            label: "voucher.signature",
+          }),
+        ),
         le64(input.chargedAmount),
         le64(input.channel.chargedCumulativeAmount),
         le64(input.chargedCumulativeAfter),
@@ -2304,7 +3290,9 @@ function batchCommitmentId(input: {
   );
 }
 
-function batchPaymentRequirementsHash(accepted: BatchPaymentRequirements): Uint8Array {
+function batchPaymentRequirementsHash(
+  accepted: BatchPaymentRequirements,
+): Uint8Array {
   return sha256(
     concatBytes([
       sha256("kaspa:x402:batch-payment-requirements:v1"),
@@ -2316,23 +3304,37 @@ function batchPaymentRequirementsHash(accepted: BatchPaymentRequirements): Uint8
       le64(accepted.maxTimeoutSeconds),
       sha256("kaspa-escrow-v1"),
       sha256(accepted.extra.templateId),
-      hexToBytes(accepted.extra.serverPublicKey, { expectedLength: 32, label: "serverPublicKey" }),
+      hexToBytes(accepted.extra.serverPublicKey, {
+        expectedLength: 32,
+        label: "serverPublicKey",
+      }),
       le64(accepted.extra.minDepositSompi),
       le64(accepted.extra.refundTimeoutDaa),
     ]),
   );
 }
 
-function isAcceptedFinality(finality: string, required: "accepted" | "confirmed"): boolean {
-  return finality === "confirmed" || (required === "accepted" && finality === "accepted");
+function isAcceptedFinality(
+  finality: string,
+  required: "accepted" | "confirmed",
+): boolean {
+  return (
+    finality === "confirmed" ||
+    (required === "accepted" && finality === "accepted")
+  );
 }
 
-function exactFinalityMeets(actual: "mempool" | "accepted" | "confirmed", required: "mempool" | "accepted" | "confirmed"): boolean {
+function exactFinalityMeets(
+  actual: "mempool" | "accepted" | "confirmed",
+  required: "mempool" | "accepted" | "confirmed",
+): boolean {
   const rank = { mempool: 0, accepted: 1, confirmed: 2 } as const;
   return rank[actual] >= rank[required];
 }
 
-function isExactFinality(value: unknown): value is "mempool" | "accepted" | "confirmed" {
+function isExactFinality(
+  value: unknown,
+): value is "mempool" | "accepted" | "confirmed" {
   return value === "mempool" || value === "accepted" || value === "confirmed";
 }
 

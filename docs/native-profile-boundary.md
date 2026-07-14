@@ -4,7 +4,10 @@ Status: active alpha boundary for the shipped package surface.
 
 The current native Kaspa x402 surface ships two profiles:
 
-- `exact` with `kaspa-exact-v1` for fixed-price one-shot transfers;
+- `exact` with `kaspa-exact-v2` for fixed-price one-shot transfers. Its
+  default `standard-native` profile is an ordinary native-KAS transfer; its
+  optional `additive` profile uses a reusable KIP-10 head whose exact
+  successor delta is the payment;
 - `batch-settlement` with `kaspa-escrow-v1` for repeated or variable-cost
   requests backed by a funded escrow/channel.
 
@@ -16,12 +19,14 @@ live evidence.
 
 ## Asset Boundary
 
-The shipped profiles settle native KAS only. `kaspa-exact-v1` verifies that a
-Kaspa transaction pays the required sompi amount to the required script public
-key. The current alpha exact path is not limited to a bare address-transfer model:
-the server advertises KIP-10 P2SH reservation terms and the client returns a
-signed transaction artifact that satisfies those terms. `kaspa-escrow-v1`
-settles native KAS from a funded escrow/channel.
+The shipped profiles settle native KAS only. `kaspa-exact-v2` verifies that a
+Kaspa transaction satisfies the advertised exact profile. `standard-native`
+requires one ordinary native-KAS output that pays exactly the advertised amount
+to the advertised recipient. Optional `additive` requires a signed transaction
+that spends the advertised current KIP-10 head and recreates its same-script
+successor with an exact delta equal to the advertised amount. The head challenge
+is not an exclusive reservation and there is no second merchant payment output.
+`kaspa-escrow-v1` settles native KAS from a funded escrow/channel.
 
 ## Absent Upstream Schemes
 
@@ -64,7 +69,7 @@ must clear the full readiness bar below before it can ship.
 - Public schemas accept only `exact` and `batch-settlement`.
 - Payment payloads accept only `exact-transaction`, `deposit-voucher`, `voucher`,
   `claim`, and `refund`.
-- Kaspa requirements extras accept only `kaspa-exact-v1` and
+- Kaspa requirements extras accept only `kaspa-exact-v2` and
   `kaspa-escrow-v1`.
 - Covenant helpers expose only the escrow template and batch claim/refund
   transaction builders.

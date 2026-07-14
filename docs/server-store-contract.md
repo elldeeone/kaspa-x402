@@ -30,6 +30,19 @@ transaction id and output index are the replay evidence.
 domain. Reusing an id with a different request fingerprint, payload hash, or
 payment scope must fail atomically.
 
+## Additive Exact Heads
+
+`registerExactHead` must enforce unique head ids and unique current outpoints.
+`selectExactHead` is read-only: issuing a 402 must not reserve, retire, or
+otherwise mutate a head. `claimExactSettlement` must atomically compare the
+advertised head id, version, and current outpoint before marking one settlement
+attempt as the claimant. `acceptExactSettlement` must atomically replace that
+outpoint and amount with the verifier-derived same-script successor, increment
+the version, and commit replay/idempotency state. A losing concurrent claimant
+must fail and refresh from the current head. Crash recovery must preserve
+broadcast uncertainty rather than reopening the old outpoint for protected
+work.
+
 ## Settlement State
 
 `commitSettlement` must atomically write the batch commitment, optional payment

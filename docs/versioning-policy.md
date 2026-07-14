@@ -14,6 +14,10 @@ minor/pre-release versions, and the affected docs in the same change.
 
 Current alpha wire notes:
 
+- `0.1.0-alpha.8` introduces `kaspa-exact-v2`, with default
+  `standard-native` and optional reusable KIP-10 `additive` head profiles. The
+  additive successor delta is the sole exact payment; unanswered offers do not
+  reserve or retire heads.
 - `0.1.0-alpha.7` hardens KIP-10 reservation validation and continuation
   recycling, enforces the Kaspa DAA lock-time boundary and rolling refund
   safety window, and makes claim-continuation accounting explicit.

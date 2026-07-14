@@ -21,30 +21,40 @@ Status: alpha threat model for the shipped exact and batch-settlement profiles.
 
 ## Core Threats
 
-| Threat | Mitigation | Residual risk |
-| ------ | ---------- | ------------- |
-| Exact transaction replay | Exact payment identity includes network, transaction id, and output index. State stores reserve the identity before handler execution. | Production stores need atomic compare-and-set behavior across workers. |
-| Batch voucher replay or regression | Channel state tracks active outpoint, cumulative amount, and voucher commitments. Older or conflicting vouchers are rejected. | Production operators need durable channel state and recovery journals. |
-| Duplicate retry double-executes protected work | Payment identifiers bind request fingerprint, payload hash, and payment scope. Same id plus same fingerprint returns cached state; conflicts fail. | Deployments must make payment-identifier writes transactional. |
-| Handler failure consumes payment state | Payment state is committed only after protected handler success unless the flow has an explicit recoverable settlement state. | Product terms still need to define any billable work exceptions. |
-| Stale node or RPC failure | Verification fails closed unless required finality evidence is present. | Operators must monitor node health and finality lag. |
-| Funding source policy bypass | Client code checks required funding source against adapter-reported funding source. | Wallet and treasury adapters still require independent audit. |
-| Malicious facilitator widens capability | Facilitator supported kinds are intersected with direct-mode server capability and explicit action settlers. | Hosted facilitators need authentication, rate limits, and tenant isolation. |
-| Covenant template drift | Escrow fixture checks and transaction-v1 vectors pin script-public-key, hash, fee, and output behavior. | Mainnet requires an independent covenant and transaction-builder audit. |
+| Threat                                         | Mitigation                                                                                                                                         | Residual risk                                                               |
+| ---------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- |
+| Exact transaction replay                       | Exact payment identity includes network, transaction id, and output index. State stores reserve the identity before handler execution.             | Production stores need atomic compare-and-set behavior across workers.      |
+| Batch voucher replay or regression             | Channel state tracks active outpoint, cumulative amount, and voucher commitments. Older or conflicting vouchers are rejected.                      | Production operators need durable channel state and recovery journals.      |
+| Duplicate retry double-executes protected work | Payment identifiers bind request fingerprint, payload hash, and payment scope. Same id plus same fingerprint returns cached state; conflicts fail. | Deployments must make payment-identifier writes transactional.              |
+| Handler failure consumes payment state         | Payment state is committed only after protected handler success unless the flow has an explicit recoverable settlement state.                      | Product terms still need to define any billable work exceptions.            |
+| Stale node or RPC failure                      | Verification fails closed unless required finality evidence is present.                                                                            | Operators must monitor node health and finality lag.                        |
+| Funding source policy bypass                   | Client code checks required funding source against adapter-reported funding source.                                                                | Wallet and treasury adapters still require independent audit.               |
+| Malicious facilitator widens capability        | Facilitator supported kinds are intersected with direct-mode server capability and explicit action settlers.                                       | Hosted facilitators need authentication, rate limits, and tenant isolation. |
+| Covenant template drift                        | Escrow fixture checks and transaction-v1 vectors pin script-public-key, hash, fee, and output behavior.                                            | Mainnet requires an independent covenant and transaction-builder audit.     |
 
-## Exact Profile
+## Exact Profiles
 
-The exact profile validates a native Kaspa transaction that pays the advertised
-amount to the advertised recipient output. Verifiers derive transaction id,
-output script, and output amount from the transaction body rather than trusting
-payload hints.
+The default `standard-native` profile validates a native Kaspa transaction whose
+selected output pays the advertised amount exactly to the advertised recipient.
+The optional `additive` profile validates a transaction that spends the current
+advertised KIP-10 head and recreates a same-script successor whose increase is
+exactly the advertised amount. The successor increase is the sole merchant
+payment; a separate merchant output is forbidden. Verifiers derive transaction
+id, inputs, outputs, scripts, amounts, and continuation evidence from the
+transaction body and trusted UTXO lookups rather than payload hints.
 
 Required checks include:
 
 - accepted requirements match a server offer exactly;
 - network, asset, amount, recipient, and binding are unchanged;
 - transaction id, when supplied, matches the transaction body;
-- selected output index exists and pays exactly the required amount;
+- the selected standard-native output exists and pays exactly the required
+  amount, or the additive successor is at the canonical index with the same
+  script and exact required delta;
+- additive challenges bind the head id, version, current outpoint, current
+  amount, script, threshold, and request fingerprint without reserving the head;
+- additive settlement advances the expected head version atomically, and stale
+  competitors receive fresh terms;
 - the transaction/output identity has not already been consumed;
 - finality satisfies the server policy before protected content is released.
 
@@ -68,7 +78,7 @@ Required checks include:
 
 Production stores must provide atomic operations for:
 
-- exact transaction/output reservation;
+- exact transaction replay claims and additive-head claim/advance transitions;
 - payment identifier reservation and conflict detection;
 - batch channel creation and active outpoint updates;
 - voucher commitment compare-and-set;

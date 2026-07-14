@@ -23,7 +23,9 @@ state, and reports under `KASPA_X402_DATA_DIR`. Keep that directory ignored.
 
 The current proof requires:
 
-- exact KIP-10 transaction artifact settlement and replay rejection;
+- standard-native exact settlement and replay rejection;
+- additive exact settlement proving exact KIP-10 head delta and replay
+  rejection;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
@@ -31,12 +33,12 @@ The current proof requires:
 - batch refund transaction construction and broadcast after timeout.
 
 Broadcast transaction evidence must include transaction ids, transaction
-versions, version evidence source, and accepted-or-confirmed finality. Exact
-KIP-10 evidence must include the transaction encoding, reservation id, borrow
-outpoint, additive threshold, payment output index, transaction-artifact hash,
-server broadcast result, final settlement transaction id, and adapter-submitted
-transaction-v1 shape evidence. The reference alpha requires the advertised
-additive threshold to be at least `10000000` sompi. Batch claim and refund
+versions, version evidence source, and accepted-or-confirmed finality. Both
+exact profiles must include transaction encoding, output index,
+transaction-artifact hash, server broadcast result, and settlement id.
+Additive evidence must identify the durable head and consumed outpoint and
+prove that the successor increase equals the advertised payment exactly. Batch
+claim and refund
 evidence must reconcile inputs, outputs, charged amounts, fees, and continuation
 or refund value.
 

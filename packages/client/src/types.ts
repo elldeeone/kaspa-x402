@@ -24,8 +24,10 @@ export const PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
 export const PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 
-export type FundingSourceKind = "hot-wallet" | "vault-treasury" | "external-wallet-adapter";
-export type ChannelStatus = "active" | "retired" | "refundable" | "refunded" | "suspicious";
+export type FundingSourceKind =
+  "hot-wallet" | "vault-treasury" | "external-wallet-adapter";
+export type ChannelStatus =
+  "active" | "retired" | "refundable" | "refunded" | "suspicious";
 
 export interface PublicIdentity {
   address: string;
@@ -79,24 +81,10 @@ export interface ExactPaymentRequest {
     challengeId: Hash32Hex;
     challengeExpiresAt: string;
   };
-  reservation?: Pick<
-    ExactPaymentRequirements["extra"],
-    | "templateId"
-    | "transactionEncoding"
-    | "borrowOutpoint"
-    | "borrowAmount"
-    | "borrowScriptPublicKey"
-    | "borrowRedeemScript"
-    | "additiveThresholdSompi"
-    | "paymentOutputIndex"
-    | "reservationId"
-    | "reservationExpiresAt"
-  >;
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
   head?: NonNullable<ExactPaymentRequest["head"]>;
-  reservation?: NonNullable<ExactPaymentRequest["reservation"]>;
 }
 
 export interface ExactTransactionPaymentResult {
@@ -129,8 +117,12 @@ export interface FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
-  fundEscrowDeposit(request: EscrowDepositRequest): Promise<EscrowDepositResult>;
-  payExactTransaction?(request: ExactTransactionPaymentRequest): Promise<ExactTransactionPaymentResult>;
+  fundEscrowDeposit(
+    request: EscrowDepositRequest,
+  ): Promise<EscrowDepositResult>;
+  payExactTransaction?(
+    request: ExactTransactionPaymentRequest,
+  ): Promise<ExactTransactionPaymentResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
@@ -261,8 +253,14 @@ export interface HttpRequestInitLike {
   [key: string]: unknown;
 }
 
-export type HeadersInitLike = Record<string, string> | Array<[string, string]> | { entries(): IterableIterator<[string, string]> };
-export type FetchLike = (input: string, init?: HttpRequestInitLike) => Promise<HttpResponseLike>;
+export type HeadersInitLike =
+  | Record<string, string>
+  | Array<[string, string]>
+  | { entries(): IterableIterator<[string, string]> };
+export type FetchLike = (
+  input: string,
+  init?: HttpRequestInitLike,
+) => Promise<HttpResponseLike>;
 
 export interface PaidFetchResult {
   response: HttpResponseLike;
@@ -282,7 +280,9 @@ export interface RefundTransactionResult {
 }
 
 export interface RefundTransactionBuilder {
-  buildRefundTransaction(request: RefundTransactionRequest): Promise<RefundTransactionResult>;
+  buildRefundTransaction(
+    request: RefundTransactionRequest,
+  ): Promise<RefundTransactionResult>;
 }
 
 export interface RefundResult {
@@ -304,7 +304,10 @@ export interface DirectModeClientOptions {
   fundingPolicy?: FundingPolicy;
   fetch?: FetchLike;
   refundBuilder?: RefundTransactionBuilder;
-  verifyVoucherSignature?: (voucher: Voucher, channel: DirectModeChannel) => Promise<boolean> | boolean;
+  verifyVoucherSignature?: (
+    voucher: Voucher,
+    channel: DirectModeChannel,
+  ) => Promise<boolean> | boolean;
   maxPaymentRetries?: number;
   supportedSchemes?: readonly PaymentScheme[];
 }

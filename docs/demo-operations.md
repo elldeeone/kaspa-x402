@@ -7,14 +7,15 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: alpha.7 Worker version
+Current deployment: historical alpha.7 Worker version
 `38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built from commit `4d53d02`. Funded
 exact, idempotent and cross-resource replay, batch deposit/voucher,
 stale-voucher, and absolute-DAA checks passed on its immediate predecessor;
 the final source-parity deploy adds only a fail-closed pre-persistence check for
 the consensus timestamp boundary and passed post-deploy health, capability,
-inventory, and stable absolute-DAA checks. Exact remains available only while
-funded KIP-10 reservation inventory exists.
+inventory, and stable absolute-DAA checks. This is not yet an alpha.8
+deployment; alpha.8 replaces consumable reservation inventory with a default
+standard-native profile and optional durable KIP-10 head chains.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
@@ -32,12 +33,13 @@ Important non-secret variables:
 | `KASPA_X402_PAY_TO` | Testnet address receiving exact payments. |
 | `KASPA_X402_SERVER_PUBLIC_KEY` | Testnet server public key advertised in batch escrow terms. |
 | `KASPA_X402_EXACT_AMOUNT` | Exact-payment price in sompi. Must be at least `10000000`. |
+| `KASPA_X402_EXACT_PROFILE` | Alpha.8 exact profile: `standard-native` (default) or optional `additive`. |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI` | Batch escrow deposit floor. Must be at least `10000000`. |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary. |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA` | Minimum remaining DAA lead required before accepting a batch payment. |
 | `KASPA_X402_SITE_BASE_URL` | Standards site base URL used by canary checks. |
 | `KASPA_X402_GATEWAY_BASE_URL` | Gateway base URL used by canary checks. |
-| `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, finality observation, and inventory consumption path are deployed. |
+| `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
 | `KASPA_X402_CHAIN_BROADCAST_MODE` | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact. |
 | `KASPA_X402_PNN_ENDPOINTS` | Comma-separated public TN10 WSS endpoints used by the Worker to submit exact transaction artifacts. |
 
@@ -48,7 +50,7 @@ Secret variables:
 
 | Variable | Purpose |
 | -------- | ------- |
-| `KASPA_X402_ADMIN_TOKEN` | Bearer token for exact inventory registration and stats endpoints. Set with `wrangler secret put`; do not commit it. |
+| `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration and stats endpoints. Set with `wrangler secret put`; do not commit it. |
 
 ## Deploy
 
@@ -72,37 +74,39 @@ availability gate, verifies the unpaid batch offer, rejects a foreign payment
 scheme, and checks the health and canary routes. A deployed paid check still
 requires an isolated funded testnet wallet.
 
-## Exact Inventory
+## Exact Profiles And Additive Heads
 
-Hosted exact is enabled only when both conditions are true: the Worker
-configuration has `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED=true`, and funded
-KIP-10 borrow UTXO inventory is available. The Worker does not hold the
-merchant wallet key and does not create borrow outputs from public requests.
+Hosted exact is enabled only when
+`KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED=true`. The default
+`standard-native` profile requires no merchant inventory. Optional `additive`
+also requires at least one durable merchant-owned KIP-10 head. The Worker does
+not hold the merchant wallet key and does not create heads from public
+requests.
 
-1. Create one or more merchant-owned KIP-10 additive borrow UTXOs from an
+1. Create one or more independent merchant-owned KIP-10 additive heads from an
    isolated TN10 wallet.
-2. Record the borrow outpoint, serialized script public key, redeem script,
-   borrow amount, additive threshold, and payment output index.
-3. Register those terms with the Worker:
+2. Record each head id/version, current outpoint and amount, serialized script
+   public key, redeem script, additive threshold, status, and timestamps.
+3. Register the head records with the Worker:
 
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
-  npm run demo:exact-inventory -- register --file inventory.json
+  npm run demo:exact-heads -- register --file heads.json
 ```
 
-4. Confirm inventory availability:
+4. Confirm head availability:
 
 ```sh
-KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-heads -- stats
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-When inventory is available, `/supported` advertises `exact` and an unpaid
-`/exact` request leases one inventory item until the advertised reservation
-expires. An accepted exact settlement consumes the original item and atomically
-registers its transaction's verified KIP-10 continuation as fresh available
-inventory. Expired unpaid reservations are retired for operator reconciliation
-rather than automatically reused.
+`standard-native` advertises exact without a head. `additive` advertises exact
+only while a matching head is available. Issuing an unpaid 402 does not reserve,
+retire, or consume a head. Settlement atomically claims the advertised current
+outpoint, verifies a same-script successor whose delta equals the exact price,
+and advances that same durable lineage. Stale competing clients receive a fresh
+402 against the current head.
 
 ## Rollback
 
@@ -176,8 +180,8 @@ The canary checks:
 - the public `payment-required` schema URL;
 - the immutable `v0.1.0-alpha.1` release snapshot with a cache-busted request;
 - the public docs index and expected page marker;
-- exact support advertisement only when hosted exact settlement is enabled and
-  inventory is available, without consuming a reservation;
+- exact support advertisement only when hosted exact settlement is enabled and,
+  for `additive`, a head is available, without claiming that head;
 - unpaid batch offer shape and deposit floor;
 - unsupported foreign payment scheme rejection.
 
@@ -204,10 +208,12 @@ Minimum manual paid checks:
 
 1. If exact is not deployed with a working KIP-10 settlement path, request
    `GET /exact` and confirm HTTP `503 exact_unavailable`.
-2. If exact is deployed, request `GET /exact`, confirm HTTP `402`, build a
-   signed KIP-10 `exact-transaction` artifact from the advertised reservation
-   terms, retry with `PAYMENT-SIGNATURE`, and confirm the Worker broadcasts the
-   artifact through PNN, observes accepted finality, and returns HTTP `200`.
+2. If exact is deployed, request `GET /exact` and confirm HTTP `402`. For
+   `standard-native`, build an ordinary exact native transfer. For `additive`,
+   spend the advertised head and increase its same-script successor by exactly
+   the advertised amount, with no separate merchant payment output. Retry with
+   `PAYMENT-SIGNATURE`, and confirm the Worker broadcasts the artifact through
+   PNN, observes accepted finality, and returns HTTP `200`.
 3. Retry the identical paid exact request and confirm idempotent HTTP `200`.
 4. Present the same exact transaction to a different resource and confirm
    conflict rejection.
@@ -219,20 +225,22 @@ Minimum manual paid checks:
 Record transaction ids, output indexes, Worker version, response status, and
 `PAYMENT-RESPONSE` summaries in the operator notes.
 
-The committed hosted exact proof seeds funded inventory, registers it through
-the admin API, pays `/exact` with a signed exact transaction artifact, confirms
-the Worker-broadcast transaction is accepted, retries the same payment for
-idempotency, rejects the same transaction on a different resource, and leaves
-at least one inventory item available by default:
+The committed hosted exact proof pays `/exact` with a signed exact transaction
+artifact, confirms the Worker-broadcast transaction is accepted, retries the
+same payment for idempotency, and rejects the same transaction on a different
+resource. In default `standard-native` mode it needs no admin state. In
+`additive` mode it funds and registers a reusable head first:
 
 ```sh
 KASPA_X402_RPC_URL=<tn10-rpc-url> \
 KASPA_X402_FUNDING_WALLET=wallet-key:/path/to/testnet-key \
 KASPA_X402_KASPA_WASM_MODULE=/path/to/kaspa.js \
-KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
 KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
   npm run proof:hosted-exact
 ```
+
+Set `KASPA_X402_EXACT_PROFILE=additive` and
+`KASPA_X402_DEMO_ADMIN_TOKEN=<token>` to exercise the optional head profile.
 
 For alpha.6 and later, also confirm that observe-only `exact-transfer` evidence
 is rejected and does not return protected content.
@@ -256,7 +264,7 @@ Policy for the public alpha:
 - durable state is operational evidence, not a user account database;
 - no private keys or wallet seeds are stored;
 - no unauthenticated backup, export, or admin read route is exposed;
-- exact inventory admin routes require `KASPA_X402_ADMIN_TOKEN`;
+- additive exact-head admin routes require `KASPA_X402_ADMIN_TOKEN`;
 - state may be reset during alpha incidents after the gateway is disabled and
   the reset is disclosed in operator notes;
 - production operators should design their own backup and state-partitioning
@@ -318,6 +326,22 @@ Alpha.7 DAA and continuation cutover:
   checks.
 - Record the Worker version, transaction ids, absolute refund DAA, and canary
   results in `docs/testnet-gateway.md`.
+
+Alpha.8 exact-profile cutover:
+
+- Deploy only after standard-native and additive exact proofs pass from the
+  reviewed alpha.8 source.
+- Default to `KASPA_X402_EXACT_PROFILE=standard-native`; it requires no head
+  inventory and pays the merchant once through the exact native output.
+- If selecting `additive`, replace all alpha.7 reservation inventory with
+  durable head records registered through `/admin/exact-heads`. Do not migrate
+  leased or retired alpha.7 records as current heads without reconciling their
+  outpoints against TN10.
+- Confirm unanswered 402s do not change head state, one conflicting settlement
+  advances the head, stale competitors receive a refreshed challenge, and the
+  successor delta equals the advertised price exactly.
+- Run both exact profiles plus the unchanged batch deposit/voucher/claim/refund
+  lifecycle before calling the public deployment alpha.8.
 
 ## Rotate Addresses And Keys
 

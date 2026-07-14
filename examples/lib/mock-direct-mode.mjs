@@ -1,5 +1,10 @@
 import { DirectModeClient, MemoryChannelStore } from "@kaspa-x402/client";
-import { X402_VERSION, encodePaymentRequiredHeader, sha256Hex, stableStringify } from "@kaspa-x402/core";
+import {
+  X402_VERSION,
+  encodePaymentRequiredHeader,
+  sha256Hex,
+  stableStringify,
+} from "@kaspa-x402/core";
 import { DirectModeFacilitator } from "@kaspa-x402/facilitator";
 import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
 
@@ -9,13 +14,12 @@ export const CLIENT_PUBLIC_KEY = "22".repeat(32);
 export const REFUND_ADDRESS = "kaspatest:refund";
 export const PAYOUT_ADDRESS = "kaspatest:payout";
 
-export function createMockDirectModeEnvironment(options = {}) {
+export function createMockDirectModeEnvironment() {
   const chainProvider = new MockChainProvider();
   const fundingProvider = new MockFundingProvider(chainProvider);
   const addressCodec = new MockAddressCodec();
   const serverStore = new MemoryServerChannelStore();
   const clientStore = new MemoryChannelStore();
-  let reservationIndex = 0;
   const server = new DirectModeServer({
     network: NETWORK,
     payTo: PAYOUT_ADDRESS,
@@ -34,7 +38,9 @@ export function createMockDirectModeEnvironment(options = {}) {
     },
     exactTransactionVerifier: {
       verifyExactPayment(request) {
-        const transactionId = mockHash(`chain-broadcast:${request.transaction}`);
+        const transactionId = mockHash(
+          `chain-broadcast:${request.transaction}`,
+        );
         return {
           transactionId,
           paymentOutput: {
@@ -42,31 +48,11 @@ export function createMockDirectModeEnvironment(options = {}) {
             scriptPublicKey: request.payToScriptPublicKey,
           },
           payerAddress: REFUND_ADDRESS,
+          finality: "accepted",
         };
       },
     },
-    ...(options.exactReservations !== false
-      ? {
-          exactReservationProvider: {
-            reserveExactPayment(request) {
-              const index = reservationIndex;
-              reservationIndex += 1;
-              return {
-                reservationId: mockHash(`exact-reservation:${index}`),
-                templateId: "kaspa-x402-kip10-additive-v1",
-                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-                borrowOutpoint: { txid: mockHash(`exact-borrow:${index}`), index: 0 },
-                borrowAmount: request.amount,
-                borrowScriptPublicKey: request.payToScriptPublicKey,
-                borrowRedeemScript: mockTransaction(`exact-borrow-redeem:${index}`),
-                additiveThresholdSompi: request.minimumAdditiveThresholdSompi,
-                paymentOutputIndex: 0,
-                expiresAt: "2099-01-01T00:00:00.000Z",
-              };
-            },
-          },
-        }
-      : {}),
+    exactProfile: "standard-native",
   });
   const client = new DirectModeClient({
     fundingProvider,
@@ -154,13 +140,20 @@ export class MockResponse {
   }
 
   async text() {
-    return typeof this.body === "string" ? this.body : JSON.stringify(this.body);
+    return typeof this.body === "string"
+      ? this.body
+      : JSON.stringify(this.body);
   }
 }
 
 export class MockHeaders {
   constructor(headers = {}) {
-    this.headers = new Map(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), String(value)]));
+    this.headers = new Map(
+      Object.entries(headers).map(([key, value]) => [
+        key.toLowerCase(),
+        String(value),
+      ]),
+    );
   }
 
   get(name) {
@@ -213,22 +206,26 @@ class MockFundingProvider {
   async payExactTransaction(request) {
     const paymentIdentity =
       request.profile === "additive"
-        ? request.reservation?.reservationId
-        : `${request.profile}:${request.payTo}:${request.amount}`;
-    if (!paymentIdentity) throw new Error("additive exact requires reservation terms");
+        ? request.head?.challengeId
+        : `${request.profile}:${request.payTo}:${request.amount}:${request.requestHash ?? "unbound"}`;
+    if (!paymentIdentity)
+      throw new Error("additive exact requires head challenge terms");
     const transaction = mockTransaction(`exact-transaction:${paymentIdentity}`);
     return {
       transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       transactionId: mockHash(`chain-broadcast:${transaction}`),
-      paymentOutputIndex: request.paymentOutputIndex ?? request.reservation?.paymentOutputIndex ?? 0,
+      paymentOutputIndex:
+        request.paymentOutputIndex ?? request.head?.paymentOutputIndex ?? 0,
       payerAddress: REFUND_ADDRESS,
       fundingSource: this.sourceKind,
     };
   }
 
   async getUtxos(addresses) {
-    return addresses.flatMap((address) => this.utxosByAddress.get(address) ?? []);
+    return addresses.flatMap(
+      (address) => this.utxosByAddress.get(address) ?? [],
+    );
   }
 
   async getVirtualDaaScore() {
@@ -237,7 +234,10 @@ class MockFundingProvider {
 
   async sendTransaction(transaction) {
     return {
-      transactionId: transaction.length === 64 ? transaction : mockHash(`broadcast:${transaction}`),
+      transactionId:
+        transaction.length === 64
+          ? transaction
+          : mockHash(`broadcast:${transaction}`),
       finality: "accepted",
     };
   }
@@ -283,7 +283,10 @@ class MockChainProvider {
 
   async sendTransaction(transaction) {
     return {
-      transactionId: transaction.length === 64 ? transaction : mockHash(`chain-broadcast:${transaction}`),
+      transactionId:
+        transaction.length === 64
+          ? transaction
+          : mockHash(`chain-broadcast:${transaction}`),
       finality: "accepted",
     };
   }
@@ -330,7 +333,11 @@ function routeForUrl(url) {
     return {
       scheme: "exact",
       amount: "100000",
-      resource: { url, description: "Fixed-price file", mimeType: "application/octet-stream" },
+      resource: {
+        url,
+        description: "Fixed-price file",
+        mimeType: "application/octet-stream",
+      },
       body: { ok: true, route: "download", bytes: 4096 },
     };
   }
@@ -338,14 +345,22 @@ function routeForUrl(url) {
     return {
       scheme: "batch-settlement",
       amount: "50000",
-      resource: { url, description: "Repeated metered call", mimeType: "application/json" },
+      resource: {
+        url,
+        description: "Repeated metered call",
+        mimeType: "application/json",
+      },
       body: { ok: true, route: "metered" },
     };
   }
   return {
     scheme: "exact",
     amount: "100000",
-    resource: { url, description: "Default paid route", mimeType: "application/json" },
+    resource: {
+      url,
+      description: "Default paid route",
+      mimeType: "application/json",
+    },
     body: { ok: true },
   };
 }

@@ -29,7 +29,7 @@
     "check:pnn-browser": "node scripts/check-pnn-browser.mjs",
     "check:vendor-wasm": "node scripts/check-vendored-kaspa-wasm.mjs",
     "check:demo-gateway": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/demo-gateway run build && node scripts/check-demo-gateway.mjs",
-    "demo:exact-inventory": "node scripts/demo-exact-inventory.mjs",
+    "demo:exact-heads": "node scripts/demo-exact-heads.mjs",
     "check:diff": "git diff --check -- . ':(exclude)site/src/vendor/kaspa-wasm/**'",
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
     "validate:schemas": "node scripts/validate-schemas.mjs",
@@ -42,6 +42,7 @@
     "validate:release:live": "npm run validate:release && npm run proof:live:check -- --live --write-report",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
     "vectors:exact-consensus": "node scripts/generate-exact-consensus-vectors.mjs",
+    "vectors:exact-http": "node scripts/generate-exact-http-vector.mjs",
     "check:covenant-fixtures": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs"
   },
   "workspaces": [

@@ -115,59 +115,6 @@
           "accepted": {
             "properties": {
               "scheme": {
-                "const": "exact"
-              },
-              "extra": {
-                "properties": {
-                  "binding": {
-                    "const": "kaspa-exact-v1"
-                  }
-                },
-                "required": ["binding"]
-              }
-            },
-            "required": ["scheme", "extra"]
-          },
-          "payload": {
-            "properties": {
-              "type": {
-                "const": "exact-transaction"
-              }
-            },
-            "required": ["type"]
-          }
-        },
-        "required": ["accepted", "payload"]
-      },
-      "then": {
-        "properties": {
-          "accepted": {
-            "properties": {
-              "extra": {
-                "required": [
-                  "templateId",
-                  "transactionEncoding",
-                  "borrowOutpoint",
-                  "borrowAmount",
-                  "borrowScriptPublicKey",
-                  "borrowRedeemScript",
-                  "additiveThresholdSompi",
-                  "paymentOutputIndex",
-                  "reservationId"
-                ]
-              }
-            },
-            "required": ["extra"]
-          }
-        }
-      }
-    },
-    {
-      "if": {
-        "properties": {
-          "accepted": {
-            "properties": {
-              "scheme": {
                 "const": "batch-settlement"
               }
             },

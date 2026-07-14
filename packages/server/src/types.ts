@@ -51,10 +51,15 @@ export interface TransactionBroadcast {
 export type PreparedTransaction = string;
 
 export interface ServerChainProvider {
-  getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null>;
+  getUtxo(
+    outpoint: FundingOutpoint,
+    network: NetworkId,
+  ): Promise<ChainUtxo | null>;
   getVirtualDaaScore(): Promise<SompiString>;
   estimateClaimFee(channel: ServerChannelRecord): Promise<SompiString>;
-  sendTransaction(transaction: PreparedTransaction): Promise<TransactionBroadcast>;
+  sendTransaction(
+    transaction: PreparedTransaction,
+  ): Promise<TransactionBroadcast>;
 }
 
 export interface VoucherVerificationRequest {
@@ -66,7 +71,9 @@ export interface VoucherVerificationRequest {
 }
 
 export interface VoucherVerifier {
-  verifyVoucher(request: VoucherVerificationRequest): Promise<boolean> | boolean;
+  verifyVoucher(
+    request: VoucherVerificationRequest,
+  ): Promise<boolean> | boolean;
 }
 
 export interface ExactTransactionOutput {
@@ -75,7 +82,7 @@ export interface ExactTransactionOutput {
   address?: string;
 }
 
-export interface ExactBorrowContinuation {
+export interface ExactHeadContinuation {
   outpoint: FundingOutpoint;
   amount: SompiString;
   scriptPublicKey: ByteHex;
@@ -96,7 +103,8 @@ export interface ExactHeadChallenge {
   expiresAt: string;
 }
 
-export type ExactHeadStatus = "available" | "claimed" | "unavailable" | "retired";
+export type ExactHeadStatus =
+  "available" | "claimed" | "unavailable" | "retired";
 
 /** Durable current state for one reusable KIP-10 additive head chain. */
 export interface ExactHeadRecord {
@@ -160,7 +168,6 @@ export interface ExactTransactionVerificationRequest {
   requiredFinality: "accepted" | "confirmed";
   requestHash?: Hash32Hex;
   head?: ExactHeadChallenge;
-  reservation?: ExactBorrowReservation;
 }
 
 export interface ExactTransactionVerification {
@@ -169,38 +176,13 @@ export interface ExactTransactionVerification {
   finality?: "mempool" | "accepted" | "confirmed";
   payerAddress?: string;
   /** Canonical KIP-10 continuation verified from the signed transaction. */
-  continuation?: ExactBorrowContinuation;
+  continuation?: ExactHeadContinuation;
 }
 
 export interface ExactTransactionVerifier {
-  verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> | ExactTransactionVerification;
-}
-
-export interface ExactBorrowReservation {
-  reservationId: Hash32Hex;
-  templateId: ExactAdditiveTemplateId;
-  transactionEncoding: ExactTransactionEncoding;
-  borrowOutpoint: FundingOutpoint;
-  borrowAmount: SompiString;
-  borrowScriptPublicKey: ByteHex;
-  borrowRedeemScript: ByteHex;
-  additiveThresholdSompi: SompiString;
-  paymentOutputIndex: number;
-  expiresAt?: string;
-}
-
-export interface ExactBorrowReservationRequest {
-  network: NetworkId;
-  amount: SompiString;
-  payTo: string;
-  payToScriptPublicKey: ByteHex;
-  maxTimeoutSeconds: number;
-  resource: ResourceInfo;
-  minimumAdditiveThresholdSompi: SompiString;
-}
-
-export interface ExactBorrowReservationProvider {
-  reserveExactPayment(request: ExactBorrowReservationRequest): Promise<ExactBorrowReservation> | ExactBorrowReservation;
+  verifyExactPayment(
+    request: ExactTransactionVerificationRequest,
+  ): Promise<ExactTransactionVerification> | ExactTransactionVerification;
 }
 
 export interface TopUpVerificationRequest {
@@ -266,11 +248,15 @@ export interface BatchCommitmentRecord {
 }
 
 export interface CommitmentStore {
-  loadCommitment(commitmentId: Hash32Hex): Promise<BatchCommitmentRecord | undefined>;
+  loadCommitment(
+    commitmentId: Hash32Hex,
+  ): Promise<BatchCommitmentRecord | undefined>;
 }
 
 export interface IdempotencyStore {
-  loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined>;
+  loadPaymentIdentifier(
+    id: string,
+  ): Promise<PaymentIdentifierRecord | undefined>;
 }
 
 export interface ExactPaymentRecord {
@@ -287,14 +273,15 @@ export interface ExactPaymentRecord {
   response: ServerResponse;
 }
 
-export type ExactSettlementAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
+export type ExactSettlementAttemptStatus =
+  "pending" | "broadcast" | "accepted" | "applied";
 
 export interface ExactSettlementHeadClaim {
   headId: Hash32Hex;
   expectedVersion: SompiString;
   expectedOutpoint: FundingOutpoint;
   expectedAmount: SompiString;
-  successor: ExactBorrowContinuation;
+  successor: ExactHeadContinuation;
 }
 
 /**
@@ -331,7 +318,7 @@ export type ExactSettlementReconciliation =
       transactionId: Hash32Hex;
       finality: "accepted" | "confirmed";
       paymentOutput: ExactTransactionOutput;
-      continuation?: ExactBorrowContinuation;
+      continuation?: ExactHeadContinuation;
     }
   | { status: "rejected"; transactionId: Hash32Hex; reason: string }
   | { status: "unknown"; transactionId: Hash32Hex; reason?: string };
@@ -341,14 +328,6 @@ export interface ExactSettlementReconciler {
   reconcileExactSettlement(
     attempt: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementReconciliation> | ExactSettlementReconciliation;
-}
-
-export type ExactReservationStatus = "reserved" | "consumed";
-
-export interface ExactReservationRecord extends ExactBorrowReservation {
-  status: ExactReservationStatus;
-  reservedAt: string;
-  transactionId?: Hash32Hex;
 }
 
 export interface SettlementCommit {
@@ -385,20 +364,15 @@ export interface ExactPaymentStore {
    * scope is transaction-wide, even though the selected output index remains
    * part of settlement evidence.
    */
-  loadExactPayment(transactionId: Hash32Hex): Promise<ExactPaymentRecord | undefined>;
+  loadExactPayment(
+    transactionId: Hash32Hex,
+  ): Promise<ExactPaymentRecord | undefined>;
   /**
    * Atomically records a consumed exact transaction and optional payment
    * identifier. Existing identical records are idempotent; conflicting txid or
    * payment-identifier writes must fail without partial writes.
    */
   commitExactPayment(record: ExactSettlementCommit): Promise<void>;
-  saveExactReservation(record: ExactReservationRecord): Promise<void>;
-  loadExactReservation(reservationId: Hash32Hex): Promise<ExactReservationRecord | undefined>;
-  consumeExactReservation(
-    reservationId: Hash32Hex,
-    transactionId: Hash32Hex,
-    continuation?: ExactBorrowContinuation,
-  ): Promise<void>;
 }
 
 export interface ExactHeadStore {
@@ -406,22 +380,48 @@ export interface ExactHeadStore {
   loadExactHead(headId: Hash32Hex): Promise<ExactHeadRecord | undefined>;
   listExactHeads(): Promise<ExactHeadRecord[]>;
   /** Read-only selection: issuing a 402 must not mutate or lease the head. */
-  selectExactHead(request: ExactHeadSelectionRequest): Promise<ExactHeadRecord | undefined>;
+  selectExactHead(
+    request: ExactHeadSelectionRequest,
+  ): Promise<ExactHeadRecord | undefined>;
   /** Atomically claims a transaction and, for additive exact, its expected head snapshot. */
-  claimExactSettlement(attempt: ExactSettlementAttemptRecord): Promise<ExactSettlementClaimResult>;
-  loadExactSettlementAttempt(transactionId: Hash32Hex): Promise<ExactSettlementAttemptRecord | undefined>;
-  recordExactSettlementBroadcast(transactionId: Hash32Hex, finality: SettlementFinality, observedAt: string): Promise<void>;
+  claimExactSettlement(
+    attempt: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementClaimResult>;
+  loadExactSettlementAttempt(
+    transactionId: Hash32Hex,
+  ): Promise<ExactSettlementAttemptRecord | undefined>;
+  recordExactSettlementBroadcast(
+    transactionId: Hash32Hex,
+    finality: SettlementFinality,
+    observedAt: string,
+  ): Promise<void>;
   /** Atomically records finality and advances a claimed additive head to its verified successor. */
-  acceptExactSettlement(transactionId: Hash32Hex, finality: Exclude<SettlementFinality, "broadcast">, observedAt: string): Promise<void>;
+  acceptExactSettlement(
+    transactionId: Hash32Hex,
+    finality: Exclude<SettlementFinality, "broadcast">,
+    observedAt: string,
+  ): Promise<void>;
   /** Returns true exactly once, preventing protected-handler replay after a crash. */
-  beginExactHandler(transactionId: Hash32Hex, startedAt: string): Promise<boolean>;
+  beginExactHandler(
+    transactionId: Hash32Hex,
+    startedAt: string,
+  ): Promise<boolean>;
   /** Releases only a not-yet-accepted attempt after trusted negative reconciliation. */
-  abandonExactSettlement(transactionId: Hash32Hex, reason: string, observedAt: string): Promise<void>;
+  abandonExactSettlement(
+    transactionId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
   /** Fail closed when trusted successor lineage cannot be established. */
-  markExactHeadUnavailable(headId: Hash32Hex, reason: string, observedAt: string): Promise<void>;
+  markExactHeadUnavailable(
+    headId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
 }
 
-export type ClaimAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
+export type ClaimAttemptStatus =
+  "pending" | "broadcast" | "accepted" | "applied";
 
 export interface ClaimAttemptRecord {
   attemptId: Hash32Hex;
@@ -445,16 +445,22 @@ export interface ClaimAttemptRecord {
 }
 
 export interface ClaimAttemptStore {
-  loadOpenClaimAttempt(channelId: Hash32Hex): Promise<ClaimAttemptRecord | undefined>;
+  loadOpenClaimAttempt(
+    channelId: Hash32Hex,
+  ): Promise<ClaimAttemptRecord | undefined>;
   /** Saves one open claim attempt per channel; durable adapters must reject conflicting open attempts. */
   saveClaimAttempt(record: ClaimAttemptRecord): Promise<void>;
   /** Applies a claim only if the channel still matches the attempt snapshot. */
-  applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void>;
+  applyClaimAttempt(
+    channel: ServerChannelRecord,
+    attempt: ClaimAttemptRecord,
+  ): Promise<void>;
   abandonClaimAttempt(attemptId: Hash32Hex, reason?: string): Promise<void>;
 }
 
 export interface ServerStateStore
-  extends ServerChannelStore,
+  extends
+    ServerChannelStore,
     CommitmentStore,
     IdempotencyStore,
     SettlementCommitStore,
@@ -488,7 +494,9 @@ export interface ClaimTransactionResult {
 }
 
 export interface ClaimTransactionBuilder {
-  buildClaimTransaction(request: ClaimTransactionRequest): Promise<ClaimTransactionResult>;
+  buildClaimTransaction(
+    request: ClaimTransactionRequest,
+  ): Promise<ClaimTransactionResult>;
 }
 
 export interface ClaimExecutionResult {
@@ -528,7 +536,6 @@ export interface DirectModeServerConfig {
   exactSettlementReconciler?: ExactSettlementReconciler;
   /** Exact wire profile offered by this server. Defaults to standard-native. */
   exactProfile?: ExactProfile;
-  exactReservationProvider?: ExactBorrowReservationProvider;
   minimumExactAdditiveThresholdSompi?: SompiString;
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
@@ -546,7 +553,6 @@ export interface BuildPaymentRequiredOptions {
   schemes?: readonly ("exact" | "batch-settlement")[];
   channel?: ServerChannelRecord;
   voucherState?: Voucher;
-  exactReservation?: ExactBorrowReservation;
   exactHead?: ExactHeadChallenge;
   error?: string;
 }
@@ -579,7 +585,8 @@ export interface PaidRequest {
   requestHash?: Hash32Hex;
 }
 
-export type HeaderSource = Record<string, string> | { get(name: string): string | null };
+export type HeaderSource =
+  Record<string, string> | { get(name: string): string | null };
 
 export interface ServerResponse {
   status: number;
@@ -608,16 +615,18 @@ export interface VerifiedBatchPayment {
 export interface VerifiedExactPayment {
   scheme: "exact";
   paymentRequired: PaymentRequired;
-  paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload };
+  paymentPayload: PaymentPayload & {
+    accepted: ExactPaymentRequirements;
+    payload: ExactTransactionPayload;
+  };
   accepted: ExactPaymentRequirements;
   profile: ExactProfile;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
   transaction?: PreparedTransaction;
   transactionEncoding?: ExactTransactionEncoding;
-  reservation?: ExactBorrowReservation;
   head?: ExactHeadChallenge;
-  continuation?: ExactBorrowContinuation;
+  continuation?: ExactHeadContinuation;
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
   observedFinality?: "mempool" | "accepted" | "confirmed";
@@ -632,6 +641,8 @@ export interface HandlerContext {
   paymentIdentifier?: string;
 }
 
-export type ProtectedHandler = (context: HandlerContext) => Promise<ProtectedHandlerResult> | ProtectedHandlerResult;
+export type ProtectedHandler = (
+  context: HandlerContext,
+) => Promise<ProtectedHandlerResult> | ProtectedHandlerResult;
 
 export type DirectModeSupportedKind = SupportedKind;

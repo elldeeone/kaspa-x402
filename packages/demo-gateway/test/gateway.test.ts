@@ -1,19 +1,40 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
-import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import {
+  buildKip10AdditiveRedeemScript,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
-import { dispatchGatewayState, GatewayLedger, type GatewayStateRequest, type GatewayStorage } from "../src/state.js";
+import { addressForScriptPublicKey } from "../src/kaspa-native.js";
+import {
+  dispatchGatewayState,
+  GatewayLedger,
+  type GatewayStateRequest,
+  type GatewayStorage,
+} from "../src/state.js";
 import type { GatewayEnv } from "../src/config.js";
 
 const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
-const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
-const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(KIP10_REDEEM_SCRIPT));
+const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({
+  ownerPublicKey: "aa".repeat(32),
+  amount: "10000000",
+});
+const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
+  payToScriptHashScript(KIP10_REDEEM_SCRIPT),
+);
+const KIP10_ADDRESS = addressForScriptPublicKey(
+  KIP10_SCRIPT_PUBLIC_KEY,
+  "kaspa:testnet-10",
+);
 
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
-  KASPA_X402_PAY_TO: "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
-  KASPA_X402_SERVER_PUBLIC_KEY: "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
+  KASPA_X402_PAY_TO:
+    "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
+  KASPA_X402_SERVER_PUBLIC_KEY:
+    "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
   KASPA_X402_SITE_BASE_URL: "https://kaspa-x402.org",
   KASPA_X402_GATEWAY_BASE_URL: "https://demo.kaspa-x402.org",
 };
@@ -25,13 +46,18 @@ describe("gateway canary", () => {
 
   it("runs non-spending checks and stores the latest report", async () => {
     const storage = new FakeStorage();
-    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+    };
     stubCanaryFetches();
 
     const report = await runGatewayCanary(env, "manual");
 
     expect(report.ok).toBe(true);
-    expect(report.checks.map((check) => `${check.name}:${check.status}`)).toEqual([
+    expect(
+      report.checks.map((check) => `${check.name}:${check.status}`),
+    ).toEqual([
       "kaspa-rest:ok",
       "schema-url:ok",
       "release-snapshot:ok",
@@ -42,18 +68,26 @@ describe("gateway canary", () => {
       "paid-exact-canary:skipped",
       "replay-rejection-canary:skipped",
     ]);
-    await expect(new GatewayLedger(storage).loadCanaryReport()).resolves.toEqual(report);
+    await expect(
+      new GatewayLedger(storage).loadCanaryReport(),
+    ).resolves.toEqual(report);
   });
 
   it("skips protected-route canaries when the gateway is disabled", async () => {
     const storage = new FakeStorage();
-    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_GATEWAY_ENABLED: "false" };
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_GATEWAY_ENABLED: "false",
+    };
     stubCanaryFetches();
 
     const report = await runGatewayCanary(env, "manual");
 
     expect(report.ok).toBe(true);
-    expect(report.checks.map((check) => `${check.name}:${check.status}`)).toEqual([
+    expect(
+      report.checks.map((check) => `${check.name}:${check.status}`),
+    ).toEqual([
       "kaspa-rest:ok",
       "schema-url:ok",
       "release-snapshot:ok",
@@ -68,7 +102,11 @@ describe("gateway canary", () => {
 
   it("keeps status routes readable while protected routes are disabled", async () => {
     const storage = new FakeStorage();
-    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_GATEWAY_ENABLED: "false" };
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_GATEWAY_ENABLED: "false",
+    };
     stubCanaryFetches();
 
     const health = await requestJson(env, "/health");
@@ -76,10 +114,22 @@ describe("gateway canary", () => {
     const exact = await requestJson(env, "/exact");
     const batch = await requestJson(env, "/batch");
 
-    expect(health).toMatchObject({ status: 200, body: { ok: true, enabled: false } });
-    expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: false } });
-    expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
-    expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
+    expect(health).toMatchObject({
+      status: 200,
+      body: { ok: true, enabled: false },
+    });
+    expect(supported).toMatchObject({
+      status: 200,
+      body: { ok: true, enabled: false },
+    });
+    expect(exact).toMatchObject({
+      status: 503,
+      body: { ok: false, error: "gateway_disabled" },
+    });
+    expect(batch).toMatchObject({
+      status: 503,
+      body: { ok: false, error: "gateway_disabled" },
+    });
   });
 
   it("keeps supported and disabled responses independent of Kaspa REST", async () => {
@@ -89,16 +139,31 @@ describe("gateway canary", () => {
     });
     vi.stubGlobal("fetch", fetchMock);
 
-    const enabled: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
-    const disabled: GatewayEnv = { ...enabled, KASPA_X402_GATEWAY_ENABLED: "false" };
+    const enabled: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+    };
+    const disabled: GatewayEnv = {
+      ...enabled,
+      KASPA_X402_GATEWAY_ENABLED: "false",
+    };
 
     const supported = await requestJson(enabled, "/supported");
     const exact = await requestJson(disabled, "/exact");
     const batch = await requestJson(disabled, "/batch");
 
-    expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: true } });
-    expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
-    expect(batch).toMatchObject({ status: 503, body: { ok: false, error: "gateway_disabled" } });
+    expect(supported).toMatchObject({
+      status: 200,
+      body: { ok: true, enabled: true },
+    });
+    expect(exact).toMatchObject({
+      status: 503,
+      body: { ok: false, error: "gateway_disabled" },
+    });
+    expect(batch).toMatchObject({
+      status: 503,
+      body: { ok: false, error: "gateway_disabled" },
+    });
     expect(fetchMock).not.toHaveBeenCalled();
   });
 
@@ -110,9 +175,17 @@ describe("gateway canary", () => {
       KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
-      const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+      const url =
+        typeof input === "string"
+          ? input
+          : input instanceof URL
+            ? input.toString()
+            : input.url;
       if (url === "https://api-tn10.kaspa.org/info/blockdag") {
-        return Response.json({ networkName: "kaspa-testnet-10", virtualDaaScore: "507000000" });
+        return Response.json({
+          networkName: "kaspa-testnet-10",
+          virtualDaaScore: "507000000",
+        });
       }
       throw new Error(`unexpected fetch ${url}`);
     });
@@ -125,35 +198,55 @@ describe("gateway canary", () => {
       fakeContext(),
     );
     const firstResponse = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch", { headers: { "cf-connecting-ip": "203.0.113.10" } }),
+      new Request("https://demo.kaspa-x402.org/batch", {
+        headers: { "cf-connecting-ip": "203.0.113.10" },
+      }),
       env,
       fakeContext(),
     );
     const fetchesAfterAllowedRequest = fetchMock.mock.calls.length;
     const limitedResponse = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch", { headers: { "cf-connecting-ip": "203.0.113.10" } }),
+      new Request("https://demo.kaspa-x402.org/batch", {
+        headers: { "cf-connecting-ip": "203.0.113.10" },
+      }),
       env,
       fakeContext(),
     );
-    const limited = { status: limitedResponse.status, body: await limitedResponse.json() };
+    const limited = {
+      status: limitedResponse.status,
+      body: await limitedResponse.json(),
+    };
 
-    expect(missing).toMatchObject({ status: 404, body: { ok: false, error: "not_found" } });
+    expect(missing).toMatchObject({
+      status: 404,
+      body: { ok: false, error: "not_found" },
+    });
     expect(method.status).toBe(405);
-    await expect(method.json()).resolves.toMatchObject({ ok: false, error: "method_not_allowed" });
+    await expect(method.json()).resolves.toMatchObject({
+      ok: false,
+      error: "method_not_allowed",
+    });
     expect(firstResponse.status).toBe(402);
     expect(fetchesAfterAllowedRequest).toBeGreaterThan(0);
-    expect(limited).toMatchObject({ status: 429, body: { ok: false, error: "rate_limited" } });
+    expect(limited).toMatchObject({
+      status: 429,
+      body: { ok: false, error: "rate_limited" },
+    });
     expect(fetchMock).toHaveBeenCalledTimes(fetchesAfterAllowedRequest);
   });
 
   it("requires operator auth and keeps hosted exact disabled unless settlement is enabled", async () => {
     const storage = new FakeStorage();
-    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_ADMIN_TOKEN: "admin-token",
+    };
 
     const unauthorized = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
-        body: JSON.stringify({ record: exactInventory() }),
+        body: JSON.stringify({ record: exactHead() }),
       }),
       env,
       fakeContext(),
@@ -161,10 +254,10 @@ describe("gateway canary", () => {
     expect(unauthorized.status).toBe(401);
 
     const registered = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
         headers: { authorization: "Bearer admin-token" },
-        body: JSON.stringify({ record: exactInventory() }),
+        body: JSON.stringify({ record: exactHead() }),
       }),
       env,
       fakeContext(),
@@ -172,98 +265,157 @@ describe("gateway canary", () => {
     expect(registered.status).toBe(200);
 
     const supported = await requestJson(env, "/supported");
-    expect(supported).toMatchObject({ status: 200, body: { ok: true, enabled: true } });
-    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).not.toContain("exact");
+    expect(supported).toMatchObject({
+      status: 200,
+      body: { ok: true, enabled: true },
+    });
+    expect(
+      (
+        (supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []
+      ).map((kind) => kind.scheme),
+    ).not.toContain("exact");
 
     const exact = await requestJson(env, "/exact");
-    expect(exact).toMatchObject({ status: 503, body: { ok: false, error: "exact_unavailable" } });
-    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 1, reserved: 0 });
+    expect(exact).toMatchObject({
+      status: 503,
+      body: { ok: false, error: "exact_unavailable" },
+    });
+    await expect(
+      new GatewayLedger(storage).listExactHeads(),
+    ).resolves.toMatchObject([{ status: "available", version: "0" }]);
   });
 
-  it("advertises standard exact without consuming or requiring inventory", async () => {
+  it("advertises standard exact without requiring a head", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
       ...BASE_ENV,
       GATEWAY_STATE: fakeNamespace(storage),
       KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
       KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
-      KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+      KASPA_X402_PNN_ENDPOINTS:
+        "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
     };
     stubCanaryFetches();
 
     const supported = await requestJson(env, "/supported");
-    expect((supported.body as { kinds: Array<{ scheme: string; extra: Record<string, unknown> }> }).kinds).toContainEqual(
+    expect(
+      (
+        supported.body as {
+          kinds: Array<{ scheme: string; extra: Record<string, unknown> }>;
+        }
+      ).kinds,
+    ).toContainEqual(
       expect.objectContaining({
         scheme: "exact",
-        extra: expect.objectContaining({ binding: "kaspa-exact-v2", profile: "standard-native" }),
+        extra: expect.objectContaining({
+          binding: "kaspa-exact-v2",
+          profile: "standard-native",
+        }),
       }),
     );
 
-    const exact = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/exact"), env, fakeContext());
+    const exact = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/exact"),
+      env,
+      fakeContext(),
+    );
     expect(exact.status).toBe(402);
     expect(exact.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
-    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0, reserved: 0 });
+    await expect(new GatewayLedger(storage).listExactHeads()).resolves.toEqual(
+      [],
+    );
   });
 
-  it("keeps legacy additive exact behind PNN inventory until the v2 head pool is enabled", async () => {
+  it("advertises additive exact only while a reusable v2 head is available", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
       ...BASE_ENV,
       GATEWAY_STATE: fakeNamespace(storage),
       KASPA_X402_EXACT_PROFILE: "additive",
+      KASPA_X402_PAY_TO: KIP10_ADDRESS,
       KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
       KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
-      KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+      KASPA_X402_PNN_ENDPOINTS:
+        "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
     };
 
-    const supported = await requestJson(env, "/supported");
-    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).not.toContain("exact");
+    let supported = await requestJson(env, "/supported");
+    expect(
+      (
+        (supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []
+      ).map((kind) => kind.scheme),
+    ).not.toContain("exact");
     await expect(requestJson(env, "/exact")).resolves.toMatchObject({
       status: 503,
       body: { ok: false, error: "exact_unavailable" },
     });
-  });
-
-  it("does not partially register invalid inventory batches", async () => {
-    const storage = new FakeStorage();
-    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: "admin-token" };
-
-    const response = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
+    const registration = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
         headers: { authorization: "Bearer admin-token" },
-        body: JSON.stringify({
-          records: [exactInventory(), exactInventory({ borrowOutpoint: { txid: "66".repeat(32), index: 0 }, additiveThresholdSompi: "1" })],
-        }),
+        body: JSON.stringify({ record: exactHead() }),
       }),
-      env,
+      { ...env, KASPA_X402_ADMIN_TOKEN: "admin-token" },
       fakeContext(),
     );
-
-    expect(response.status).toBe(400);
-    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0 });
+    expect(registration.status).toBe(200);
+    supported = await requestJson(env, "/supported");
+    expect(
+      (
+        supported.body as {
+          kinds: Array<{ scheme: string; extra: Record<string, unknown> }>;
+        }
+      ).kinds,
+    ).toContainEqual(
+      expect.objectContaining({
+        scheme: "exact",
+        extra: expect.objectContaining({
+          binding: "kaspa-exact-v2",
+          profile: "additive",
+        }),
+      }),
+    );
   });
 });
 
-async function requestJson(env: GatewayEnv, path: string): Promise<{ status: number; body: unknown }> {
-  const response = await handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}`), env, fakeContext());
+async function requestJson(
+  env: GatewayEnv,
+  path: string,
+): Promise<{ status: number; body: unknown }> {
+  const response = await handleGatewayRequest(
+    new Request(`https://demo.kaspa-x402.org${path}`),
+    env,
+    fakeContext(),
+  );
   return { status: response.status, body: await response.json() };
 }
 
 function stubCanaryFetches(): void {
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-    const url = typeof input === "string" ? input : input instanceof URL ? input.toString() : input.url;
+    const url =
+      typeof input === "string"
+        ? input
+        : input instanceof URL
+          ? input.toString()
+          : input.url;
     if (url === "https://api-tn10.kaspa.org/info/blockdag") {
-      return Response.json({ networkName: "kaspa-testnet-10", virtualDaaScore: "507000000" });
+      return Response.json({
+        networkName: "kaspa-testnet-10",
+        virtualDaaScore: "507000000",
+      });
     }
     if (url === "https://kaspa-x402.org/schemas/payment-required.schema.json") {
-      return Response.json({ $id: "https://kaspa-x402.org/schemas/payment-required.schema.json" });
+      return Response.json({
+        $id: "https://kaspa-x402.org/schemas/payment-required.schema.json",
+      });
     }
     if (url.startsWith("https://kaspa-x402.org/v0.1.0-alpha.1/release.json?")) {
       return Response.json({ version: "0.1.0-alpha.1" });
     }
     if (url === "https://kaspa-x402.org/docs/") {
-      return new Response("<!doctype html><h1>Docs</h1>", { headers: { "content-type": "text/html" } });
+      return new Response("<!doctype html><h1>Docs</h1>", {
+        headers: { "content-type": "text/html" },
+      });
     }
     throw new Error(`unexpected fetch ${url}`);
   });
@@ -284,7 +436,9 @@ function fakeNamespace(storage: GatewayStorage): DurableObjectNamespace {
     get() {
       return {
         async fetch(_input: RequestInfo | URL, init?: RequestInit) {
-          const request = JSON.parse(String(init?.body ?? "{}")) as GatewayStateRequest;
+          const request = JSON.parse(
+            String(init?.body ?? "{}"),
+          ) as GatewayStateRequest;
           const value = await dispatchGatewayState(ledger, request);
           return Response.json({ ok: true, value });
         },
@@ -308,15 +462,20 @@ class FakeStorage implements GatewayStorage {
     return this.#values.delete(key);
   }
 
-  async list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>> {
+  async list<T = unknown>(options: {
+    prefix: string;
+  }): Promise<Map<string, T>> {
     const result = new Map<string, T>();
     for (const [key, value] of this.#values) {
-      if (key.startsWith(options.prefix)) result.set(key, structuredClone(value) as T);
+      if (key.startsWith(options.prefix))
+        result.set(key, structuredClone(value) as T);
     }
     return result;
   }
 
-  async transaction<T>(closure: (txn: GatewayStorage) => Promise<T>): Promise<T> {
+  async transaction<T>(
+    closure: (txn: GatewayStorage) => Promise<T>,
+  ): Promise<T> {
     const snapshot = structuredClone(Array.from(this.#values.entries()));
     try {
       return await closure(this);
@@ -331,20 +490,21 @@ function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : structuredClone(value);
 }
 
-function exactInventory(overrides: Partial<ReturnType<typeof exactInventoryBase>> = {}) {
-  return { ...exactInventoryBase(), ...overrides };
-}
-
-function exactInventoryBase() {
+function exactHead() {
   return {
+    headId: "90".repeat(32),
     network: "kaspa:testnet-10",
+    payTo: KIP10_ADDRESS,
     templateId: "kaspa-x402-kip10-additive-v1",
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-    borrowAmount: "100000000",
-    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
-    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
+    currentOutpoint: { txid: FUNDING_TX, index: 0 },
+    currentAmount: "100000000",
+    scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    redeemScript: KIP10_REDEEM_SCRIPT,
     additiveThresholdSompi: "10000000",
-    paymentOutputIndex: 0,
+    version: "0",
+    status: "available",
+    createdAt: "2026-07-14T00:00:00.000Z",
+    updatedAt: "2026-07-14T00:00:00.000Z",
   };
 }

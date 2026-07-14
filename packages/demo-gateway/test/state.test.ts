@@ -2,16 +2,18 @@ import { describe, expect, it } from "vitest";
 import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
-  ExactBorrowReservationRequest,
   ExactHeadRecord,
   ExactPaymentRecord,
-  ExactReservationRecord,
   ExactSettlementAttemptRecord,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
-import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import {
+  buildKip10AdditiveRedeemScript,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import { GatewayLedger, type GatewayStorage } from "../src/state.js";
 
 const CHANNEL_ID = "11".repeat(32);
@@ -23,8 +25,13 @@ const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
 const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
-const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
-const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(KIP10_REDEEM_SCRIPT));
+const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({
+  ownerPublicKey: "aa".repeat(32),
+  amount: "10000000",
+});
+const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
+  payToScriptHashScript(KIP10_REDEEM_SCRIPT),
+);
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
@@ -35,8 +42,15 @@ describe("gateway durable ledger", () => {
     await ledger.commitExactPayment({ payment: first });
     await ledger.commitExactPayment({ payment: first });
 
-    await expect(ledger.loadExactPayment(TX)).resolves.toMatchObject({ transactionId: TX, paymentOutputIndex: 1 });
-    await expect(ledger.commitExactPayment({ payment: exactPayment({ paymentOutputIndex: 2 }) })).rejects.toThrow("already committed");
+    await expect(ledger.loadExactPayment(TX)).resolves.toMatchObject({
+      transactionId: TX,
+      paymentOutputIndex: 1,
+    });
+    await expect(
+      ledger.commitExactPayment({
+        payment: exactPayment({ paymentOutputIndex: 2 }),
+      }),
+    ).rejects.toThrow("already committed");
   });
 
   it("keeps conflicting payment identifiers atomic", async () => {
@@ -55,43 +69,37 @@ describe("gateway durable ledger", () => {
     await expect(ledger.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
   });
 
-  it("stores and consumes exact KIP-10 reservations idempotently", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    const first = exactReservation();
-    await ledger.saveExactReservation(first);
-    await ledger.saveExactReservation(first);
-    await ledger.saveExactReservation(exactReservation({ reservedAt: "2026-07-07T00:01:00.000Z" }));
-
-    await expect(ledger.loadExactReservation(TX)).resolves.toMatchObject({
-      reservationId: TX,
-      status: "reserved",
-      borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-    });
-    await expect(ledger.saveExactReservation(exactReservation({ borrowAmount: "200" }))).rejects.toThrow("different terms");
-    await ledger.consumeExactReservation(TX, OTHER_TX);
-    await ledger.consumeExactReservation(TX, OTHER_TX);
-    await expect(ledger.loadExactReservation(TX)).resolves.toMatchObject({
-      status: "consumed",
-      transactionId: OTHER_TX,
-    });
-    await expect(ledger.consumeExactReservation(TX, "aa".repeat(32))).rejects.toThrow("different transaction");
-    await expect(ledger.saveExactReservation(first)).rejects.toThrow("already consumed");
-  });
-
   it("selects durable additive heads without consuming unanswered challenges", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await ledger.registerExactHead(exactHead());
     await ledger.registerExactHead(
-      exactHead({ headId: "91".repeat(32), currentOutpoint: { txid: "92".repeat(32), index: 0 } }),
+      exactHead({
+        headId: "91".repeat(32),
+        currentOutpoint: { txid: "92".repeat(32), index: 0 },
+      }),
     );
 
     for (let index = 0; index < 1_000; index += 1) {
-      await expect(ledger.selectExactHead(exactHeadSelection(index % 2 === 0 ? "00".repeat(32) : "ff".repeat(32)))).resolves.toBeDefined();
+      await expect(
+        ledger.selectExactHead(
+          exactHeadSelection(
+            index % 2 === 0 ? "00".repeat(32) : "ff".repeat(32),
+          ),
+        ),
+      ).resolves.toBeDefined();
     }
 
     await expect(ledger.listExactHeads()).resolves.toEqual([
-      expect.objectContaining({ headId: HEAD_ID, status: "available", version: "0" }),
-      expect.objectContaining({ headId: "91".repeat(32), status: "available", version: "0" }),
+      expect.objectContaining({
+        headId: HEAD_ID,
+        status: "available",
+        version: "0",
+      }),
+      expect.objectContaining({
+        headId: "91".repeat(32),
+        status: "available",
+        version: "0",
+      }),
     ]);
   });
 
@@ -100,8 +108,15 @@ describe("gateway durable ledger", () => {
     await ledger.registerExactHead(exactHead());
     const attempt = exactSettlementAttempt();
 
-    await expect(ledger.claimExactSettlement(attempt)).resolves.toMatchObject({ created: true });
-    await expect(ledger.claimExactSettlement({ ...attempt, createdAt: "2026-07-07T00:00:01.000Z" })).resolves.toMatchObject({
+    await expect(ledger.claimExactSettlement(attempt)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(
+      ledger.claimExactSettlement({
+        ...attempt,
+        createdAt: "2026-07-07T00:00:01.000Z",
+      }),
+    ).resolves.toMatchObject({
       created: false,
     });
     await expect(
@@ -110,15 +125,28 @@ describe("gateway durable ledger", () => {
           transactionId: OTHER_TX,
           head: {
             ...attempt.head!,
-            successor: { ...attempt.head!.successor, outpoint: { txid: OTHER_TX, index: 0 } },
+            successor: {
+              ...attempt.head!.successor,
+              outpoint: { txid: OTHER_TX, index: 0 },
+            },
           },
         }),
       ),
     ).rejects.toThrow("head changed");
-    await expect(ledger.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
+    await expect(
+      ledger.selectExactHead(exactHeadSelection()),
+    ).resolves.toBeUndefined();
 
-    await ledger.recordExactSettlementBroadcast(TX, "broadcast", "2026-07-07T00:00:02.000Z");
-    await ledger.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:03.000Z");
+    await ledger.recordExactSettlementBroadcast(
+      TX,
+      "broadcast",
+      "2026-07-07T00:00:02.000Z",
+    );
+    await ledger.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:03.000Z",
+    );
     await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "available",
       version: "1",
@@ -126,10 +154,18 @@ describe("gateway durable ledger", () => {
       currentAmount: "120000000",
       lastTransactionId: TX,
     });
-    await expect(ledger.beginExactHandler(TX, "2026-07-07T00:00:04.000Z")).resolves.toBe(true);
-    await expect(ledger.beginExactHandler(TX, "2026-07-07T00:00:05.000Z")).resolves.toBe(false);
+    await expect(
+      ledger.beginExactHandler(TX, "2026-07-07T00:00:04.000Z"),
+    ).resolves.toBe(true);
+    await expect(
+      ledger.beginExactHandler(TX, "2026-07-07T00:00:05.000Z"),
+    ).resolves.toBe(false);
     await ledger.commitExactPayment({
-      payment: exactPayment({ transactionId: TX, paymentOutputIndex: 0, amount: "20000000" }),
+      payment: exactPayment({
+        transactionId: TX,
+        paymentOutputIndex: 0,
+        amount: "20000000",
+      }),
     });
     await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
@@ -141,105 +177,31 @@ describe("gateway durable ledger", () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await ledger.registerExactHead(exactHead());
     await ledger.claimExactSettlement(exactSettlementAttempt());
-    await ledger.abandonExactSettlement(TX, "trusted node rejected transaction", "2026-07-07T00:00:02.000Z");
+    await ledger.abandonExactSettlement(
+      TX,
+      "trusted node rejected transaction",
+      "2026-07-07T00:00:02.000Z",
+    );
 
-    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
-    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({ status: "available", claimTransactionId: undefined });
-    await ledger.markExactHeadUnavailable(HEAD_ID, "successor lineage unavailable", "2026-07-07T00:00:03.000Z");
+    await expect(
+      ledger.loadExactSettlementAttempt(TX),
+    ).resolves.toBeUndefined();
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "available",
+      claimTransactionId: undefined,
+    });
+    await ledger.markExactHeadUnavailable(
+      HEAD_ID,
+      "successor lineage unavailable",
+      "2026-07-07T00:00:03.000Z",
+    );
     await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "unavailable",
       unavailableReason: "successor lineage unavailable",
     });
-    await expect(ledger.selectExactHead(exactHeadSelection())).resolves.toBeUndefined();
-  });
-
-  it("leases exact inventory and retires expired unpaid reservations", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await expect(ledger.registerExactInventory(exactInventory({ additiveThresholdSompi: "1" }))).rejects.toThrow("additive threshold");
     await expect(
-      ledger.registerExactInventory(
-        exactInventory({ borrowRedeemScript: "51", borrowScriptPublicKey: serializedScriptPublicKey(payToScriptHashScript("51")) }),
-      ),
-    ).rejects.toThrow("canonical KIP-10 additive template");
-    await expect(ledger.registerExactInventory(exactInventory({ borrowScriptPublicKey: SCRIPT }))).rejects.toThrow(
-      "redeem script must match borrowScriptPublicKey",
-    );
-    await ledger.registerExactInventory(exactInventory());
-    await ledger.registerExactInventory(exactInventory());
-
-    await expect(ledger.exactInventoryStats("2026-07-07T00:00:00.000Z")).resolves.toMatchObject({
-      total: 1,
-      available: 1,
-      reserved: 0,
-    });
-
-    const reservation = await ledger.reserveExactInventory(exactReservationRequest({ maxTimeoutSeconds: 1 }), "2026-07-07T00:00:00.000Z");
-    expect(reservation).toMatchObject({
-      templateId: "kaspa-x402-kip10-additive-v1",
-      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-      paymentOutputIndex: 0,
-      expiresAt: "2026-07-07T00:00:01.000Z",
-    });
-    await expect(ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:00.500Z")).resolves.toBeUndefined();
-    await expect(ledger.exactInventoryStats("2026-07-07T00:00:02.000Z")).resolves.toMatchObject({
-      available: 0,
-      reserved: 0,
-      retired: 1,
-      expiredRetired: 1,
-    });
-    await expect(ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:02.000Z")).resolves.toBeUndefined();
-    await expect(ledger.listExactInventory()).resolves.toMatchObject([{ status: "retired", reservationId: reservation!.reservationId }]);
-  });
-
-  it("registers exact inventory batches atomically", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-
-    await expect(
-      ledger.registerExactInventoryBatch([
-        exactInventory(),
-        exactInventory({ borrowOutpoint: { txid: OTHER_TX, index: 0 }, additiveThresholdSompi: "1" }),
-      ]),
-    ).rejects.toThrow("additive threshold");
-    await expect(ledger.exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0 });
-
-    await expect(
-      ledger.registerExactInventoryBatch([exactInventory(), exactInventory({ borrowOutpoint: { txid: OTHER_TX, index: 0 } })]),
-    ).resolves.toHaveLength(2);
-    await expect(ledger.exactInventoryStats()).resolves.toMatchObject({ total: 2, available: 2 });
-  });
-
-  it("marks leased exact inventory consumed with its settlement", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.registerExactInventory(exactInventory());
-    const reservation = await ledger.reserveExactInventory(exactReservationRequest(), "2026-07-07T00:00:00.000Z");
-    expect(reservation).toBeDefined();
-
-    await ledger.saveExactReservation({ ...reservation!, status: "reserved", reservedAt: "2026-07-07T00:00:00.000Z" });
-    await ledger.consumeExactReservation(reservation!.reservationId, TX, {
-      outpoint: { txid: TX, index: 0 },
-      amount: "110000000",
-      scriptPublicKey: reservation!.borrowScriptPublicKey,
-    });
-
-    await expect(ledger.listExactInventory()).resolves.toEqual(
-      expect.arrayContaining([
-        expect.objectContaining({
-          inventoryId: `${FUNDING_TX}:0`,
-          status: "consumed",
-          transactionId: TX,
-        }),
-        expect.objectContaining({
-          inventoryId: `${TX}:0`,
-          status: "available",
-          borrowAmount: "110000000",
-        }),
-      ]),
-    );
-    await expect(ledger.exactInventoryStats("2026-07-07T00:00:01.000Z")).resolves.toMatchObject({
-      available: 1,
-      consumed: 1,
-    });
+      ledger.selectExactHead(exactHeadSelection()),
+    ).resolves.toBeUndefined();
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
@@ -247,28 +209,52 @@ describe("gateway durable ledger", () => {
     await ledger.saveChannel(channel());
     await ledger.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
 
-    const stale = settlementCommit(channel(), { chargedCumulativeAmount: "100" });
-    await expect(ledger.commitSettlement(stale)).rejects.toThrow("channel state changed");
-    await expect(ledger.loadCommitment(stale.commitment.commitmentId)).resolves.toBeUndefined();
+    const stale = settlementCommit(channel(), {
+      chargedCumulativeAmount: "100",
+    });
+    await expect(ledger.commitSettlement(stale)).rejects.toThrow(
+      "channel state changed",
+    );
+    await expect(
+      ledger.loadCommitment(stale.commitment.commitmentId),
+    ).resolves.toBeUndefined();
   });
 
   it("serializes lock ownership with expiring leases", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await expect(ledger.acquireLock(CHANNEL_ID, "first", 1_000, 1_000)).resolves.toBe(true);
-    await expect(ledger.acquireLock(CHANNEL_ID, "second", 1_100, 1_000)).resolves.toBe(false);
-    await expect(ledger.acquireLock(CHANNEL_ID, "second", 2_001, 1_000)).resolves.toBe(true);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "first", 1_000, 1_000),
+    ).resolves.toBe(true);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "second", 1_100, 1_000),
+    ).resolves.toBe(false);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "second", 2_001, 1_000),
+    ).resolves.toBe(true);
     await ledger.releaseLock(CHANNEL_ID, "first");
-    await expect(ledger.acquireLock(CHANNEL_ID, "third", 2_100, 1_000)).resolves.toBe(false);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "third", 2_100, 1_000),
+    ).resolves.toBe(false);
     await ledger.releaseLock(CHANNEL_ID, "second");
-    await expect(ledger.acquireLock(CHANNEL_ID, "third", 2_200, 1_000)).resolves.toBe(true);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "third", 2_200, 1_000),
+    ).resolves.toBe(true);
   });
 
   it("rate limits by fixed windows", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await expect(ledger.checkRateLimit("ip:exact", 1_000, 2, 60_000)).resolves.toMatchObject({ allowed: true, count: 1 });
-    await expect(ledger.checkRateLimit("ip:exact", 1_100, 2, 60_000)).resolves.toMatchObject({ allowed: true, count: 2 });
-    await expect(ledger.checkRateLimit("ip:exact", 1_200, 2, 60_000)).resolves.toMatchObject({ allowed: false, count: 3 });
-    await expect(ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000)).resolves.toMatchObject({ allowed: true, count: 1 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 1_000, 2, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 1_100, 2, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 2 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 1_200, 2, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 3 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1 });
   });
 
   it("persists the latest canary report", async () => {
@@ -277,7 +263,9 @@ describe("gateway durable ledger", () => {
       checkedAt: "2026-07-03T00:00:00.000Z",
       trigger: "scheduled" as const,
       ok: true,
-      checks: [{ name: "exact-offer", status: "ok" as const, detail: "valid offer" }],
+      checks: [
+        { name: "exact-offer", status: "ok" as const, detail: "valid offer" },
+      ],
     };
 
     await ledger.saveCanaryReport(report);
@@ -288,17 +276,29 @@ describe("gateway durable ledger", () => {
   it("keeps one absolute batch refund timeout until the minimum lead is reached", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
 
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1000", "1000", "100")).resolves.toBe("2000");
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1500", "1000", "100")).resolves.toBe("2000");
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1899", "1000", "100")).resolves.toBe("2000");
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1900", "1000", "100")).resolves.toBe("2900");
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1901", "1000", "100")).resolves.toBe("2900");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1000", "1000", "100"),
+    ).resolves.toBe("2000");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1500", "1000", "100"),
+    ).resolves.toBe("2000");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1899", "1000", "100"),
+    ).resolves.toBe("2000");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1900", "1000", "100"),
+    ).resolves.toBe("2900");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1901", "1000", "100"),
+    ).resolves.toBe("2900");
   });
 
   it("rejects an invalid persisted batch refund window", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
 
-    await expect(ledger.resolveBatchRefundTimeoutDaa("1000", "100", "100")).rejects.toThrow("must exceed minimum lead");
+    await expect(
+      ledger.resolveBatchRefundTimeoutDaa("1000", "100", "100"),
+    ).rejects.toThrow("must exceed minimum lead");
   });
 
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
@@ -307,9 +307,16 @@ describe("gateway durable ledger", () => {
     const first = claimAttempt({ attemptId: ATTEMPT });
     await ledger.saveClaimAttempt(first);
 
-    await expect(ledger.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX }))).rejects.toThrow("already pending");
+    await expect(
+      ledger.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX })),
+    ).rejects.toThrow("already pending");
     await ledger.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
-    await expect(ledger.applyClaimAttempt({ ...channel(), claimedCumulativeAmount: "100" }, first)).rejects.toThrow("channel state changed");
+    await expect(
+      ledger.applyClaimAttempt(
+        { ...channel(), claimedCumulativeAmount: "100" },
+        first,
+      ),
+    ).rejects.toThrow("channel state changed");
   });
 });
 
@@ -328,15 +335,20 @@ class FakeStorage implements GatewayStorage {
     return this.#values.delete(key);
   }
 
-  async list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>> {
+  async list<T = unknown>(options: {
+    prefix: string;
+  }): Promise<Map<string, T>> {
     const result = new Map<string, T>();
     for (const [key, value] of this.#values) {
-      if (key.startsWith(options.prefix)) result.set(key, structuredClone(value) as T);
+      if (key.startsWith(options.prefix))
+        result.set(key, structuredClone(value) as T);
     }
     return result;
   }
 
-  async transaction<T>(closure: (txn: GatewayStorage) => Promise<T>): Promise<T> {
+  async transaction<T>(
+    closure: (txn: GatewayStorage) => Promise<T>,
+  ): Promise<T> {
     const snapshot = structuredClone(Array.from(this.#values.entries()));
     try {
       return await closure(this);
@@ -347,7 +359,9 @@ class FakeStorage implements GatewayStorage {
   }
 }
 
-function channel(overrides: Partial<ServerChannelRecord> = {}): ServerChannelRecord {
+function channel(
+  overrides: Partial<ServerChannelRecord> = {},
+): ServerChannelRecord {
   return {
     channelId: CHANNEL_ID,
     channelConfig: {
@@ -373,7 +387,10 @@ function channel(overrides: Partial<ServerChannelRecord> = {}): ServerChannelRec
   };
 }
 
-function settlementCommit(previous: ServerChannelRecord, next: Partial<ServerChannelRecord>): SettlementCommit {
+function settlementCommit(
+  previous: ServerChannelRecord,
+  next: Partial<ServerChannelRecord>,
+): SettlementCommit {
   const updated = { ...previous, ...next };
   const commitment: BatchCommitmentRecord = {
     commitmentId: "15".repeat(32),
@@ -387,7 +404,12 @@ function settlementCommit(previous: ServerChannelRecord, next: Partial<ServerCha
     chargedCumulativeBefore: previous.chargedCumulativeAmount,
     chargedCumulativeAfter: updated.chargedCumulativeAmount,
     claimedCumulativeAmount: previous.claimedCumulativeAmount,
-    settlement: { success: true, transaction: "15".repeat(32), network: "kaspa:testnet-10", amount: "100" },
+    settlement: {
+      success: true,
+      transaction: "15".repeat(32),
+      network: "kaspa:testnet-10",
+      amount: "100",
+    },
     response: { status: 200, headers: {}, body: "ok" },
   };
   return {
@@ -405,7 +427,9 @@ function settlementCommit(previous: ServerChannelRecord, next: Partial<ServerCha
   };
 }
 
-function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPaymentRecord {
+function exactPayment(
+  overrides: Partial<ExactPaymentRecord> = {},
+): ExactPaymentRecord {
   return {
     profile: "additive",
     transactionId: TX,
@@ -415,25 +439,13 @@ function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPayment
     paymentPayloadHash: PAYLOAD,
     amount: "100",
     finality: "accepted",
-    settlement: { success: true, transaction: TX, network: "kaspa:testnet-10", amount: "100" },
+    settlement: {
+      success: true,
+      transaction: TX,
+      network: "kaspa:testnet-10",
+      amount: "100",
+    },
     response: { status: 200, headers: {}, body: "ok" },
-    ...overrides,
-  };
-}
-
-function exactReservation(overrides: Partial<ExactReservationRecord> = {}): ExactReservationRecord {
-  return {
-    reservationId: TX,
-    templateId: "kaspa-x402-kip10-additive-v1",
-    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-    borrowAmount: "100000000",
-    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
-    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
-    additiveThresholdSompi: "10000000",
-    paymentOutputIndex: 0,
-    status: "reserved",
-    reservedAt: "2026-07-07T00:00:00.000Z",
     ...overrides,
   };
 }
@@ -469,7 +481,9 @@ function exactHeadSelection(selectionKey = "00".repeat(32)) {
   };
 }
 
-function exactSettlementAttempt(overrides: Partial<ExactSettlementAttemptRecord> = {}): ExactSettlementAttemptRecord {
+function exactSettlementAttempt(
+  overrides: Partial<ExactSettlementAttemptRecord> = {},
+): ExactSettlementAttemptRecord {
   return {
     transactionId: TX,
     profile: "additive",
@@ -498,47 +512,28 @@ function exactSettlementAttempt(overrides: Partial<ExactSettlementAttemptRecord>
   };
 }
 
-function exactInventory(overrides: Partial<Parameters<GatewayLedger["registerExactInventory"]>[0]> = {}): Parameters<GatewayLedger["registerExactInventory"]>[0] {
-  return {
-    network: "kaspa:testnet-10",
-    templateId: "kaspa-x402-kip10-additive-v1",
-    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-    borrowOutpoint: { txid: FUNDING_TX, index: 0 },
-    borrowAmount: "100000000",
-    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
-    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
-    additiveThresholdSompi: "10000000",
-    paymentOutputIndex: 0,
-    ...overrides,
-  };
-}
-
-function exactReservationRequest(overrides: Partial<ExactBorrowReservationRequest> = {}): ExactBorrowReservationRequest {
-  return {
-    network: "kaspa:testnet-10",
-    amount: "20000000",
-    payTo: "kaspatest:payout",
-    payToScriptPublicKey: SCRIPT,
-    maxTimeoutSeconds: 60,
-    resource: { url: "https://demo.kaspa-x402.org/exact/report" },
-    minimumAdditiveThresholdSompi: "10000000",
-    ...overrides,
-  };
-}
-
-function paymentIdentifier(overrides: Partial<PaymentIdentifierRecord> = {}): PaymentIdentifierRecord {
+function paymentIdentifier(
+  overrides: Partial<PaymentIdentifierRecord> = {},
+): PaymentIdentifierRecord {
   return {
     id: "payment-id",
     fingerprint: REQUEST,
     paymentPayloadHash: PAYLOAD,
     paymentScopeId: TX,
     response: { status: 200, headers: {}, body: "ok" },
-    settlement: { success: true, transaction: TX, network: "kaspa:testnet-10", amount: "100" },
+    settlement: {
+      success: true,
+      transaction: TX,
+      network: "kaspa:testnet-10",
+      amount: "100",
+    },
     ...overrides,
   };
 }
 
-function claimAttempt(overrides: Partial<ClaimAttemptRecord> = {}): ClaimAttemptRecord {
+function claimAttempt(
+  overrides: Partial<ClaimAttemptRecord> = {},
+): ClaimAttemptRecord {
   return {
     attemptId: ATTEMPT,
     channelId: CHANNEL_ID,

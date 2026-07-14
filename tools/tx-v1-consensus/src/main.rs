@@ -161,9 +161,9 @@ fn main() -> Result<()> {
             "transactionHash": vector.expected.transaction_hash,
         }));
     }
-    let kip10 = validate_kip10_exact_template(repo_root)?;
     let exact_profiles = validate_exact_consensus_profiles()?;
     validate_exact_profiles_vector(repo_root, &exact_profiles)?;
+    let kip10 = validate_kip10_exact_template(&exact_profiles)?;
 
     println!(
         "{}",
@@ -908,29 +908,23 @@ fn validate_exact_profiles_vector(repo_root: &Path, actual: &serde_json::Value) 
     Ok(())
 }
 
-fn validate_kip10_exact_template(repo_root: &Path) -> Result<serde_json::Value> {
-    let vector_path = "vectors/x402-http/exact-transaction.json";
-    let contents = fs::read_to_string(repo_root.join(vector_path))
-        .with_context(|| format!("reading {vector_path}"))?;
-    let vector: serde_json::Value =
-        serde_json::from_str(&contents).with_context(|| format!("parsing {vector_path}"))?;
-    let extra = &vector["paymentRequired"]["accepts"][0]["extra"];
-    let expected_script = json_string(extra, "borrowRedeemScript")?;
+fn validate_kip10_exact_template(exact_profiles: &serde_json::Value) -> Result<serde_json::Value> {
+    let additive = &exact_profiles["additive"];
+    let head_input = &additive["transaction"]["inputs"][0];
+    let signature_script = json_string(head_input, "signatureScript")?;
+    let expected_script = signature_script
+        .strip_prefix("0035")
+        .ok_or_else(|| anyhow!("additive exact head witness must use OP_FALSE and a 53-byte redeem script push"))?;
     let script = parse_hex(expected_script, "borrowRedeemScript")?;
     if script.len() < 34 || script[0] != OpIf || script[1] != 32 {
         return Err(anyhow!(
-            "exact HTTP vector does not contain a canonical KIP-10 owner key prefix"
+            "additive exact consensus vector does not contain a canonical KIP-10 owner key prefix"
         ));
     }
     let owner_public_key: [u8; 32] = script[2..34]
         .try_into()
         .map_err(|_| anyhow!("KIP-10 owner public key must be 32 bytes"))?;
-    let threshold = json_string(extra, "additiveThresholdSompi")?
-        .parse::<i64>()
-        .context("parsing additiveThresholdSompi")?;
-    if threshold <= 0 {
-        return Err(anyhow!("additiveThresholdSompi must be positive"));
-    }
+    let threshold = 10_000_000_i64;
     let mut builder = ScriptBuilder::new();
     let canonical_script = builder
         .add_op(OpIf)?
@@ -965,14 +959,14 @@ fn validate_kip10_exact_template(repo_root: &Path) -> Result<serde_json::Value> 
     );
     expect_eq(
         serialized_script_public_key.as_str(),
-        json_string(extra, "borrowScriptPublicKey")?,
+        json_string(&head_input["utxo"], "scriptPublicKey")?,
         "KIP-10 script public key",
     )?;
 
-    let input_amount = json_string(extra, "borrowAmount")?
+    let input_amount = json_string(&head_input["utxo"], "amount")?
         .parse::<u64>()
-        .context("parsing borrowAmount")?;
-    let borrow_outpoint = &extra["borrowOutpoint"];
+        .context("parsing head amount")?;
+    let head_outpoint = &head_input["previousOutpoint"];
     let mut signature_builder = ScriptBuilder::new();
     let signature_script = signature_builder
         .add_op(OpFalse)?
@@ -980,9 +974,9 @@ fn validate_kip10_exact_template(repo_root: &Path) -> Result<serde_json::Value> 
         .drain();
     let input = TransactionInput::new_with_compute_budget(
         TransactionOutpoint {
-            transaction_id: TransactionId::from_str(json_string(borrow_outpoint, "txid")?)
-                .context("parsing borrow outpoint txid")?,
-            index: json_u32(borrow_outpoint, "index")?,
+            transaction_id: TransactionId::from_str(json_string(head_outpoint, "txid")?)
+                .context("parsing head outpoint txid")?,
+            index: json_u32(head_outpoint, "index")?,
         },
         signature_script,
         0,
@@ -1022,11 +1016,12 @@ fn validate_kip10_exact_template(repo_root: &Path) -> Result<serde_json::Value> 
     }
 
     Ok(json!({
-        "vector": vector_path,
+        "vector": "vectors/exact/consensus-profiles.json",
         "template": "kaspa-x402-kip10-additive-v1",
         "redeemScript": expected_script,
         "scriptPublicKey": serialized_script_public_key,
         "thresholdSompi": threshold.to_string(),
+        "fullConsensusValidated": true,
         "validContinuation": "accepted",
         "belowThreshold": "rejected",
         "wrongContinuationScript": "rejected",

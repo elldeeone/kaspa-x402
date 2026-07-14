@@ -1,7 +1,7 @@
 # Alpha Publish Checklist
 
-Status: preparing `0.1.0-alpha.7`. `0.1.0-alpha.6` remains the latest recorded
-live release snapshot. Publishes require npm authorization and must not happen
+Status: preparing `0.1.0-alpha.8`. `0.1.0-alpha.7` remains the latest published
+and deployed alpha. Publishes require npm authorization and must not happen
 accidentally from CI or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
@@ -39,6 +39,10 @@ and consume the reservation before releasing protected content.
 `0.1.0-alpha.7` hardens that path with canonical transaction-envelope and
 reservation checks, atomic continuation recycling, rolling DAA refund safety,
 full-outpoint voucher binding, and recovery-safe claim accounting.
+`0.1.0-alpha.8` preserves those controls while replacing the alpha.7 exact
+contract with `kaspa-exact-v2`: default `standard-native` exact transfers and
+an optional durable KIP-10 `additive` head profile whose exact successor delta
+is the sole merchant payment. Unanswered 402s no longer consume inventory.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -157,14 +161,13 @@ Checked for alpha.5 on 2026-07-06:
 
 ## Hosted Evidence Gate
 
-For alpha.7, the source release gate is not the same as the public hosted
-gateway gate. Alpha.7 source hardens the KIP-10 exact transaction-artifact path for
-direct-mode servers that advertise reservations. The hosted
-`demo.kaspa-x402.org` gateway may advertise exact evidence only while it is
-deployed with working exact reservations, PNN broadcast, finality observation,
-and funded TN10 borrow-UTXO inventory.
+For alpha.8, the source release gate is not the same as the public hosted
+gateway gate. The hosted `demo.kaspa-x402.org` gateway remains alpha.7 until a
+post-merge cutover. Alpha.8 `standard-native` needs working verification, PNN
+broadcast, and finality observation but no merchant inventory. Optional
+`additive` also needs an available durable KIP-10 head.
 
-Before advertising alpha.6 source live evidence, run:
+Before advertising alpha.8 source live evidence, run:
 
 ```sh
 npm run proof:live:check -- --live --write-report
@@ -176,12 +179,12 @@ Before advertising hosted exact evidence, run:
 KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS npm run proof:hosted-exact
 ```
 
-The expected alpha.7 live proof must include:
+The expected alpha.8 live proof must include:
 
-- KIP-10 exact reservation terms with `additiveThresholdSompi` at or above
-  `10000000` sompi;
-
-- exact KIP-10 transaction artifact settlement and replay rejection;
+- standard-native exact transaction settlement and replay rejection;
+- additive exact settlement proving the KIP-10 successor delta equals the
+  advertised amount and no second merchant payment output exists;
+- durable head advancement and stale-head conflict handling;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
@@ -299,6 +302,6 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
-- alpha.7 exact supports preferred KIP-10 `exact-transaction` artifacts with
-  durable reservation continuation and replay requirements;
+- alpha.8 exact supports signed `exact-transaction` artifacts under default
+  standard-native or optional durable additive-head semantics;
 - live proof evidence is testnet-only.

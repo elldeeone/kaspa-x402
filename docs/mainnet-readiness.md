@@ -5,7 +5,8 @@ not a production readiness claim.
 
 The current shipped native profiles are:
 
-- `exact` with `kaspa-exact-v1`;
+- `exact` with `kaspa-exact-v2` (`standard-native` by default, optional
+  KIP-10 `additive` head profile);
 - `batch-settlement` with `kaspa-escrow-v1`.
 
 `kaspa:testnet-10` is the active validation target. Mainnet must remain opt-in
@@ -52,7 +53,8 @@ state across process loss.
 
 Operators need documented recovery procedures for:
 
-- exact transaction reservation conflicts;
+- standard-native exact transaction conflicts and additive-head advancement
+  conflicts;
 - batch deposit broadcast and finality waits;
 - voucher commitment persistence;
 - claim/refund transaction broadcast and finality waits;
@@ -68,7 +70,8 @@ must pass:
 npm run proof:live:check -- --live --write-report
 ```
 
-The sanitized report in `docs/live-testnet-report.md` must show exact replay
+The sanitized report in `docs/live-testnet-report.md` must show standard-native
+exact settlement, additive exact-delta head advancement, exact replay
 rejection, batch deposit-voucher settlement, voucher-only settlement, claim,
 replay rejection, and refund evidence.
 

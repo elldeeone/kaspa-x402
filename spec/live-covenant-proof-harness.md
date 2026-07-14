@@ -17,22 +17,26 @@ sanitized committed report.
 
 The runner requires live evidence for:
 
-1. exact KIP-10 transaction artifact settlement and replay rejection;
-2. batch deposit-voucher settlement;
-3. batch voucher-only settlement;
-4. batch claim construction and broadcast;
-5. replay rejection across exact and batch-settlement;
-6. batch refund construction and broadcast after timeout.
+1. standard-native exact settlement and replay rejection;
+2. KIP-10 additive-head settlement whose successor delta equals the exact
+   advertised amount, plus replay rejection;
+3. batch deposit-voucher settlement;
+4. batch voucher-only settlement;
+5. batch claim construction and broadcast;
+6. replay rejection across exact and batch-settlement;
+7. batch refund construction and broadcast after timeout.
 
 The live result must state transaction ids, transaction versions, version
 evidence source, finality for every broadcast transaction, final rejection for
 the replay attempt, outpoints, charged amounts, top-level settlement amounts,
 Kaspa extension charged amounts, cumulative charge before/after values, replay
-outcomes, and refund/claim evidence where applicable. Exact KIP-10 evidence
-must include the transaction encoding, reservation id, borrow outpoint,
-payment output index, transaction-artifact hash, server broadcast result,
-final settlement transaction id, and adapter-submitted transaction-v1 shape
-evidence. Claim evidence must reconcile the funding input, previous claimed
+outcomes, and refund/claim evidence where applicable. Both exact profiles must
+include the transaction encoding, canonical payment output index,
+transaction-artifact hash, server broadcast result, final settlement
+transaction id, and transaction-version evidence. Additive evidence must also
+identify the durable head/version and consumed outpoint and prove
+`successorAmount - headAmount == advertisedAmount`. Claim evidence must
+reconcile the funding input, previous claimed
 cumulative amount, active charged amount, claim amount, server output, fee, and
 continuation amount. Refund evidence must reconcile the continuation input,
 refund amount, and fee. Batch voucher-only evidence must prove it continues the

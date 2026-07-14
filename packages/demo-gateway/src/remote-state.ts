@@ -1,10 +1,7 @@
 import type {
   BatchCommitmentRecord,
   ClaimAttemptRecord,
-  ExactBorrowReservation,
-  ExactBorrowReservationRequest,
   ExactPaymentRecord,
-  ExactReservationRecord,
   ExactSettlementCommit,
   ExactHeadRecord,
   ExactHeadSelectionRequest,
@@ -16,9 +13,6 @@ import type {
 } from "@kaspa-x402/server";
 import type {
   GatewayCanaryReport,
-  GatewayExactInventoryRecord,
-  GatewayExactInventoryRegistration,
-  GatewayExactInventoryStats,
   GatewayStateClient,
   GatewayStateMethod,
   GatewayStateRequest,
@@ -49,15 +43,21 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("listChannels");
   }
 
-  loadCommitment(commitmentId: string): Promise<BatchCommitmentRecord | undefined> {
+  loadCommitment(
+    commitmentId: string,
+  ): Promise<BatchCommitmentRecord | undefined> {
     return this.#call("loadCommitment", { commitmentId });
   }
 
-  loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined> {
+  loadPaymentIdentifier(
+    id: string,
+  ): Promise<PaymentIdentifierRecord | undefined> {
     return this.#call("loadPaymentIdentifier", { id });
   }
 
-  loadExactPayment(transactionId: string): Promise<ExactPaymentRecord | undefined> {
+  loadExactPayment(
+    transactionId: string,
+  ): Promise<ExactPaymentRecord | undefined> {
     return this.#call("loadExactPayment", { transactionId });
   }
 
@@ -73,15 +73,21 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("listExactHeads");
   }
 
-  selectExactHead(request: ExactHeadSelectionRequest): Promise<ExactHeadRecord | undefined> {
+  selectExactHead(
+    request: ExactHeadSelectionRequest,
+  ): Promise<ExactHeadRecord | undefined> {
     return this.#call("selectExactHead", { request });
   }
 
-  claimExactSettlement(record: ExactSettlementAttemptRecord): Promise<ExactSettlementClaimResult> {
+  claimExactSettlement(
+    record: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementClaimResult> {
     return this.#call("claimExactSettlement", { record });
   }
 
-  loadExactSettlementAttempt(transactionId: string): Promise<ExactSettlementAttemptRecord | undefined> {
+  loadExactSettlementAttempt(
+    transactionId: string,
+  ): Promise<ExactSettlementAttemptRecord | undefined> {
     return this.#call("loadExactSettlementAttempt", { transactionId });
   }
 
@@ -90,23 +96,54 @@ export class RemoteGatewayState implements GatewayStateClient {
     finality: "broadcast" | "accepted" | "confirmed",
     observedAt: string,
   ): Promise<void> {
-    return this.#call("recordExactSettlementBroadcast", { transactionId, finality, observedAt });
+    return this.#call("recordExactSettlementBroadcast", {
+      transactionId,
+      finality,
+      observedAt,
+    });
   }
 
-  acceptExactSettlement(transactionId: string, finality: "accepted" | "confirmed", observedAt: string): Promise<void> {
-    return this.#call("acceptExactSettlement", { transactionId, finality, observedAt });
+  acceptExactSettlement(
+    transactionId: string,
+    finality: "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("acceptExactSettlement", {
+      transactionId,
+      finality,
+      observedAt,
+    });
   }
 
-  beginExactHandler(transactionId: string, startedAt: string): Promise<boolean> {
+  beginExactHandler(
+    transactionId: string,
+    startedAt: string,
+  ): Promise<boolean> {
     return this.#call("beginExactHandler", { transactionId, startedAt });
   }
 
-  abandonExactSettlement(transactionId: string, reason: string, observedAt: string): Promise<void> {
-    return this.#call("abandonExactSettlement", { transactionId, reason, observedAt });
+  abandonExactSettlement(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("abandonExactSettlement", {
+      transactionId,
+      reason,
+      observedAt,
+    });
   }
 
-  markExactHeadUnavailable(headId: string, reason: string, observedAt: string): Promise<void> {
-    return this.#call("markExactHeadUnavailable", { headId, reason, observedAt });
+  markExactHeadUnavailable(
+    headId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("markExactHeadUnavailable", {
+      headId,
+      reason,
+      observedAt,
+    });
   }
 
   commitSettlement(record: SettlementCommit): Promise<void> {
@@ -117,47 +154,21 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("commitExactPayment", { record });
   }
 
-  saveExactReservation(record: ExactReservationRecord): Promise<void> {
-    return this.#call("saveExactReservation", { record });
+  resolveBatchRefundTimeoutDaa(
+    currentDaa: string,
+    refundDeltaDaa: string,
+    minimumLeadDaa: string,
+  ): Promise<string> {
+    return this.#call("resolveBatchRefundTimeoutDaa", {
+      currentDaa,
+      refundDeltaDaa,
+      minimumLeadDaa,
+    });
   }
 
-  loadExactReservation(reservationId: string): Promise<ExactReservationRecord | undefined> {
-    return this.#call("loadExactReservation", { reservationId });
-  }
-
-  consumeExactReservation(
-    reservationId: string,
-    transactionId: string,
-    continuation?: Parameters<GatewayStateClient["consumeExactReservation"]>[2],
-  ): Promise<void> {
-    return this.#call("consumeExactReservation", { reservationId, transactionId, continuation });
-  }
-
-  registerExactInventory(record: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord> {
-    return this.#call("registerExactInventory", { record });
-  }
-
-  registerExactInventoryBatch(records: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]> {
-    return this.#call("registerExactInventoryBatch", { records });
-  }
-
-  reserveExactInventory(request: ExactBorrowReservationRequest, nowIso?: string): Promise<ExactBorrowReservation | undefined> {
-    return this.#call("reserveExactInventory", { request, nowIso });
-  }
-
-  listExactInventory(): Promise<GatewayExactInventoryRecord[]> {
-    return this.#call("listExactInventory");
-  }
-
-  exactInventoryStats(nowIso?: string): Promise<GatewayExactInventoryStats> {
-    return this.#call("exactInventoryStats", { nowIso });
-  }
-
-  resolveBatchRefundTimeoutDaa(currentDaa: string, refundDeltaDaa: string, minimumLeadDaa: string): Promise<string> {
-    return this.#call("resolveBatchRefundTimeoutDaa", { currentDaa, refundDeltaDaa, minimumLeadDaa });
-  }
-
-  loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {
+  loadOpenClaimAttempt(
+    channelId: string,
+  ): Promise<ClaimAttemptRecord | undefined> {
     return this.#call("loadOpenClaimAttempt", { channelId });
   }
 
@@ -165,7 +176,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("saveClaimAttempt", { record });
   }
 
-  applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void> {
+  applyClaimAttempt(
+    channel: ServerChannelRecord,
+    attempt: ClaimAttemptRecord,
+  ): Promise<void> {
     return this.#call("applyClaimAttempt", { channel, attempt });
   }
 
@@ -173,7 +187,12 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("abandonClaimAttempt", { attemptId, reason });
   }
 
-  acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean> {
+  acquireLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
     return this.#call("acquireLock", { key, token, nowMs, ttlMs });
   }
 
@@ -181,7 +200,12 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("releaseLock", { key, token });
   }
 
-  checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }> {
+  checkRateLimit(
+    scope: string,
+    nowMs: number,
+    limit: number,
+    windowMs: number,
+  ): Promise<{ allowed: boolean; count: number; resetAt: number }> {
     return this.#call("checkRateLimit", { scope, nowMs, limit, windowMs });
   }
 
