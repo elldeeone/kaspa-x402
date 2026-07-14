@@ -74,6 +74,26 @@ type HttpVector = {
   };
 };
 
+type ExactConsensusVector = {
+  expected: {
+    standardNative: ExactConsensusProfile;
+    additive: ExactConsensusProfile;
+    mutations: Record<string, string>;
+  };
+};
+
+type ExactConsensusProfile = {
+  profile: "standard-native" | "additive";
+  version: 0 | 1;
+  amount: string;
+  fee: string;
+  transaction: {
+    version: 0 | 1;
+    inputs: Array<{ utxo: { amount: string; scriptPublicKey: string } }>;
+    outputs: Array<{ amount: string; scriptPublicKey: string; covenant: null }>;
+  };
+};
+
 type NegativeVector =
   | {
       kind: "negative";
@@ -393,6 +413,25 @@ describe("settlement response vectors", () => {
     const voucher = readJson<{ response: SettlementResponse }>("vectors/settlement-response/voucher-only-success.json");
     expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", exact.settlementResponse).ok).toBe(true);
     expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", voucher.response).ok).toBe(true);
+  });
+});
+
+describe("full-consensus exact profile vectors", () => {
+  it("keeps standard-native and additive merchant gain exact", () => {
+    const vector = readJson<ExactConsensusVector>("vectors/exact/consensus-profiles.json");
+    const standard = vector.expected.standardNative;
+    const additive = vector.expected.additive;
+
+    expect(standard).toMatchObject({ profile: "standard-native", version: 0 });
+    expect(standard.transaction.outputs[0]?.amount).toBe(standard.amount);
+    expect(standard.transaction.outputs.every((output) => output.covenant === null)).toBe(true);
+
+    expect(additive).toMatchObject({ profile: "additive", version: 1 });
+    expect(BigInt(additive.transaction.outputs[0]!.amount) - BigInt(additive.transaction.inputs[0]!.utxo.amount)).toBe(BigInt(additive.amount));
+    expect(additive.transaction.outputs).toHaveLength(2);
+    expect(additive.transaction.outputs.every((output) => output.covenant === null)).toBe(true);
+    expect(vector.expected.mutations.additiveExcessiveDelta).toBe("profile-rejected-after-consensus-acceptance");
+    expect(vector.expected.mutations.additiveDuplicateMerchantBenefit).toBe("profile-rejected-after-consensus-acceptance");
   });
 });
 

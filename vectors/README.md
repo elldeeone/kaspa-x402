@@ -22,6 +22,7 @@ vectors/
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
   negative/             Schema and semantic rejection fixtures.
   tx-v1/                Transaction v1 plan plus batch claim/refund fixtures.
+  exact/                Full-consensus standard-native and additive exact fixtures.
 ```
 
 ## Vector Kinds
@@ -40,6 +41,13 @@ Every JSON vector has a `kind` field:
 - `tx-v1-plan`: enumerate implemented transaction v1 fixtures.
 - `tx-v1-batch-claim`: reproduce the batch claim transaction-v1 reference artifact.
 - `tx-v1-batch-refund`: reproduce the batch refund transaction-v1 reference artifact.
+- `exact-consensus-profiles`: reproduce deterministic standard-native v0 and
+  corrected KIP-10 additive v1 transactions, then validate them and their
+  mutations through Rusty Kaspa's isolation and populated-UTXO consensus paths.
+
+Regenerate the exact consensus vector with `npm run vectors:exact-consensus`.
+The generator uses fixed public test keys and deterministic Schnorr signatures;
+it contains no wallet or deployment secret.
 
 For transaction-v1 vectors, `serializedTransaction` is the deterministic
 transaction hash preimage/projection used by the vector. It is not a

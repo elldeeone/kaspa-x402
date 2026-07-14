@@ -11,6 +11,7 @@ const CONSENSUS_SOURCE_PATHS = [
   "Cargo.lock",
   "Cargo.toml",
   "consensus/core",
+  "consensus/src",
   "core",
   "crypto/addresses",
   "crypto/hashes",
@@ -104,6 +105,7 @@ function parseArgs(args) {
 }
 
 function cargoToml(kaspaRoot) {
+  const validatorPath = path.join(kaspaRoot, "consensus").replaceAll("\\", "\\\\");
   const consensusPath = path.join(kaspaRoot, "consensus/core").replaceAll("\\", "\\\\");
   const hashesPath = path.join(kaspaRoot, "crypto/hashes").replaceAll("\\", "\\\\");
   const txscriptPath = path.join(kaspaRoot, "crypto/txscript").replaceAll("\\", "\\\\");
@@ -119,8 +121,10 @@ hex = "0.4"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kaspa-consensus-core = { path = "${consensusPath}" }
+kaspa-consensus = { path = "${validatorPath}" }
 kaspa-hashes = { path = "${hashesPath}" }
 kaspa-txscript = { path = "${txscriptPath}" }
+secp256k1 = { version = "0.29.0", features = ["global-context"] }
 `;
 }
 

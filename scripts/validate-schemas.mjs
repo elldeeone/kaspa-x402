@@ -10,6 +10,7 @@ const U64_DECIMAL_PATTERN =
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
 const TX_V1_CONSENSUS_COMMIT = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
+const EXACT_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
@@ -448,8 +449,67 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertTxV1Vector(file, vector, "batch-refund");
       break;
     }
+    case "exact-consensus-profiles": {
+      assertExactConsensusProfiles(file, vector);
+      break;
+    }
     default:
       throw new Error(`${file}: unknown vector kind ${vector.kind}`);
+  }
+}
+
+function assertExactConsensusProfiles(file, vector) {
+  const validation = vector.validation;
+  if (
+    validation?.status !== "full-consensus-cross-validated" ||
+    validation?.tool !== "kaspa-consensus" ||
+    validation?.toolVersion !== "2.0.1" ||
+    validation?.sourceCommit !== EXACT_CONSENSUS_COMMIT ||
+    typeof validation?.command !== "string" ||
+    !validation.command.includes("validate:tx-v1-consensus")
+  ) {
+    throw new Error(`${file}: exact profiles require pinned full-consensus validation metadata`);
+  }
+  const profiles = [
+    ["standardNative", "standard-native", 0],
+    ["additive", "additive", 1],
+  ];
+  for (const [field, profile, version] of profiles) {
+    const item = vector.expected?.[field];
+    if (item?.profile !== profile || item?.version !== version || item?.transaction?.version !== version) {
+      throw new Error(`${file}: ${field} profile/version mismatch`);
+    }
+    assertHash32(item.transactionId, `${file}:${field}:transactionId`);
+    assertHash32(item.transactionHash, `${file}:${field}:transactionHash`);
+    for (const amountField of ["amount", "fee", "storageMass", "computeMass", "transientMass"]) {
+      if (!isUint64String(item[amountField])) throw new Error(`${file}:${field}:${amountField} must be a uint64 string`);
+    }
+    if (!Array.isArray(item.transaction.inputs) || item.transaction.inputs.length !== item.inputs) {
+      throw new Error(`${file}:${field}: input evidence mismatch`);
+    }
+    if (!Array.isArray(item.transaction.outputs) || item.transaction.outputs.length !== item.outputs) {
+      throw new Error(`${file}:${field}: output evidence mismatch`);
+    }
+    for (const [index, input] of item.transaction.inputs.entries()) {
+      assertHash32(input.previousOutpoint?.txid, `${file}:${field}:input[${index}].txid`);
+      assertHexBytes(input.signatureScript, `${file}:${field}:input[${index}].signatureScript`);
+      assertHexBytes(input.utxo?.scriptPublicKey, `${file}:${field}:input[${index}].utxo.scriptPublicKey`);
+      if (!isUint64String(input.utxo?.amount)) throw new Error(`${file}:${field}:input[${index}].utxo.amount must be uint64`);
+    }
+    for (const [index, output] of item.transaction.outputs.entries()) {
+      if (!isUint64String(output.amount)) throw new Error(`${file}:${field}:output[${index}].amount must be uint64`);
+      assertHexBytes(output.scriptPublicKey, `${file}:${field}:output[${index}].scriptPublicKey`);
+      if (output.covenant !== null) throw new Error(`${file}:${field}:output[${index}] must not have a covenant binding`);
+    }
+  }
+  if (vector.expected.standardNative.transaction.outputs[0].amount !== vector.expected.standardNative.amount) {
+    throw new Error(`${file}: standard-native merchant output must equal the exact amount`);
+  }
+  const additive = vector.expected.additive;
+  const headInput = BigInt(additive.transaction.inputs[0].utxo.amount);
+  const successor = BigInt(additive.transaction.outputs[0].amount);
+  if (successor - headInput !== BigInt(additive.amount)) {
+    throw new Error(`${file}: additive successor delta must equal the exact amount`);
   }
 }
 

@@ -201,6 +201,7 @@ export const VECTOR_GROUPS = [
   { dir: "voucher", note: "Voucher digest and signature binding." },
   { dir: "channel-id", note: "Canonical channel id derivation." },
   { dir: "tx-v1", note: "Transaction-v1 claim and refund reference artifacts." },
+  { dir: "exact", note: "Full-consensus standard-native and additive exact reference transactions." },
   { dir: "negative", note: "Inputs that must fail validation." },
 ];
 
