@@ -202,7 +202,10 @@ Checked for alpha.7 on 2026-07-14:
   idempotent replay, cross-resource rejection, batch deposit/voucher reuse,
   stale-voucher rejection, and stable absolute-DAA checks. The exact
   transaction, channel, timeout, and continuation inventory evidence are
-  recorded in `docs/testnet-gateway.md`.
+  recorded in `docs/testnet-gateway.md`. The exact committed source was then
+  deployed as Worker `38f3d622-4638-4821-a7d4-23b5ae3e97b2`; its only gateway
+  code delta is a fail-closed pre-persistence consensus-boundary check, and its
+  post-deploy health, capability, inventory, and stable-DAA checks passed.
 
 Checked for alpha.6 on 2026-07-09:
 

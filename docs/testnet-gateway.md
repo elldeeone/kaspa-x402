@@ -13,8 +13,9 @@ continuation recycling, absolute DAA refund handling, and claim recovery. The
 separate TN10 full live harness passed from alpha.7 source on 2026-07-14 and is
 recorded in `docs/live-testnet-report.md`.
 
-Hosted status: Worker version `d4716742-d771-454d-92d4-83ea5b0d36e9` is live.
-The final paid run settled a KIP-10 exact transaction through TN10 PNN,
+Hosted status: Worker version `38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built
+from commit `4d53d02`, is live. The funded run on its immediate predecessor
+settled a KIP-10 exact transaction through TN10 PNN,
 confirmed idempotent replay and cross-resource rejection, reused one batch
 channel for deposit-voucher and voucher-only payments, rejected a stale batch
 replay, and verified a stable absolute refund timeout against the operator node.
@@ -276,13 +277,19 @@ cover the corrected behavior.
 
 Deployment and DAA evidence:
 
-- Worker version: `d4716742-d771-454d-92d4-83ea5b0d36e9`;
+- current Worker version: `38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built from
+  commit `4d53d02`;
+- funded-canary Worker version: `d4716742-d771-454d-92d4-83ea5b0d36e9`; the
+  final source-parity deploy adds only a fail-closed check before persisting a
+  timeout that would cross the consensus timestamp boundary;
 - three consecutive unpaid batch offers advertised the same absolute
   `refundTimeoutDaa: "516611736"`;
-- operator-node DAA at that check: `516575999`, leaving `35737` DAA of lead;
+- gateway chain DAA after the final deploy: `516582525`, leaving `29211` DAA
+  of lead;
 - the timeout was below the `500000000000` consensus timestamp boundary;
-- `/health`, `/canary`, `/supported`, unpaid exact, and unpaid batch checks
-  passed after deployment.
+- `/health`, `/supported`, exact inventory, and three unpaid batch checks
+  passed after the final source-parity deployment. The scheduled canary passed
+  after the funded-canary deployment at `2026-07-14T08:15:58.974Z`.
 
 Hosted exact proof:
 

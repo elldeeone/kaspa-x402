@@ -8,10 +8,13 @@ https://demo.kaspa-x402.org
 ```
 
 Current deployment: alpha.7 Worker version
-`d4716742-d771-454d-92d4-83ea5b0d36e9`. Funded exact, idempotent and
-cross-resource replay, batch deposit/voucher, stale-voucher, and absolute-DAA
-checks passed on 2026-07-14. Exact remains available only while funded KIP-10
-reservation inventory exists.
+`38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built from commit `4d53d02`. Funded
+exact, idempotent and cross-resource replay, batch deposit/voucher,
+stale-voucher, and absolute-DAA checks passed on its immediate predecessor;
+the final source-parity deploy adds only a fail-closed pre-persistence check for
+the consensus timestamp boundary and passed post-deploy health, capability,
+inventory, and stable absolute-DAA checks. Exact remains available only while
+funded KIP-10 reservation inventory exists.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
