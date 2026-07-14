@@ -128,12 +128,14 @@ Every Kaspa x402 `PaymentRequirements` object must use:
 `payTo` must be a non-empty string. `maxTimeoutSeconds` must be a positive
 uint32 integer.
 
-Amounts that become on-chain outputs (exact payments and escrow deposits) must
-sit at or above Kaspa's standard-output storage-mass floor, about `10000000`
-sompi (0.1 KAS) under current consensus parameters. Outputs below the floor
-cannot be constructed as standard transactions, so an offer priced below it is
-unpayable. Per-request prices below the floor belong in `batch-settlement`
-vouchers.
+Amounts that become on-chain outputs (exact payments and escrow deposits) are
+subject to KIP-9 storage mass, which depends on the complete transaction shape.
+Kaspa does not define a universal `10000000` sompi consensus dust floor. The
+reference runtime uses `10000000` sompi as a conservative application policy
+for its on-chain outputs, but other implementations must evaluate their full
+transactions under current consensus rules. `batch-settlement` vouchers can
+price individual requests below an implementation's on-chain output policy
+because each voucher does not create a new on-chain output.
 
 `extra.binding` identifies the concrete Kaspa binding:
 

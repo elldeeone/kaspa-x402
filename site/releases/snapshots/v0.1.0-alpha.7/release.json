@@ -71,14 +71,14 @@
     {
       "source": "spec/kaspa-x402-v1.md",
       "target": "v0.1.0-alpha.7/spec/kaspa-x402-v1.md",
-      "bytes": 11213,
-      "sha256": "b8915178e0175ad8d9b22174567d081cf924000a18a84020046899b3ebe99861"
+      "bytes": 11417,
+      "sha256": "bd7a3e6cbff4e6de72f33072254b9416488bd775f8f59f5a855724c67946912e"
     },
     {
       "source": "spec/kaspa-exact-v1.md",
       "target": "v0.1.0-alpha.7/spec/kaspa-exact-v1.md",
-      "bytes": 12590,
-      "sha256": "1fe7fb7cfaf6bd65f085c16fb96f05295bc043c07a60b8679e90e56c377a19eb"
+      "bytes": 12759,
+      "sha256": "477177f041b328a295f5b5b4f955306d446fa4451b3421c587ece3890c5bc9a3"
     },
     {
       "source": "spec/kaspa-batch-settlement-v1.md",
@@ -149,8 +149,8 @@
     {
       "source": "docs/review-closure-ledger.md",
       "target": "v0.1.0-alpha.7/docs/review-closure-ledger.md",
-      "bytes": 4192,
-      "sha256": "66af7b9a3ac9d3c6314a5d92d6a67d10ac6c6f7f4757a21c4e46bbbe1280415c"
+      "bytes": 4040,
+      "sha256": "88aa1425518882d310a9bcf1ce459a44a1a5ff5ba8fbe1e2380cb97dcd869b8c"
     },
     {
       "source": "docs/security-threat-model.md",
@@ -173,8 +173,8 @@
     {
       "source": "docs/native-profile-boundary.md",
       "target": "v0.1.0-alpha.7/docs/native-profile-boundary.md",
-      "bytes": 4910,
-      "sha256": "18348e5ee82db3275fed0642c3945e4f5190ffb3945ab6f7ea3beca61de40687"
+      "bytes": 4916,
+      "sha256": "382068b2a235553152f51e30a34e7c10b6ba1fc1b80f687885cd53fc1a6a3696"
     },
     {
       "source": "docs/server-store-contract.md",
@@ -417,5 +417,5 @@
       "sha256": "15b5a878df6453d456b06b36bab3e17f872430bb744efd716a8008a0fbe17a9f"
     }
   ],
-  "contentSha256": "96e6382bace2d41c6de45db64f8d93450f0dfd6329f822c85d24e5d3dcf470e1"
+  "contentSha256": "f30aae23fa24a70b565bf52dc9c9f2065cf99b207006d1fc6e0c6be5c6b5d53e"
 }

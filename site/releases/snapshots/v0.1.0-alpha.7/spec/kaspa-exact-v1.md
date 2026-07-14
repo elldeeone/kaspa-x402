@@ -77,7 +77,7 @@ script-hash addresses.
 | ----- | -------- | ---- |
 | `scheme` | yes | Must equal `"exact"`. |
 | `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
-| `amount` | yes | Decimal string in sompi. This is the exact payment amount. Must sit at or above Kaspa's standard-output storage-mass floor (about `10000000` sompi under current consensus parameters); lower amounts cannot be constructed as standard transactions and make the offer unpayable. |
+| `amount` | yes | Decimal string in sompi. This is the exact payment amount. KIP-9 storage mass depends on the complete transaction shape, so implementations must reject offers they cannot construct under current consensus rules and local output policy; there is no universal `10000000` sompi consensus dust floor. |
 | `asset` | yes | Must equal `"KAS"`. |
 | `payTo` | yes | Non-empty recipient Kaspa address for the selected network. |
 | `maxTimeoutSeconds` | yes | Positive maximum time, in seconds, that the client may take to provide a payment payload. |
@@ -89,7 +89,7 @@ script-hash addresses.
 | `extra.borrowAmount` | yes | Amount in sompi held by `borrowOutpoint`. |
 | `extra.borrowScriptPublicKey` | yes | Serialized script public key for `borrowOutpoint`. |
 | `extra.borrowRedeemScript` | yes | Hex-encoded redeem script for the reserved KIP-10 additive path. |
-| `extra.additiveThresholdSompi` | yes | Minimum additional value, in sompi, that the KIP-10 continuation output must carry. Production reservation providers should set this at or above the standard-output floor unless they have a stronger local anti-DoS policy. |
+| `extra.additiveThresholdSompi` | yes | Minimum additional value, in sompi, that the KIP-10 continuation output must carry. This is an application anti-churn policy, not a consensus dust value. The reference runtime requires at least `10000000` sompi; production operators should choose a threshold from their transaction shape and service economics. |
 | `extra.paymentOutputIndex` | yes | Output index the server expects to pay `payTo`. |
 | `extra.reservationId` | yes | Server-local reservation identifier for the advertised borrow terms. |
 | `extra.reservationExpiresAt` | no | Reservation expiry timestamp. |
@@ -103,12 +103,13 @@ inventory. In other words, the merchant or its chosen operator prepares UTXOs
 that are spendable through the advertised additive path, and the reservation
 provider leases one outpoint to one x402 challenge at a time.
 
-This creates a dust-churn risk if the advertised additive threshold is too low:
+This creates an inventory-churn risk if the advertised additive threshold is too low:
 an attacker could keep touching merchant inventory with economically trivial
-top-ups. For the alpha.6 reference path, reservation providers should reject
-offers whose `additiveThresholdSompi` is below `10000000` sompi, the current
-standard-output storage-mass floor used elsewhere in this binding. Operators may
-raise that threshold for higher-value services.
+top-ups. The reference runtime rejects offers whose
+`additiveThresholdSompi` is below `10000000` sompi as a conservative
+application policy. It is not a universal consensus floor. Operators may raise
+that threshold for higher-value services or choose another policy after
+evaluating the complete transaction shape and abuse economics.
 
 Third-party escrowed borrow inventory is possible as a future deployment model,
 but it adds a trust and availability dependency and is not part of the reference
@@ -283,7 +284,7 @@ Even when `payment-identifier` is not required, the server must record consumed 
 
 ## Toccata Notes
 
-The alpha.6 exact path uses a native KIP-10 additive covenant reservation. It
+The current exact path uses a native KIP-10 additive covenant reservation. It
 still satisfies the x402 `exact` property: one request settles to exactly the
 required amount for the required recipient, and the settlement response reports
 the resulting Kaspa transaction id.
