@@ -5,6 +5,7 @@ import {
   X402_VERSION,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  exactRequestAuthorizationDigest,
   mcpToolCallFingerprint,
   readMcpPaymentRequired,
   readMcpPaymentResponse,
@@ -153,15 +154,38 @@ function exactFundingProvider(): FundingProvider {
     async getPublicIdentity() {
       return { address: "kaspatest:refund" };
     },
+    async authorizeExactPayment() {},
     async fundEscrowDeposit() {
       throw new Error("not used");
     },
     async payExactTransaction(request) {
+      const transactionId = "77".repeat(32);
+      const paymentOutputIndex = request.paymentOutputIndex ?? 0;
+      const digest = exactRequestAuthorizationDigest({
+        network: request.network,
+        profile: request.profile,
+        transactionId,
+        paymentOutputIndex,
+        amount: request.amount,
+        payTo: request.payTo,
+        payToScriptPublicKey: request.payToScriptPublicKey,
+        paymentRequirementsHash: request.paymentRequirementsHash,
+        requestHash: request.requestHash,
+        inputIndex: 0,
+        expiresAt: request.authorizationExpiresAt,
+      });
       return {
         transaction: '{"transaction":"signed-kip10-exact"}',
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        transactionId: "77".repeat(32),
-        paymentOutputIndex: request.paymentOutputIndex ?? 0,
+        transactionId,
+        paymentOutputIndex,
+        authorization: {
+          version: "kaspa-x402-exact-request-authorization-v1",
+          inputIndex: 0,
+          expiresAt: request.authorizationExpiresAt,
+          digest,
+          signature: "ab".repeat(64),
+        },
         payerAddress: "kaspatest:refund",
       };
     },

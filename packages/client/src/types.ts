@@ -4,6 +4,7 @@ import type {
   ChannelConfig,
   ExactPaymentRequirements,
   ExactProfile,
+  ExactRequestAuthorization,
   ExactTransactionEncoding,
   FundingOutpoint,
   Hash32Hex,
@@ -63,11 +64,15 @@ export interface EscrowDepositResult {
 export interface ExactPaymentRequest {
   network: NetworkId;
   profile: ExactProfile;
+  origin: string;
+  resourceUrl: string;
   amount: SompiString;
   payTo: string;
-  payToScriptPublicKey?: ByteHex;
+  payToScriptPublicKey: ByteHex;
   paymentOutputIndex?: number;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  authorizationExpiresAt: string;
   requiredFinality?: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
   head?: {
@@ -92,6 +97,7 @@ export interface ExactTransactionPaymentResult {
   transactionEncoding: ExactTransactionEncoding;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
+  authorization: ExactRequestAuthorization;
   payerAddress?: string;
   fundingSource?: FundingSourceKind;
 }
@@ -117,6 +123,8 @@ export interface FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
+  /** Explicit policy boundary invoked before any exact signing operation. */
+  authorizeExactPayment(request: ExactTransactionPaymentRequest): Promise<void>;
   fundEscrowDeposit(
     request: EscrowDepositRequest,
   ): Promise<EscrowDepositResult>;
@@ -131,6 +139,10 @@ export interface FundingProvider {
 
 export interface FundingPolicy {
   requiredSource?: FundingSourceKind;
+  allowedOrigins?: readonly string[];
+  allowedExactProfiles?: readonly ExactProfile[];
+  allowedPayTo?: readonly string[];
+  maximumExactAmountSompi?: SompiString;
 }
 
 export interface ChannelKey {

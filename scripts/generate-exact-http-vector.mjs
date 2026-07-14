@@ -2,6 +2,14 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+import { schnorr } from "@noble/curves/secp256k1.js";
+import {
+  bytesToHex,
+  exactRequestAuthorizationDigest,
+  sha256Hex,
+  stableStringify,
+} from "@kaspa-x402/core";
+
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const consensus = JSON.parse(
   fs.readFileSync(
@@ -70,6 +78,35 @@ const accepted = {
   maxTimeoutSeconds: 60,
   extra,
 };
+const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
+const authorizationExpiresAt = "2099-01-01T00:00:00.000Z";
+const authorizationDigest = exactRequestAuthorizationDigest({
+  network: accepted.network,
+  profile: "additive",
+  transactionId: additive.transactionId,
+  paymentOutputIndex: 0,
+  amount: accepted.amount,
+  payTo: accepted.payTo,
+  payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
+  paymentRequirementsHash,
+  requestHash,
+  challengeId,
+  inputIndex: 1,
+  expiresAt: authorizationExpiresAt,
+});
+const authorization = {
+  version: "kaspa-x402-exact-request-authorization-v1",
+  inputIndex: 1,
+  expiresAt: authorizationExpiresAt,
+  digest: authorizationDigest,
+  signature: bytesToHex(
+    schnorr.sign(
+      Buffer.from(authorizationDigest, "hex"),
+      new Uint8Array(32).fill(7),
+      new Uint8Array(32),
+    ),
+  ),
+};
 const paymentRequired = {
   x402Version: 2,
   resource: {
@@ -91,6 +128,7 @@ const paymentPayload = {
     paymentOutputIndex: 0,
     challengeId,
     requestHash,
+    authorization,
   },
 };
 const settlementResponse = {
@@ -128,18 +166,19 @@ const vector = {
 };
 
 const output = path.join(root, "vectors/x402-http/exact-transaction.json");
-fs.writeFileSync(output, `${JSON.stringify(vector, null, 2)}\n`);
-console.log(`wrote ${path.relative(root, output)}`);
+const rendered = `${JSON.stringify(vector, null, 2)}\n`;
+if (process.argv.includes("--check")) {
+  if (fs.readFileSync(output, "utf8") !== rendered) {
+    throw new Error(
+      `${path.relative(root, output)} is stale; run scripts/generate-exact-http-vector.mjs`,
+    );
+  }
+  console.log(`verified ${path.relative(root, output)}`);
+} else {
+  fs.writeFileSync(output, rendered);
+  console.log(`wrote ${path.relative(root, output)}`);
+}
 
 function encode(value) {
   return Buffer.from(stableStringify(value), "utf8").toString("base64");
-}
-
-function stableStringify(value) {
-  if (value === null || typeof value !== "object") return JSON.stringify(value);
-  if (Array.isArray(value)) return `[${value.map(stableStringify).join(",")}]`;
-  return `{${Object.keys(value)
-    .sort()
-    .map((key) => `${JSON.stringify(key)}:${stableStringify(value[key])}`)
-    .join(",")}}`;
 }

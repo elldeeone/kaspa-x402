@@ -6,6 +6,7 @@ import type {
   ChannelState,
   ExactPaymentRequirements,
   ExactProfile,
+  ExactRequestAuthorization,
   ExactTransactionEncoding,
   ExactAdditiveTemplateId,
   ExactTransactionPayload,
@@ -205,7 +206,9 @@ export interface ExactTransactionVerificationRequest {
   payTo: string;
   payToScriptPublicKey: ByteHex;
   requiredFinality: "accepted" | "confirmed";
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  authorization: ExactRequestAuthorization;
   head?: ExactHeadChallenge;
 }
 
@@ -214,6 +217,12 @@ export interface ExactTransactionVerification {
   paymentOutput: ExactTransactionOutput;
   finality?: "mempool" | "accepted" | "confirmed";
   payerAddress?: string;
+  requestAuthorization: {
+    authorizationId: Hash32Hex;
+    digest: Hash32Hex;
+    inputIndex: number;
+    publicKey: PublicKeyHex;
+  };
   /** Canonical KIP-10 continuation verified from the signed transaction. */
   continuation?: ExactHeadContinuation;
 }
@@ -305,6 +314,7 @@ export interface ExactPaymentRecord {
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
   paymentPayloadHash: Hash32Hex;
+  requestAuthorizationId: Hash32Hex;
   amount: SompiString;
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
@@ -335,6 +345,7 @@ export interface ExactSettlementAttemptRecord {
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
   paymentPayloadHash: Hash32Hex;
+  requestAuthorizationId: Hash32Hex;
   payToScriptPublicKey: ByteHex;
   transaction: PreparedTransaction;
   status: ExactSettlementAttemptStatus;
@@ -664,6 +675,7 @@ export interface VerifiedExactPayment {
   accepted: ExactPaymentRequirements;
   profile: ExactProfile;
   transactionId: Hash32Hex;
+  requestAuthorizationId: Hash32Hex;
   paymentOutputIndex: number;
   transaction?: PreparedTransaction;
   transactionEncoding?: ExactTransactionEncoding;

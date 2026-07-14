@@ -3,13 +3,17 @@ import { describe, expect, it, vi } from "vitest";
 import {
   X402_VERSION,
   channelId,
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   readKaspaSettlementExtension,
   sha256Hex,
+  stableStringify,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
   type DepositVoucherPayload,
   type ExactPaymentRequirements,
+  type ExactRequestAuthorization,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -695,7 +699,6 @@ describe("direct-mode facilitator", () => {
   it("reports exact replay during verify after settlement", async () => {
     const { facilitator, server } = makeFacilitator();
     const paymentPayload = makeExactPayment(server);
-    delete paymentPayload.payload.requestHash;
 
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
@@ -704,10 +707,18 @@ describe("direct-mode facilitator", () => {
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
     });
+    const replayPayload = structuredClone(paymentPayload);
+    if (replayPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact transaction payload");
+    replayPayload.payload.requestHash = OTHER_REQUEST_HASH;
+    replayPayload.payload.authorization = fakeExactAuthorization(
+      replayPayload.accepted as ExactPaymentRequirements,
+      OTHER_REQUEST_HASH,
+    );
     const replay = await facilitator.verify({
       x402Version: X402_VERSION,
-      paymentPayload,
-      paymentRequirements: paymentPayload.accepted,
+      paymentPayload: replayPayload,
+      paymentRequirements: replayPayload.accepted,
       resource: RESOURCE,
       requestHash: OTHER_REQUEST_HASH,
     });
@@ -722,8 +733,6 @@ describe("direct-mode facilitator", () => {
   it("checks exact replay after deriving the exact-transaction id", async () => {
     const initial = makeFacilitator();
     const paymentPayload = makeExactPayment(initial.server);
-    if (paymentPayload.payload.type === "exact-transaction")
-      delete paymentPayload.payload.requestHash;
     const settlement = await initial.facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
@@ -731,6 +740,14 @@ describe("direct-mode facilitator", () => {
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
     });
+    const replayPayload = structuredClone(paymentPayload);
+    if (replayPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact transaction payload");
+    replayPayload.payload.requestHash = OTHER_REQUEST_HASH;
+    replayPayload.payload.authorization = fakeExactAuthorization(
+      replayPayload.accepted as ExactPaymentRequirements,
+      OTHER_REQUEST_HASH,
+    );
     const verifier = vi.fn((request) => ({
       transactionId: EXACT_TX_ID,
       paymentOutput: {
@@ -739,6 +756,7 @@ describe("direct-mode facilitator", () => {
       },
       finality: "accepted" as const,
       payerAddress: "kaspatest:refund",
+      requestAuthorization: fakeAuthorizationEvidence(request.authorization),
     }));
     const replaySetup = makeFacilitator({
       store: initial.store,
@@ -749,8 +767,8 @@ describe("direct-mode facilitator", () => {
 
     const replay = await replaySetup.facilitator.verify({
       x402Version: X402_VERSION,
-      paymentPayload,
-      paymentRequirements: paymentPayload.accepted,
+      paymentPayload: replayPayload,
+      paymentRequirements: replayPayload.accepted,
       resource: RESOURCE,
       requestHash: OTHER_REQUEST_HASH,
     });
@@ -871,8 +889,37 @@ function makeFacilitator(
   overrides: Partial<DirectModeServerConfig> = {},
   facilitatorOptions: { allowMainnet?: boolean } = {},
 ) {
+  const {
+    exactTransactionVerifier: suppliedExactVerifier,
+    ...serverOverrides
+  } = overrides;
   const store = overrides.store ?? new MemoryServerChannelStore();
   const chain = new FakeChainProvider();
+  const rawExactVerifier = suppliedExactVerifier ?? {
+    verifyExactPayment(
+      request: Parameters<
+        NonNullable<
+          DirectModeServerConfig["exactTransactionVerifier"]
+        >["verifyExactPayment"]
+      >[0],
+    ) {
+      return {
+        transactionId: EXACT_TX_ID,
+        paymentOutput: {
+          amount: request.amount,
+          scriptPublicKey: request.payToScriptPublicKey,
+        },
+        finality: "accepted" as const,
+        payerAddress: "kaspatest:refund",
+        requestAuthorization: fakeAuthorizationEvidence(request.authorization),
+      };
+    },
+  };
+  const exactVerifierExplicitlyDisabled =
+    Object.prototype.hasOwnProperty.call(
+      overrides,
+      "exactTransactionVerifier",
+    ) && suppliedExactVerifier === undefined;
   const server = new DirectModeServer({
     network: "kaspa:testnet-10",
     payTo: "kaspatest:payout",
@@ -889,21 +936,21 @@ function makeFacilitator(
         return voucher.signature === `${digest}${digest}`;
       },
     },
-    exactTransactionVerifier: {
-      verifyExactPayment(request) {
-        return {
-          transactionId: EXACT_TX_ID,
-          paymentOutput: {
-            amount: request.amount,
-            scriptPublicKey: request.payToScriptPublicKey,
-          },
-          finality: "accepted",
-          payerAddress: "kaspatest:refund",
-        };
-      },
-    },
     exactProfile: "standard-native",
-    ...overrides,
+    ...serverOverrides,
+    exactTransactionVerifier: exactVerifierExplicitlyDisabled
+      ? undefined
+      : {
+          async verifyExactPayment(request) {
+            const result = await rawExactVerifier.verifyExactPayment(request);
+            return {
+              ...result,
+              requestAuthorization:
+                result.requestAuthorization ??
+                fakeAuthorizationEvidence(request.authorization),
+            };
+          },
+        },
   });
   (server as unknown as { __testChain?: FakeChainProvider }).__testChain =
     chain;
@@ -932,6 +979,7 @@ function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
     scheme: "exact",
   });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
+  const authorization = fakeExactAuthorization(accepted, REQUEST_HASH);
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -943,7 +991,43 @@ function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex: 0,
       requestHash: REQUEST_HASH,
+      authorization,
     },
+  };
+}
+
+function fakeExactAuthorization(
+  accepted: ExactPaymentRequirements,
+  requestHash: Hash32Hex,
+): ExactRequestAuthorization {
+  const expiresAt = "2099-01-01T00:00:00.000Z";
+  return {
+    version: "kaspa-x402-exact-request-authorization-v1",
+    inputIndex: 0,
+    expiresAt,
+    digest: exactRequestAuthorizationDigest({
+      network: accepted.network,
+      profile: "standard-native",
+      transactionId: EXACT_TX_ID,
+      paymentOutputIndex: 0,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      payToScriptPublicKey: accepted.extra.payToScriptPublicKey!,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+      requestHash,
+      inputIndex: 0,
+      expiresAt,
+    }),
+    signature: "ab".repeat(64),
+  };
+}
+
+function fakeAuthorizationEvidence(authorization: ExactRequestAuthorization) {
+  return {
+    authorizationId: exactRequestAuthorizationId(authorization),
+    digest: authorization.digest,
+    inputIndex: authorization.inputIndex,
+    publicKey: CLIENT_KEY,
   };
 }
 

@@ -10,6 +10,8 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   formatSompiString,
   hexToBytes,
   le32,
@@ -1140,7 +1142,6 @@ export class DirectModeServer {
       );
     }
     if (
-      payload.requestHash &&
       payload.requestHash.toLowerCase() !== requestFingerprint.toLowerCase()
     ) {
       throw new KaspaX402Error(
@@ -1163,6 +1164,7 @@ export class DirectModeServer {
       profile === "additive"
         ? await this.#verifiedExactHead(accepted, payload)
         : undefined;
+    const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
     const verification =
       await this.#config.exactTransactionVerifier.verifyExactPayment({
         network: accepted.network,
@@ -1175,12 +1177,46 @@ export class DirectModeServer {
         payToScriptPublicKey,
         requiredFinality: this.#config.acceptedFinality,
         requestHash: requestFingerprint,
+        paymentRequirementsHash,
+        authorization: payload.authorization,
         ...(head ? { head } : {}),
       });
     if (!/^[0-9a-fA-F]{64}$/.test(verification.transactionId)) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "exact verifier returned an invalid transaction id",
+      );
+    }
+    const expectedAuthorizationDigest = exactRequestAuthorizationDigest({
+      network: accepted.network,
+      profile,
+      transactionId: verification.transactionId,
+      paymentOutputIndex: payload.paymentOutputIndex,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      payToScriptPublicKey,
+      paymentRequirementsHash,
+      requestHash: requestFingerprint,
+      challengeId: head?.challengeId,
+      inputIndex: payload.authorization.inputIndex,
+      expiresAt: payload.authorization.expiresAt,
+    });
+    const requestAuthorizationId = exactRequestAuthorizationId(
+      payload.authorization,
+    );
+    if (
+      payload.authorization.digest.toLowerCase() !==
+        expectedAuthorizationDigest ||
+      verification.requestAuthorization.digest.toLowerCase() !==
+        expectedAuthorizationDigest ||
+      verification.requestAuthorization.authorizationId.toLowerCase() !==
+        requestAuthorizationId ||
+      verification.requestAuthorization.inputIndex !==
+        payload.authorization.inputIndex
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "exact verifier did not authenticate the expected payer request authorization",
       );
     }
     if (
@@ -1225,6 +1261,7 @@ export class DirectModeServer {
       paymentPayload,
       accepted,
       transactionId: verification.transactionId,
+      requestAuthorizationId,
       paymentOutputIndex: payload.paymentOutputIndex,
       transaction: payload.transaction,
       transactionEncoding: payload.transactionEncoding,
@@ -1791,6 +1828,7 @@ export class DirectModeServer {
       requestFingerprint: fingerprint,
       paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
       paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+      requestAuthorizationId: verified.requestAuthorizationId,
       payToScriptPublicKey: verified.accepted.extra.payToScriptPublicKey!,
       transaction: verified.transaction,
       status: "pending",
@@ -2044,6 +2082,7 @@ export class DirectModeServer {
         requestFingerprint: fingerprint,
         paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
         paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+        requestAuthorizationId: verified.requestAuthorizationId,
         amount: chargedAmount,
         ...(verified.payerAddress
           ? { payerAddress: verified.payerAddress }

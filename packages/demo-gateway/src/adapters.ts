@@ -1,4 +1,6 @@
 import {
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   KaspaX402Error,
   type FundingOutpoint,
   type Hash32Hex,
@@ -829,6 +831,24 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         throw invalidTransaction("additive exact payer signature is invalid");
       payerScripts.add(trusted.scriptPublicKey);
     }
+    if (
+      request.authorization.inputIndex < 1 ||
+      request.authorization.inputIndex >= transaction.inputs.length
+    ) {
+      throw invalidTransaction(
+        "additive exact request authorization must select a payer input",
+      );
+    }
+    const authorizationEvidence = transactionV1SchnorrSignatureEvidence(
+      reference,
+      request.authorization.inputIndex,
+    );
+    const requestAuthorization = verifyExactRequestAuthorization(
+      request,
+      transactionId,
+      authorizationEvidence.publicKey,
+      Boolean(finality),
+    );
     const change = transaction.outputs[1];
     if (change && !payerScripts.has(change.scriptPublicKey)) {
       throw invalidTransaction(
@@ -848,6 +868,7 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         amount: successor.value,
         scriptPublicKey: successor.scriptPublicKey,
       },
+      requestAuthorization,
       ...(finality ? { finality } : {}),
     };
   }
@@ -912,6 +933,24 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         );
       payerScripts.add(previous.scriptPublicKey);
     }
+    if (
+      request.authorization.inputIndex < 0 ||
+      request.authorization.inputIndex >= transaction.inputs.length
+    ) {
+      throw invalidTransaction(
+        "standard-native request authorization input is outside the transaction",
+      );
+    }
+    const authorizationEvidence = exactV0SchnorrSignatureEvidence(
+      reference,
+      request.authorization.inputIndex,
+    );
+    const requestAuthorization = verifyExactRequestAuthorization(
+      request,
+      transactionId,
+      authorizationEvidence.publicKey,
+      Boolean(finality),
+    );
 
     const changeOutputs = transaction.outputs.filter(
       (_, index) => index !== merchant.index,
@@ -936,6 +975,7 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         scriptPublicKey: merchant.output.scriptPublicKey,
         address: request.payTo,
       },
+      requestAuthorization,
       ...(finality ? { finality } : {}),
     };
   }
@@ -994,6 +1034,60 @@ export class NativeVoucherVerifier implements VoucherVerifier {
       publicKey: request.clientPublicKey,
     });
   }
+}
+
+function verifyExactRequestAuthorization(
+  request: ExactTransactionVerificationRequest,
+  transactionId: Hash32Hex,
+  publicKey: string,
+  alreadyAccepted: boolean,
+): ExactTransactionVerification["requestAuthorization"] {
+  const authorization = request.authorization;
+  if (
+    authorization.version !== "kaspa-x402-exact-request-authorization-v1" ||
+    !Number.isInteger(authorization.inputIndex) ||
+    authorization.inputIndex < 0 ||
+    !/^[0-9a-fA-F]{128}$/.test(authorization.signature)
+  ) {
+    throw invalidTransaction("exact request authorization is malformed");
+  }
+  const expiresAt = Date.parse(authorization.expiresAt);
+  if (!Number.isFinite(expiresAt))
+    throw invalidTransaction("exact request authorization expiry is invalid");
+  if (!alreadyAccepted && expiresAt <= Date.now())
+    throw invalidTransaction("exact request authorization has expired");
+  const digest = exactRequestAuthorizationDigest({
+    network: request.network,
+    profile: request.profile,
+    transactionId,
+    paymentOutputIndex: request.paymentOutputIndex,
+    amount: request.amount,
+    payTo: request.payTo,
+    payToScriptPublicKey: request.payToScriptPublicKey,
+    paymentRequirementsHash: request.paymentRequirementsHash,
+    requestHash: request.requestHash,
+    challengeId: request.head?.challengeId,
+    inputIndex: authorization.inputIndex,
+    expiresAt: authorization.expiresAt,
+  });
+  if (
+    authorization.digest.toLowerCase() !== digest ||
+    !verifyKaspaSchnorrDigest({
+      digest,
+      signature: authorization.signature,
+      publicKey,
+    })
+  ) {
+    throw invalidTransaction(
+      "exact request authorization signature is invalid",
+    );
+  }
+  return {
+    authorizationId: exactRequestAuthorizationId(authorization),
+    digest,
+    inputIndex: authorization.inputIndex,
+    publicKey,
+  };
 }
 
 export class KaspaRestClient {

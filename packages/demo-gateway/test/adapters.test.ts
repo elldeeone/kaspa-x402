@@ -28,6 +28,7 @@ import {
   scriptPublicKeyForAddress,
 } from "../src/kaspa-native.js";
 import type { ExactHeadRecord } from "@kaspa-x402/server";
+import { exactRequestAuthorizationDigest } from "@kaspa-x402/core";
 
 const originalFetch = globalThis.fetch;
 
@@ -650,6 +651,15 @@ describe("RestExactTransactionVerifier", () => {
       payTo,
       payToScriptPublicKey: merchant.scriptPublicKey,
       requiredFinality: "accepted" as const,
+      ...exactAuthorizationFields({
+        profile: "standard-native",
+        transactionId: standard.transactionId,
+        paymentOutputIndex: 0,
+        amount: standard.amount,
+        payTo,
+        payToScriptPublicKey: merchant.scriptPublicKey,
+        inputIndex: 0,
+      }),
     };
 
     await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({
@@ -660,6 +670,19 @@ describe("RestExactTransactionVerifier", () => {
         address: payTo,
       },
     });
+
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        requestHash: "94".repeat(32),
+      }),
+    ).rejects.toThrow("request authorization signature is invalid");
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        paymentRequirementsHash: "95".repeat(32),
+      }),
+    ).rejects.toThrow("request authorization signature is invalid");
 
     const invalidSignature = JSON.parse(artifact) as {
       inputs: Array<{ signatureScript: string }>;
@@ -847,6 +870,16 @@ describe("RestExactTransactionVerifier", () => {
         payTo,
         payToScriptPublicKey: headInput.utxo.scriptPublicKey,
         requiredFinality: "accepted",
+        ...exactAuthorizationFields({
+          profile: "additive",
+          transactionId: additive.transactionId,
+          paymentOutputIndex: 0,
+          amount: additive.amount,
+          payTo,
+          payToScriptPublicKey: headInput.utxo.scriptPublicKey,
+          challengeId: "91".repeat(32),
+          inputIndex: 1,
+        }),
         head: {
           headId: "90".repeat(32),
           headVersion: "0",
@@ -891,6 +924,16 @@ describe("RestExactTransactionVerifier", () => {
       payTo,
       payToScriptPublicKey: headInput.utxo.scriptPublicKey,
       requiredFinality: "accepted",
+      ...exactAuthorizationFields({
+        profile: "additive",
+        transactionId: additive.transactionId,
+        paymentOutputIndex: 0,
+        amount: additive.amount,
+        payTo,
+        payToScriptPublicKey: headInput.utxo.scriptPublicKey,
+        challengeId: "91".repeat(32),
+        inputIndex: 1,
+      }),
       head: {
         headId: "90".repeat(32),
         headVersion: "0",
@@ -1342,4 +1385,46 @@ function offlineExactVerifier(): RestExactTransactionVerifier {
       ) as typeof fetch,
     }),
   );
+}
+
+function exactAuthorizationFields(input: {
+  profile: "standard-native" | "additive";
+  transactionId: string;
+  paymentOutputIndex: number;
+  amount: string;
+  payTo: string;
+  payToScriptPublicKey: string;
+  challengeId?: string;
+  inputIndex: number;
+}) {
+  const requestHash = "92".repeat(32);
+  const paymentRequirementsHash = "93".repeat(32);
+  const expiresAt = "2099-01-01T00:00:00.000Z";
+  const digest = exactRequestAuthorizationDigest({
+    network: "kaspa:testnet-10",
+    profile: input.profile,
+    transactionId: input.transactionId,
+    paymentOutputIndex: input.paymentOutputIndex,
+    amount: input.amount,
+    payTo: input.payTo,
+    payToScriptPublicKey: input.payToScriptPublicKey,
+    paymentRequirementsHash,
+    requestHash,
+    challengeId: input.challengeId,
+    inputIndex: input.inputIndex,
+    expiresAt,
+  });
+  return {
+    requestHash,
+    paymentRequirementsHash,
+    authorization: {
+      version: "kaspa-x402-exact-request-authorization-v1" as const,
+      inputIndex: input.inputIndex,
+      expiresAt,
+      digest,
+      signature: Buffer.from(
+        schnorr.sign(Buffer.from(digest, "hex"), new Uint8Array(32).fill(7)),
+      ).toString("hex"),
+    },
+  };
 }

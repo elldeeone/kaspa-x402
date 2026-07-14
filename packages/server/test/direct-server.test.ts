@@ -9,6 +9,8 @@ import {
   decodePaymentResponseHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   mcpToolCallFingerprint,
   paymentIdentifierExtension as buildPaymentIdentifierExtension,
   readKaspaSettlementExtension,
@@ -20,6 +22,7 @@ import {
   type BatchPaymentRequirements,
   type ChannelConfig,
   type ExactPaymentRequirements,
+  type ExactRequestAuthorization,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -387,6 +390,9 @@ describe("direct-mode server", () => {
               scriptPublicKey: head.headScriptPublicKey,
             },
             finality: "accepted",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -398,8 +404,14 @@ describe("direct-mode server", () => {
     const accepted = decodePaymentRequiredHeader(
       unpaid.headers[PAYMENT_REQUIRED_HEADER],
     ).accepts[0] as ExactPaymentRequirements;
-    const first = makeAdditivePayment(accepted);
-    const second = makeAdditivePayment(accepted);
+    const first = makeAdditivePayment(accepted, {
+      requestHash: "a1".repeat(32),
+      transactionId: EXACT_TX_ID,
+    });
+    const second = makeAdditivePayment(accepted, {
+      requestHash: "a2".repeat(32),
+      transactionId: CLAIM_TX,
+    });
     if (
       first.payload.type !== "exact-transaction" ||
       second.payload.type !== "exact-transaction"
@@ -566,7 +578,7 @@ describe("direct-mode server", () => {
     expect(executions).toBe(1);
   });
 
-  it("returns terminal MCP errors without a new payment challenge", async () => {
+  it("returns a fresh MCP challenge when payer authorization targets another call", async () => {
     const setup = makeServer({ amount: "100" });
     const firstRequired = setup.server.buildPaymentRequired({
       resource: { url: "mcp://tool/download" },
@@ -597,7 +609,6 @@ describe("direct-mode server", () => {
     );
 
     const replayPayload = structuredClone(payment);
-    delete replayPayload.payload.requestHash;
     const replay = await handlePaidMcpToolCall(
       setup.server,
       {
@@ -615,9 +626,8 @@ describe("direct-mode server", () => {
     );
 
     expect(replay.isError).toBe(true);
-    expect(readMcpPaymentRequired(replay)).toBeUndefined();
-    expect(replay.structuredContent).toBeUndefined();
-    expect(replay.content?.[0]?.text).toBe("invalid_transaction_state");
+    expect(readMcpPaymentRequired(replay)).toBeDefined();
+    expect(replay.content?.[0]?.text).toContain("invalid_payload");
   });
 
   it("returns hybrid MCP settlement failures without exposing paid tool output", async () => {
@@ -846,8 +856,8 @@ describe("direct-mode server", () => {
 
   it("returns the cached response for an identical exact payment retry", async () => {
     const setup = makeServer();
-    const payment = makeExactPayment(setup);
     const requestHash = "12".repeat(32);
+    const payment = makeExactPayment(setup, { requestHash });
     await setup.server.handlePaidRequest(
       requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
       async () => ({
@@ -920,9 +930,9 @@ describe("direct-mode server", () => {
     });
   });
 
-  it("rejects exact transaction replay against a different request", async () => {
+  it("rejects an exact authorization replayed against a different request", async () => {
     const setup = makeServer();
-    const payment = makeExactPayment(setup);
+    const payment = makeExactPayment(setup, { requestHash: "12".repeat(32) });
     await setup.server.handlePaidRequest(
       requestWithPayment(payment, {
         paymentScheme: "exact",
@@ -945,15 +955,21 @@ describe("direct-mode server", () => {
       },
     );
 
-    expect(replay.status).toBe(409);
-    expect(replay.body).toEqual({ error: "invalid_transaction_state" });
+    expect(replay.status).toBe(402);
+    expect(replay.body).toEqual({ error: "invalid_payload" });
     expect(executed).toBe(false);
   });
 
   it("rejects a second exact payment from the same transaction", async () => {
     const setup = makeServer();
-    const firstPayment = makeExactPayment(setup, { paymentOutputIndex: 1 });
-    const secondPayment = makeExactPayment(setup, { paymentOutputIndex: 2 });
+    const firstPayment = makeExactPayment(setup, {
+      paymentOutputIndex: 1,
+      requestHash: "21".repeat(32),
+    });
+    const secondPayment = makeExactPayment(setup, {
+      paymentOutputIndex: 2,
+      requestHash: "22".repeat(32),
+    });
     let activeHandlers = 0;
     let maxActiveHandlers = 0;
     let executions = 0;
@@ -1027,6 +1043,9 @@ describe("direct-mode server", () => {
               scriptPublicKey: request.payToScriptPublicKey,
             },
             finality: "accepted",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1071,6 +1090,9 @@ describe("direct-mode server", () => {
               scriptPublicKey: head.headScriptPublicKey,
             },
             payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1162,6 +1184,9 @@ describe("direct-mode server", () => {
             },
             finality: "accepted",
             payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1219,6 +1244,9 @@ describe("direct-mode server", () => {
               scriptPublicKey: request.payToScriptPublicKey,
             },
             finality: "accepted",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1232,7 +1260,7 @@ describe("direct-mode server", () => {
     const accepted = decodePaymentRequiredHeader(
       unpaid.headers[PAYMENT_REQUIRED_HEADER],
     ).accepts[0] as ExactPaymentRequirements;
-    const payment: PaymentPayload = {
+    const payment = {
       x402Version: X402_VERSION,
       accepted,
       payload: {
@@ -1241,7 +1269,7 @@ describe("direct-mode server", () => {
         transactionId: EXACT_TX_ID,
         paymentOutputIndex: 0,
       },
-    };
+    } as unknown as PaymentPayload;
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
@@ -1282,6 +1310,9 @@ describe("direct-mode server", () => {
               ).toString(),
               scriptPublicKey: head.headScriptPublicKey,
             },
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1351,6 +1382,9 @@ describe("direct-mode server", () => {
                 ).toString(),
                 scriptPublicKey: head.headScriptPublicKey,
               },
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
             };
           },
         },
@@ -1411,6 +1445,9 @@ describe("direct-mode server", () => {
               scriptPublicKey: head.headScriptPublicKey,
             },
             payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -1531,6 +1568,9 @@ describe("direct-mode server", () => {
               ).toString(),
               scriptPublicKey: head.headScriptPublicKey,
             },
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
           };
         },
       },
@@ -3229,8 +3269,34 @@ describe("direct-mode server", () => {
 });
 
 function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
+  const {
+    exactTransactionVerifier: suppliedExactVerifier,
+    ...serverOverrides
+  } = overrides;
   const store = overrides.store ?? new MemoryServerChannelStore();
   const chain = new FakeChainProvider();
+  const rawExactVerifier = suppliedExactVerifier ?? {
+    verifyExactPayment(
+      request: Parameters<
+        NonNullable<
+          DirectModeServerConfig["exactTransactionVerifier"]
+        >["verifyExactPayment"]
+      >[0],
+    ) {
+      return {
+        transactionId: /^[0-9a-fA-F]{64}$/.test(request.transaction)
+          ? request.transaction
+          : EXACT_TX_ID,
+        paymentOutput: {
+          amount: request.amount,
+          scriptPublicKey: request.payToScriptPublicKey,
+        },
+        finality: "accepted" as const,
+        payerAddress: "kaspatest:refund",
+        requestAuthorization: fakeAuthorizationEvidence(request.authorization),
+      };
+    },
+  };
   const server = new DirectModeServer({
     network: "kaspa:testnet-10",
     payTo: "kaspatest:payout",
@@ -3247,23 +3313,19 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         return voucher.signature === `${digest}${digest}`;
       },
     },
+    exactProfile: "standard-native",
+    ...serverOverrides,
     exactTransactionVerifier: {
-      verifyExactPayment(request) {
+      async verifyExactPayment(request) {
+        const result = await rawExactVerifier.verifyExactPayment(request);
         return {
-          transactionId: /^[0-9a-fA-F]{64}$/.test(request.transaction)
-            ? request.transaction
-            : EXACT_TX_ID,
-          paymentOutput: {
-            amount: request.amount,
-            scriptPublicKey: request.payToScriptPublicKey,
-          },
-          finality: "accepted",
-          payerAddress: "kaspatest:refund",
+          ...result,
+          requestAuthorization:
+            result.requestAuthorization ??
+            fakeAuthorizationEvidence(request.authorization),
         };
       },
     },
-    exactProfile: "standard-native",
-    ...overrides,
   });
   return {
     server,
@@ -3330,6 +3392,7 @@ async function makeAdditiveServer(
         },
         finality: "accepted" as const,
         payerAddress: "kaspatest:refund",
+        requestAuthorization: fakeAuthorizationEvidence(request.authorization),
       };
     },
   };
@@ -3411,8 +3474,10 @@ function exactHeadChallenge(
 
 function makeAdditivePayment(
   accepted: ExactPaymentRequirements,
-  options: { requestHash?: Hash32Hex } = {},
+  options: { requestHash?: Hash32Hex; transactionId?: Hash32Hex } = {},
 ): PaymentPayload {
+  const requestHash = options.requestHash ?? testRequestFingerprint(accepted);
+  const transactionId = options.transactionId ?? EXACT_TX_ID;
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -3420,10 +3485,17 @@ function makeAdditivePayment(
       type: "exact-transaction",
       profile: "additive",
       challengeId: accepted.extra.challengeId,
-      transaction: EXACT_TRANSACTION_ARTIFACT,
+      transaction: options.transactionId ?? EXACT_TRANSACTION_ARTIFACT,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex: 0,
-      ...(options.requestHash ? { requestHash: options.requestHash } : {}),
+      requestHash,
+      authorization: fakeExactAuthorization({
+        accepted,
+        profile: "additive",
+        transactionId,
+        requestHash,
+        inputIndex: 1,
+      }),
     },
   };
 }
@@ -3443,6 +3515,11 @@ function makeExactPayment(
     scheme: "exact",
   });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
+  const requestHash = options.requestHash ?? testRequestFingerprint(accepted);
+  const transaction = options.transactionId ?? EXACT_TRANSACTION_ARTIFACT;
+  const transactionId = /^[0-9a-fA-F]{64}$/.test(transaction)
+    ? transaction
+    : EXACT_TX_ID;
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -3450,10 +3527,18 @@ function makeExactPayment(
       type: "exact-transaction",
       profile: "standard-native",
       payerAddress: "kaspatest:refund",
-      transaction: options.transactionId ?? EXACT_TRANSACTION_ARTIFACT,
+      transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex,
-      ...(options.requestHash ? { requestHash: options.requestHash } : {}),
+      requestHash,
+      authorization: fakeExactAuthorization({
+        accepted,
+        profile: "standard-native",
+        transactionId,
+        requestHash,
+        inputIndex: 0,
+        paymentOutputIndex,
+      }),
     },
     ...(options.paymentIdentifier
       ? paymentIdentifierExtension(options.paymentIdentifier)
@@ -3469,6 +3554,7 @@ function makeStandardExactPayment(
     scheme: "exact",
   });
   const accepted = required.accepts[0] as ExactPaymentRequirements;
+  const requestHash = testRequestFingerprint(accepted);
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -3479,7 +3565,68 @@ function makeStandardExactPayment(
       transaction: EXACT_TX_ID,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex: 0,
+      requestHash,
+      authorization: fakeExactAuthorization({
+        accepted,
+        profile: "standard-native",
+        transactionId: EXACT_TX_ID,
+        requestHash,
+        inputIndex: 0,
+      }),
     },
+  };
+}
+
+function testRequestFingerprint(accepted: ExactPaymentRequirements): Hash32Hex {
+  return sha256Hex(
+    stableStringify({
+      method: "GET",
+      url: RESOURCE.url,
+      body: null,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+    }),
+  );
+}
+
+function fakeExactAuthorization(input: {
+  accepted: ExactPaymentRequirements;
+  profile: "standard-native" | "additive";
+  transactionId: Hash32Hex;
+  requestHash: Hash32Hex;
+  inputIndex: number;
+  paymentOutputIndex?: number;
+}) {
+  const expiresAt = "2099-01-01T00:00:00.000Z";
+  const paymentOutputIndex = input.paymentOutputIndex ?? 0;
+  const digest = exactRequestAuthorizationDigest({
+    network: input.accepted.network,
+    profile: input.profile,
+    transactionId: input.transactionId,
+    paymentOutputIndex,
+    amount: input.accepted.amount,
+    payTo: input.accepted.payTo,
+    payToScriptPublicKey: input.accepted.extra.payToScriptPublicKey!,
+    paymentRequirementsHash: sha256Hex(stableStringify(input.accepted)),
+    requestHash: input.requestHash,
+    challengeId: input.accepted.extra.challengeId,
+    inputIndex: input.inputIndex,
+    expiresAt,
+  });
+  return {
+    version: "kaspa-x402-exact-request-authorization-v1" as const,
+    inputIndex: input.inputIndex,
+    expiresAt,
+    digest,
+    signature: "ab".repeat(64),
+  };
+}
+
+function fakeAuthorizationEvidence(authorization: ExactRequestAuthorization) {
+  return {
+    authorizationId: exactRequestAuthorizationId(authorization),
+    digest: authorization.digest,
+    inputIndex: authorization.inputIndex,
+    publicKey: CLIENT_KEY,
   };
 }
 

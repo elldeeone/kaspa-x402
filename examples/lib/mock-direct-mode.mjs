@@ -2,6 +2,8 @@ import { DirectModeClient, MemoryChannelStore } from "@kaspa-x402/client";
 import {
   X402_VERSION,
   encodePaymentRequiredHeader,
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   sha256Hex,
   stableStringify,
 } from "@kaspa-x402/core";
@@ -49,6 +51,12 @@ export function createMockDirectModeEnvironment() {
           },
           payerAddress: REFUND_ADDRESS,
           finality: "accepted",
+          requestAuthorization: {
+            authorizationId: exactRequestAuthorizationId(request.authorization),
+            digest: request.authorization.digest,
+            inputIndex: request.authorization.inputIndex,
+            publicKey: CLIENT_PUBLIC_KEY,
+          },
         };
       },
     },
@@ -182,6 +190,8 @@ class MockFundingProvider {
     };
   }
 
+  async authorizeExactPayment() {}
+
   async fundEscrowDeposit(request) {
     const outpoint = this.nextOutpoint("deposit");
     const utxo = {
@@ -211,12 +221,36 @@ class MockFundingProvider {
     if (!paymentIdentity)
       throw new Error("additive exact requires head challenge terms");
     const transaction = mockTransaction(`exact-transaction:${paymentIdentity}`);
+    const transactionId = mockHash(`chain-broadcast:${transaction}`);
+    const paymentOutputIndex =
+      request.paymentOutputIndex ?? request.head?.paymentOutputIndex ?? 0;
+    const inputIndex = request.profile === "additive" ? 1 : 0;
+    const digest = exactRequestAuthorizationDigest({
+      network: request.network,
+      profile: request.profile,
+      transactionId,
+      paymentOutputIndex,
+      amount: request.amount,
+      payTo: request.payTo,
+      payToScriptPublicKey: request.payToScriptPublicKey,
+      paymentRequirementsHash: request.paymentRequirementsHash,
+      requestHash: request.requestHash,
+      challengeId: request.head?.challengeId,
+      inputIndex,
+      expiresAt: request.authorizationExpiresAt,
+    });
     return {
       transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      transactionId: mockHash(`chain-broadcast:${transaction}`),
-      paymentOutputIndex:
-        request.paymentOutputIndex ?? request.head?.paymentOutputIndex ?? 0,
+      transactionId,
+      paymentOutputIndex,
+      authorization: {
+        version: "kaspa-x402-exact-request-authorization-v1",
+        inputIndex,
+        expiresAt: request.authorizationExpiresAt,
+        digest,
+        signature: mockSignature(digest),
+      },
       payerAddress: REFUND_ADDRESS,
       fundingSource: this.sourceKind,
     };

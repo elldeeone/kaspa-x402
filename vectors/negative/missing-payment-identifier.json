@@ -73,7 +73,15 @@
       "profile": "standard-native",
       "transaction": "{\"transaction\":\"signed-kip10-exact\"}",
       "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
-      "paymentOutputIndex": 0
+      "paymentOutputIndex": 0,
+      "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
+      "authorization": {
+        "version": "kaspa-x402-exact-request-authorization-v1",
+        "inputIndex": 0,
+        "expiresAt": "2099-01-01T00:00:00.000Z",
+        "digest": "8888888888888888888888888888888888888888888888888888888888888888",
+        "signature": "77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+      }
     }
   }
 }

@@ -3,9 +3,7 @@
   "$id": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
   "title": "Kaspa x402 Payment Payload",
   "type": "object",
-  "required": [
-    "type"
-  ],
+  "required": ["type"],
   "properties": {
     "type": {
       "enum": [
@@ -20,10 +18,7 @@
       "type": "string"
     },
     "profile": {
-      "enum": [
-        "standard-native",
-        "additive"
-      ]
+      "enum": ["standard-native", "additive"]
     },
     "challengeId": {
       "$ref": "#/$defs/hash32"
@@ -45,6 +40,31 @@
     },
     "requestHash": {
       "$ref": "#/$defs/hash32"
+    },
+    "authorization": {
+      "type": "object",
+      "required": ["version", "inputIndex", "expiresAt", "digest", "signature"],
+      "properties": {
+        "version": {
+          "const": "kaspa-x402-exact-request-authorization-v1"
+        },
+        "inputIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "expiresAt": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+        },
+        "digest": {
+          "$ref": "#/$defs/hash32"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature64"
+        }
+      },
+      "additionalProperties": false
     },
     "clientPublicKey": {
       "$ref": "#/$defs/pubkey32"
@@ -70,10 +90,7 @@
       ],
       "properties": {
         "network": {
-          "enum": [
-            "kaspa:mainnet",
-            "kaspa:testnet-10"
-          ]
+          "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
         },
         "asset": {
           "const": "KAS"
@@ -132,10 +149,7 @@
     },
     "voucher": {
       "type": "object",
-      "required": [
-        "amount",
-        "signature"
-      ],
+      "required": ["amount", "signature"],
       "properties": {
         "amount": {
           "$ref": "#/$defs/amount"
@@ -155,21 +169,19 @@
             "const": "exact-transaction"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "then": {
         "required": [
           "type",
           "transaction",
           "transactionEncoding",
-          "paymentOutputIndex"
+          "paymentOutputIndex",
+          "requestHash",
+          "authorization"
         ],
         "not": {
-          "required": [
-            "transactionId"
-          ]
+          "required": ["transactionId"]
         }
       }
     },
@@ -180,9 +192,7 @@
             "const": "deposit-voucher"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "then": {
         "required": [
@@ -204,9 +214,7 @@
             "const": "voucher"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "then": {
         "required": [
@@ -226,9 +234,7 @@
             "const": "claim"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "then": {
         "required": [
@@ -248,9 +254,7 @@
             "const": "refund"
           }
         },
-        "required": [
-          "type"
-        ]
+        "required": ["type"]
       },
       "then": {
         "required": [
@@ -289,10 +293,7 @@
     },
     "outpoint": {
       "type": "object",
-      "required": [
-        "txid",
-        "index"
-      ],
+      "required": ["txid", "index"],
       "properties": {
         "txid": {
           "$ref": "#/$defs/hash32"

@@ -469,6 +469,7 @@ function exactPayment(
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
     paymentPayloadHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     amount: "100",
     finality: "accepted",
     settlement: {
@@ -524,6 +525,7 @@ function exactSettlementAttempt(
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
     paymentPayloadHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     payToScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
     status: "pending",

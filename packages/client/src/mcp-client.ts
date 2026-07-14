@@ -12,7 +12,9 @@ import { KaspaX402Error } from "@kaspa-x402/core";
 import { DirectModeClient } from "./direct-client.js";
 import type { ApplySettlementResult, CreatePaymentResult } from "./types.js";
 
-export type McpToolCaller = (params: McpToolCallParams) => Promise<McpToolResult> | McpToolResult;
+export type McpToolCaller = (
+  params: McpToolCallParams,
+) => Promise<McpToolResult> | McpToolResult;
 
 export interface PaidMcpToolCallOptions {
   paymentIdentifier?: string;
@@ -33,46 +35,60 @@ export async function paidMcpToolCall(
   params: McpToolCallParams,
   options: PaidMcpToolCallOptions = {},
 ): Promise<PaidMcpToolCallResult> {
+  if (
+    options.maxPaymentRetries !== undefined &&
+    options.maxPaymentRetries !== 0
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "automatic corrective MCP payment retries are disabled; authorize a new payment explicitly",
+    );
+  }
   const firstResult = await callTool(params);
-  let paymentRequired = readMcpPaymentRequired(firstResult);
+  const paymentRequired = readMcpPaymentRequired(firstResult);
   if (!paymentRequired) return { result: firstResult };
 
-  const maxPaymentRetries = options.maxPaymentRetries ?? 2;
-  for (let attempt = 0; attempt <= maxPaymentRetries; attempt += 1) {
-    const header = encodePaymentRequiredEnvelopeHeader(paymentRequired);
-    const parsed = client.selectPaymentRequirement(header);
-    const requestHash =
-      options.requestHash ??
-      mcpToolCallFingerprint({
-        toolName: params.name,
-        arguments: params.arguments,
-        accepted: parsed.accepted,
-      });
-    const payment = await client.createPayment(header, {
-      url: paymentRequired.resource.url,
-      origin: options.origin ?? `mcp://tool/${params.name}`,
-      paymentIdentifier: options.paymentIdentifier,
-      requestHash,
+  const header = encodePaymentRequiredEnvelopeHeader(paymentRequired);
+  const parsed = client.selectPaymentRequirement(header);
+  const requestHash =
+    options.requestHash ??
+    mcpToolCallFingerprint({
+      toolName: params.name,
+      arguments: params.arguments,
+      accepted: parsed.accepted,
     });
-    const retryResult = await callTool(withMcpPaymentPayload(params, payment.paymentPayload));
-    const settlementResponse = readMcpPaymentResponse(retryResult);
-    if (settlementResponse) {
-      const settlement = await client.applySettlement(payment, settlementResponse);
-      return {
-        result: retryResult,
-        payment,
-        settlement,
-      };
-    }
-
-    const corrective = readMcpPaymentRequired(retryResult);
-    if (retryResult.isError && corrective) {
-      paymentRequired = corrective;
-      continue;
-    }
-
-    throw new KaspaX402Error("invalid_kaspa_settlement_response", "paid MCP tool result is missing x402 payment response metadata");
+  const payment = await client.createPayment(header, {
+    url: paymentRequired.resource.url,
+    origin: options.origin ?? `mcp://tool/${params.name}`,
+    paymentIdentifier: options.paymentIdentifier,
+    requestHash,
+  });
+  const retryResult = await callTool(
+    withMcpPaymentPayload(params, payment.paymentPayload),
+  );
+  const settlementResponse = readMcpPaymentResponse(retryResult);
+  if (settlementResponse) {
+    const settlement = await client.applySettlement(
+      payment,
+      settlementResponse,
+    );
+    return {
+      result: retryResult,
+      payment,
+      settlement,
+    };
   }
 
-  throw new KaspaX402Error("invalid_kaspa_x402_payload", "too many corrective MCP payment retries");
+  const corrective = readMcpPaymentRequired(retryResult);
+  if (retryResult.isError && corrective) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "corrective MCP payment requirements need a new explicit payment authorization",
+    );
+  }
+
+  throw new KaspaX402Error(
+    "invalid_kaspa_settlement_response",
+    "paid MCP tool result is missing x402 payment response metadata",
+  );
 }

@@ -14,6 +14,8 @@ import {
   decodePaymentResponseHeader,
   encodePaymentRequiredHeader,
   encodePaymentSignatureHeader,
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
   hexToBytes,
   readKaspaSettlementExtension,
   sha256Hex,
@@ -129,6 +131,7 @@ export async function runLiveProof(context) {
       fundingPrivateKeyHex,
       fundingAddress,
       fundingPublicKey,
+      schnorr,
       pendingBroadcasts,
       knownUtxos,
       spentOutpoints,
@@ -155,9 +158,11 @@ export async function runLiveProof(context) {
       async verifyExactPayment(request) {
         return verifyExactTransaction({
           sdk,
+          schnorr,
           transactionArtifact: request.transaction,
           request,
           fundingAddress,
+          fundingPublicKey,
         });
       },
     };
@@ -440,8 +445,10 @@ async function buildStandardExactTransaction(input) {
     rpc,
     sdk,
     fundingPrivateKey,
+    fundingPrivateKeyHex,
     fundingAddress,
     request,
+    schnorr,
     spentOutpoints,
   } = input;
   const paymentAmount = BigInt(request.amount);
@@ -496,7 +503,15 @@ async function buildStandardExactTransaction(input) {
     inputs: [{ ...inputBase, signatureScript }],
   });
   markOutpointSpent(spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(signed, fundingAddress, 0);
+  return exactPaymentArtifact({
+    transaction: signed,
+    payerAddress: fundingAddress,
+    paymentOutputIndex: 0,
+    authorizationInputIndex: 0,
+    fundingPrivateKeyHex,
+    request,
+    schnorr,
+  });
 }
 
 async function buildKip10ExactTransaction(input) {
@@ -504,8 +519,10 @@ async function buildKip10ExactTransaction(input) {
     rpc,
     sdk,
     fundingPrivateKey,
+    fundingPrivateKeyHex,
     fundingAddress,
     request,
+    schnorr,
     spentOutpoints,
   } = input;
   const head = request.head;
@@ -593,15 +610,57 @@ async function buildKip10ExactTransaction(input) {
     ],
   });
   markOutpointSpent(spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(signed, fundingAddress, 0);
+  return exactPaymentArtifact({
+    transaction: signed,
+    payerAddress: fundingAddress,
+    paymentOutputIndex: 0,
+    authorizationInputIndex: 1,
+    fundingPrivateKeyHex,
+    request,
+    schnorr,
+  });
 }
 
-function exactPaymentArtifact(transaction, payerAddress, paymentOutputIndex) {
+function exactPaymentArtifact({
+  transaction,
+  payerAddress,
+  paymentOutputIndex,
+  authorizationInputIndex,
+  fundingPrivateKeyHex,
+  request,
+  schnorr,
+}) {
+  const digest = exactRequestAuthorizationDigest({
+    network: request.network,
+    profile: request.profile,
+    transactionId: transaction.id,
+    paymentOutputIndex,
+    amount: request.amount,
+    payTo: request.payTo,
+    payToScriptPublicKey: request.payToScriptPublicKey,
+    paymentRequirementsHash: request.paymentRequirementsHash,
+    requestHash: request.requestHash,
+    challengeId: request.head?.challengeId,
+    inputIndex: authorizationInputIndex,
+    expiresAt: request.authorizationExpiresAt,
+  });
   return {
     transaction: transaction.serializeToSafeJSON(),
     transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
     paymentOutputIndex,
     transactionId: transaction.id,
+    authorization: {
+      version: "kaspa-x402-exact-request-authorization-v1",
+      inputIndex: authorizationInputIndex,
+      expiresAt: request.authorizationExpiresAt,
+      digest,
+      signature: bytesToHex(
+        schnorr.sign(
+          hexToBytes(digest, { expectedLength: 32 }),
+          hexToBytes(fundingPrivateKeyHex, { expectedLength: 32 }),
+        ),
+      ),
+    },
     payerAddress,
     fundingSource: "hot-wallet",
   };
@@ -736,9 +795,11 @@ async function createKip10Head(input) {
 
 function verifyExactTransaction({
   sdk,
+  schnorr,
   transactionArtifact,
   request,
   fundingAddress,
+  fundingPublicKey,
 }) {
   if (request.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) {
     throw new Error("unsupported exact transaction encoding");
@@ -773,6 +834,12 @@ function verifyExactTransaction({
         address: request.payTo,
       },
       payerAddress: fundingAddress,
+      requestAuthorization: verifyRequestAuthorization({
+        request,
+        transactionId: tx.id,
+        fundingPublicKey,
+        schnorr,
+      }),
     };
   }
   const head = request.head;
@@ -850,6 +917,60 @@ function verifyExactTransaction({
       scriptPublicKey: paymentScriptPublicKey,
     },
     payerAddress: fundingAddress,
+    requestAuthorization: verifyRequestAuthorization({
+      request,
+      transactionId: tx.id,
+      fundingPublicKey,
+      schnorr,
+    }),
+  };
+}
+
+function verifyRequestAuthorization({
+  request,
+  transactionId,
+  fundingPublicKey,
+  schnorr,
+}) {
+  const authorization = request.authorization;
+  const expectedInputIndex = request.profile === "additive" ? 1 : 0;
+  if (authorization.inputIndex !== expectedInputIndex) {
+    throw new Error("exact request authorization uses the wrong funding input");
+  }
+  if (Date.parse(authorization.expiresAt) <= Date.now()) {
+    throw new Error("exact request authorization has expired");
+  }
+  const digest = exactRequestAuthorizationDigest({
+    network: request.network,
+    profile: request.profile,
+    transactionId,
+    paymentOutputIndex: request.paymentOutputIndex,
+    amount: request.amount,
+    payTo: request.payTo,
+    payToScriptPublicKey: request.payToScriptPublicKey,
+    paymentRequirementsHash: request.paymentRequirementsHash,
+    requestHash: request.requestHash,
+    challengeId: request.head?.challengeId,
+    inputIndex: authorization.inputIndex,
+    expiresAt: authorization.expiresAt,
+  });
+  if (authorization.digest.toLowerCase() !== digest) {
+    throw new Error("exact request authorization digest does not match");
+  }
+  if (
+    !schnorr.verify(
+      hexToBytes(authorization.signature, { expectedLength: 64 }),
+      hexToBytes(digest, { expectedLength: 32 }),
+      hexToBytes(fundingPublicKey, { expectedLength: 32 }),
+    )
+  ) {
+    throw new Error("exact request authorization signature is invalid");
+  }
+  return {
+    id: exactRequestAuthorizationId(authorization),
+    digest,
+    inputIndex: authorization.inputIndex,
+    payerPublicKey: fundingPublicKey,
   };
 }
 
@@ -1069,11 +1190,13 @@ function makeFundingProvider(input) {
     networkId,
     network,
     fundingPrivateKey,
+    fundingPrivateKeyHex,
     fundingAddress,
     fundingPublicKey,
     knownUtxos,
     spentOutpoints,
     fundingVersionByTxid,
+    schnorr,
   } = input;
   return {
     networkId: network,
@@ -1081,6 +1204,7 @@ function makeFundingProvider(input) {
     async getPublicIdentity() {
       return { address: fundingAddress, publicKey: fundingPublicKey };
     },
+    async authorizeExactPayment() {},
     async fundEscrowDeposit(request) {
       const sent = await sendFromFunding({
         rpc,
@@ -1116,7 +1240,9 @@ function makeFundingProvider(input) {
         rpc,
         sdk,
         fundingPrivateKey,
+        fundingPrivateKeyHex,
         fundingAddress,
+        schnorr,
         spentOutpoints,
         request,
       });

@@ -121,7 +121,8 @@ export function normalizeExactSettlementAttempt(
     throw new Error("exact settlement request fingerprint must be 32-byte hex");
   if (
     !/^[0-9a-fA-F]{64}$/.test(input.paymentRequirementsHash) ||
-    !/^[0-9a-fA-F]{64}$/.test(input.paymentPayloadHash)
+    !/^[0-9a-fA-F]{64}$/.test(input.paymentPayloadHash) ||
+    !/^[0-9a-fA-F]{64}$/.test(input.requestAuthorizationId)
   ) {
     throw new Error("exact settlement hashes must be 32-byte hex");
   }
@@ -151,6 +152,7 @@ export function normalizeExactSettlementAttempt(
     requestFingerprint: input.requestFingerprint.toLowerCase(),
     paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
     paymentPayloadHash: input.paymentPayloadHash.toLowerCase(),
+    requestAuthorizationId: input.requestAuthorizationId.toLowerCase(),
     payToScriptPublicKey: input.payToScriptPublicKey.toLowerCase(),
   };
   if (attempt.head) {

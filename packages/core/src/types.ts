@@ -13,6 +13,14 @@ export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
 export type ExactProfile = "standard-native" | "additive";
 
+export interface ExactRequestAuthorization extends JsonRecord {
+  version: "kaspa-x402-exact-request-authorization-v1";
+  inputIndex: number;
+  expiresAt: string;
+  digest: Hash32Hex;
+  signature: SignatureHex;
+}
+
 export type JsonRecord = Record<string, unknown>;
 
 export interface ResourceInfo extends JsonRecord {
@@ -149,7 +157,8 @@ export interface ExactTransactionPayload extends JsonRecord {
   transaction: string;
   transactionEncoding: ExactTransactionEncoding;
   paymentOutputIndex: number;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
+  authorization: ExactRequestAuthorization;
 }
 
 export interface DepositVoucherPayload extends JsonRecord {

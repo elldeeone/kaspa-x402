@@ -4,6 +4,7 @@ import {
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactRequestAuthorizationDigest,
   formatSompiString,
   hexToBytes,
   paymentIdentifierExtension,
@@ -71,6 +72,15 @@ export class DirectModeClient {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_network",
         "DirectModeClient requires allowMainnet for kaspa:mainnet",
+      );
+    }
+    if (
+      options.maxPaymentRetries !== undefined &&
+      options.maxPaymentRetries !== 0
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "automatic corrective payment retries are disabled because a disclosed artifact remains spendable",
       );
     }
     this.#options = options;
@@ -164,7 +174,7 @@ export class DirectModeClient {
       return { response: firstResponse };
     }
 
-    let required = firstResponse.headers.get(PAYMENT_REQUIRED_HEADER);
+    const required = firstResponse.headers.get(PAYMENT_REQUIRED_HEADER);
     if (!required) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
@@ -172,55 +182,42 @@ export class DirectModeClient {
       );
     }
 
-    const maxPaymentRetries = this.#options.maxPaymentRetries ?? 2;
-    for (let attempt = 0; attempt <= maxPaymentRetries; attempt += 1) {
-      const payment = await this.createPayment(required, {
-        url: input,
-        paymentIdentifier: init.paymentIdentifier,
-        requestHash: init.requestHash,
-        method: init.method,
-        body: init.body,
-      });
-      const retryInit: HttpRequestInitLike = {
-        ...init,
-        headers: withHeader(
-          init.headers,
-          PAYMENT_SIGNATURE_HEADER,
-          encodePaymentSignatureHeader(payment.paymentPayload),
-        ),
-      };
-      const retryResponse = await fetch(input, retryInit);
-      if (retryResponse.status === 402) {
-        const corrective = retryResponse.headers.get(PAYMENT_REQUIRED_HEADER);
-        if (!corrective) {
-          throw new KaspaX402Error(
-            "invalid_kaspa_x402_payload",
-            "corrective 402 response is missing PAYMENT-REQUIRED",
-          );
-        }
-        required = corrective;
-        continue;
-      }
-
-      const responseHeader = retryResponse.headers.get(PAYMENT_RESPONSE_HEADER);
-      if (!responseHeader) {
-        throw new KaspaX402Error(
-          "invalid_kaspa_settlement_response",
-          "paid retry response is missing PAYMENT-RESPONSE",
-        );
-      }
-
-      const settlement = await this.applySettlement(
-        payment,
-        decodePaymentResponseHeader(responseHeader),
+    const payment = await this.createPayment(required, {
+      url: input,
+      paymentIdentifier: init.paymentIdentifier,
+      requestHash: init.requestHash,
+      method: init.method,
+      body: init.body,
+    });
+    const retryInit: HttpRequestInitLike = {
+      ...init,
+      headers: withHeader(
+        init.headers,
+        PAYMENT_SIGNATURE_HEADER,
+        encodePaymentSignatureHeader(payment.paymentPayload),
+      ),
+    };
+    const retryResponse = await fetch(input, retryInit);
+    if (retryResponse.status === 402) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "corrective 402 requires a new explicit payment authorization; the client will not sign automatically",
       );
-      return { response: retryResponse, payment, settlement };
     }
 
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_payload",
-      "too many corrective 402 payment retries",
+    const responseHeader = retryResponse.headers.get(PAYMENT_RESPONSE_HEADER);
+    if (!responseHeader) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_settlement_response",
+        "paid retry response is missing PAYMENT-RESPONSE",
+      );
+    }
+
+    const settlement = await this.applySettlement(
+      payment,
+      decodePaymentResponseHeader(responseHeader),
     );
+    return { response: retryResponse, payment, settlement };
   }
 
   async applySettlement(
@@ -624,16 +621,28 @@ export class DirectModeClient {
         );
       }
     }
+    if (!context.requestHash) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "exact request authorization requires a canonical request hash",
+      );
+    }
     const exactRequest: ExactPaymentRequest = {
       network: accepted.network,
       profile,
+      origin: context.origin ?? originForUrl(context.url),
+      resourceUrl: paymentRequired.resource.url,
       amount: accepted.amount,
       payTo: accepted.payTo,
-      ...(payToScriptPublicKey ? { payToScriptPublicKey } : {}),
+      payToScriptPublicKey: payToScriptPublicKey!,
       ...(typeof accepted.extra.paymentOutputIndex === "number"
         ? { paymentOutputIndex: accepted.extra.paymentOutputIndex }
         : {}),
       requestHash: context.requestHash,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+      authorizationExpiresAt: new Date(
+        Date.now() + accepted.maxTimeoutSeconds * 1_000,
+      ).toISOString(),
       requiredFinality: accepted.extra.finality,
       fundingSource: this.#options.fundingPolicy?.requiredSource,
     };
@@ -647,11 +656,13 @@ export class DirectModeClient {
         "additive exact requirements must include head challenge terms",
       );
     }
-    const transactionExact = await this.#createExactTransaction({
+    const transactionRequest: ExactPaymentRequest = {
       ...exactRequest,
       ...(head ? { head } : {}),
-    });
-    this.#assertExactResult(transactionExact);
+    };
+    const transactionExact =
+      await this.#createExactTransaction(transactionRequest);
+    this.#assertExactResult(transactionExact, transactionRequest);
     const identity = transactionExact.payerAddress
       ? undefined
       : await this.#options.fundingProvider.getPublicIdentity();
@@ -663,8 +674,9 @@ export class DirectModeClient {
       transaction: transactionExact.transaction,
       transactionEncoding: transactionExact.transactionEncoding,
       paymentOutputIndex: transactionExact.paymentOutputIndex,
+      authorization: transactionExact.authorization,
       ...(head ? { challengeId: head.challengeId } : {}),
-      ...(context.requestHash ? { requestHash: context.requestHash } : {}),
+      requestHash: context.requestHash,
     };
     exact = transactionExact;
     const paymentPayload = buildPaymentPayload(
@@ -692,7 +704,10 @@ export class DirectModeClient {
     };
   }
 
-  #assertExactResult(exact: ExactTransactionPaymentResult): void {
+  #assertExactResult(
+    exact: ExactTransactionPaymentResult,
+    request: ExactPaymentRequest,
+  ): void {
     if (
       this.#options.fundingPolicy?.requiredSource &&
       exact.fundingSource &&
@@ -712,6 +727,41 @@ export class DirectModeClient {
         "exact payment output index is invalid",
       );
     }
+    const expiresAt = Date.parse(exact.authorization.expiresAt);
+    if (
+      exact.authorization.version !==
+        "kaspa-x402-exact-request-authorization-v1" ||
+      !Number.isInteger(exact.authorization.inputIndex) ||
+      exact.authorization.inputIndex < 0 ||
+      !Number.isFinite(expiresAt) ||
+      exact.authorization.expiresAt !== request.authorizationExpiresAt ||
+      !/^[0-9a-fA-F]{128}$/.test(exact.authorization.signature)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "exact transaction adapter returned invalid request authorization evidence",
+      );
+    }
+    const expectedDigest = exactRequestAuthorizationDigest({
+      network: request.network,
+      profile: request.profile,
+      transactionId: exact.transactionId,
+      paymentOutputIndex: exact.paymentOutputIndex,
+      amount: request.amount,
+      payTo: request.payTo,
+      payToScriptPublicKey: request.payToScriptPublicKey,
+      paymentRequirementsHash: request.paymentRequirementsHash,
+      requestHash: request.requestHash,
+      challengeId: request.head?.challengeId,
+      inputIndex: exact.authorization.inputIndex,
+      expiresAt: exact.authorization.expiresAt,
+    });
+    if (exact.authorization.digest.toLowerCase() !== expectedDigest) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "exact request authorization digest does not match the payment intent",
+      );
+    }
   }
 
   async #createExactTransaction(
@@ -723,6 +773,8 @@ export class DirectModeClient {
         "exact offers require an exact transaction adapter",
       );
     }
+    assertExactFundingPolicy(this.#options, request);
+    await this.#options.fundingProvider.authorizeExactPayment(request);
     const exact =
       await this.#options.fundingProvider.payExactTransaction(request);
     if (!isExactTransactionPaymentResult(exact)) {
@@ -931,6 +983,48 @@ function assertFundingPolicy(options: DirectModeClientOptions): void {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
       `funding source ${options.fundingProvider.sourceKind} does not satisfy policy ${required}`,
+    );
+  }
+}
+
+function assertExactFundingPolicy(
+  options: DirectModeClientOptions,
+  request: ExactPaymentRequest,
+): void {
+  const policy = options.fundingPolicy;
+  if (!policy) return;
+  if (
+    policy.allowedOrigins &&
+    !policy.allowedOrigins.includes(request.origin)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `exact payment origin ${request.origin} is not allowed by funding policy`,
+    );
+  }
+  if (
+    policy.allowedExactProfiles &&
+    !policy.allowedExactProfiles.includes(request.profile)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `exact profile ${request.profile} is not allowed by funding policy`,
+    );
+  }
+  if (policy.allowedPayTo && !policy.allowedPayTo.includes(request.payTo)) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "exact payment recipient is not allowed by funding policy",
+    );
+  }
+  if (
+    policy.maximumExactAmountSompi !== undefined &&
+    parseSompiString(request.amount) >
+      parseSompiString(policy.maximumExactAmountSompi)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "exact payment amount exceeds funding policy",
     );
   }
 }
@@ -1177,7 +1271,8 @@ function isExactTransactionPaymentResult(
   return (
     isRecord(exact) &&
     typeof exact.transaction === "string" &&
-    exact.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0"
+    exact.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0" &&
+    isRecord(exact.authorization)
   );
 }
 

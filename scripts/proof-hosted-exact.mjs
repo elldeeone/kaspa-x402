@@ -8,6 +8,7 @@ import {
   bytesToHex,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactRequestAuthorizationDigest,
   hexToBytes,
   readKaspaSettlementExtension,
   stableStringify,
@@ -172,7 +173,9 @@ async function runHostedExactProof(input) {
       network: input.network,
       networkId,
       fundingPrivateKey,
+      fundingPrivateKeyHex,
       fundingAddress,
+      schnorr,
       spentOutpoints,
     });
     const client = new DirectModeClient({
@@ -403,13 +406,16 @@ function makeFundingProvider(input) {
         ),
       };
     },
+    async authorizeExactPayment() {},
     async payExactTransaction(request) {
       return buildExactTransaction({
         rpc: input.rpc,
         sdk: input.sdk,
         networkId: input.networkId,
         fundingPrivateKey: input.fundingPrivateKey,
+        fundingPrivateKeyHex: input.fundingPrivateKeyHex,
         fundingAddress: input.fundingAddress,
+        schnorr: input.schnorr,
         request,
         spentOutpoints: input.spentOutpoints,
       });
@@ -491,7 +497,14 @@ async function buildStandardExactTransaction(input) {
     inputs: [{ ...inputBase, signatureScript }],
   });
   markOutpointSpent(input.spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(signed, input.fundingAddress);
+  return exactPaymentArtifact(
+    signed,
+    input.fundingAddress,
+    input.request,
+    0,
+    input.schnorr,
+    input.fundingPrivateKeyHex,
+  );
 }
 
 async function buildKip10ExactTransaction(input) {
@@ -575,15 +588,55 @@ async function buildKip10ExactTransaction(input) {
     ],
   });
   markOutpointSpent(input.spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(signed, input.fundingAddress);
+  return exactPaymentArtifact(
+    signed,
+    input.fundingAddress,
+    input.request,
+    1,
+    input.schnorr,
+    input.fundingPrivateKeyHex,
+  );
 }
 
-function exactPaymentArtifact(transaction, payerAddress) {
+function exactPaymentArtifact(
+  transaction,
+  payerAddress,
+  request,
+  authorizationInputIndex,
+  schnorr,
+  fundingPrivateKeyHex,
+) {
+  const authorizationDigest = exactRequestAuthorizationDigest({
+    network: request.network,
+    profile: request.profile,
+    transactionId: transaction.id,
+    paymentOutputIndex: 0,
+    amount: request.amount,
+    payTo: request.payTo,
+    payToScriptPublicKey: request.payToScriptPublicKey,
+    paymentRequirementsHash: request.paymentRequirementsHash,
+    requestHash: request.requestHash,
+    challengeId: request.head?.challengeId,
+    inputIndex: authorizationInputIndex,
+    expiresAt: request.authorizationExpiresAt,
+  });
   return {
     transaction: transaction.serializeToSafeJSON(),
     transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
     paymentOutputIndex: 0,
     transactionId: transaction.id,
+    authorization: {
+      version: "kaspa-x402-exact-request-authorization-v1",
+      inputIndex: authorizationInputIndex,
+      expiresAt: request.authorizationExpiresAt,
+      digest: authorizationDigest,
+      signature: bytesToHex(
+        schnorr.sign(
+          hexToBytes(authorizationDigest, { expectedLength: 32 }),
+          hexToBytes(fundingPrivateKeyHex, { expectedLength: 32 }),
+        ),
+      ),
+    },
     payerAddress,
     fundingSource: "hot-wallet",
   };
