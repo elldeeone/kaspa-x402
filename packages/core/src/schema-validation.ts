@@ -470,7 +470,7 @@ function classifyRequirementEntry(entry: Record<string, unknown> | undefined): K
   }
 
   const extra = asRecord(entry.extra);
-  if (extra?.binding !== expectedBindingForScheme(String(entry.scheme))) return "invalid_kaspa_x402_binding";
+  if (!isExpectedBindingForScheme(String(entry.scheme), extra?.binding)) return "invalid_kaspa_x402_binding";
 
   return "invalid_kaspa_x402_payload";
 }
@@ -534,11 +534,9 @@ function classifySettlementResponse(value: unknown): KaspaX402ErrorCode {
   return "invalid_kaspa_settlement_response";
 }
 
-function expectedBindingForScheme(scheme: string): string | undefined {
-  return {
-    exact: "kaspa-exact-v1",
-    "batch-settlement": "kaspa-escrow-v1",
-  }[scheme];
+function isExpectedBindingForScheme(scheme: string, binding: unknown): boolean {
+  if (scheme === "exact") return binding === "kaspa-exact-v1" || binding === "kaspa-exact-v2";
+  return scheme === "batch-settlement" && binding === "kaspa-escrow-v1";
 }
 
 function expectedPayloadTypesForScheme(scheme: string): string[] | undefined {

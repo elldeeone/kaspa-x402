@@ -186,6 +186,9 @@
         "transactionEncoding": {
           "const": "kaspa-sdk-safe-json-v2.0.0"
         },
+        "exactProfile": {
+          "enum": ["standard-native", "additive"]
+        },
         "templateId": {
           "const": "kaspa-x402-kip10-additive-v1"
         },

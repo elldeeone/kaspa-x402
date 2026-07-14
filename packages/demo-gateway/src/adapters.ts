@@ -14,12 +14,16 @@ import type {
 import {
   KIP10_EXACT_TRANSACTION_ENCODING,
   buildKip10AdditiveBorrowSignatureScript,
+  calculateKaspaStorageMass,
+  exactV0SchnorrSignatureEvidence,
+  exactV0TransactionId,
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
   type DeriveEscrowAddressInput,
+  type ExactV0ReferenceTransaction,
 } from "@kaspa-x402/covenant";
-import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
+import { addressForScriptPublicKey, encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
 
 type FetchLike = typeof fetch;
 type SleepLike = (ms: number) => Promise<void>;
@@ -420,9 +424,11 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
     assertTestnet(request.network);
-    void this.#client;
     if (request.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) {
       throw invalidTransaction("unsupported exact transaction encoding");
+    }
+    if (request.profile === "standard-native") {
+      return this.#verifyStandardNative(request);
     }
     if (!request.reservation) {
       throw invalidTransaction("hosted exact verification requires KIP-10 reservation terms");
@@ -496,6 +502,83 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
       },
       ...(finality ? { finality } : {}),
     };
+  }
+
+  async #verifyStandardNative(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
+    if (request.reservation) throw invalidTransaction("standard-native exact cannot include additive reservation terms");
+    const transaction = parseSafeTransactionArtifact(request.transaction);
+    assertStandardNativeTransactionEnvelope(transaction, this.#maxFeeSompi);
+    const reference = exactV0ReferenceTransaction(transaction);
+    const transactionId = exactV0TransactionId(reference);
+    if (transaction.id !== transactionId) throw invalidTransaction("standard-native transaction id does not match canonical fields");
+
+    const merchantOutputs = transaction.outputs
+      .map((output, index) => ({ output, index }))
+      .filter(({ output }) => output.scriptPublicKey === request.payToScriptPublicKey.toLowerCase());
+    if (merchantOutputs.length !== 1) throw invalidTransaction("standard-native transaction must contain exactly one merchant output");
+    const merchant = merchantOutputs[0]!;
+    if (merchant.index !== request.paymentOutputIndex) throw invalidTransaction("standard-native payment output index is not canonical");
+    if (merchant.output.value !== request.amount) throw invalidTransaction("standard-native merchant output must equal the accepted amount");
+
+    const accepted = await this.#client.getTransaction(transaction.id);
+    const finality = accepted?.is_accepted ? "accepted" : undefined;
+    if (accepted?.is_accepted) assertChainTransactionMatchesSafe(accepted, transaction);
+
+    const payerScripts = new Set<string>();
+    for (let index = 0; index < transaction.inputs.length; index += 1) {
+      const input = transaction.inputs[index]!;
+      const previous = await this.#trustedInput(input, request.network, finality === "accepted");
+      if (previous.amount !== input.utxo.amount || previous.scriptPublicKey !== input.utxo.scriptPublicKey) {
+        throw invalidTransaction("standard-native embedded UTXO evidence does not match trusted chain state");
+      }
+      const evidence = exactV0SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence)) throw invalidTransaction("standard-native funding signature is invalid");
+      payerScripts.add(previous.scriptPublicKey);
+    }
+
+    const changeOutputs = transaction.outputs.filter((_, index) => index !== merchant.index);
+    if (changeOutputs.length > 1) throw invalidTransaction("standard-native transaction may contain at most one payer change output");
+    if (changeOutputs[0] && !payerScripts.has(changeOutputs[0].scriptPublicKey)) {
+      throw invalidTransaction("standard-native change output is not controlled by a verified payer input");
+    }
+
+    return {
+      transactionId,
+      paymentOutput: {
+        amount: merchant.output.value,
+        scriptPublicKey: merchant.output.scriptPublicKey,
+        address: request.payTo,
+      },
+      ...(finality ? { finality } : {}),
+    };
+  }
+
+  async #trustedInput(
+    input: SafeTransactionInput,
+    network: NetworkId,
+    acceptedCandidateSpendsInput: boolean,
+  ): Promise<{ amount: string; scriptPublicKey: string }> {
+    const previous = await this.#client.getTransaction(input.transactionId);
+    if (!previous?.is_accepted || !Array.isArray(previous.outputs)) {
+      throw invalidTransaction("standard-native input origin is not accepted chain state");
+    }
+    const output = previous.outputs.find((candidate) => candidate.index === input.index) ?? previous.outputs[input.index];
+    if (!output || output.amount === undefined || typeof output.script_public_key !== "string") {
+      throw invalidTransaction("standard-native input origin output is missing");
+    }
+    const trusted = {
+      amount: String(output.amount),
+      scriptPublicKey: normalizeRestScript(output.script_public_key),
+    };
+    if (acceptedCandidateSpendsInput) return trusted;
+    const address = addressForScriptPublicKey(trusted.scriptPublicKey, network);
+    const unspent = (await this.#client.getUtxosForAddress(address)).some(
+      (utxo) => sameOutpoint(utxo.outpoint, { txid: input.transactionId, index: input.index }) &&
+        utxo.amount === trusted.amount &&
+        utxo.scriptPublicKey === trusted.scriptPublicKey,
+    );
+    if (!unspent) throw invalidTransaction("standard-native input is not currently unspent");
+    return trusted;
   }
 }
 
@@ -716,6 +799,7 @@ type SafeTransactionInput = {
 type SafeTransactionOutput = {
   value: string;
   scriptPublicKey: string;
+  covenant: null;
 };
 
 type PnnPaymentEvidence = {
@@ -845,6 +929,74 @@ function assertExactTransactionEnvelope(transaction: SafeTransaction, maxFeeSomp
   if (inputAmount - outputAmount > maxFeeSompi) throw invalidTransaction("exact transaction fee exceeds the configured maximum");
 }
 
+function assertStandardNativeTransactionEnvelope(transaction: SafeTransaction, maxFeeSompi: bigint): void {
+  if (transaction.version !== 0) throw invalidTransaction("standard-native transaction version must be 0");
+  if ((transaction.lockTime ?? "0") !== "0") throw invalidTransaction("standard-native transaction lockTime must be 0");
+  if ((transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID) {
+    throw invalidTransaction("standard-native transaction must use the native subnetwork");
+  }
+  if ((transaction.gas ?? "0") !== "0") throw invalidTransaction("standard-native transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "") throw invalidTransaction("standard-native transaction payload must be empty");
+  if (transaction.inputs.length === 0) throw invalidTransaction("standard-native transaction must have payer inputs");
+  if (transaction.outputs.length < 1 || transaction.outputs.length > 2) {
+    throw invalidTransaction("standard-native transaction must contain merchant output and optional change only");
+  }
+  for (const [index, input] of transaction.inputs.entries()) {
+    if (input.computeBudget !== undefined) throw invalidTransaction(`standard-native input ${index} cannot carry a compute budget`);
+    if (input.sigOpCount !== 1) throw invalidTransaction(`standard-native input ${index} sigOpCount must be 1`);
+    if (!input.utxo.scriptPublicKey.startsWith("0000")) throw invalidTransaction(`standard-native input ${index} script version must be 0`);
+  }
+  for (const [index, output] of transaction.outputs.entries()) {
+    if (!output.scriptPublicKey.startsWith("0000")) throw invalidTransaction(`standard-native output ${index} script version must be 0`);
+    if (output.covenant !== null) throw invalidTransaction(`standard-native output ${index} cannot carry a covenant`);
+  }
+  if (transaction.storageMass === undefined) throw invalidTransaction("standard-native transaction must commit contextual storage mass");
+  const storageMass = calculateKaspaStorageMass({
+    inputs: transaction.inputs.map((input) => ({
+      amount: input.utxo.amount,
+      scriptPublicKey: input.utxo.scriptPublicKey,
+      hasCovenant: false,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      hasCovenant: false,
+    })),
+  });
+  if (BigInt(transaction.storageMass) !== storageMass) {
+    throw invalidTransaction("standard-native transaction storage mass does not match contextual KIP-9 mass");
+  }
+  const inputAmount = transaction.inputs.reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
+  const outputAmount = transaction.outputs.reduce((total, output) => total + BigInt(output.value), 0n);
+  if (outputAmount > inputAmount) throw invalidTransaction("standard-native outputs exceed input amounts");
+  const fee = inputAmount - outputAmount;
+  if (fee > maxFeeSompi) throw invalidTransaction("standard-native transaction fee exceeds the configured maximum");
+}
+
+function exactV0ReferenceTransaction(transaction: SafeTransaction): ExactV0ReferenceTransaction {
+  if (transaction.version !== 0) throw invalidTransaction("standard-native transaction version must be 0");
+  return {
+    version: 0,
+    inputs: transaction.inputs.map((input) => ({
+      previousOutpoint: { txid: input.transactionId, index: input.index },
+      signatureScript: input.signatureScript,
+      sequence: input.sequence,
+      sigOpCount: input.sigOpCount,
+      utxo: { ...input.utxo },
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant,
+    })),
+    lockTime: transaction.lockTime ?? "0",
+    subnetworkId: transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID,
+    gas: transaction.gas ?? "0",
+    payload: transaction.payload ?? "",
+    ...(transaction.storageMass !== undefined ? { storageMass: transaction.storageMass } : {}),
+  };
+}
+
 function parseSafeInput(value: unknown, position: number): SafeTransactionInput {
   if (!isRecord(value)) throw invalidTransaction(`transaction input ${position} must be an object`);
   const previous = isRecord(value.previousOutpoint) ? value.previousOutpoint : value;
@@ -866,9 +1018,13 @@ function parseSafeInput(value: unknown, position: number): SafeTransactionInput 
 
 function parseSafeOutput(value: unknown, position: number): SafeTransactionOutput {
   if (!isRecord(value)) throw invalidTransaction(`transaction output ${position} must be an object`);
+  if (value.covenant !== undefined && value.covenant !== null) {
+    throw invalidTransaction(`transaction output ${position} covenant must be null`);
+  }
   return {
     value: uintStringValue(value.value, `transaction output ${position} value`),
     scriptPublicKey: serializedScriptValue(value.scriptPublicKey, `transaction output ${position} scriptPublicKey`),
+    covenant: null,
   };
 }
 

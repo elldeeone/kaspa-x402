@@ -37,6 +37,7 @@
     "KASPA_X402_PAY_TO": "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
     "KASPA_X402_SERVER_PUBLIC_KEY": "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
     "KASPA_X402_EXACT_AMOUNT": "20000000",
+    "KASPA_X402_EXACT_PROFILE": "standard-native",
     "KASPA_X402_BATCH_AMOUNT": "500",
     "KASPA_X402_MIN_DEPOSIT_SOMPI": "20000000",
     "KASPA_X402_REFUND_TIMEOUT_DAA_DELTA": "36000",

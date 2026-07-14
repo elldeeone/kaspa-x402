@@ -180,35 +180,48 @@ describe("gateway canary", () => {
     await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 1, reserved: 0 });
   });
 
-  it("advertises exact when hosted settlement is enabled and inventory is available", async () => {
+  it("advertises standard exact without consuming or requiring inventory", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
       ...BASE_ENV,
       GATEWAY_STATE: fakeNamespace(storage),
-      KASPA_X402_ADMIN_TOKEN: "admin-token",
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+    };
+    stubCanaryFetches();
+
+    const supported = await requestJson(env, "/supported");
+    expect((supported.body as { kinds: Array<{ scheme: string; extra: Record<string, unknown> }> }).kinds).toContainEqual(
+      expect.objectContaining({
+        scheme: "exact",
+        extra: expect.objectContaining({ binding: "kaspa-exact-v2", profile: "standard-native" }),
+      }),
+    );
+
+    const exact = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/exact"), env, fakeContext());
+    expect(exact.status).toBe(402);
+    expect(exact.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
+    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ total: 0, available: 0, reserved: 0 });
+  });
+
+  it("keeps legacy additive exact behind PNN inventory until the v2 head pool is enabled", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_EXACT_PROFILE: "additive",
       KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
       KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
       KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
     };
 
-    const registered = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-inventory/register", {
-        method: "POST",
-        headers: { authorization: "Bearer admin-token" },
-        body: JSON.stringify({ record: exactInventory() }),
-      }),
-      env,
-      fakeContext(),
-    );
-    expect(registered.status).toBe(200);
-
     const supported = await requestJson(env, "/supported");
-    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).toContain("exact");
-
-    const exact = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/exact"), env, fakeContext());
-    expect(exact.status).toBe(402);
-    expect(exact.headers.get("PAYMENT-REQUIRED")).toBeTruthy();
-    await expect(new GatewayLedger(storage).exactInventoryStats()).resolves.toMatchObject({ available: 0, reserved: 1 });
+    expect(((supported.body as { kinds: Array<{ scheme: string }> }).kinds ?? []).map((kind) => kind.scheme)).not.toContain("exact");
+    await expect(requestJson(env, "/exact")).resolves.toMatchObject({
+      status: 503,
+      body: { ok: false, error: "exact_unavailable" },
+    });
   });
 
   it("does not partially register invalid inventory batches", async () => {

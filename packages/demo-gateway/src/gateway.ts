@@ -228,6 +228,7 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
 
 async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateClient): Promise<boolean> {
   if (!config.hostedExactSettlementEnabled) return false;
+  if (config.exactProfile === "standard-native") return true;
   if (config.chainBroadcastMode !== "pnn") return false;
   const stats = await state.exactInventoryStats();
   return stats.available > 0;
@@ -242,8 +243,10 @@ function gatewaySupportedKinds(config: GatewayConfig, exactAvailable: boolean): 
       network: config.network,
       extra: {
         asset: "KAS",
-        binding: "kaspa-exact-v1",
-        templateId: "kaspa-x402-kip10-additive-v1",
+        binding: config.exactProfile === "standard-native" ? "kaspa-exact-v2" : "kaspa-exact-v1",
+        ...(config.exactProfile === "standard-native"
+          ? { profile: config.exactProfile }
+          : { templateId: "kaspa-x402-kip10-additive-v1" }),
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
         modes: ["verify", "settle"],
       },
@@ -293,6 +296,7 @@ async function createGateway(
     serverPublicKey: config.serverPublicKey,
     minDepositSompi: config.minDepositSompi,
     amount: config.batchAmount,
+    exactProfile: config.exactProfile,
     refundTimeoutDaa: refundTimeoutDaa.toString(),
     minimumRefundLeadDaa: config.minimumRefundLeadDaa,
     allowRollingRefundTimeoutDaa: true,
@@ -314,7 +318,9 @@ async function createGateway(
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
-    ...(options.exactAvailable ? { exactReservationProvider: new GatewayExactReservationProvider(state) } : {}),
+    ...(options.exactAvailable && config.exactProfile === "additive"
+      ? { exactReservationProvider: new GatewayExactReservationProvider(state) }
+      : {}),
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     requirePaymentIdentifier: false,
@@ -429,6 +435,7 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
         enabled: config.enabled,
         gateway: "kaspa-x402-testnet",
         hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
+        exactProfile: config.exactProfile,
         chainBroadcastMode: config.chainBroadcastMode,
         pnnEndpoints: config.chainBroadcastMode === "pnn" ? config.pnnEndpoints : [],
         chain,
@@ -543,6 +550,7 @@ function skippedCheck(name: string, detail: string): GatewayCanaryCheck {
 
 function exactUnavailableReason(config: GatewayConfig, stats: { available: number }): string {
   if (!config.hostedExactSettlementEnabled) return "hosted gateway exact verifier/broadcast path is not enabled";
+  if (config.exactProfile === "standard-native") return "hosted gateway standard exact is unavailable";
   if (config.chainBroadcastMode !== "pnn") return "hosted gateway exact requires PNN broadcast mode";
   if (stats.available <= 0) return "hosted gateway exact inventory is empty";
   return "hosted gateway exact is unavailable";

@@ -51,11 +51,82 @@
         "properties": {
           "accepted": {
             "properties": {
-              "scheme": {
-                "const": "exact"
+              "scheme": { "const": "exact" },
+              "extra": {
+                "properties": {
+                  "binding": { "const": "kaspa-exact-v2" },
+                  "profile": { "const": "standard-native" }
+                },
+                "required": ["binding", "profile"]
               }
             },
-            "required": ["scheme"]
+            "required": ["scheme", "extra"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "profile": { "const": "standard-native" }
+            },
+            "required": ["profile"],
+            "not": {
+              "required": ["challengeId"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": { "const": "exact" },
+              "extra": {
+                "properties": {
+                  "binding": { "const": "kaspa-exact-v2" },
+                  "profile": { "const": "additive" }
+                },
+                "required": ["binding", "profile"]
+              }
+            },
+            "required": ["scheme", "extra"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "profile": { "const": "additive" }
+            },
+            "required": ["profile", "challengeId"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "exact"
+              },
+              "extra": {
+                "properties": {
+                  "binding": {
+                    "const": "kaspa-exact-v1"
+                  }
+                },
+                "required": ["binding"]
+              }
+            },
+            "required": ["scheme", "extra"]
           },
           "payload": {
             "properties": {

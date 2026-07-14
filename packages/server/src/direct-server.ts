@@ -86,6 +86,7 @@ type ResolvedServerConfig = DirectModeServerConfig &
 	      | "templateId"
 	      | "maxTimeoutSeconds"
 	      | "acceptedFinality"
+	      | "exactProfile"
 	      | "minimumExactAdditiveThresholdSompi"
 	      | "minimumRefundLeadDaa"
 	      | "allowRollingRefundTimeoutDaa"
@@ -117,6 +118,7 @@ export class DirectModeServer {
 	      templateId: "kaspa-x402-escrow-v1",
 	      maxTimeoutSeconds: 60,
 	      acceptedFinality: "accepted",
+	      exactProfile: "standard-native",
 	      minimumExactAdditiveThresholdSompi: "10000000",
 	      minimumRefundLeadDaa: "1000",
 	      allowRollingRefundTimeoutDaa: false,
@@ -162,10 +164,20 @@ export class DirectModeServer {
   }
 
   async #buildRuntimePaymentRequired(options: BuildPaymentRequiredOptions): Promise<PaymentRequired> {
-    if (paymentRequirementSchemes(options).includes("exact") && !options.exactReservation && !this.#config.exactReservationProvider) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements require KIP-10 reservation terms");
+    if (
+      this.#config.exactProfile === "additive" &&
+      paymentRequirementSchemes(options).includes("exact") &&
+      !options.exactReservation &&
+      !this.#config.exactReservationProvider
+    ) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact requirements require head terms");
     }
-    if (this.#config.exactReservationProvider && paymentRequirementSchemes(options).includes("exact") && !options.exactReservation) {
+    if (
+      this.#config.exactProfile === "additive" &&
+      this.#config.exactReservationProvider &&
+      paymentRequirementSchemes(options).includes("exact") &&
+      !options.exactReservation
+    ) {
       const amount = options.amount ?? this.#config.amount;
       const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(this.#config.payTo, this.#config.network);
       const exactReservation = await this.#config.exactReservationProvider.reserveExactPayment({
@@ -197,18 +209,22 @@ export class DirectModeServer {
 
   supportedKinds(): SupportedKind[] {
     const kinds: SupportedKind[] = [];
-    if (this.#config.exactTransactionVerifier && this.#config.exactReservationProvider) {
+    if (
+      this.#config.exactTransactionVerifier &&
+      (this.#config.exactProfile === "standard-native" || this.#config.exactReservationProvider)
+    ) {
       kinds.push({
         x402Version: X402_VERSION,
         scheme: "exact",
         network: this.#config.network,
         extra: {
           asset: this.#config.asset,
-          binding: "kaspa-exact-v1",
-          ...(this.#config.exactReservationProvider
+          binding: this.#config.exactProfile === "standard-native" ? "kaspa-exact-v2" : "kaspa-exact-v1",
+          ...(this.#config.exactProfile === "standard-native" ? { profile: this.#config.exactProfile } : {}),
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          ...(this.#config.exactProfile === "additive"
             ? {
                 templateId: "kaspa-x402-kip10-additive-v1",
-                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
               }
             : {}),
           modes: ["verify", "settle"],
@@ -640,6 +656,13 @@ export class DirectModeServer {
     const accepted = paymentPayload.accepted;
     const payload = paymentPayload.payload;
     validateExactTerms(this.#config, accepted);
+    const profile = exactProfileFromAccepted(accepted);
+    if (
+      (accepted.extra.binding === "kaspa-exact-v2" && payload.profile !== profile) ||
+      (accepted.extra.binding === "kaspa-exact-v1" && payload.profile !== undefined && payload.profile !== "additive")
+    ) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payload profile does not match accepted requirements");
+    }
     if (payload.requestHash && payload.requestHash.toLowerCase() !== requestFingerprint.toLowerCase()) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact payload requestHash does not match request fingerprint");
     }
@@ -647,9 +670,10 @@ export class DirectModeServer {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction verifier is required");
     }
     const payToScriptPublicKey = this.#config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
-    const reservation = await this.#verifiedExactReservation(accepted, payload);
+    const reservation = profile === "additive" ? await this.#verifiedExactReservation(accepted, payload) : undefined;
     const verification = await this.#config.exactTransactionVerifier.verifyExactPayment({
       network: accepted.network,
+      profile,
       transaction: payload.transaction,
       transactionEncoding: payload.transactionEncoding,
       paymentOutputIndex: payload.paymentOutputIndex,
@@ -677,6 +701,7 @@ export class DirectModeServer {
     }
     return {
       scheme: "exact",
+      profile,
       paymentRequired,
       paymentPayload,
       accepted,
@@ -1125,6 +1150,7 @@ export class DirectModeServer {
       ...(verified.payerAddress ? { payer: verified.payerAddress } : {}),
       amount: chargedAmount,
       extensions: kaspaSettlementExtensions({
+        exactProfile: verified.profile,
         paymentOutputIndex: verified.paymentOutputIndex,
         finality: verified.finality,
         requestHash: fingerprint,
@@ -1141,6 +1167,7 @@ export class DirectModeServer {
     return {
       settlement,
       payment: {
+        profile: verified.profile,
         transactionId: verified.transactionId,
         paymentOutputIndex: verified.paymentOutputIndex,
         requestFingerprint: fingerprint,
@@ -1387,20 +1414,30 @@ function makeAcceptedRequirement(
   scheme: "exact" | "batch-settlement",
 ): ExactPaymentRequirements | BatchPaymentRequirements {
   if (scheme === "exact") {
-    if (!options.exactReservation) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact requirements require KIP-10 reservation terms");
+    const amount = options.amount ?? config.amount;
+    if (parseSompiString(amount) <= 0n) {
+      throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment amount must be positive");
     }
-    assertExactReservationPolicy(options.exactReservation, config.minimumExactAdditiveThresholdSompi);
+    const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(config.payTo, config.network);
+    if (config.exactProfile === "additive" && !options.exactReservation) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "additive exact requirements require head terms");
+    }
+    if (options.exactReservation) {
+      assertExactReservationPolicy(options.exactReservation, config.minimumExactAdditiveThresholdSompi);
+    }
     return {
       scheme: "exact",
       network: config.network,
-      amount: options.amount ?? config.amount,
+      amount,
       asset: "KAS",
       payTo: config.payTo,
       maxTimeoutSeconds: config.maxTimeoutSeconds,
       extra: {
-        binding: "kaspa-exact-v1",
+        binding: config.exactProfile === "standard-native" ? "kaspa-exact-v2" : "kaspa-exact-v1",
+        ...(config.exactProfile === "standard-native" ? { profile: config.exactProfile } : {}),
         finality: config.acceptedFinality,
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        payToScriptPublicKey,
         ...(options.exactReservation
           ? {
               templateId: options.exactReservation.templateId,
@@ -1580,10 +1617,20 @@ function validateExactTerms(config: ResolvedServerConfig, accepted: ExactPayment
   if (accepted.payTo !== config.payTo) {
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "payTo does not match server config");
   }
-  if (accepted.extra.binding !== "kaspa-exact-v1") {
+  const expectedBinding = config.exactProfile === "standard-native" ? "kaspa-exact-v2" : "kaspa-exact-v1";
+  if (accepted.extra.binding !== expectedBinding) {
     throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact binding does not match server config");
   }
-  parseSompiString(accepted.amount);
+  if (exactProfileFromAccepted(accepted) !== config.exactProfile) {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact profile does not match server config");
+  }
+  const payToScriptPublicKey = config.addressCodec.scriptPublicKeyForAddress(accepted.payTo, accepted.network);
+  if (accepted.extra.payToScriptPublicKey?.toLowerCase() !== payToScriptPublicKey.toLowerCase()) {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact payTo script does not match server derivation");
+  }
+  if (parseSompiString(accepted.amount) <= 0n) {
+    throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment amount must be positive");
+  }
 }
 
 function exactRequirementMatchesRoute(config: ResolvedServerConfig, accepted: ExactPaymentRequirements, paymentAmount?: SompiString): boolean {
@@ -1593,9 +1640,18 @@ function exactRequirementMatchesRoute(config: ResolvedServerConfig, accepted: Ex
     accepted.payTo === config.payTo &&
     accepted.amount === (paymentAmount ?? config.amount) &&
     accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
-    accepted.extra.binding === "kaspa-exact-v1" &&
+    accepted.extra.binding === (config.exactProfile === "standard-native" ? "kaspa-exact-v2" : "kaspa-exact-v1") &&
+    (config.exactProfile === "additive" || accepted.extra.profile === config.exactProfile) &&
     accepted.extra.finality === config.acceptedFinality
   );
+}
+
+function exactProfileFromAccepted(accepted: ExactPaymentRequirements): "standard-native" | "additive" {
+  if (accepted.extra.binding === "kaspa-exact-v2") {
+    if (accepted.extra.profile === "standard-native" || accepted.extra.profile === "additive") return accepted.extra.profile;
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact v2 requirements must select a profile");
+  }
+  return "additive";
 }
 
 function exactReservationFromAccepted(accepted: ExactPaymentRequirements): ExactBorrowReservation | undefined {

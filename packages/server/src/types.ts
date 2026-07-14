@@ -5,6 +5,7 @@ import type {
   ClaimPolicy,
   ChannelState,
   ExactPaymentRequirements,
+  ExactProfile,
   ExactTransactionEncoding,
   ExactAdditiveTemplateId,
   ExactTransactionPayload,
@@ -82,6 +83,7 @@ export interface ExactBorrowContinuation {
 
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
+  profile: ExactProfile;
   transaction: PreparedTransaction;
   transactionEncoding: ExactTransactionEncoding;
   paymentOutputIndex: number;
@@ -204,6 +206,7 @@ export interface IdempotencyStore {
 }
 
 export interface ExactPaymentRecord {
+  profile: ExactProfile;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
   requestFingerprint: Hash32Hex;
@@ -377,6 +380,8 @@ export interface DirectModeServerConfig {
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  /** Exact wire profile offered by this server. Defaults to standard-native. */
+  exactProfile?: ExactProfile;
   exactReservationProvider?: ExactBorrowReservationProvider;
   minimumExactAdditiveThresholdSompi?: SompiString;
   lockManager?: ChannelLockManager;
@@ -458,6 +463,7 @@ export interface VerifiedExactPayment {
   paymentRequired: PaymentRequired;
   paymentPayload: PaymentPayload & { accepted: ExactPaymentRequirements; payload: ExactTransactionPayload };
   accepted: ExactPaymentRequirements;
+  profile: ExactProfile;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
   transaction?: PreparedTransaction;

@@ -19,6 +19,15 @@
     "payerAddress": {
       "type": "string"
     },
+    "profile": {
+      "enum": [
+        "standard-native",
+        "additive"
+      ]
+    },
+    "challengeId": {
+      "$ref": "#/$defs/hash32"
+    },
     "transaction": {
       "type": "string",
       "minLength": 1

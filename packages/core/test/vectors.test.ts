@@ -435,6 +435,51 @@ describe("full-consensus exact profile vectors", () => {
   });
 });
 
+describe("exact v2 profile schemas", () => {
+  const standardExtra = {
+    binding: "kaspa-exact-v2",
+    profile: "standard-native",
+    finality: "accepted",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    payToScriptPublicKey: `0000${"11".repeat(34)}`,
+  };
+
+  it("accepts inventory-free standard-native terms and rejects additive head fields", () => {
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", standardExtra).ok).toBe(true);
+    expect(
+      validateSchemaById("https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", {
+        ...standardExtra,
+        headId: "22".repeat(32),
+      }).ok,
+    ).toBe(false);
+  });
+
+  it("keeps additive head versions and amounts within uint64", () => {
+    const additiveExtra = {
+      ...standardExtra,
+      profile: "additive",
+      templateId: "kaspa-x402-kip10-additive-v1",
+      headId: "22".repeat(32),
+      headVersion: "1",
+      expectedHeadOutpoint: { txid: "33".repeat(32), index: 0 },
+      headAmount: "100000000",
+      headScriptPublicKey: `0000${"44".repeat(34)}`,
+      headRedeemScript: "51",
+      additiveThresholdSompi: "10000000",
+      challengeId: "55".repeat(32),
+      challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+      paymentOutputIndex: 0,
+    };
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", additiveExtra).ok).toBe(true);
+    expect(
+      validateSchemaById("https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", {
+        ...additiveExtra,
+        headVersion: "18446744073709551616",
+      }).ok,
+    ).toBe(false);
+  });
+});
+
 describe("negative vectors", () => {
   for (const file of listJson("vectors/negative")) {
     it(`rejects ${file} with the expected error`, () => {

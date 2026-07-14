@@ -105,6 +105,34 @@ describe("direct-mode facilitator", () => {
     });
   });
 
+  it("verifies and settles standard-native exact without reservation state", async () => {
+    const { facilitator, server, store } = makeFacilitator({
+      exactProfile: "standard-native",
+      exactReservationProvider: undefined,
+    });
+    const paymentPayload = makeStandardExactPayment(server);
+
+    const verify = await facilitator.verify({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    });
+    const settlement = await facilitator.settle({
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    });
+
+    expect(verify).toMatchObject({ isValid: true, payer: "kaspatest:refund" });
+    expect(settlement).toMatchObject({ success: true, transaction: EXACT_TX_ID, amount: "100" });
+    expect(readKaspaSettlementExtension(settlement)?.exactProfile).toBe("standard-native");
+    await expect(store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+  });
+
   it("honors embedded request hashes for exact-transaction facilitator requests", async () => {
     const { facilitator, server, store } = makeFacilitator();
     const paymentPayload = await makeExactTransactionPayment(server, store);
@@ -764,6 +792,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
         };
       },
     },
+    exactProfile: "additive",
     exactReservationProvider: {
       reserveExactPayment(request) {
         return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
@@ -772,7 +801,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
     ...overrides,
   });
   (server as unknown as { __testChain?: FakeChainProvider }).__testChain = chain;
-  if (!overrides.store) {
+  if (!overrides.store && overrides.exactProfile !== "standard-native") {
     void store.saveExactReservation({
       ...exactReservation(),
       status: "reserved",
@@ -823,6 +852,24 @@ function makeExactPayment(server: DirectModeServer): PaymentPayload {
       transaction: EXACT_TRANSACTION_ARTIFACT,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex: reservation.paymentOutputIndex,
+      requestHash: REQUEST_HASH,
+    },
+  };
+}
+
+function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
+  const required = server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
+  const accepted = required.accepts[0] as ExactPaymentRequirements;
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "exact-transaction",
+      profile: "standard-native",
+      payerAddress: "kaspatest:refund",
+      transaction: EXACT_TRANSACTION_ARTIFACT,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
       requestHash: REQUEST_HASH,
     },
   };

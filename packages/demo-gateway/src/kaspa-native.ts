@@ -55,6 +55,17 @@ export function encodeScriptAddress(input: DeriveEscrowAddressInput): string {
   return encodeAddress(prefixForNetwork(input.network), ADDRESS_VERSION_SCRIPT_HASH, payload);
 }
 
+export function addressForScriptPublicKey(serializedScriptPublicKey: string, network: NetworkId): string {
+  const { version, script } = parseSerializedScriptPublicKey(serializedScriptPublicKey);
+  if (version !== SCRIPT_PUBLIC_KEY_VERSION) {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "script public key version must be 0");
+  }
+  const payload = standardScriptAddressPayload(script);
+  const addressVersion = script.byteLength === 35 && script[0] === OP_DATA_33 ? ADDRESS_VERSION_PUB_KEY_ECDSA :
+    script.byteLength === 35 && script[0] === OP_BLAKE2B ? ADDRESS_VERSION_SCRIPT_HASH : ADDRESS_VERSION_PUB_KEY;
+  return encodeAddress(prefixForNetwork(network), addressVersion, payload);
+}
+
 export function verifyKaspaSchnorrDigest(input: { digest: string; signature: string; publicKey: string }): boolean {
   try {
     const signature = hexToBytes(input.signature, { expectedLength: 64, errorCode: "invalid_kaspa_signature", label: "voucher.signature" });

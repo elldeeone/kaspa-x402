@@ -211,12 +211,17 @@ class MockFundingProvider {
   }
 
   async payExactTransaction(request) {
-    const transaction = mockTransaction(`exact-transaction:${request.reservation.reservationId}:${request.amount}`);
+    const paymentIdentity =
+      request.profile === "additive"
+        ? request.reservation?.reservationId
+        : `${request.profile}:${request.payTo}:${request.amount}`;
+    if (!paymentIdentity) throw new Error("additive exact requires reservation terms");
+    const transaction = mockTransaction(`exact-transaction:${paymentIdentity}`);
     return {
       transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       transactionId: mockHash(`chain-broadcast:${transaction}`),
-      paymentOutputIndex: request.reservation.paymentOutputIndex,
+      paymentOutputIndex: request.paymentOutputIndex ?? request.reservation?.paymentOutputIndex ?? 0,
       payerAddress: REFUND_ADDRESS,
       fundingSource: this.sourceKind,
     };

@@ -155,6 +155,40 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v1");
   });
 
+  it("offers standard-native exact by default without allocating reservation state", async () => {
+    const setup = makeServer({ exactProfile: "standard-native", exactReservationProvider: undefined });
+
+    const response = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, paymentAmount: "20000000", paymentScheme: "exact" },
+      async () => ({ body: "secret" }),
+    );
+
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers[PAYMENT_REQUIRED_HEADER]);
+    expect(required.accepts[0]).toMatchObject({
+      scheme: "exact",
+      amount: "20000000",
+      extra: {
+        binding: "kaspa-exact-v2",
+        profile: "standard-native",
+        finality: "accepted",
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      },
+    });
+    expect((required.accepts[0] as ExactPaymentRequirements).extra.payToScriptPublicKey).toMatch(/^0000/);
+    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+    expect(setup.server.supportedKinds()).toContainEqual(
+      expect.objectContaining({ scheme: "exact", extra: expect.objectContaining({ binding: "kaspa-exact-v2", profile: "standard-native" }) }),
+    );
+  });
+
+  it("rejects zero-value standard-native exact offers", () => {
+    const { server } = makeServer({ exactProfile: "standard-native", exactReservationProvider: undefined });
+    expect(() => server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact", amount: "0" })).toThrow(
+      "exact payment amount must be positive",
+    );
+  });
+
   it("can advertise exact and batch-settlement requirements from one route", async () => {
     const { server } = makeServer({ amount: "100" });
 
@@ -407,6 +441,41 @@ describe("direct-mode server", () => {
     expect(stored?.amount).toBe("100");
     expect(stored?.paymentOutputIndex).toBe(0);
     expect(stored?.response.status).toBe(200);
+  });
+
+  it("verifies and settles standard-native exact before protected work without reservation state", async () => {
+    const setup = makeServer({ exactProfile: "standard-native", exactReservationProvider: undefined });
+    const payment = makeStandardExactPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithPayment(payment, { paymentScheme: "exact" }), async () => {
+      executed = true;
+      return { body: "standard", chargedAmount: "100" };
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("standard");
+    expect(executed).toBe(true);
+    const stored = await setup.store.loadExactPayment(EXACT_TX_ID);
+    expect(stored).toMatchObject({ profile: "standard-native", amount: "100", paymentOutputIndex: 0 });
+    expect(readKaspaSettlementExtension(stored!.settlement)?.exactProfile).toBe("standard-native");
+    await expect(setup.store.loadExactReservation(EXACT_RESERVATION_ID)).resolves.toBeUndefined();
+  });
+
+  it("rejects a mismatched standard-native payload profile before protected work", async () => {
+    const setup = makeServer({ exactProfile: "standard-native", exactReservationProvider: undefined });
+    const payment = makeStandardExactPayment(setup);
+    (payment.payload as { profile?: string }).profile = "additive";
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(requestWithRawPaymentPayload(payment, { paymentScheme: "exact" }), async () => {
+      executed = true;
+      return { body: "secret" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
   });
 
   it("accepts an exact transaction selected from a mixed route", async () => {
@@ -2228,6 +2297,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         };
       },
     },
+    exactProfile: "additive",
     exactReservationProvider: {
       reserveExactPayment(request) {
         return exactReservation({ borrowScriptPublicKey: request.payToScriptPublicKey });
@@ -2275,6 +2345,23 @@ function makeExactPayment(
       ...(options.requestHash ? { requestHash: options.requestHash } : {}),
     },
     ...(options.paymentIdentifier ? paymentIdentifierExtension(options.paymentIdentifier) : {}),
+  };
+}
+
+function makeStandardExactPayment(setup: ReturnType<typeof makeServer>): PaymentPayload {
+  const required = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" });
+  const accepted = required.accepts[0] as ExactPaymentRequirements;
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "exact-transaction",
+      profile: "standard-native",
+      payerAddress: "kaspatest:refund",
+      transaction: EXACT_TX_ID,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+    },
   };
 }
 

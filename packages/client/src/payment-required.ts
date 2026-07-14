@@ -99,7 +99,9 @@ function narrowKaspaPaymentRequired(paymentRequired: PaymentRequired | PaymentRe
 
 function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirement is ExactPaymentRequirements | BatchPaymentRequirements {
   if (requirement.asset !== "KAS") return false;
-  if (requirement.scheme === "exact") return requirement.extra.binding === "kaspa-exact-v1";
+  if (requirement.scheme === "exact") {
+    return requirement.extra.binding === "kaspa-exact-v1" || requirement.extra.binding === "kaspa-exact-v2";
+  }
   return (
     requirement.scheme === "batch-settlement" &&
     requirement.extra.binding === "kaspa-escrow-v1" &&
@@ -110,7 +112,7 @@ function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirem
 function validateSupportedRequirement(accepted: ExactPaymentRequirements | BatchPaymentRequirements): void {
   parseSompiString(accepted.amount);
   if (accepted.scheme === "exact") {
-    validateExactReservationTerms(accepted);
+    validateExactTerms(accepted);
   }
   if (accepted.scheme === "batch-settlement") {
     parseSompiString(accepted.extra.minDepositSompi);
@@ -118,8 +120,20 @@ function validateSupportedRequirement(accepted: ExactPaymentRequirements | Batch
   }
 }
 
-function validateExactReservationTerms(accepted: ExactPaymentRequirements): void {
+function validateExactTerms(accepted: ExactPaymentRequirements): void {
+  if (parseSompiString(accepted.amount) <= 0n) {
+    throw new KaspaX402Error("invalid_kaspa_x402_amount", "exact payment amount must be positive");
+  }
   const extra = accepted.extra;
+  if (extra.binding === "kaspa-exact-v2") {
+    if (extra.profile !== "standard-native" && extra.profile !== "additive") {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact v2 requirements must select a profile");
+    }
+    if (extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" || typeof extra.payToScriptPublicKey !== "string") {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact v2 requirements must bind transaction encoding and payTo script");
+    }
+    if (extra.profile === "standard-native") return;
+  }
   const hasReservation =
     extra.templateId !== undefined ||
     extra.transactionEncoding !== undefined ||

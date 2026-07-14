@@ -8,9 +8,10 @@ export type SignatureHex = string;
 export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v1" | "kaspa-escrow-v1";
+export type KaspaBinding = "kaspa-exact-v1" | "kaspa-exact-v2" | "kaspa-escrow-v1";
 export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
+export type ExactProfile = "standard-native" | "additive";
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -31,17 +32,33 @@ export interface BasePaymentRequirements<TScheme extends PaymentScheme, TExtra e
 }
 
 export interface ExactRequirementsExtra extends JsonRecord {
-  binding: "kaspa-exact-v1";
+  binding: "kaspa-exact-v1" | "kaspa-exact-v2";
+  profile?: ExactProfile;
   finality?: "mempool" | "accepted" | "confirmed";
+  payToScriptPublicKey?: ByteHex;
   templateId?: ExactAdditiveTemplateId;
   transactionEncoding?: ExactTransactionEncoding;
+  headId?: Hash32Hex;
+  headVersion?: SompiString;
+  expectedHeadOutpoint?: FundingOutpoint;
+  headAmount?: SompiString;
+  headScriptPublicKey?: ByteHex;
+  headRedeemScript?: ByteHex;
+  challengeId?: Hash32Hex;
+  challengeExpiresAt?: string;
+  /** @deprecated alpha.7 reservation field; use expectedHeadOutpoint. */
   borrowOutpoint?: FundingOutpoint;
+  /** @deprecated alpha.7 reservation field; use headAmount. */
   borrowAmount?: SompiString;
+  /** @deprecated alpha.7 reservation field; use headScriptPublicKey. */
   borrowScriptPublicKey?: ByteHex;
+  /** @deprecated alpha.7 reservation field; use headRedeemScript. */
   borrowRedeemScript?: ByteHex;
   additiveThresholdSompi?: SompiString;
   paymentOutputIndex?: number;
+  /** @deprecated alpha.7 exclusive reservation identifier; use challengeId. */
   reservationId?: Hash32Hex;
+  /** @deprecated alpha.7 exclusive reservation expiry; use challengeExpiresAt. */
   reservationExpiresAt?: string;
   assetKind?: "native";
   assetDecimals?: 8;
@@ -127,6 +144,8 @@ export interface ChannelState extends JsonRecord {
 
 export interface ExactTransactionPayload extends JsonRecord {
   type: "exact-transaction";
+  profile?: ExactProfile;
+  challengeId?: Hash32Hex;
   payerAddress?: string;
   transaction: string;
   transactionEncoding: ExactTransactionEncoding;
@@ -189,6 +208,7 @@ export interface SettlementResponseExtra extends JsonRecord {
   finality?: "mempool" | "accepted" | "confirmed";
   requestHash?: Hash32Hex;
   transactionEncoding?: ExactTransactionEncoding;
+  exactProfile?: ExactProfile;
   templateId?: ExactAdditiveTemplateId;
   reservationId?: Hash32Hex;
   borrowOutpoint?: FundingOutpoint;

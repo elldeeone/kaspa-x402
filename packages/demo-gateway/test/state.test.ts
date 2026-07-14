@@ -329,6 +329,7 @@ function settlementCommit(previous: ServerChannelRecord, next: Partial<ServerCha
 
 function exactPayment(overrides: Partial<ExactPaymentRecord> = {}): ExactPaymentRecord {
   return {
+    profile: "additive",
     transactionId: TX,
     paymentOutputIndex: 0,
     requestFingerprint: REQUEST,

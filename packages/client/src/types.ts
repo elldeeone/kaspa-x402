@@ -3,6 +3,7 @@ import type {
   ByteHex,
   ChannelConfig,
   ExactPaymentRequirements,
+  ExactProfile,
   ExactTransactionEncoding,
   FundingOutpoint,
   Hash32Hex,
@@ -59,8 +60,11 @@ export interface EscrowDepositResult {
 
 export interface ExactPaymentRequest {
   network: NetworkId;
+  profile: ExactProfile;
   amount: SompiString;
   payTo: string;
+  payToScriptPublicKey?: ByteHex;
+  paymentOutputIndex?: number;
   requestHash?: Hash32Hex;
   requiredFinality?: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
@@ -80,7 +84,7 @@ export interface ExactPaymentRequest {
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
-  reservation: NonNullable<ExactPaymentRequest["reservation"]>;
+  reservation?: NonNullable<ExactPaymentRequest["reservation"]>;
 }
 
 export interface ExactTransactionPaymentResult {
