@@ -283,7 +283,7 @@ function checkContent() {
     "docs/testnet-gateway.md",
     "docs/demo-interop-checklist.md",
   ]) {
-    assertContains(path.join(outDir, relative), "not fund", `${relative} hosted-gateway funding warning`);
+    assertContains(path.join(outDir, relative), "paid-canary", `${relative} current-alpha paid-canary evidence`);
   }
 }
 

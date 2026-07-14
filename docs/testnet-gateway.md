@@ -1,7 +1,8 @@
 # Testnet Gateway
 
-Status: historical alpha.6 testnet deployment. Do not fund the hosted gateway
-until this page records an alpha.7 redeploy and paid canary.
+Status: live, paid-canary-proven alpha.7 `kaspa:testnet-10` integration
+deployment. Funded exact, replay, batch, and absolute-DAA canaries passed on
+2026-07-14.
 
 The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
@@ -12,18 +13,17 @@ continuation recycling, absolute DAA refund handling, and claim recovery. The
 separate TN10 full live harness passed from alpha.7 source on 2026-07-14 and is
 recorded in `docs/live-testnet-report.md`.
 
-Hosted status: the Worker was last deployed and paid-canary proven from
-alpha.6 source on 2026-07-09. It has not been redeployed or paid-canary proven
-for alpha.7. A read-only check on 2026-07-14 found the Worker healthy but exact
-inventory empty: `/supported` advertised only `batch-settlement` and `/exact`
-returned `503 exact_unavailable`. Its batch offer still carried the historical
-duration-like `refundTimeoutDaa: "3600"`; alpha.7 requires a freshly computed
-absolute DAA score. Do not fund either hosted scheme until the Worker is
-redeployed from reviewed alpha.7 source and the required paid canaries pass.
+Hosted status: Worker version `d4716742-d771-454d-92d4-83ea5b0d36e9` is live.
+The final paid run settled a KIP-10 exact transaction through TN10 PNN,
+confirmed idempotent replay and cross-resource rejection, reused one batch
+channel for deposit-voucher and voucher-only payments, rejected a stale batch
+replay, and verified a stable absolute refund timeout against the operator node.
+Exact remains inventory-gated; `/exact` returns `503 exact_unavailable` whenever
+the operator has no funded reservation available.
 
 ## Base URL
 
-The historical gateway deployment is reachable at:
+The gateway deployment is reachable at:
 
 ```text
 https://demo.kaspa-x402.org
@@ -69,12 +69,12 @@ enabled and at least one funded KIP-10 borrow UTXO is available in inventory.
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
 
-Configured alpha.7 source terms for a future reviewed redeploy:
+Deployed alpha.7 terms:
 
 - exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
 - batch minimum deposit: `20000000` sompi;
-- batch refund timeout: current virtual DAA plus `36000`;
+- batch refund horizon: current virtual DAA plus at most `36000`;
 - minimum server refund safety lead: `1000` DAA score.
 
 The exact price and batch deposit are on-chain outputs. Because KIP-9 storage
@@ -85,8 +85,10 @@ startup below it.
 Hosted exact uses merchant-owned borrow UTXO inventory and advertises an
 `additiveThresholdSompi` of at least `10000000` sompi.
 
-`KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` is a duration added to a freshly read
-virtual DAA score; the resulting channel field is an absolute score.
+`KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` defines the maximum duration from a
+freshly read virtual DAA score. The Durable Object persists one absolute offer
+timeout so repeated requests can reuse the same covenant channel, then rolls
+that timeout forward only when it reaches the minimum-lead boundary.
 `KASPA_X402_MINIMUM_REFUND_LEAD_DAA` makes the gateway fail closed before the
 escrow reaches that boundary. Kaspa lock-time finality is strict: a refund with
 lock time `T` is eligible only once the contextual DAA score is greater than
@@ -200,7 +202,7 @@ domain. Send it only over TLS to the intended gateway, and do not publish or log
 unused payment headers or transaction material before the paid retry has been
 settled.
 
-The historical alpha.6 `exact-transaction` path requires server-advertised buildable
+The alpha.7 `exact-transaction` path requires server-advertised buildable
 reservation terms, including the borrow redeem script and additive threshold,
 plus a signed SDK-safe JSON transaction artifact. The hosted gateway rejects
 observe-only `exact-transfer` evidence on reserved offers.
@@ -260,6 +262,70 @@ deployment checks completed on 2026-07-06:
   with `invalid_transaction_state` for intentionally fake txid evidence;
 - paid hosted TN10 E2E result: exact, deposit-voucher, voucher-only, and stale
   replay checks passed.
+
+## Alpha.7 Evidence Status
+
+Status: complete for the 2026-07-14 hosted alpha.7 redeploy.
+
+The paid canary first caught a rolling-DAA integration defect: recomputing a
+different absolute timeout for every offer could make a client open a second
+deposit instead of reusing its covenant channel. The deployed fix persists one
+safe absolute timeout in the Durable Object and rolls it forward only at the
+configured minimum-lead boundary. Unit tests and the repeated hosted batch run
+cover the corrected behavior.
+
+Deployment and DAA evidence:
+
+- Worker version: `d4716742-d771-454d-92d4-83ea5b0d36e9`;
+- three consecutive unpaid batch offers advertised the same absolute
+  `refundTimeoutDaa: "516611736"`;
+- operator-node DAA at that check: `516575999`, leaving `35737` DAA of lead;
+- the timeout was below the `500000000000` consensus timestamp boundary;
+- `/health`, `/canary`, `/supported`, unpaid exact, and unpaid batch checks
+  passed after deployment.
+
+Hosted exact proof:
+
+- client RPC evidence source: operator-controlled synced `kaspa:testnet-10`
+  node with UTXO index;
+- Worker broadcast path: public TN10 PNN/WSS JSON endpoints;
+- virtual DAA score at run start: `516576106`;
+- registered borrow outpoints:
+  `ddfed142fdf97785e65667fbf9b535ed2e7bd16f49863000e63b8d2891d3775a:0`
+  and
+  `611650aec4ea3d16d7067a24723e087b3bbb7721d3bd1b8e1a24883de41d0470:0`;
+- borrow amount per item: `100000000` sompi;
+- additive threshold: `10000000` sompi;
+- reservation id:
+  `369ff97aa33d97c7118e1d7165bd4d7ff97b956d206f64f7e921d863794661bb`;
+- transaction artifact SHA-256:
+  `eee877a69e9cbfd3e89961fea7d934c5b4ce7641141318c85bd9bf2b0f737b5b`;
+- exact transaction id:
+  `e6c9238970d9e6b76279674fea611a517158f766b6f372b34501b2529bef89c5`;
+- request result: HTTP `200`, payment output index `1`, charged amount
+  `20000000` sompi, finality `accepted`;
+- identical retry: HTTP `200` with the same settlement transaction;
+- same transaction against `/exact/report`: HTTP `409`,
+  `invalid_transaction_state`;
+- inventory after settlement: `2` available, `5` consumed, `14` retired. The
+  accepted transaction's verifier-derived continuation was registered
+  atomically.
+
+Hosted batch proof:
+
+- virtual DAA score at run start: `516575867`;
+- channel id:
+  `d50c638480087fb096224b6094bcba5f13c82b5b19f21637c97ea516efbf4cec`;
+- funding outpoint:
+  `e553adf26c97f580e7fe5670e0bcfa0a2a8291f7599902c477ad053ccc1fe859:0`;
+- funding amount: `20000000` sompi;
+- deposit-voucher: HTTP `200`, opened channel `true`, settlement commitment
+  `ff11f9d6ea7563d90537b08704f35907d9740a2ffa58f6bf840dd7ff318a4e08`;
+- voucher-only reuse: HTTP `200`, opened channel `false`, settlement commitment
+  `88f9933573f28f948fa7d3fc5e378b002435378fe2cc180d6e43396b2d5cd16d`;
+- cumulative charged and signed maximum after reuse: `1000` sompi;
+- stale deposit-voucher replay: corrective HTTP `402`,
+  `invalid_payment_requirements`, with the current channel state.
 
 ## Alpha.6 Evidence Status
 

@@ -101,6 +101,7 @@ export type GatewayStateMethod =
   | "reserveExactInventory"
   | "listExactInventory"
   | "exactInventoryStats"
+  | "resolveBatchRefundTimeoutDaa"
   | "commitSettlement"
   | "commitExactPayment"
   | "loadOpenClaimAttempt"
@@ -389,6 +390,28 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
+  async resolveBatchRefundTimeoutDaa(
+    currentDaa: string,
+    refundDeltaDaa: string,
+    minimumLeadDaa: string,
+  ): Promise<string> {
+    const current = parseSompiString(currentDaa);
+    const delta = parseSompiString(refundDeltaDaa);
+    const minimumLead = parseSompiString(minimumLeadDaa);
+    if (delta <= minimumLead) throw new Error("refund DAA delta must exceed minimum lead");
+    const next = current + delta;
+    return this.#storage.transaction(async (txn) => {
+      const key = batchRefundTimeoutKey();
+      const stored = await txn.get<string>(key);
+      if (stored !== undefined) {
+        const timeout = parseSompiString(stored);
+        if (current + minimumLead < timeout && timeout <= next) return timeout.toString();
+      }
+      await txn.put(key, next.toString());
+      return next.toString();
+    });
+  }
+
   async loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {
     return cloneOrUndefined(await this.#storage.get<GatewayCanaryReport>(canaryReportKey()));
   }
@@ -447,6 +470,7 @@ export type GatewayStateClient = ServerStateStore & {
   reserveExactInventory(request: ExactBorrowReservationRequest, nowIso?: string): Promise<ExactBorrowReservation | undefined>;
   listExactInventory(): Promise<GatewayExactInventoryRecord[]>;
   exactInventoryStats(nowIso?: string): Promise<GatewayExactInventoryStats>;
+  resolveBatchRefundTimeoutDaa(currentDaa: string, refundDeltaDaa: string, minimumLeadDaa: string): Promise<string>;
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
   saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
@@ -497,6 +521,10 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
       return ledger.listExactInventory();
     case "exactInventoryStats":
       return ledger.exactInventoryStats(readPayload<{ nowIso?: string }>(request).nowIso);
+    case "resolveBatchRefundTimeoutDaa": {
+      const payload = readPayload<{ currentDaa: string; refundDeltaDaa: string; minimumLeadDaa: string }>(request);
+      return ledger.resolveBatchRefundTimeoutDaa(payload.currentDaa, payload.refundDeltaDaa, payload.minimumLeadDaa);
+    }
     case "commitSettlement":
       return ledger.commitSettlement(readPayload<{ record: SettlementCommit }>(request).record);
     case "commitExactPayment":
@@ -629,6 +657,10 @@ function rateKey(scope: string, resetAt: number): string {
 
 function canaryReportKey(): string {
   return "canary:latest";
+}
+
+function batchRefundTimeoutKey(): string {
+  return "batch:refund-timeout-daa";
 }
 
 function metricKey(name: string): string {

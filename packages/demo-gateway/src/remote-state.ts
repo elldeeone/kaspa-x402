@@ -101,6 +101,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("exactInventoryStats", { nowIso });
   }
 
+  resolveBatchRefundTimeoutDaa(currentDaa: string, refundDeltaDaa: string, minimumLeadDaa: string): Promise<string> {
+    return this.#call("resolveBatchRefundTimeoutDaa", { currentDaa, refundDeltaDaa, minimumLeadDaa });
+  }
+
   loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {
     return this.#call("loadOpenClaimAttempt", { channelId });
   }

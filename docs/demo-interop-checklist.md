@@ -13,8 +13,8 @@ the site without repository context.
 | Can a reader find the canonical schemas? | Yes. `/schemas/` lists every schema with a purpose note and hash. |
 | Can a reader find the supported schemes and networks? | Yes. The homepage, specs, and gateway docs state `exact`, `batch-settlement`, `kaspa:testnet-10`, and `KAS`. |
 | Can a reader run fixture validation? | Yes. `/vectors/` groups fixtures by directory and `npm run validate:schemas` validates committed fixtures locally. |
-| Can a reader hit a real endpoint? | Read-only only. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch`, but it has not been redeployed or paid-canary proven for alpha.7. |
-| Does the endpoint advertise current payable terms? | No. On 2026-07-14 exact inventory was empty and the historical batch deployment advertised `refundTimeoutDaa: "3600"`, not the freshly computed absolute DAA required by alpha.7. Do not fund the offer. |
+| Can a reader hit a real endpoint? | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch` from the paid-canary-proven alpha.7 Worker. |
+| Does the endpoint advertise current payable terms? | Yes. Exact is inventory-gated; batch advertises a persisted absolute DAA timeout that remains within the configured rolling horizon and stable for channel reuse. |
 | Does the endpoint publish operational status? | Yes. `/health` exposes chain evidence, metrics, enabled state, and latest canary when present; `/canary` exposes enabled state and the stored canary report after the scheduled job has run, including a release-snapshot freshness check. |
 | Does the public material imply mainnet readiness? | No. The site and gateway docs frame the deployment as alpha and `kaspa:testnet-10` only. |
 | Does the site publish internal planning or review drafts? | No. The site checker blocks ignored planning files, review files, and private announcement drafts. |
@@ -31,8 +31,8 @@ Recommended external manual checks:
 5. Call `GET https://demo.kaspa-x402.org/batch` and decode
    `PAYMENT-REQUIRED`.
 6. Submit a foreign-scheme retry and confirm `unsupported_scheme`.
-7. Do not submit funds until the gateway reference records an alpha.7 redeploy,
-   a valid absolute refund DAA, and funded exact and batch canaries.
+7. Compare the advertised absolute refund DAA with a trusted TN10 node and
+   confirm the gateway reference records the current funded canaries.
 
 ## Current Limitations
 
@@ -47,8 +47,7 @@ Recommended external manual checks:
 
 ## Acceptance Verdict
 
-The static schemas, vectors, and unpaid endpoint shapes are suitable for alpha
-interoperability inspection on `kaspa:testnet-10`. The hosted deployment is not
-suitable for funded testing until it is redeployed and paid-canary proven from
-alpha.7 source. It is not suitable for mainnet funds, production use, or
+The static schemas, vectors, endpoint shapes, and paid-canary-proven hosted
+deployment are suitable for alpha interoperability testing on
+`kaspa:testnet-10`. They are not suitable for mainnet funds, production use, or
 unreviewed third-party custody patterns.

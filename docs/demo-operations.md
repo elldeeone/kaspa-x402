@@ -7,11 +7,11 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment warning: the Worker was last paid-canary proven from
-alpha.6 source. A 2026-07-14 read-only check found exact inventory empty and
-the historical batch Worker advertising `refundTimeoutDaa: "3600"`. That is
-not the absolute DAA required by alpha.7. Do not fund the hosted deployment
-until the alpha.7 cutover and paid canaries below are complete.
+Current deployment: alpha.7 Worker version
+`d4716742-d771-454d-92d4-83ea5b0d36e9`. Funded exact, idempotent and
+cross-resource replay, batch deposit/voucher, stale-voucher, and absolute-DAA
+checks passed on 2026-07-14. Exact remains available only while funded KIP-10
+reservation inventory exists.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
@@ -30,7 +30,7 @@ Important non-secret variables:
 | `KASPA_X402_SERVER_PUBLIC_KEY` | Testnet server public key advertised in batch escrow terms. |
 | `KASPA_X402_EXACT_AMOUNT` | Exact-payment price in sompi. Must be at least `10000000`. |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI` | Batch escrow deposit floor. Must be at least `10000000`. |
-| `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` | Rolling DAA duration added to a freshly read virtual DAA score when constructing an offer. |
+| `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary. |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA` | Minimum remaining DAA lead required before accepting a batch payment. |
 | `KASPA_X402_SITE_BASE_URL` | Standards site base URL used by canary checks. |
 | `KASPA_X402_GATEWAY_BASE_URL` | Gateway base URL used by canary checks. |
@@ -196,8 +196,6 @@ broad public guidance until the failed check is understood and fixed.
 ## Manual Paid Canary
 
 Use an isolated testnet key. Do not import a key that controls mainnet funds.
-Do not run this canary against the historical deployment until alpha.7 has
-been deployed and an unpaid batch offer shows a fresh absolute refund DAA.
 
 Minimum manual paid checks:
 
@@ -221,7 +219,8 @@ Record transaction ids, output indexes, Worker version, response status, and
 The committed hosted exact proof seeds funded inventory, registers it through
 the admin API, pays `/exact` with a signed exact transaction artifact, confirms
 the Worker-broadcast transaction is accepted, retries the same payment for
-idempotency, and leaves at least one inventory item available by default:
+idempotency, rejects the same transaction on a different resource, and leaves
+at least one inventory item available by default:
 
 ```sh
 KASPA_X402_RPC_URL=<tn10-rpc-url> \
@@ -303,9 +302,11 @@ Alpha.7 DAA and continuation cutover:
 
 - Deploy only from the reviewed alpha.7 source after all local release checks
   pass.
-- Confirm each unpaid batch offer sets `refundTimeoutDaa` to current virtual
-  DAA plus the configured rolling delta, remains below `500000000000`, and has
-  more than the configured minimum lead.
+- Confirm repeated unpaid batch offers retain one absolute `refundTimeoutDaa`
+  so an active covenant channel remains reusable. Confirm the stored timeout is
+  no more than the configured delta ahead of current virtual DAA, remains below
+  `500000000000`, and has more than the configured minimum lead. It should roll
+  forward only when that minimum-lead boundary is reached.
 - Confirm the exact inventory store recycles only verifier-derived
   continuations and does so atomically with consumption of the original
   reservation.
@@ -313,8 +314,7 @@ Alpha.7 DAA and continuation cutover:
   voucher-only, claim, stale-voucher rejection, and strict post-timeout refund
   checks.
 - Record the Worker version, transaction ids, absolute refund DAA, and canary
-  results in `docs/testnet-gateway.md` before removing the public no-funding
-  warning.
+  results in `docs/testnet-gateway.md`.
 
 ## Rotate Addresses And Keys
 

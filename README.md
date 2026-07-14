@@ -6,8 +6,7 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Historical hosted testnet gateway (do not fund until the current-alpha
-  redeploy and paid canary are recorded): https://demo.kaspa-x402.org
+- Live alpha.7 testnet integration gateway: https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 
 Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked

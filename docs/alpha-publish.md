@@ -8,6 +8,12 @@ Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
 stable version can own `latest`.
 
+Registry workflow note: npm's current release flow stages packages before a
+human proof-of-presence approval. Use npm 11.15 or later to run
+`npm stage publish`, inspect the staged tarball and hash, then approve it with
+2FA using `npm stage approve` or the npmjs.com Staged Packages page. Long-lived
+2FA-bypass tokens are not the release path.
+
 ## Package Set
 
 Public alpha package set:
@@ -101,8 +107,11 @@ Checked locally for alpha.7 on 2026-07-14:
   vulnerabilities. The full development tree retains transitive
   Wrangler/Miniflare advisories.
 
-No alpha.7 package has been published by this review. Registry and dist-tag
-checks remain a release-operator step after publication.
+All four alpha.7 packages were staged and approved with human 2FA on
+2026-07-14 after their tarball hashes were rechecked. Registry readback matched
+all four staged SHA-1 hashes, `alpha` resolved to `0.1.0-alpha.7`, and `latest`
+remained on `0.1.0-alpha.4`. A clean exact-version install imported all four
+packages successfully and reported zero production dependency vulnerabilities.
 
 ## Alpha.6 Registry And Tarball Recheck
 
@@ -189,9 +198,11 @@ Checked for alpha.7 on 2026-07-14:
   continuation replay rejection, and post-timeout refund all passed;
 - the sanitized evidence and transaction ids are recorded in
   `docs/live-testnet-report.md`;
-- the hosted gateway was not redeployed or represented as fresh alpha.7
-  evidence. Its last recorded hosted proof remains the historical alpha.6 run
-  in `docs/testnet-gateway.md`.
+- Worker `d4716742-d771-454d-92d4-83ea5b0d36e9` passed hosted KIP-10 exact,
+  idempotent replay, cross-resource rejection, batch deposit/voucher reuse,
+  stale-voucher rejection, and stable absolute-DAA checks. The exact
+  transaction, channel, timeout, and continuation inventory evidence are
+  recorded in `docs/testnet-gateway.md`.
 
 Checked for alpha.6 on 2026-07-09:
 

@@ -207,6 +207,22 @@ describe("gateway durable ledger", () => {
     await expect(ledger.loadCanaryReport()).resolves.toEqual(report);
   });
 
+  it("keeps one absolute batch refund timeout until the minimum lead is reached", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1000", "1000", "100")).resolves.toBe("2000");
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1500", "1000", "100")).resolves.toBe("2000");
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1899", "1000", "100")).resolves.toBe("2000");
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1900", "1000", "100")).resolves.toBe("2900");
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1901", "1000", "100")).resolves.toBe("2900");
+  });
+
+  it("rejects an invalid persisted batch refund window", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+
+    await expect(ledger.resolveBatchRefundTimeoutDaa("1000", "100", "100")).rejects.toThrow("must exceed minimum lead");
+  });
+
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await ledger.saveChannel(channel());

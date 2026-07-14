@@ -161,6 +161,7 @@ async function runHostedExactProof(input) {
       paymentIdentifier,
       accepted: payment.paymentPayload.accepted,
       payload: payment.paymentPayload.payload,
+      extensions: payment.paymentPayload.extensions,
       transactionArtifactSha256: sha256Hex(payment.paymentPayload.payload.transaction),
     });
     const paid = await submitPayment(exactUrl, payment.paymentPayload, { expectStatus: 200, label: "hosted exact" });
@@ -168,6 +169,13 @@ async function runHostedExactProof(input) {
     const applied = await client.applySettlement(payment, settlement);
     const replay = await submitPayment(exactUrl, payment.paymentPayload, { expectStatus: 200, label: "hosted exact idempotent replay" });
     const replaySettlement = decodePaymentResponseHeader(replay.headers.get(PAYMENT_RESPONSE_HEADER));
+    const crossResourceReplay = await submitPayment(new URL("/exact/report", input.gatewayBase).toString(), payment.paymentPayload, {
+      expectStatus: 409,
+      label: "hosted exact cross-resource replay",
+    });
+    if (crossResourceReplay.body?.error !== "invalid_transaction_state") {
+      throw new Error(`hosted exact cross-resource replay returned unexpected error: ${JSON.stringify(crossResourceReplay.body)}`);
+    }
     const statsAfterPayment = await gatewayAdminRequest(input.gatewayBase, "/admin/exact-inventory", input.adminToken);
     const extra = readKaspaSettlementExtension(settlement);
     const observedPayment = await waitForAddressOutpoint({
@@ -212,6 +220,8 @@ async function runHostedExactProof(input) {
         },
         replayStatus: replay.status,
         replaySettlementTransaction: replaySettlement.transaction,
+        crossResourceReplayStatus: crossResourceReplay.status,
+        crossResourceReplayError: crossResourceReplay.body.error,
       },
       statsAfterPayment: statsAfterPayment.stats,
     };

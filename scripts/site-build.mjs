@@ -119,7 +119,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is a historical testnet integration deployment. Its last recorded paid proof is alpha.6; it has not been redeployed or paid-canary proven for ${escapeHtml(releaseVersion)}. Do not fund its offers until the <a href="/docs/testnet-gateway/">gateway reference</a> records a current redeploy and paid canary.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is a live <code>kaspa:testnet-10</code> integration deployment, paid-canary proven for ${escapeHtml(releaseVersion)}. Exact remains funded-inventory gated; current Worker and transaction evidence are recorded in the <a href="/docs/testnet-gateway/">gateway reference</a>.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -151,7 +151,7 @@ function writeHomePage() {
     <h2>Start here</h2>
     <ul>
       <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
-      <li><strong>Reviewing the historical hosted gateway:</strong> see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>. Do not fund <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> until those pages record an alpha.7 redeploy and paid canary; the <a href="/docs/demo-operations/">operations runbook</a> defines that gate.</li>
+      <li><strong>Testing the hosted gateway:</strong> see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>. The <a href="/docs/demo-operations/">operations runbook</a> defines its testnet-only safety and paid-canary gates.</li>
       <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
       <li><strong>Evaluating the proposal:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
@@ -328,7 +328,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The historical hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> has not been redeployed or paid-canary proven for the current alpha; do not fund it until the <a href="/docs/testnet-gateway/">gateway reference</a> records that gate as complete.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is paid-canary proven for the current alpha; see the <a href="/docs/testnet-gateway/">gateway reference</a> for its Worker, transaction, and inventory status.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -502,7 +502,7 @@ function writePnnSpikeJson() {
       constraints: ["testnet-only", "no implicit key persistence", "manual transaction broadcast only"],
     },
     worker: {
-      status: "historical Worker deployment at https://demo.kaspa-x402.org; current-alpha redeploy and paid canary pending",
+      status: "live alpha.7 Worker deployment at https://demo.kaspa-x402.org; funded paid canaries recorded",
       verifiedCapabilities: [
         "REST chain health",
         "Durable Object state",
@@ -514,7 +514,7 @@ function writePnnSpikeJson() {
         "testnet-only",
         "claim broadcasting disabled",
         "not part of the apex static site",
-        "do not fund until the current-alpha redeploy and paid canary are recorded",
+        "testnet integration only; not a production or mainnet service",
       ],
     },
     packageBoundary: {

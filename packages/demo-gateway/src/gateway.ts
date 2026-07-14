@@ -272,7 +272,16 @@ async function createGateway(
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
   const currentDaa = BigInt(await rest.getVirtualDaaScore());
-  const refundTimeoutDaa = currentDaa + BigInt(config.refundTimeoutDaaDelta);
+  if (currentDaa + BigInt(config.refundTimeoutDaaDelta) >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new Error("computed refund DAA crosses the consensus timestamp boundary");
+  }
+  const refundTimeoutDaa = BigInt(
+    await state.resolveBatchRefundTimeoutDaa(
+      currentDaa.toString(),
+      config.refundTimeoutDaaDelta,
+      config.minimumRefundLeadDaa,
+    ),
+  );
   if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
     throw new Error("computed refund DAA crosses the consensus timestamp boundary");
   }
