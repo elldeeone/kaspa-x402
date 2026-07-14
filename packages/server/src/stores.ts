@@ -117,7 +117,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return record ? clone(record) : undefined;
   }
 
-  async consumeExactReservation(reservationId: Hash32Hex, transactionId: Hash32Hex): Promise<void> {
+  async consumeExactReservation(
+    reservationId: Hash32Hex,
+    transactionId: Hash32Hex,
+    _continuation?: import("./types.js").ExactBorrowContinuation,
+  ): Promise<void> {
     const current = this.#exactReservations.get(reservationId);
     if (!current) {
       throw new Error("exact reservation was not found");

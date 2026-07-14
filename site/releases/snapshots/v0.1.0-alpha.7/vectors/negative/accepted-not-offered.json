@@ -1,0 +1,72 @@
+{
+  "kind": "semantic-negative",
+  "name": "accepted-not-offered",
+  "scenario": "accepted-not-offered",
+  "description": "A retry cannot alter the selected PaymentRequirements object from the server's offers.",
+  "expectedError": "invalid_kaspa_x402_accepted",
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/download.bin"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v1",
+          "finality": "accepted",
+          "templateId": "kaspa-x402-kip10-additive-v1",
+          "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+          "borrowOutpoint": {
+            "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+            "index": 2
+          },
+          "borrowAmount": "1000",
+          "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+          "borrowRedeemScript": "51",
+          "additiveThresholdSompi": "10000000",
+          "paymentOutputIndex": 0,
+          "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "2000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v1",
+        "finality": "accepted",
+        "templateId": "kaspa-x402-kip10-additive-v1",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "borrowOutpoint": {
+          "txid": "5555555555555555555555555555555555555555555555555555555555555555",
+          "index": 2
+        },
+        "borrowAmount": "1000",
+        "borrowScriptPublicKey": "0000abababababababababababababababababababababababababababababababababab",
+        "borrowRedeemScript": "51",
+        "additiveThresholdSompi": "10000000",
+        "paymentOutputIndex": 0,
+        "reservationId": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    },
+    "payload": {
+      "type": "exact-transaction",
+      "transaction": "{\"transaction\":\"signed-kip10-exact\"}",
+      "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+      "paymentOutputIndex": 0
+    }
+  }
+}

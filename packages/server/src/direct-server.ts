@@ -1,5 +1,6 @@
 import {
   X402_VERSION,
+  KASPA_LOCK_TIME_THRESHOLD,
   assertMainnetAllowed,
   bytesToHex,
   channelId,
@@ -86,6 +87,8 @@ type ResolvedServerConfig = DirectModeServerConfig &
 	      | "maxTimeoutSeconds"
 	      | "acceptedFinality"
 	      | "minimumExactAdditiveThresholdSompi"
+	      | "minimumRefundLeadDaa"
+	      | "allowRollingRefundTimeoutDaa"
 	      | "lockManager"
     >
   >;
@@ -115,10 +118,13 @@ export class DirectModeServer {
 	      maxTimeoutSeconds: 60,
 	      acceptedFinality: "accepted",
 	      minimumExactAdditiveThresholdSompi: "10000000",
+	      minimumRefundLeadDaa: "1000",
+	      allowRollingRefundTimeoutDaa: false,
 	      lockManager: new MemoryChannelLockManager(),
       ...config,
 	    };
 	    assertMainnetAllowed(this.#config.network, this.#config.allowMainnet, "DirectModeServer");
+	    assertRefundPolicyConfig(this.#config);
 	  }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
@@ -178,6 +184,9 @@ export class DirectModeServer {
         reservedAt: new Date().toISOString(),
       });
       return paymentRequired;
+    }
+    if (paymentRequirementSchemes(options).includes("batch-settlement")) {
+      await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
     }
     return makePaymentRequired(this.#config, options);
   }
@@ -429,6 +438,15 @@ export class DirectModeServer {
       if (!claim.continuationOutpoint || !claim.continuationScriptPublicKey || !claim.continuationFundingAmount) {
         throw new KaspaX402Error("invalid_kaspa_transaction", "claim transaction must provide continuation channel state");
       }
+      const expectedContinuationFunding = formatSompiString(
+        parseSompiString(preview.channel.fundingAmount) - parseSompiString(claim.claimAmount),
+      );
+      if (claim.continuationFundingAmount !== expectedContinuationFunding) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim continuation amount must equal funding minus the authorized claim",
+        );
+      }
       const attempt: ClaimAttemptRecord = {
         attemptId: claimAttemptId(preview.channel, claim.transaction, claim.claimAmount),
         channelId: preview.channel.channelId,
@@ -667,7 +685,8 @@ export class DirectModeServer {
       transaction: payload.transaction,
       transactionEncoding: payload.transactionEncoding,
       reservation,
-      payerAddress: verification.payerAddress ?? payload.payerAddress,
+      ...(verification.continuation ? { continuation: verification.continuation } : {}),
+      ...(verification.payerAddress ? { payerAddress: verification.payerAddress } : {}),
       finality: verification.finality ?? "mempool",
       ...(verification.finality ? { observedFinality: verification.finality } : {}),
     };
@@ -713,6 +732,7 @@ export class DirectModeServer {
     payload: DepositVoucherPayload,
   ): Promise<VerifiedPayment> {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
+    await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
     if (channelId(payload.channelConfig) !== payload.channelId) {
       throw new KaspaX402Error("invalid_kaspa_channel_id", "channel id does not match channel config");
     }
@@ -782,6 +802,7 @@ export class DirectModeServer {
   ): Promise<VerifiedPayment> {
     const channel = await this.#requireChannel(payload.channelId);
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
+    await this.#assertRefundWindow(channel.channelConfig.refundTimeoutDaa);
     if (channel.status !== "active") {
       throw new KaspaX402Error("invalid_kaspa_channel_id", "channel is not active");
     }
@@ -838,6 +859,33 @@ export class DirectModeServer {
 
   async #minimumActiveReserve(channel: ServerChannelRecord): Promise<bigint> {
     return parseSompiString(await this.#config.chainProvider.estimateClaimFee(channel));
+  }
+
+  async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
+    const timeout = parseSompiString(timeoutDaa);
+    const current = parseSompiString(await this.#config.chainProvider.getVirtualDaaScore());
+    const lead = parseSompiString(this.#config.minimumRefundLeadDaa);
+    if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "refund timeout crosses the consensus timestamp boundary",
+      );
+    }
+    if (current + lead >= timeout) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "escrow is too close to its absolute DAA refund threshold",
+      );
+    }
+    if (this.#config.allowRollingRefundTimeoutDaa) {
+      const horizon = parseSompiString(this.#config.maximumRefundHorizonDaa!);
+      if (timeout > current + horizon) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_x402_payload",
+          "refund timeout exceeds the server rolling DAA horizon",
+        );
+      }
+    }
   }
 
   async #rejectOpenClaimAttempt(channelId: Hash32Hex): Promise<void> {
@@ -980,7 +1028,11 @@ export class DirectModeServer {
       (!verified.accepted.extra.finality || exactFinalityMeets(verified.observedFinality, verified.accepted.extra.finality))
     ) {
       if (verified.reservation) {
-        await this.#config.store.consumeExactReservation(verified.reservation.reservationId, verified.transactionId);
+        await this.#config.store.consumeExactReservation(
+          verified.reservation.reservationId,
+          verified.transactionId,
+          verified.continuation,
+        );
       }
       return { ...verified, finality: verified.observedFinality };
     }
@@ -998,7 +1050,11 @@ export class DirectModeServer {
       throw new KaspaX402Error("invalid_kaspa_transaction", "exact transaction broadcast did not reach advertised finality");
     }
     if (verified.reservation) {
-      await this.#config.store.consumeExactReservation(verified.reservation.reservationId, broadcast.transactionId);
+      await this.#config.store.consumeExactReservation(
+        verified.reservation.reservationId,
+        broadcast.transactionId,
+        verified.continuation,
+      );
     }
     return { ...verified, transactionId: broadcast.transactionId, finality: broadcast.finality };
   }
@@ -1206,6 +1262,7 @@ export class DirectModeServer {
     const channelId = safePaymentChannelId(paymentPayload);
     const channel = channelId ? await this.#config.store.loadChannel(channelId) : undefined;
     const activeChannel = channel?.status === "active" ? channel : undefined;
+    const reusableChannel = activeChannel && (await this.#canReuseCorrectiveChannel(activeChannel)) ? activeChannel : undefined;
     const scheme = paymentPayload.accepted.scheme === "exact" ? paymentPayload.accepted.scheme : requestedScheme;
     const exactReservation = paymentPayload.accepted.scheme === "exact" ? exactReservationFromAccepted(paymentPayload.accepted) : undefined;
     const reusableExactReservation = exactReservation && !shouldRefreshExactReservation(error) ? exactReservation : undefined;
@@ -1215,7 +1272,7 @@ export class DirectModeServer {
       scheme,
       error: errorReason,
       ...(reusableExactReservation ? { exactReservation: reusableExactReservation } : {}),
-      ...(activeChannel ? { channel: activeChannel, voucherState: latestVoucher(activeChannel) } : {}),
+      ...(reusableChannel ? { channel: reusableChannel, voucherState: latestVoucher(reusableChannel) } : {}),
     });
     return {
       ...paymentRequired,
@@ -1229,6 +1286,15 @@ export class DirectModeServer {
     const channel = await this.#config.store.loadChannel(channelId);
     if (!channel) throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     return channel;
+  }
+
+  async #canReuseCorrectiveChannel(channel: ServerChannelRecord): Promise<boolean> {
+    try {
+      await this.#assertRefundWindow(channel.channelConfig.refundTimeoutDaa);
+      return true;
+    } catch {
+      return false;
+    }
   }
 
   async #expectedPaymentRequired(
@@ -1255,8 +1321,36 @@ export class DirectModeServer {
     }
     const channel = await this.#config.store.loadChannel(payloadChannelId);
     const acceptedExtra = accepted.extra;
-    if (!channel || channel.status !== "active" || (!acceptedExtra.channelState && !acceptedExtra.voucherState)) {
+    if (!channel || channel.status !== "active") {
+      if (
+        this.#config.allowRollingRefundTimeoutDaa &&
+        paymentPayload.payload.type === "deposit-voucher" &&
+        !acceptedExtra.channelState &&
+        !acceptedExtra.voucherState &&
+        batchRequirementMatchesRoute(this.#config, accepted, paymentAmount)
+      ) {
+        return {
+          x402Version: X402_VERSION,
+          resource,
+          accepts: [accepted],
+          ...requiredPaymentIdentifierExtensions(this.#config),
+        };
+      }
       return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "batch-settlement" });
+    }
+    if (!acceptedExtra.channelState && !acceptedExtra.voucherState) {
+      if (
+        batchRequirementMatchesRoute(this.#config, accepted, paymentAmount) &&
+        accepted.extra.refundTimeoutDaa === channel.channelConfig.refundTimeoutDaa
+      ) {
+        return {
+          x402Version: X402_VERSION,
+          resource,
+          accepts: [accepted],
+          ...requiredPaymentIdentifierExtensions(this.#config),
+        };
+      }
+      return this.buildPaymentRequired({ resource, amount: paymentAmount, scheme: "batch-settlement", channel });
     }
     return this.buildPaymentRequired({
       resource,
@@ -1337,7 +1431,7 @@ function makeAcceptedRequirement(
       templateId: config.templateId,
       serverPublicKey: config.serverPublicKey,
       minDepositSompi: config.minDepositSompi,
-      refundTimeoutDaa: config.refundTimeoutDaa,
+      refundTimeoutDaa: options.channel?.channelConfig.refundTimeoutDaa ?? config.refundTimeoutDaa,
       ...(config.claimPolicy ? { claimPolicy: config.claimPolicy } : {}),
       ...(options.channel ? { channelState: channelState(options.channel) } : {}),
       ...(options.voucherState ? { voucherState: options.voucherState } : {}),
@@ -1584,8 +1678,59 @@ function validateChannelTerms(config: ResolvedServerConfig, accepted: BatchPayme
   if (accepted.extra.templateId !== config.templateId || channelConfig.templateId !== config.templateId) {
     throw new KaspaX402Error("invalid_kaspa_x402_binding", "template id does not match server config");
   }
-  if (accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa || channelConfig.refundTimeoutDaa !== config.refundTimeoutDaa) {
+  if (accepted.extra.refundTimeoutDaa !== channelConfig.refundTimeoutDaa) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "refund timeout does not match channel config");
+  }
+  if (!config.allowRollingRefundTimeoutDaa && accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa) {
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "refund timeout does not match server config");
+  }
+}
+
+function batchRequirementMatchesRoute(
+  config: ResolvedServerConfig,
+  accepted: BatchPaymentRequirements,
+  paymentAmount?: SompiString,
+): boolean {
+  return (
+    accepted.network === config.network &&
+    accepted.amount === (paymentAmount ?? config.amount) &&
+    accepted.asset === "KAS" &&
+    accepted.payTo === config.payTo &&
+    accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
+    accepted.extra.binding === "kaspa-escrow-v1" &&
+    accepted.extra.templateId === config.templateId &&
+    accepted.extra.serverPublicKey === config.serverPublicKey &&
+    accepted.extra.minDepositSompi === config.minDepositSompi &&
+    ((accepted.extra.claimPolicy === undefined && config.claimPolicy === undefined) ||
+      (accepted.extra.claimPolicy !== undefined &&
+        config.claimPolicy !== undefined &&
+        stableStringify(accepted.extra.claimPolicy) === stableStringify(config.claimPolicy)))
+  );
+}
+
+function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
+  const timeout = parseSompiString(config.refundTimeoutDaa);
+  const lead = parseSompiString(config.minimumRefundLeadDaa);
+  if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "refundTimeoutDaa must remain below the consensus timestamp boundary",
+    );
+  }
+  if (config.allowRollingRefundTimeoutDaa) {
+    if (config.maximumRefundHorizonDaa === undefined) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "maximumRefundHorizonDaa is required for rolling refund timeouts",
+      );
+    }
+    const horizon = parseSompiString(config.maximumRefundHorizonDaa);
+    if (horizon <= lead) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "maximumRefundHorizonDaa must exceed minimumRefundLeadDaa",
+      );
+    }
   }
 }
 

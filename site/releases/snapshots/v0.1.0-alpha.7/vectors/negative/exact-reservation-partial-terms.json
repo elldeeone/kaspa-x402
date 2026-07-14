@@ -1,0 +1,27 @@
+{
+  "kind": "negative",
+  "name": "exact reservation partial terms",
+  "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
+  "value": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.test/file"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "250",
+        "asset": "KAS",
+        "payTo": "kaspatest:payout",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v1",
+          "finality": "accepted",
+          "templateId": "kaspa-x402-kip10-additive-v1"
+        }
+      }
+    ]
+  },
+  "expectedError": "invalid_kaspa_x402_payload"
+}

@@ -1,5 +1,5 @@
 import { describe, expect, it } from "vitest";
-import { MIN_STANDARD_OUTPUT_SOMPI, readGatewayConfig, type GatewayEnv } from "../src/config.js";
+import { MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI, readGatewayConfig, type GatewayEnv } from "../src/config.js";
 
 const BASE_ENV: GatewayEnv = {
   GATEWAY_STATE: {} as DurableObjectNamespace,
@@ -10,24 +10,24 @@ const BASE_ENV: GatewayEnv = {
 };
 
 describe("gateway config", () => {
-  it("rejects exact offers below the Kaspa storage-mass floor", () => {
+  it("rejects exact offers below the reference on-chain output policy", () => {
     expect(() =>
       readGatewayConfig({
         ...BASE_ENV,
         KASPA_X402_EXACT_AMOUNT: "9999999",
-        KASPA_X402_MIN_DEPOSIT_SOMPI: String(MIN_STANDARD_OUTPUT_SOMPI),
+        KASPA_X402_MIN_DEPOSIT_SOMPI: String(MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI),
       }),
-    ).toThrow("KASPA_X402_EXACT_AMOUNT is below Kaspa storage-mass floor 10000000");
+    ).toThrow("KASPA_X402_EXACT_AMOUNT is below reference on-chain output policy 10000000");
   });
 
-  it("rejects batch deposits below the Kaspa storage-mass floor", () => {
+  it("rejects batch deposits below the reference on-chain output policy", () => {
     expect(() =>
       readGatewayConfig({
         ...BASE_ENV,
-        KASPA_X402_EXACT_AMOUNT: String(MIN_STANDARD_OUTPUT_SOMPI),
+        KASPA_X402_EXACT_AMOUNT: String(MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI),
         KASPA_X402_MIN_DEPOSIT_SOMPI: "9999999",
       }),
-    ).toThrow("KASPA_X402_MIN_DEPOSIT_SOMPI is below Kaspa storage-mass floor 10000000");
+    ).toThrow("KASPA_X402_MIN_DEPOSIT_SOMPI is below reference on-chain output policy 10000000");
   });
 
   it("accepts payable exact and batch deposit values", () => {
@@ -40,7 +40,19 @@ describe("gateway config", () => {
     ).toMatchObject({
       exactAmount: "20000000",
       minDepositSompi: "20000000",
+      refundTimeoutDaaDelta: "36000",
+      minimumRefundLeadDaa: "1000",
     });
+  });
+
+  it("requires an absolute refund timeout delta beyond the server safety lead", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_REFUND_TIMEOUT_DAA_DELTA: "1000",
+        KASPA_X402_MINIMUM_REFUND_LEAD_DAA: "1000",
+      }),
+    ).toThrow("KASPA_X402_REFUND_TIMEOUT_DAA_DELTA must exceed KASPA_X402_MINIMUM_REFUND_LEAD_DAA");
   });
 
   it("parses the operator switch and canary base urls", () => {

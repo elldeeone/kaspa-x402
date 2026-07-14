@@ -742,6 +742,7 @@ function makeFacilitator(overrides: Partial<DirectModeServerConfig> = {}, facili
     minDepositSompi: "1000",
     amount: "100",
     refundTimeoutDaa: "1000",
+    minimumRefundLeadDaa: "0",
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
@@ -925,7 +926,7 @@ class FakeAddressCodec implements AddressCodec {
 
 class FakeChainProvider implements ServerChainProvider {
   readonly utxos = new Map<string, ChainUtxo>();
-  daa = "1000";
+  daa = "0";
 
   setUtxo(utxo: ChainUtxo): void {
     this.utxos.set(outpointKey(utxo.outpoint), structuredClone(utxo));

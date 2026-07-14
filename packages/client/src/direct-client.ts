@@ -228,7 +228,7 @@ export class DirectModeClient {
     assertProviderNetwork(this.#options, target.config.network);
 
     const nowDaa = await this.#options.fundingProvider.getVirtualDaaScore();
-    if (parseSompiString(nowDaa) < parseSompiString(target.refundTimeoutDaa)) {
+    if (parseSompiString(nowDaa) <= parseSompiString(target.refundTimeoutDaa)) {
       throw new KaspaX402Error("invalid_kaspa_settlement_response", "channel is not refund-unlocked yet");
     }
     if (!this.#options.signer.signRefund || !this.#options.refundBuilder) {

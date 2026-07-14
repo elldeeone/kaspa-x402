@@ -73,8 +73,12 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("loadExactReservation", { reservationId });
   }
 
-  consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
-    return this.#call("consumeExactReservation", { reservationId, transactionId });
+  consumeExactReservation(
+    reservationId: string,
+    transactionId: string,
+    continuation?: Parameters<GatewayStateClient["consumeExactReservation"]>[2],
+  ): Promise<void> {
+    return this.#call("consumeExactReservation", { reservationId, transactionId, continuation });
   }
 
   registerExactInventory(record: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord> {

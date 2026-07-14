@@ -9,6 +9,7 @@ import type {
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
+import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import { GatewayLedger, type GatewayStorage } from "../src/state.js";
 
 const CHANNEL_ID = "11".repeat(32);
@@ -20,6 +21,8 @@ const OTHER_TX = "66".repeat(32);
 const ATTEMPT = "77".repeat(32);
 const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
+const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
+const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(KIP10_REDEEM_SCRIPT));
 
 describe("gateway durable ledger", () => {
   it("commits exact transaction ids once while allowing identical retries", async () => {
@@ -75,6 +78,14 @@ describe("gateway durable ledger", () => {
   it("leases exact inventory and retires expired unpaid reservations", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await expect(ledger.registerExactInventory(exactInventory({ additiveThresholdSompi: "1" }))).rejects.toThrow("additive threshold");
+    await expect(
+      ledger.registerExactInventory(
+        exactInventory({ borrowRedeemScript: "51", borrowScriptPublicKey: serializedScriptPublicKey(payToScriptHashScript("51")) }),
+      ),
+    ).rejects.toThrow("canonical KIP-10 additive template");
+    await expect(ledger.registerExactInventory(exactInventory({ borrowScriptPublicKey: SCRIPT }))).rejects.toThrow(
+      "redeem script must match borrowScriptPublicKey",
+    );
     await ledger.registerExactInventory(exactInventory());
     await ledger.registerExactInventory(exactInventory());
 
@@ -127,17 +138,28 @@ describe("gateway durable ledger", () => {
     expect(reservation).toBeDefined();
 
     await ledger.saveExactReservation({ ...reservation!, status: "reserved", reservedAt: "2026-07-07T00:00:00.000Z" });
-    await ledger.consumeExactReservation(reservation!.reservationId, TX);
+    await ledger.consumeExactReservation(reservation!.reservationId, TX, {
+      outpoint: { txid: TX, index: 0 },
+      amount: "110000000",
+      scriptPublicKey: reservation!.borrowScriptPublicKey,
+    });
 
-    await expect(ledger.listExactInventory()).resolves.toMatchObject([
-      {
-        inventoryId: `${FUNDING_TX}:0`,
-        status: "consumed",
-        transactionId: TX,
-      },
-    ]);
+    await expect(ledger.listExactInventory()).resolves.toEqual(
+      expect.arrayContaining([
+        expect.objectContaining({
+          inventoryId: `${FUNDING_TX}:0`,
+          status: "consumed",
+          transactionId: TX,
+        }),
+        expect.objectContaining({
+          inventoryId: `${TX}:0`,
+          status: "available",
+          borrowAmount: "110000000",
+        }),
+      ]),
+    );
     await expect(ledger.exactInventoryStats("2026-07-07T00:00:01.000Z")).resolves.toMatchObject({
-      available: 0,
+      available: 1,
       consumed: 1,
     });
   });
@@ -311,8 +333,8 @@ function exactReservation(overrides: Partial<ExactReservationRecord> = {}): Exac
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     borrowOutpoint: { txid: FUNDING_TX, index: 0 },
     borrowAmount: "100000000",
-    borrowScriptPublicKey: SCRIPT,
-    borrowRedeemScript: "51",
+    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
     additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
     status: "reserved",
@@ -328,8 +350,8 @@ function exactInventory(overrides: Partial<Parameters<GatewayLedger["registerExa
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     borrowOutpoint: { txid: FUNDING_TX, index: 0 },
     borrowAmount: "100000000",
-    borrowScriptPublicKey: SCRIPT,
-    borrowRedeemScript: "51",
+    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
     additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
     ...overrides,

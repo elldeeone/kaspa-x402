@@ -340,6 +340,10 @@ export function buildBatchRefundTxV1Artifact(input: BatchRefundTxV1Input): Batch
   const inputSequence = normalizeUint64(input.inputSequence, "inputSequence");
   const refundOutputAmount = activeAmount - fee;
 
+  if (timeoutDaa >= 500_000_000_000n || lockTimeDaa >= 500_000_000_000n) {
+    throw new Error("refund DAA lock times must remain below the consensus timestamp boundary");
+  }
+
   if (fee >= activeAmount) {
     throw new Error("refund amount must exceed the transaction fee");
   }

@@ -6,7 +6,8 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Hosted testnet gateway with live paid endpoints: https://demo.kaspa-x402.org
+- Historical hosted testnet gateway (do not fund until the current-alpha
+  redeploy and paid canary are recorded): https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 
 Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
@@ -37,14 +38,22 @@ The binding ships two x402 schemes:
 }
 ```
 
-`exact` is a fixed-price one-shot native transfer. Alpha.6 uses the preferred
+`exact` is a fixed-price one-shot native transfer. The current alpha uses the
 KIP-10 `exact-transaction` artifact path for reservation-backed direct exact
 settlement. Reservation providers are expected to use merchant-owned borrow
-UTXOs and a non-dust additive top-up threshold.
+UTXOs and a policy-bounded additive top-up threshold.
 `batch-settlement` funds a covenant-backed escrow once and meters repeated or
-variable-cost requests with off-chain vouchers. On-chain outputs must clear
-Kaspa's standard-output storage-mass floor (about 0.1 KAS); batch-settlement
-vouchers price below it.
+variable-cost requests with off-chain vouchers. KIP-9 storage mass makes very
+small on-chain outputs uneconomic or non-constructible depending on the full
+transaction shape; the reference gateway therefore applies a conservative
+`10000000` sompi output policy. This is not a universal consensus dust constant.
+Batch-settlement vouchers can price below the on-chain policy.
+Server claims preserve the covenant continuation at exactly active funding
+minus the voucher-authorized claim; transaction fees reduce the server payout
+or come from a separate server input.
+Batch refund locks are absolute DAA scores below the consensus timestamp
+boundary, and become eligible only after the chain DAA strictly exceeds the
+advertised score.
 
 ## What's Here
 

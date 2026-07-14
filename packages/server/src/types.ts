@@ -74,6 +74,12 @@ export interface ExactTransactionOutput {
   address?: string;
 }
 
+export interface ExactBorrowContinuation {
+  outpoint: FundingOutpoint;
+  amount: SompiString;
+  scriptPublicKey: ByteHex;
+}
+
 export interface ExactTransactionVerificationRequest {
   network: NetworkId;
   transaction: PreparedTransaction;
@@ -92,6 +98,8 @@ export interface ExactTransactionVerification {
   paymentOutput: ExactTransactionOutput;
   finality?: "mempool" | "accepted" | "confirmed";
   payerAddress?: string;
+  /** Canonical KIP-10 continuation verified from the signed transaction. */
+  continuation?: ExactBorrowContinuation;
 }
 
 export interface ExactTransactionVerifier {
@@ -259,7 +267,11 @@ export interface ExactPaymentStore {
   commitExactPayment(record: ExactSettlementCommit): Promise<void>;
   saveExactReservation(record: ExactReservationRecord): Promise<void>;
   loadExactReservation(reservationId: Hash32Hex): Promise<ExactReservationRecord | undefined>;
-  consumeExactReservation(reservationId: Hash32Hex, transactionId: Hash32Hex): Promise<void>;
+  consumeExactReservation(
+    reservationId: Hash32Hex,
+    transactionId: Hash32Hex,
+    continuation?: ExactBorrowContinuation,
+  ): Promise<void>;
 }
 
 export type ClaimAttemptStatus = "pending" | "broadcast" | "accepted" | "applied";
@@ -353,6 +365,12 @@ export interface DirectModeServerConfig {
   minDepositSompi: SompiString;
   amount: SompiString;
   refundTimeoutDaa: SompiString;
+  /** Minimum remaining DAA-score distance before accepting a voucher. */
+  minimumRefundLeadDaa?: SompiString;
+  /** Allows a previously advertised absolute timeout within the configured rolling window. */
+  allowRollingRefundTimeoutDaa?: boolean;
+  /** Required when rolling timeouts are enabled. */
+  maximumRefundHorizonDaa?: SompiString;
   maxTimeoutSeconds?: number;
   store: ServerStateStore;
   chainProvider: ServerChainProvider;
@@ -445,6 +463,7 @@ export interface VerifiedExactPayment {
   transaction?: PreparedTransaction;
   transactionEncoding?: ExactTransactionEncoding;
   reservation?: ExactBorrowReservation;
+  continuation?: ExactBorrowContinuation;
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
   observedFinality?: "mempool" | "accepted" | "confirmed";

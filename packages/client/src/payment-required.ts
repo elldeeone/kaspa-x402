@@ -1,5 +1,6 @@
 import {
   X402_VERSION,
+  KASPA_LOCK_TIME_THRESHOLD,
   decodePaymentRequiredEnvelopeHeader,
   narrowPaymentRequiredEnvelope,
   parseSompiString,
@@ -78,7 +79,7 @@ export function selectBatchPaymentRequired(
 
   parseSompiString(accepted.amount);
   parseSompiString(accepted.extra.minDepositSompi);
-  parseSompiString(accepted.extra.refundTimeoutDaa);
+  assertDaaLockTime(accepted.extra.refundTimeoutDaa);
 
   return {
     paymentRequired: narrowed,
@@ -113,7 +114,7 @@ function validateSupportedRequirement(accepted: ExactPaymentRequirements | Batch
   }
   if (accepted.scheme === "batch-settlement") {
     parseSompiString(accepted.extra.minDepositSompi);
-    parseSompiString(accepted.extra.refundTimeoutDaa);
+    assertDaaLockTime(accepted.extra.refundTimeoutDaa);
   }
 }
 
@@ -157,6 +158,15 @@ function validateExactReservationTerms(accepted: ExactPaymentRequirements): void
   }
   if (extra.reservationExpiresAt !== undefined && Number.isNaN(Date.parse(extra.reservationExpiresAt))) {
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation expiry must be an ISO date string");
+  }
+}
+
+function assertDaaLockTime(value: string): void {
+  if (parseSompiString(value) >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "refundTimeoutDaa must remain below the consensus timestamp boundary",
+    );
   }
 }
 

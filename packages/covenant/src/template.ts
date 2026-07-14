@@ -52,6 +52,11 @@ export interface Kip10AdditiveTemplateParams {
   amount: bigint | number | string;
 }
 
+export interface ParsedKip10AdditiveRedeemScript {
+  ownerPublicKey: string;
+  amount: string;
+}
+
 export interface ClaimOutputPlan {
   inputAmount: bigint | number | string;
   voucherAmount: bigint | number | string;
@@ -74,6 +79,7 @@ export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v1";
 export const ESCROW_VOUCHER_DOMAIN_TAG = "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12";
 export const KIP10_ADDITIVE_TEMPLATE_ID = "kaspa-x402-kip10-additive-v1";
 export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
+export const KASPA_LOCK_TIME_THRESHOLD = 500_000_000_000n;
 
 export const CLAIM_SCRIPT_UNITS_ESTIMATE = 200_544;
 export const REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
@@ -103,6 +109,9 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   const payoutScriptPublicKeyHash = hexToBytes(params.payoutScriptPublicKeyHash, 32, "payoutScriptPublicKeyHash");
   const refundScriptPublicKeyHash = hexToBytes(params.refundScriptPublicKeyHash, 32, "refundScriptPublicKeyHash");
   const timeout = normalizeUint64(params.timeoutDaa, "timeoutDaa");
+  if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new Error("timeoutDaa must remain below the consensus timestamp boundary");
+  }
   const network = networkHash(params.network);
 
   return bytesToHex(
@@ -140,12 +149,50 @@ export function buildKip10AdditiveRedeemScript(params: Kip10AdditiveTemplatePara
   );
 }
 
+/**
+ * Parses the canonical additive-threshold KIP-10 template used by exact
+ * payments. The parser deliberately accepts only the byte-for-byte canonical
+ * script form produced by {@link buildKip10AdditiveRedeemScript}; semantically
+ * similar scripts are not interchangeable reservation terms.
+ */
+export function parseKip10AdditiveRedeemScript(redeemScript: string): ParsedKip10AdditiveRedeemScript {
+  const bytes = hexToBytes(redeemScript, undefined, "redeemScript");
+  const fixedPrefix = Uint8Array.of(0x63, 0x20);
+  const opcodes = Uint8Array.of(0xac, 0x67, 0xb9, 0xbf, 0xb9, 0xc3, 0x88, 0xb9, 0xc2);
+  const suffix = Uint8Array.of(0x94, 0xb9, 0xbe, 0xa2, 0x68);
+  const minimumLength = fixedPrefix.length + 32 + opcodes.length + 1 + suffix.length;
+  if (bytes.length < minimumLength || bytes[0] !== fixedPrefix[0] || bytes[1] !== fixedPrefix[1]) {
+    throw new Error("redeemScript is not the canonical KIP-10 additive template");
+  }
+
+  const owner = bytes.slice(2, 34);
+  if (!bytesEqual(bytes.slice(34, 43), opcodes)) {
+    throw new Error("redeemScript is not the canonical KIP-10 additive template");
+  }
+  const { value: amount, nextOffset } = readNonNegativeScriptNumber(bytes, 43);
+  if (!bytesEqual(bytes.slice(nextOffset), suffix)) {
+    throw new Error("redeemScript is not the canonical KIP-10 additive template");
+  }
+
+  const parsed = { ownerPublicKey: bytesToHex(owner), amount: amount.toString() };
+  if (buildKip10AdditiveRedeemScript(parsed) !== bytesToHex(bytes)) {
+    throw new Error("redeemScript must use canonical KIP-10 script-number encoding");
+  }
+  return parsed;
+}
+
 export function kip10AdditiveScriptPublicKey(params: Kip10AdditiveTemplateParams): ScriptPublicKey {
   return payToScriptHashScript(buildKip10AdditiveRedeemScript(params));
 }
 
 export function buildKip10AdditiveBorrowArgs(): string {
   return "00";
+}
+
+export function buildKip10AdditiveBorrowSignatureScript(redeemScript: string): string {
+  const canonical = parseKip10AdditiveRedeemScript(redeemScript);
+  const script = hexToBytes(buildKip10AdditiveRedeemScript(canonical), undefined, "redeemScript");
+  return bytesToHex(concatBytes([Uint8Array.of(0x00), pushData(script)]));
 }
 
 export function escrowScriptPublicKey(params: EscrowTemplateParams): ScriptPublicKey {
@@ -339,6 +386,34 @@ function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return output;
+}
+
+function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {
+  if (left.length !== right.length) return false;
+  return left.every((byte, index) => byte === right[index]);
+}
+
+function readNonNegativeScriptNumber(bytes: Uint8Array, offset: number): { value: bigint; nextOffset: number } {
+  const opcode = bytes[offset];
+  if (opcode === undefined) throw new Error("redeemScript is missing the additive threshold");
+  if (opcode === 0x00) return { value: 0n, nextOffset: offset + 1 };
+  if (opcode >= 0x51 && opcode <= 0x60) return { value: BigInt(opcode - 0x50), nextOffset: offset + 1 };
+  if (opcode < 0x01 || opcode > 0x08 || offset + 1 + opcode > bytes.length) {
+    throw new Error("redeemScript has an invalid KIP-10 additive threshold");
+  }
+
+  const numberBytes = bytes.slice(offset + 1, offset + 1 + opcode);
+  if ((numberBytes[numberBytes.length - 1] ?? 0) & 0x80) {
+    throw new Error("redeemScript KIP-10 additive threshold must be non-negative");
+  }
+  let value = 0n;
+  for (let index = numberBytes.length - 1; index >= 0; index -= 1) {
+    value = (value << 8n) | BigInt(numberBytes[index] ?? 0);
+  }
+  if (value > 0x7fff_ffff_ffff_ffffn) {
+    throw new Error("redeemScript KIP-10 additive threshold must fit in signed 64-bit script number");
+  }
+  return { value, nextOffset: offset + 1 + opcode };
 }
 
 function normalizeUint64(value: bigint | number | string, label: string): bigint {

@@ -2,8 +2,11 @@ import {
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
   KaspaX402Error,
+  KASPA_LOCK_TIME_THRESHOLD,
   toX402ErrorReason,
+  X402_VERSION,
   type ResourceInfo,
+  type SupportedKind,
 } from "@kaspa-x402/core";
 import {
   DirectModeServer,
@@ -61,10 +64,9 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (url.pathname === "/metrics" && request.method === "GET") return json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) });
   if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
 
-  const exactAvailable = await hostedExactAvailable(config, state);
-  const gateway = createGateway(config, state, { exactAvailable });
   if (url.pathname === "/supported" && request.method === "GET") {
-    return json({ ok: true, enabled: config.enabled, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
+    const exactAvailable = await hostedExactAvailable(config, state);
+    return json({ ok: true, enabled: config.enabled, kinds: gatewaySupportedKinds(config, exactAvailable) }, { headers: corsHeaders(config) });
   }
 
   const profile = routeProfile(url.pathname);
@@ -75,16 +77,24 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (!config.enabled) {
     return json({ ok: false, error: "gateway_disabled" }, { status: 503, headers: corsHeaders(config) });
   }
-  if (profile === "exact" && !gateway.server.supportedKinds().some((kind) => kind.scheme === "exact")) {
-    return json({ ok: false, error: "exact_unavailable" }, { status: 503, headers: corsHeaders(config) });
-  }
-
   const rate = await state.checkRateLimit(rateScope(request, profile), Date.now(), config.rateLimitPerMinute, 60_000);
   if (!rate.allowed) {
     return json(
       { ok: false, error: "rate_limited", resetAt: new Date(rate.resetAt).toISOString() },
       { status: 429, headers: { ...corsHeaders(config), "retry-after": String(Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000))) } },
     );
+  }
+
+  const exactAvailable = profile === "exact" ? await hostedExactAvailable(config, state) : false;
+  if (profile === "exact" && !exactAvailable) {
+    return json({ ok: false, error: "exact_unavailable" }, { status: 503, headers: corsHeaders(config) });
+  }
+
+  let gateway: { server: DirectModeServer };
+  try {
+    gateway = await createGateway(config, state, { exactAvailable });
+  } catch (error) {
+    return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(config) });
   }
 
   const resource = resourceFor(url, profile);
@@ -223,10 +233,49 @@ async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateCl
   return stats.available > 0;
 }
 
-function createGateway(config: GatewayConfig, state: GatewayStateClient, options: { exactAvailable: boolean }): { server: DirectModeServer } {
+function gatewaySupportedKinds(config: GatewayConfig, exactAvailable: boolean): SupportedKind[] {
+  const kinds: SupportedKind[] = [];
+  if (exactAvailable) {
+    kinds.push({
+      x402Version: X402_VERSION,
+      scheme: "exact",
+      network: config.network,
+      extra: {
+        asset: "KAS",
+        binding: "kaspa-exact-v1",
+        templateId: "kaspa-x402-kip10-additive-v1",
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        modes: ["verify", "settle"],
+      },
+    });
+  }
+  kinds.push({
+    x402Version: X402_VERSION,
+    scheme: "batch-settlement",
+    network: config.network,
+    extra: {
+      asset: "KAS",
+      binding: "kaspa-escrow-v1",
+      templateId: "kaspa-x402-escrow-v1",
+      modes: ["verify", "settle"],
+    },
+  });
+  return kinds;
+}
+
+async function createGateway(
+  config: GatewayConfig,
+  state: GatewayStateClient,
+  options: { exactAvailable: boolean },
+): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
+  const currentDaa = BigInt(await rest.getVirtualDaaScore());
+  const refundTimeoutDaa = currentDaa + BigInt(config.refundTimeoutDaaDelta);
+  if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new Error("computed refund DAA crosses the consensus timestamp boundary");
+  }
   const restChainProvider = new RestKaspaChainProvider(rest, book, config.claimFeeSompi);
   const store = new AddressRecordingStore(state, book);
   const server = new DirectModeServer({
@@ -235,7 +284,10 @@ function createGateway(config: GatewayConfig, state: GatewayStateClient, options
     serverPublicKey: config.serverPublicKey,
     minDepositSompi: config.minDepositSompi,
     amount: config.batchAmount,
-    refundTimeoutDaa: config.refundTimeoutDaa,
+    refundTimeoutDaa: refundTimeoutDaa.toString(),
+    minimumRefundLeadDaa: config.minimumRefundLeadDaa,
+    allowRollingRefundTimeoutDaa: true,
+    maximumRefundHorizonDaa: config.refundTimeoutDaaDelta,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     store,
     chainProvider:
@@ -333,8 +385,12 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.loadExactReservation(reservationId);
   }
 
-  consumeExactReservation(reservationId: string, transactionId: string) {
-    return this.#inner.consumeExactReservation(reservationId, transactionId);
+  consumeExactReservation(
+    reservationId: string,
+    transactionId: string,
+    continuation?: Parameters<ServerStateStore["consumeExactReservation"]>[2],
+  ) {
+    return this.#inner.consumeExactReservation(reservationId, transactionId, continuation);
   }
 
   loadOpenClaimAttempt(channelId: string) {

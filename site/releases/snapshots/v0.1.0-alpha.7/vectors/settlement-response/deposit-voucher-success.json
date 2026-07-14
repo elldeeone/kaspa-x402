@@ -1,0 +1,30 @@
+{
+  "kind": "settlement-response",
+  "description": "Deposit-voucher success reports the request charge as top-level amount and escrow funding in extensions.kaspa.",
+  "response": {
+    "success": true,
+    "transaction": "7777777777777777777777777777777777777777777777777777777777777777",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "extensions": {
+      "kaspa": {
+        "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "fundingAmount": "90000000",
+        "chargedAmount": "700000",
+        "channelState": {
+          "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+          "activeOutpoint": {
+            "txid": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+            "index": 0
+          },
+          "activeScriptPublicKey": "00002079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+          "fundingAmount": "90000000",
+          "chargedCumulativeAmount": "700000",
+          "claimedCumulativeAmount": "0",
+          "signedMaxClaimable": "1000000"
+        }
+      }
+    },
+    "amount": "700000"
+  }
+}

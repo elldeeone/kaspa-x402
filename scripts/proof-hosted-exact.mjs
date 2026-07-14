@@ -81,7 +81,7 @@ async function runHostedExactProof(input) {
   const sdkRequire = createRequire(path.resolve(input.sdkPath));
   globalThis.WebSocket = sdkRequire("websocket").w3cwebsocket;
   const sdk = sdkRequire(path.resolve(input.sdkPath));
-  const { schnorr } = sdkRequire("@noble/curves/secp256k1");
+  const { schnorr } = sdkRequire("@noble/curves/secp256k1.js");
   sdk.initConsolePanicHook?.();
 
   const networkId = kaspaNetworkId(input.network);
@@ -273,7 +273,7 @@ function makeFundingProvider(input) {
     networkId: input.network,
     sourceKind: "hot-wallet",
     async getPublicIdentity() {
-      const { schnorr } = createRequire(path.resolve(config.sdkPath))("@noble/curves/secp256k1");
+      const { schnorr } = createRequire(path.resolve(config.sdkPath))("@noble/curves/secp256k1.js");
       return {
         address: input.fundingAddress,
         publicKey: bytesToHex(schnorr.getPublicKey(hexToBytes(loadFundingPrivateKey(config.fundingWallet), { expectedLength: 32 }))),
@@ -480,7 +480,7 @@ async function getAddressUtxos(rpc, address) {
 function makeSigner({ schnorr, dataDir }) {
   return {
     async generateChannelKey() {
-      const privateKey = bytesToHex(schnorr.utils.randomPrivateKey());
+      const privateKey = bytesToHex(schnorr.utils.randomSecretKey());
       const publicKey = bytesToHex(schnorr.getPublicKey(hexToBytes(privateKey, { expectedLength: 32 })));
       fs.writeFileSync(path.join(path.resolve(dataDir), `hosted-exact-client-${Date.now()}-${publicKey.slice(0, 12)}.json`), `${JSON.stringify({ createdAt: new Date().toISOString(), publicKey, privateKey }, null, 2)}\n`, { mode: 0o600 });
       return { privateKey, publicKey };
@@ -569,7 +569,7 @@ function scriptPublicKeyFromSerialized(sdk, serialized) {
 function serializeSdkScriptPublicKey(scriptPublicKey) {
   const script = hexToBytes(String(scriptPublicKey.script));
   const version = Number(scriptPublicKey.version ?? 0);
-  return bytesToHex(Uint8Array.from([version & 0xff, (version >>> 8) & 0xff, ...script]));
+  return bytesToHex(Uint8Array.from([(version >>> 8) & 0xff, version & 0xff, ...script]));
 }
 
 function loadFundingPrivateKey(specifier) {

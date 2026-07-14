@@ -29,7 +29,7 @@ const exactReplay = await facilitator.verify({
   resource: { url: "https://api.example.test/download" },
   requestHash: mockHash("exact-replay-other-request"),
 });
-const refundable = await client.listRefundableChannels("1000");
+const refundable = await client.listRefundableChannels("1001");
 
 console.log(
   JSON.stringify(

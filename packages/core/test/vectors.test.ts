@@ -17,6 +17,7 @@ import {
   isKaspaX402Network,
   mcpPaymentRequiredResult,
   mcpSettlementFailureResult,
+  MCP_PAYMENT_RESPONSE_META_KEY,
   narrowPaymentRequiredEnvelope,
   paymentIdentifierExtension,
   parseSompiString,
@@ -369,6 +370,30 @@ describe("settlement response vectors", () => {
       }
     });
   }
+
+  it("rejects successful responses without exact or batch settlement evidence", () => {
+    const malformed = {
+      success: true,
+      transaction: "",
+      network: "kaspa:testnet-10",
+      amount: "700000",
+    };
+    const header = Buffer.from(JSON.stringify(malformed), "utf8").toString("base64");
+
+    expectFailureCode(
+      validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", malformed),
+      "invalid_kaspa_settlement_response",
+    );
+    expect(() => decodePaymentResponseHeader(header)).toThrow("settlement-response.schema.json");
+    expect(() => readMcpPaymentResponse({ _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: malformed } })).toThrow(
+      "settlement-response.schema.json",
+    );
+
+    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const voucher = readJson<{ response: SettlementResponse }>("vectors/settlement-response/voucher-only-success.json");
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", exact.settlementResponse).ok).toBe(true);
+    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", voucher.response).ok).toBe(true);
+  });
 });
 
 describe("negative vectors", () => {

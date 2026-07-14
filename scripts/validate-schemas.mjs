@@ -120,7 +120,7 @@ function classifyInvalidValue(schemaId, value) {
   }
 
   if (schemaId === "https://kaspa-x402.org/schemas/settlement-response.schema.json") {
-    if (value?.success === true && value?.transaction === "" && value?.extensions?.kaspa?.commitmentId) return "invalid_kaspa_settlement_response";
+    if (value?.success === true && value?.transaction === "") return "invalid_kaspa_settlement_response";
     if (typeof value?.transaction === "string" && !/^(?:|[0-9a-fA-F]{64})$/.test(value.transaction)) return "invalid_kaspa_transaction";
     return "invalid_kaspa_settlement_response";
   }

@@ -1,4 +1,4 @@
-import { ASSET_ID, CHANNEL_DOMAIN_TAG, ESCROW_TEMPLATE_ID } from "./constants.js";
+import { ASSET_ID, CHANNEL_DOMAIN_TAG, ESCROW_TEMPLATE_ID, KASPA_LOCK_TIME_THRESHOLD } from "./constants.js";
 import { bytesToHex, concatBytes, hexToBytes, le64, sha256 } from "./binary.js";
 import { KaspaX402Error } from "./errors.js";
 import { parseKaspaNetwork } from "./network.js";
@@ -11,6 +11,12 @@ export function channelIdPreimage(input: ChannelConfig): Uint8Array {
   }
   if (input.templateId !== ESCROW_TEMPLATE_ID) {
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "unsupported channel template id");
+  }
+  if (BigInt(input.refundTimeoutDaa) >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "refundTimeoutDaa must remain below the consensus timestamp boundary",
+    );
   }
 
   return concatBytes([

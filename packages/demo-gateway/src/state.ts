@@ -1,7 +1,9 @@
 import { parseSompiString, sha256Hex, type NetworkId } from "@kaspa-x402/core";
+import { parseKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import type {
   BatchCommitmentRecord,
   ChannelLockManager,
+  ExactBorrowContinuation,
   ExactBorrowReservation,
   ExactBorrowReservationRequest,
   ClaimAttemptRecord,
@@ -207,19 +209,23 @@ export class GatewayLedger implements ServerStateStore {
     return cloneOrUndefined(await this.#storage.get<ExactReservationRecord>(exactReservationKey(reservationId)));
   }
 
-  async consumeExactReservation(reservationId: string, transactionId: string): Promise<void> {
+  async consumeExactReservation(
+    reservationId: string,
+    transactionId: string,
+    continuation?: ExactBorrowContinuation,
+  ): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const current = await txn.get<ExactReservationRecord>(exactReservationKey(reservationId));
       if (!current) throw new Error("exact reservation was not found");
       if (current.status === "consumed") {
         if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) {
-          await markInventoryConsumed(txn, reservationId, transactionId);
+          await markInventoryConsumed(txn, reservationId, transactionId, continuation);
           return;
         }
         throw new Error("exact reservation was already consumed by a different transaction");
       }
       await txn.put(exactReservationKey(reservationId), { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
-      await markInventoryConsumed(txn, reservationId, transactionId);
+      await markInventoryConsumed(txn, reservationId, transactionId, continuation);
     });
   }
 
@@ -468,8 +474,16 @@ export async function dispatchGatewayState(ledger: GatewayLedger, request: Gatew
     case "loadExactReservation":
       return ledger.loadExactReservation(readPayload<{ reservationId: string }>(request).reservationId);
     case "consumeExactReservation": {
-      const payload = readPayload<{ reservationId: string; transactionId: string }>(request);
-      return ledger.consumeExactReservation(payload.reservationId, payload.transactionId);
+      const payload = readPayload<{
+        reservationId: string;
+        transactionId: string;
+        continuation?: ExactBorrowContinuation;
+      }>(request);
+      return ledger.consumeExactReservation(
+        payload.reservationId,
+        payload.transactionId,
+        payload.continuation,
+      );
     }
     case "registerExactInventory":
       return ledger.registerExactInventory(readPayload<{ record: GatewayExactInventoryRegistration }>(request).record);
@@ -671,8 +685,16 @@ function normalizeExactInventoryRegistration(input: GatewayExactInventoryRegistr
   if (!/^(?:[0-9a-f]{2})+$/i.test(input.borrowRedeemScript)) throw new Error("exact inventory borrow redeem script must be byte hex");
   const borrowAmount = parseSompiString(input.borrowAmount);
   const additiveThreshold = parseSompiString(input.additiveThresholdSompi);
-  if (borrowAmount < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory borrow amount is below the standard output floor");
+  if (borrowAmount < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory borrow amount is below the standard output safety floor");
   if (additiveThreshold < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory additive threshold is below the server minimum");
+  const template = parseKip10AdditiveRedeemScript(input.borrowRedeemScript);
+  if (template.amount !== input.additiveThresholdSompi) {
+    throw new Error("exact inventory KIP-10 script threshold must match additiveThresholdSompi");
+  }
+  const expectedBorrowScript = serializedScriptPublicKey(payToScriptHashScript(input.borrowRedeemScript)).toLowerCase();
+  if (expectedBorrowScript !== input.borrowScriptPublicKey.toLowerCase()) {
+    throw new Error("exact inventory KIP-10 redeem script must match borrowScriptPublicKey");
+  }
   if (!Number.isInteger(input.paymentOutputIndex) || input.paymentOutputIndex < 0 || input.paymentOutputIndex > 0xffffffff) {
     throw new Error("exact inventory payment output index is outside uint32 range");
   }
@@ -747,7 +769,12 @@ async function retireExpiredExactInventory(txn: GatewayTransaction, nowMs: numbe
   return retired;
 }
 
-async function markInventoryConsumed(txn: GatewayTransaction, reservationId: string, transactionId: string): Promise<void> {
+async function markInventoryConsumed(
+  txn: GatewayTransaction,
+  reservationId: string,
+  transactionId: string,
+  continuation?: ExactBorrowContinuation,
+): Promise<void> {
   const inventoryId = await txn.get<string>(exactInventoryReservationKey(reservationId));
   if (!inventoryId) return;
   const current = await txn.get<GatewayExactInventoryRecord>(exactInventoryKey(inventoryId));
@@ -756,17 +783,59 @@ async function markInventoryConsumed(txn: GatewayTransaction, reservationId: str
     if (current.transactionId?.toLowerCase() !== transactionId.toLowerCase()) {
       throw new Error("exact inventory was already consumed by a different transaction");
     }
+  } else {
+    if (current.reservationId?.toLowerCase() !== reservationId.toLowerCase()) return;
+    const nowIso = new Date().toISOString();
+    await txn.put(exactInventoryKey(current.inventoryId), {
+      ...clone(current),
+      status: "consumed",
+      transactionId: transactionId.toLowerCase(),
+      consumedAt: nowIso,
+      updatedAt: nowIso,
+    });
+  }
+  if (!continuation) return;
+  const txid = transactionId.toLowerCase();
+  if (continuation.outpoint.txid.toLowerCase() !== txid) {
+    throw new Error("exact continuation outpoint must belong to the consumed transaction");
+  }
+  if (continuation.scriptPublicKey.toLowerCase() !== current.borrowScriptPublicKey) {
+    throw new Error("exact continuation script must match the consumed KIP-10 inventory");
+  }
+  if (
+    parseSompiString(continuation.amount) <
+    parseSompiString(current.borrowAmount) + parseSompiString(current.additiveThresholdSompi)
+  ) {
+    throw new Error("exact continuation amount is below the KIP-10 additive threshold");
+  }
+  const nowIso = new Date().toISOString();
+  const recycled = normalizeExactInventoryRegistration(
+    {
+      network: current.network,
+      templateId: current.templateId,
+      transactionEncoding: current.transactionEncoding,
+      borrowOutpoint: {
+        txid,
+        index: continuation.outpoint.index,
+      },
+      borrowAmount: continuation.amount,
+      borrowScriptPublicKey: continuation.scriptPublicKey,
+      borrowRedeemScript: current.borrowRedeemScript,
+      additiveThresholdSompi: current.additiveThresholdSompi,
+      paymentOutputIndex: current.paymentOutputIndex,
+      note: `recycled from ${current.inventoryId}`,
+    },
+    nowIso,
+  );
+  const key = exactInventoryKey(recycled.inventoryId);
+  const existing = await txn.get<GatewayExactInventoryRecord>(key);
+  if (existing) {
+    if (stableJson(exactInventoryTerms(existing)) !== stableJson(exactInventoryTerms(recycled))) {
+      throw new Error("exact continuation inventory already exists with different terms");
+    }
     return;
   }
-  if (current.reservationId?.toLowerCase() !== reservationId.toLowerCase()) return;
-  const nowIso = new Date().toISOString();
-  await txn.put(exactInventoryKey(current.inventoryId), {
-    ...clone(current),
-    status: "consumed",
-    transactionId: transactionId.toLowerCase(),
-    consumedAt: nowIso,
-    updatedAt: nowIso,
-  });
+  await txn.put(key, recycled);
 }
 
 function compareExactInventory(left: GatewayExactInventoryRecord, right: GatewayExactInventoryRecord): number {

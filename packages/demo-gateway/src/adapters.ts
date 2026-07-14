@@ -13,6 +13,8 @@ import type {
 } from "@kaspa-x402/server";
 import {
   KIP10_EXACT_TRANSACTION_ENCODING,
+  buildKip10AdditiveBorrowSignatureScript,
+  parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
   type DeriveEscrowAddressInput,
@@ -21,6 +23,13 @@ import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDiges
 
 type FetchLike = typeof fetch;
 type SleepLike = (ms: number) => Promise<void>;
+
+const NATIVE_SUBNETWORK_ID = "00".repeat(20);
+const MAX_SAFE_TRANSACTION_ARTIFACT_CHARS = 128 * 1024;
+const MAX_SAFE_TRANSACTION_INPUTS = 64;
+const MAX_SAFE_TRANSACTION_OUTPUTS = 64;
+const MAX_SAFE_TRANSACTION_FEE_SOMPI = 100_000_000n;
+const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
 type PnnRpc = {
   connect(): Promise<void>;
@@ -399,9 +408,14 @@ class JsonPnnRpc implements PnnRpc {
 
 export class RestExactTransactionVerifier implements ExactTransactionVerifier {
   readonly #client: KaspaRestClient;
+  readonly #maxFeeSompi: bigint;
 
-  constructor(client: KaspaRestClient) {
+  constructor(client: KaspaRestClient, options: { maxFeeSompi?: bigint | string } = {}) {
     this.#client = client;
+    this.#maxFeeSompi = BigInt(options.maxFeeSompi ?? MAX_SAFE_TRANSACTION_FEE_SOMPI);
+    if (this.#maxFeeSompi < 0n || this.#maxFeeSompi > U64_MAX) {
+      throw new Error("maxFeeSompi must fit in uint64");
+    }
   }
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
@@ -414,6 +428,7 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
       throw invalidTransaction("hosted exact verification requires KIP-10 reservation terms");
     }
     const transaction = parseSafeTransactionArtifact(request.transaction);
+    assertExactTransactionEnvelope(transaction, this.#maxFeeSompi);
     const paymentOutput = transaction.outputs[request.paymentOutputIndex];
     if (!paymentOutput) throw invalidTransaction("exact transaction is missing payment output");
     if (paymentOutput.scriptPublicKey !== request.payToScriptPublicKey.toLowerCase()) {
@@ -424,10 +439,17 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     }
 
     const reservation = request.reservation;
+    const template = parseKip10AdditiveRedeemScript(reservation.borrowRedeemScript);
+    if (template.amount !== reservation.additiveThresholdSompi) {
+      throw invalidTransaction("exact transaction KIP-10 script threshold does not match reservation");
+    }
     const borrowInputIndex = transaction.inputs.findIndex(
       (input) => input.transactionId === reservation.borrowOutpoint.txid.toLowerCase() && input.index === reservation.borrowOutpoint.index,
     );
     if (borrowInputIndex < 0) throw invalidTransaction("exact transaction does not spend the reserved borrow outpoint");
+    if (borrowInputIndex === request.paymentOutputIndex) {
+      throw invalidTransaction("exact transaction payment output cannot replace the KIP-10 continuation output");
+    }
     const advertisedBorrowScript = serializedScriptPublicKey(payToScriptHashScript(reservation.borrowRedeemScript)).toLowerCase();
     if (advertisedBorrowScript !== reservation.borrowScriptPublicKey.toLowerCase()) {
       throw invalidTransaction("exact transaction borrow redeem script does not match reservation script public key");
@@ -439,6 +461,9 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     if (borrowInput.utxo.amount !== reservation.borrowAmount) {
       throw invalidTransaction("exact transaction borrow input amount does not match reservation");
     }
+    if (borrowInput.signatureScript !== buildKip10AdditiveBorrowSignatureScript(reservation.borrowRedeemScript)) {
+      throw invalidTransaction("exact transaction borrow input does not select the canonical KIP-10 borrower branch");
+    }
     const continuation = transaction.outputs[borrowInputIndex];
     if (!continuation) throw invalidTransaction("exact transaction is missing KIP-10 continuation output");
     if (continuation.scriptPublicKey !== reservation.borrowScriptPublicKey.toLowerCase()) {
@@ -447,6 +472,11 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
     if (BigInt(continuation.value) < BigInt(reservation.borrowAmount) + BigInt(reservation.additiveThresholdSompi)) {
       throw invalidTransaction("exact transaction KIP-10 continuation amount is below the additive threshold");
     }
+    const duplicatePayment = transaction.outputs.some(
+      (output, index) =>
+        index !== request.paymentOutputIndex && output.scriptPublicKey === paymentOutput.scriptPublicKey && output.value === paymentOutput.value,
+    );
+    if (duplicatePayment) throw invalidTransaction("exact transaction contains an ambiguous duplicate payment output");
 
     const accepted = await this.#client.getTransaction(transaction.id);
     const finality = accepted?.is_accepted ? "accepted" : undefined;
@@ -458,6 +488,11 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
         amount: paymentOutput.value,
         scriptPublicKey: paymentOutput.scriptPublicKey,
         address: request.payTo,
+      },
+      continuation: {
+        outpoint: { txid: transaction.id, index: borrowInputIndex },
+        amount: continuation.value,
+        scriptPublicKey: continuation.scriptPublicKey,
       },
       ...(finality ? { finality } : {}),
     };
@@ -629,6 +664,10 @@ type RestTxAcceptanceResponse = {
 type RestTransaction = {
   transaction_id?: string;
   version?: number;
+  lock_time?: string | number | null;
+  subnetwork_id?: string | null;
+  gas?: string | number | null;
+  payload?: string | null;
   is_accepted?: boolean;
   inputs?: RestTransactionInput[];
   outputs?: RestTransactionOutput[];
@@ -638,6 +677,7 @@ type RestTransactionInput = {
   previous_outpoint_hash?: string;
   previous_outpoint_index?: string | number;
   signature_script?: string;
+  sequence?: string | number | null;
   sig_op_count?: string | number;
   compute_budget?: number;
 };
@@ -729,7 +769,7 @@ function serializeSdkScriptPublicKey(value: unknown): string {
   const script = hexValue(value.script, "Kaspa PNN UTXO script");
   const version = uint32Value(value.version ?? 0, "Kaspa PNN UTXO script version");
   if (version > 0xffff) throw invalidTransaction("Kaspa PNN UTXO script version exceeds uint16");
-  return `${(version & 0xff).toString(16).padStart(2, "0")}${((version >>> 8) & 0xff).toString(16).padStart(2, "0")}${script}`.toLowerCase();
+  return `${((version >>> 8) & 0xff).toString(16).padStart(2, "0")}${(version & 0xff).toString(16).padStart(2, "0")}${script}`.toLowerCase();
 }
 
 function assertTestnet(network: NetworkId): void {
@@ -748,6 +788,9 @@ function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
 }
 
 function parseSafeTransactionArtifact(transaction: PreparedTransaction): SafeTransaction {
+  if (transaction.length > MAX_SAFE_TRANSACTION_ARTIFACT_CHARS) {
+    throw invalidTransaction("exact transaction artifact exceeds the 128 KiB limit");
+  }
   let parsed: unknown;
   try {
     parsed = JSON.parse(transaction);
@@ -755,8 +798,12 @@ function parseSafeTransactionArtifact(transaction: PreparedTransaction): SafeTra
     throw invalidTransaction("exact transaction artifact is not valid safe JSON");
   }
   if (!isRecord(parsed)) throw invalidTransaction("exact transaction artifact must be a JSON object");
-  const inputs = arrayValue(parsed.inputs, "inputs").map((input, index) => parseSafeInput(input, index));
-  const outputs = arrayValue(parsed.outputs, "outputs").map((output, index) => parseSafeOutput(output, index));
+  const inputValues = arrayValue(parsed.inputs, "inputs");
+  const outputValues = arrayValue(parsed.outputs, "outputs");
+  if (inputValues.length > MAX_SAFE_TRANSACTION_INPUTS) throw invalidTransaction("exact transaction has too many inputs");
+  if (outputValues.length > MAX_SAFE_TRANSACTION_OUTPUTS) throw invalidTransaction("exact transaction has too many outputs");
+  const inputs = inputValues.map((input, index) => parseSafeInput(input, index));
+  const outputs = outputValues.map((output, index) => parseSafeOutput(output, index));
   if (inputs.length === 0) throw invalidTransaction("exact transaction artifact must have inputs");
   if (outputs.length === 0) throw invalidTransaction("exact transaction artifact must have outputs");
   return {
@@ -765,11 +812,37 @@ function parseSafeTransactionArtifact(transaction: PreparedTransaction): SafeTra
     inputs,
     outputs,
     ...(parsed.lockTime !== undefined ? { lockTime: uintStringValue(parsed.lockTime, "lockTime") } : {}),
-    ...(typeof parsed.subnetworkId === "string" ? { subnetworkId: hexValue(parsed.subnetworkId, "subnetworkId") } : {}),
+    ...(parsed.subnetworkId !== undefined ? { subnetworkId: hexValue(parsed.subnetworkId, "subnetworkId") } : {}),
     ...(parsed.gas !== undefined ? { gas: uintStringValue(parsed.gas, "gas") } : {}),
-    ...(typeof parsed.payload === "string" ? { payload: hexValue(parsed.payload, "payload") } : {}),
+    ...(parsed.payload !== undefined ? { payload: hexValue(parsed.payload, "payload") } : {}),
     ...(parsed.storageMass !== undefined ? { storageMass: uintStringValue(parsed.storageMass, "storageMass") } : {}),
   };
+}
+
+function assertExactTransactionEnvelope(transaction: SafeTransaction, maxFeeSompi: bigint): void {
+  if (transaction.version !== 1) throw invalidTransaction("KIP-10 exact transaction version must be 1");
+  if ((transaction.lockTime ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction lockTime must be 0");
+  if ((transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID) {
+    throw invalidTransaction("KIP-10 exact transaction must use the native subnetwork");
+  }
+  if ((transaction.gas ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "") throw invalidTransaction("KIP-10 exact transaction payload must be empty");
+  if ((transaction.storageMass ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction storageMass must be 0");
+  for (const [index, input] of transaction.inputs.entries()) {
+    if (!input.utxo.scriptPublicKey.startsWith("0000")) {
+      throw invalidTransaction(`transaction input ${index} UTXO script public key version must be 0`);
+    }
+  }
+  for (const [index, output] of transaction.outputs.entries()) {
+    if (!output.scriptPublicKey.startsWith("0000")) {
+      throw invalidTransaction(`transaction output ${index} script public key version must be 0`);
+    }
+  }
+
+  const inputAmount = transaction.inputs.reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
+  const outputAmount = transaction.outputs.reduce((total, output) => total + BigInt(output.value), 0n);
+  if (outputAmount > inputAmount) throw invalidTransaction("exact transaction outputs exceed input amounts");
+  if (inputAmount - outputAmount > maxFeeSompi) throw invalidTransaction("exact transaction fee exceeds the configured maximum");
 }
 
 function parseSafeInput(value: unknown, position: number): SafeTransactionInput {
@@ -863,6 +936,18 @@ function restScriptPublicKey(serialized: string): { version: number; scriptPubli
 function assertChainTransactionMatchesSafe(chain: RestTransaction, safe: SafeTransaction): void {
   if (chain.transaction_id?.toLowerCase() !== safe.id) throw invalidTransaction("accepted transaction id does not match exact artifact");
   if (chain.version !== undefined && chain.version !== safe.version) throw invalidTransaction("accepted transaction version does not match exact artifact");
+  if (chain.lock_time != null && String(chain.lock_time) !== (safe.lockTime ?? "0")) {
+    throw invalidTransaction("accepted transaction lockTime does not match exact artifact");
+  }
+  if (chain.subnetwork_id != null && chain.subnetwork_id.toLowerCase() !== (safe.subnetworkId ?? NATIVE_SUBNETWORK_ID)) {
+    throw invalidTransaction("accepted transaction subnetwork does not match exact artifact");
+  }
+  if (chain.gas != null && String(chain.gas) !== (safe.gas ?? "0")) {
+    throw invalidTransaction("accepted transaction gas does not match exact artifact");
+  }
+  if (chain.payload != null && chain.payload.toLowerCase() !== (safe.payload ?? "")) {
+    throw invalidTransaction("accepted transaction payload does not match exact artifact");
+  }
   if (!Array.isArray(chain.inputs) || chain.inputs.length !== safe.inputs.length) {
     throw invalidTransaction("accepted transaction inputs do not match exact artifact");
   }
@@ -881,6 +966,9 @@ function assertChainTransactionMatchesSafe(chain: RestTransaction, safe: SafeTra
     }
     if (typeof actual.signature_script === "string" && actual.signature_script.toLowerCase() !== expected.signatureScript) {
       throw invalidTransaction("accepted transaction signature script does not match exact artifact");
+    }
+    if (actual.sequence != null && String(actual.sequence) !== expected.sequence) {
+      throw invalidTransaction("accepted transaction sequence does not match exact artifact");
     }
     if (actual.sig_op_count !== undefined && Number(actual.sig_op_count) !== expected.sigOpCount) {
       throw invalidTransaction("accepted transaction sigOpCount does not match exact artifact");
@@ -935,7 +1023,8 @@ function uintStringValue(value: unknown, label: string): string {
     if (!Number.isSafeInteger(value) || value < 0) throw invalidTransaction(`${label} must be a safe unsigned integer`);
     return String(value);
   }
-  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value)) throw invalidTransaction(`${label} must be an unsigned integer`);
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(value)) throw invalidTransaction(`${label} must be an unsigned integer`);
+  if (BigInt(value) > U64_MAX) throw invalidTransaction(`${label} exceeds uint64`);
   return value;
 }
 

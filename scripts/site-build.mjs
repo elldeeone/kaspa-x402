@@ -119,7 +119,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> serves paid <code>exact</code> and <code>batch-settlement</code> endpoints with recorded live runs; see the <a href="/docs/testnet-gateway/">gateway reference</a>.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is a historical testnet integration deployment. Its last recorded paid proof is alpha.6; it has not been redeployed or paid-canary proven for ${escapeHtml(releaseVersion)}. Do not fund its offers until the <a href="/docs/testnet-gateway/">gateway reference</a> records a current redeploy and paid canary.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -136,14 +136,14 @@ function writeHomePage() {
     <p>The claims below are engineering rationale, each specified or backed by testnet evidence. None of them is a mainnet claim.</p>
     <ul>
       <li><strong>Settlement latency close to request latency.</strong> Paying per HTTP request only works when payment confirmation is not the slow path. Kaspa's block cadence makes one-shot native payments practical at request time; the <a href="/docs/live-testnet-report/">live testnet report</a> records executed end-to-end flows.</li>
-      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). On-chain <code>exact</code> outputs must clear Kaspa's standard-output storage-mass floor (about 0.1 KAS); prices below it use <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> vouchers — the hosted gateway charges 500 sompi per request this way.</li>
+      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). KIP-9 storage mass depends on the complete transaction shape; Kaspa does not define a universal 0.1 KAS consensus dust floor. The reference runtime applies a conservative 10,000,000 sompi output policy. <a href="/spec/kaspa-batch-settlement-v1/">Batch-settlement</a> vouchers can price individual requests below that application policy.</li>
       <li><strong>Direct verification, no facilitator lock-in.</strong> Kaspa is UTXO-native, so a server can verify and settle against a node it trusts: payment identity is bound to transaction ids, outpoints, and script-public-key material rather than to a hosted intermediary. A <a href="/spec/facilitator-profile/">self-hosted facilitator profile</a> exists for x402 <code>/supported</code>, <code>/verify</code>, <code>/settle</code> compatibility, but it is optional.</li>
       <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> funds a covenant-backed escrow once, signs a cumulative voucher per paid request, and touches the chain again only at claim or refund time.</li>
     </ul>
 
     <h2>The two profiles</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
-    <p><code>exact</code> — fixed-price one-shot native transfer. Alpha.6 focuses on preferred KIP-10 transaction artifacts for reservation-backed direct exact settlement, with merchant-owned borrow UTXOs and a non-dust additive threshold. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
+    <p><code>exact</code> — fixed-price one-shot native transfer. The current alpha uses KIP-10 transaction artifacts for reservation-backed direct exact settlement, with merchant-owned borrow UTXOs and a policy-bounded additive threshold. Spec: <a href="/spec/kaspa-exact-v1/">kaspa-exact-v1</a>.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated or variable-cost requests against escrow/channel state. Spec: <a href="/spec/kaspa-batch-settlement-v1/">kaspa-batch-settlement-v1</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -151,7 +151,7 @@ function writeHomePage() {
     <h2>Start here</h2>
     <ul>
       <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
-      <li><strong>Trying the hosted testnet gateway:</strong> <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> — see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>; the <a href="/docs/demo-operations/">operations runbook</a> covers how it is run.</li>
+      <li><strong>Reviewing the historical hosted gateway:</strong> see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>. Do not fund <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> until those pages record an alpha.7 redeploy and paid canary; the <a href="/docs/demo-operations/">operations runbook</a> defines that gate.</li>
       <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
       <li><strong>Evaluating the proposal:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
@@ -328,7 +328,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. For real paid requests, use the hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a>; see the <a href="/docs/testnet-gateway/">gateway reference</a>.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The historical hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> has not been redeployed or paid-canary proven for the current alpha; do not fund it until the <a href="/docs/testnet-gateway/">gateway reference</a> records that gate as complete.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -502,7 +502,7 @@ function writePnnSpikeJson() {
       constraints: ["testnet-only", "no implicit key persistence", "manual transaction broadcast only"],
     },
     worker: {
-      status: "separate Worker gateway deployed at https://demo.kaspa-x402.org",
+      status: "historical Worker deployment at https://demo.kaspa-x402.org; current-alpha redeploy and paid canary pending",
       verifiedCapabilities: [
         "REST chain health",
         "Durable Object state",
@@ -510,7 +510,12 @@ function writePnnSpikeJson() {
         "batch-settlement 402 offers",
         "unsupported-scheme rejection",
       ],
-      constraints: ["testnet-only", "claim broadcasting disabled", "not part of the apex static site"],
+      constraints: [
+        "testnet-only",
+        "claim broadcasting disabled",
+        "not part of the apex static site",
+        "do not fund until the current-alpha redeploy and paid canary are recorded",
+      ],
     },
     packageBoundary: {
       browserSafeToday: ["static schemas", "browser SDK", "browser-native header encoder"],

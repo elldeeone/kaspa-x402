@@ -1164,6 +1164,8 @@ describe("direct-mode client", () => {
 
     await expect(client.listRefundableChannels()).resolves.toHaveLength(0);
     provider.daa = "1000";
+    await expect(client.listRefundableChannels()).resolves.toHaveLength(0);
+    provider.daa = "1001";
     await expect(client.listRefundableChannels()).resolves.toHaveLength(1);
 
     const refund = await client.refundChannel(payment.channel!.id);
@@ -1174,6 +1176,7 @@ describe("direct-mode client", () => {
 
   it("does not mark a channel refunded for broadcast-only refund submission", async () => {
     const provider = new FakeFundingProvider();
+    provider.daa = "1001";
     provider.sendFinality = "broadcast";
     const store = new MemoryChannelStore();
     const client = makeClient({
@@ -1199,6 +1202,7 @@ describe("direct-mode client", () => {
 
   it("rejects refund transactions whose amount differs from the signed amount", async () => {
     const provider = new FakeFundingProvider();
+    provider.daa = "1001";
     provider.sendFinality = "accepted";
     const store = new MemoryChannelStore();
     const client = makeClient({

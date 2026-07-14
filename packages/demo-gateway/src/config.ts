@@ -1,6 +1,7 @@
 import { KaspaX402Error, type NetworkId, type SompiString } from "@kaspa-x402/core";
 
-export const MIN_STANDARD_OUTPUT_SOMPI = 10_000_000n;
+/** Reference gateway policy, not a universal Kaspa consensus dust constant. */
+export const MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI = 10_000_000n;
 
 export interface GatewayEnv {
   GATEWAY_STATE: DurableObjectNamespace;
@@ -12,7 +13,8 @@ export interface GatewayEnv {
   KASPA_X402_EXACT_AMOUNT?: string;
   KASPA_X402_BATCH_AMOUNT?: string;
   KASPA_X402_MIN_DEPOSIT_SOMPI?: string;
-  KASPA_X402_REFUND_TIMEOUT_DAA?: string;
+  KASPA_X402_REFUND_TIMEOUT_DAA_DELTA?: string;
+  KASPA_X402_MINIMUM_REFUND_LEAD_DAA?: string;
   KASPA_X402_MAX_TIMEOUT_SECONDS?: string;
   KASPA_X402_CLAIM_FEE_SOMPI?: string;
   KASPA_X402_RATE_LIMIT_PER_MINUTE?: string;
@@ -36,7 +38,8 @@ export interface GatewayConfig {
   exactAmount: SompiString;
   batchAmount: SompiString;
   minDepositSompi: SompiString;
-  refundTimeoutDaa: SompiString;
+  refundTimeoutDaaDelta: SompiString;
+  minimumRefundLeadDaa: SompiString;
   maxTimeoutSeconds: number;
   claimFeeSompi: SompiString;
   rateLimitPerMinute: number;
@@ -69,6 +72,17 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
   if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
     throw new Error("KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn");
   }
+  const refundTimeoutDaaDelta = sompi(
+    env.KASPA_X402_REFUND_TIMEOUT_DAA_DELTA ?? "36000",
+    "KASPA_X402_REFUND_TIMEOUT_DAA_DELTA",
+  );
+  const minimumRefundLeadDaa = sompi(
+    env.KASPA_X402_MINIMUM_REFUND_LEAD_DAA ?? "1000",
+    "KASPA_X402_MINIMUM_REFUND_LEAD_DAA",
+  );
+  if (BigInt(refundTimeoutDaaDelta) <= BigInt(minimumRefundLeadDaa)) {
+    throw new Error("KASPA_X402_REFUND_TIMEOUT_DAA_DELTA must exceed KASPA_X402_MINIMUM_REFUND_LEAD_DAA");
+  }
   return {
     enabled: bool(env.KASPA_X402_GATEWAY_ENABLED ?? "true", "KASPA_X402_GATEWAY_ENABLED"),
     network,
@@ -78,7 +92,8 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     exactAmount,
     batchAmount: sompi(env.KASPA_X402_BATCH_AMOUNT ?? "500", "KASPA_X402_BATCH_AMOUNT"),
     minDepositSompi,
-    refundTimeoutDaa: sompi(env.KASPA_X402_REFUND_TIMEOUT_DAA ?? "3600", "KASPA_X402_REFUND_TIMEOUT_DAA"),
+    refundTimeoutDaaDelta,
+    minimumRefundLeadDaa,
     maxTimeoutSeconds: uint(env.KASPA_X402_MAX_TIMEOUT_SECONDS ?? "60", "KASPA_X402_MAX_TIMEOUT_SECONDS", 1, 600),
     claimFeeSompi: sompi(env.KASPA_X402_CLAIM_FEE_SOMPI ?? "10000", "KASPA_X402_CLAIM_FEE_SOMPI"),
     rateLimitPerMinute: uint(env.KASPA_X402_RATE_LIMIT_PER_MINUTE ?? "60", "KASPA_X402_RATE_LIMIT_PER_MINUTE", 1, 600),
@@ -111,8 +126,8 @@ function sompi(value: string, name: string): SompiString {
 }
 
 function assertStandardOutputAmount(value: SompiString, name: string): void {
-  if (BigInt(value) < MIN_STANDARD_OUTPUT_SOMPI) {
-    throw new Error(`${name} is below Kaspa storage-mass floor ${MIN_STANDARD_OUTPUT_SOMPI}`);
+  if (BigInt(value) < MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI) {
+    throw new Error(`${name} is below reference on-chain output policy ${MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI}`);
   }
 }
 
