@@ -14,6 +14,9 @@ minor/pre-release versions, and the affected docs in the same change.
 
 Current alpha wire notes:
 
+- `0.1.0-alpha.7` hardens KIP-10 reservation validation and continuation
+  recycling, enforces the Kaspa DAA lock-time boundary and rolling refund
+  safety window, and makes claim-continuation accounting explicit.
 - `0.1.0-alpha.5` made `exact-transfer` observe-only by requiring
   `transactionId` plus `paymentOutputIndex`.
 - `0.1.0-alpha.6` replaces observe-only exact with KIP-10

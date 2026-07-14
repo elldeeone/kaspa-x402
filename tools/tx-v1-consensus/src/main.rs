@@ -9,19 +9,29 @@ use kaspa_consensus_core::{
         tx as tx_hashing,
         HasherExtensions,
     },
-    mass::{transaction_estimated_serialized_size, MassCalculator},
+    mass::{transaction_estimated_serialized_size, MassCalculator, SigopCount},
     subnets::SubnetworkId,
     tx::{
-        CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionInput, TransactionOutpoint,
+        CovenantBinding, PopulatedTransaction, ScriptPublicKey, Transaction, TransactionId, TransactionInput, TransactionOutpoint,
         TransactionOutput, UtxoEntry, VerifiableTransaction,
     },
 };
 use kaspa_hashes::{Hash, Hasher, HasherBase, TransactionHash};
+use kaspa_txscript::{
+    caches::Cache,
+    opcodes::codes::{
+        OpCheckSig, OpElse, OpEndIf, OpEqualVerify, OpFalse, OpGreaterThanOrEqual, OpIf, OpSub,
+        OpTxInputAmount, OpTxInputIndex, OpTxInputSpk, OpTxOutputAmount, OpTxOutputSpk,
+    },
+    pay_to_script_hash_script,
+    script_builder::ScriptBuilder,
+    EngineCtx, TxScriptEngine,
+};
 use serde::Deserialize;
 use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
 
-const EXPECTED_SOURCE_COMMIT: &str = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
+const EXPECTED_SOURCE_COMMIT: &str = "78257f273a26c4be085bab0f79437dee99ca8835";
 const STORAGE_MASS_PARAMETER: u64 = 1_000_000_000_000;
 
 #[derive(Debug, Deserialize)]
@@ -141,6 +151,7 @@ fn main() -> Result<()> {
             "transactionHash": vector.expected.transaction_hash,
         }));
     }
+    let kip10 = validate_kip10_exact_template()?;
 
     println!(
         "{}",
@@ -152,10 +163,99 @@ fn main() -> Result<()> {
                 "commit": EXPECTED_SOURCE_COMMIT,
             },
             "vectors": checked,
+            "kip10Exact": kip10,
         }))?
     );
 
     Ok(())
+}
+
+fn validate_kip10_exact_template() -> Result<serde_json::Value> {
+    let owner_public_key = [0x11_u8; 32];
+    let threshold = 10_000_000_i64;
+    let mut builder = ScriptBuilder::new();
+    let script = builder
+        .add_op(OpIf)?
+        .add_data(&owner_public_key)?
+        .add_op(OpCheckSig)?
+        .add_op(OpElse)?
+        .add_ops(&[
+            OpTxInputIndex,
+            OpTxInputSpk,
+            OpTxInputIndex,
+            OpTxOutputSpk,
+            OpEqualVerify,
+            OpTxInputIndex,
+            OpTxOutputAmount,
+        ])?
+        .add_i64(threshold)?
+        .add_ops(&[OpSub, OpTxInputIndex, OpTxInputAmount, OpGreaterThanOrEqual])?
+        .add_op(OpEndIf)?
+        .drain();
+    let expected_script = format!(
+        "6320{}ac67b9bfb9c388b9c2048096980094b9bea268",
+        "11".repeat(32)
+    );
+    expect_eq(hex::encode(&script), expected_script.as_str(), "KIP-10 redeem script")?;
+
+    let script_public_key = pay_to_script_hash_script(&script);
+    let input_amount = 100_000_000_u64;
+    let mut signature_builder = ScriptBuilder::new();
+    let signature_script = signature_builder.add_op(OpFalse)?.add_data(&script)?.drain();
+    let input = TransactionInput {
+        previous_outpoint: TransactionOutpoint {
+            transaction_id: TransactionId::from_bytes([0x22; 32]),
+            index: 0,
+        },
+        signature_script,
+        sequence: 0,
+        compute_commit: SigopCount(1).into(),
+    };
+    let utxo = UtxoEntry::new(input_amount, script_public_key.clone(), 0, false, None);
+    let output = TransactionOutput {
+        value: input_amount + threshold as u64,
+        script_public_key: script_public_key.clone(),
+        covenant: None,
+    };
+    let tx = Transaction::new(1, vec![input.clone()], vec![output], 0, Default::default(), 0, vec![]);
+    execute_kip10_input(&tx, &utxo).context("canonical KIP-10 borrower path must execute")?;
+
+    let mut below_threshold = tx.clone();
+    below_threshold.outputs[0].value -= 1;
+    if execute_kip10_input(&below_threshold, &utxo).is_ok() {
+        return Err(anyhow!("KIP-10 borrower path accepted a continuation below threshold"));
+    }
+
+    let mut wrong_script = tx.clone();
+    wrong_script.outputs[0].script_public_key = ScriptPublicKey::new(0, vec![0x51].into());
+    if execute_kip10_input(&wrong_script, &utxo).is_ok() {
+        return Err(anyhow!("KIP-10 borrower path accepted a different continuation script"));
+    }
+
+    Ok(json!({
+        "template": "kaspa-x402-kip10-additive-v1",
+        "redeemScript": expected_script,
+        "thresholdSompi": threshold.to_string(),
+        "validContinuation": "accepted",
+        "belowThreshold": "rejected",
+        "wrongContinuationScript": "rejected",
+    }))
+}
+
+fn execute_kip10_input(tx: &Transaction, utxo: &UtxoEntry) -> Result<()> {
+    let populated = PopulatedTransaction::new(tx, vec![utxo.clone()]);
+    let cache = Cache::new(64);
+    let reused = SigHashReusedValuesUnsync::new();
+    let ctx = EngineCtx::new(&cache).with_reused(&reused);
+    let mut engine = TxScriptEngine::from_transaction_input(
+        &populated,
+        &populated.tx.inputs[0],
+        0,
+        utxo,
+        ctx,
+        Default::default(),
+    );
+    engine.execute().map_err(|error| anyhow!(error.to_string()))
 }
 
 fn read_vector(path: &Path) -> Result<VectorFile> {

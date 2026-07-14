@@ -23,6 +23,7 @@ export function createMockDirectModeEnvironment(options = {}) {
     amount: "100000",
     minDepositSompi: "1000000",
     refundTimeoutDaa: "1000",
+    minimumRefundLeadDaa: "0",
     store: serverStore,
     chainProvider,
     addressCodec,

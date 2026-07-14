@@ -70,13 +70,25 @@ Current hosted terms:
 
 - exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
-- batch minimum deposit: `20000000` sompi.
+- batch minimum deposit: `20000000` sompi;
+- batch refund timeout: current virtual DAA plus `36000`;
+- minimum server refund safety lead: `1000` DAA score.
 
-The exact price and batch deposit are on-chain outputs, so they must stay at or
-above the Kaspa standard-output storage-mass floor of `10000000` sompi. The
-Worker fails closed at startup if either configured value is below that floor.
+The exact price and batch deposit are on-chain outputs. Because KIP-9 storage
+mass depends on the complete input/output composition, Kaspa has no universal
+`10000000` sompi consensus dust floor. The reference Worker nevertheless uses
+`10000000` sompi as a conservative on-chain output policy and fails closed at
+startup below it.
 Hosted exact uses merchant-owned borrow UTXO inventory and advertises an
 `additiveThresholdSompi` of at least `10000000` sompi.
+
+`KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` is a duration added to a freshly read
+virtual DAA score; the resulting channel field is an absolute score.
+`KASPA_X402_MINIMUM_REFUND_LEAD_DAA` makes the gateway fail closed before the
+escrow reaches that boundary. Kaspa lock-time finality is strict: a refund with
+lock time `T` is eligible only once the contextual DAA score is greater than
+`T`. All DAA-mode timeouts must remain below the `500000000000` consensus
+timestamp boundary.
 
 Exact inventory records are public transaction terms, not wallet secrets. A
 registration record has this shape:
@@ -109,9 +121,11 @@ KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
 ```
 
 Registration enables public exact offers only when the hosted exact settlement
-flag is also enabled. Expired reserved inventory is retired for operator
+flag is also enabled. An accepted settlement consumes the leased outpoint and
+atomically registers its verified KIP-10 continuation as the next available
+inventory item. Expired unpaid reservations are retired for operator
 reconciliation rather than automatically reused, because a late or
-already-propagating transaction may still consume the borrow outpoint.
+already-propagating transaction may still consume the original outpoint.
 
 Operational details, rollback steps, the gateway disable switch, and manual
 paid canary procedure are covered in the
@@ -150,7 +164,8 @@ Gateway state is held in a SQLite-backed Cloudflare Durable Object. The ledger
 records:
 
 - exact transaction replay reservations;
-- exact KIP-10 borrow UTXO inventory and active reservation leases;
+- exact KIP-10 borrow UTXO inventory, active reservation leases, and verified
+  continuation rotation;
 - payment-identifier response cache entries;
 - batch channel state and settlement commitments;
 - one open claim attempt per channel, though public claim execution is disabled;

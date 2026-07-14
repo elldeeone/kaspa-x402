@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const EXPECTED_COMMIT = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
+const EXPECTED_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const EXPECTED_VERSION = "2.0.1";
 const CONSENSUS_SOURCE_PATHS = [
   "Cargo.lock",
@@ -18,6 +18,7 @@ const CONSENSUS_SOURCE_PATHS = [
   "crypto/muhash",
   "crypto/smt",
   "crypto/txscript/errors",
+  "crypto/txscript",
   "math",
   "utils",
 ];
@@ -105,6 +106,7 @@ function parseArgs(args) {
 function cargoToml(kaspaRoot) {
   const consensusPath = path.join(kaspaRoot, "consensus/core").replaceAll("\\", "\\\\");
   const hashesPath = path.join(kaspaRoot, "crypto/hashes").replaceAll("\\", "\\\\");
+  const txscriptPath = path.join(kaspaRoot, "crypto/txscript").replaceAll("\\", "\\\\");
   return `[package]
 name = "kaspa-x402-tx-v1-consensus-check"
 version = "0.0.0"
@@ -118,6 +120,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kaspa-consensus-core = { path = "${consensusPath}" }
 kaspa-hashes = { path = "${hashesPath}" }
+kaspa-txscript = { path = "${txscriptPath}" }
 `;
 }
 

@@ -39,10 +39,10 @@ Before calling the hosted gateway, an implementation should be able to:
    `channel-id`, `tx-v1`, and `negative`.
 5. Confirm negative vectors fail for the expected reason.
 
-Amounts are decimal strings in sompi. The gateway's on-chain exact output and
-batch deposit values sit above the Kaspa standard-output storage-mass floor
-(about 0.1 KAS); outputs below the floor cannot be built as standard
-transactions.
+Amounts are decimal strings in sompi. KIP-9 storage mass depends on the full
+transaction shape rather than defining a universal dust amount. The gateway's
+on-chain exact output and batch deposit use a conservative `10000000` sompi
+reference policy; smaller values require transaction-specific mass analysis.
 
 ## Discover Gateway Support
 

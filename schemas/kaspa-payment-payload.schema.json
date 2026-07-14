@@ -85,7 +85,8 @@
           "type": "string"
         },
         "refundTimeoutDaa": {
-          "$ref": "#/$defs/amount"
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,10}|[1-4][0-9]{11})$"
         },
         "salt": {
           "$ref": "#/$defs/hash32"

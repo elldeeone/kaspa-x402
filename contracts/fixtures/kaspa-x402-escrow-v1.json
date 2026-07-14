@@ -7,12 +7,12 @@
   "domainTagHash": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12",
   "compiler": {
     "name": "silverc",
-    "checkedCommit": "bf04c35b7ec74b0dce12815d78075af1c42ae2dd",
+    "checkedCommit": "956868ea63a2af4176889f1331449b5f4f9e1df8",
     "command": "SILVERSCRIPT_DIR=<silverscript-checkout> cargo run --quiet -p silverscript-lang --bin silverc -- contracts/kaspa-x402-escrow-v1.sil --constructor-args <args.json> -o <out.json>"
   },
   "reproducibility": {
-    "status": "checked-against-local-compiler",
-    "note": "The sample redeem script was checked against silverc at compiler.checkedCommit; release builds must pin an upstream compiler tag before publishing."
+    "status": "checked-against-upstream-commit",
+    "note": "The 337-byte sample redeem script was reproduced byte-for-byte with upstream silverc at compiler.checkedCommit. Upstream has no stable release tag, so the exact commit is the reproducibility pin."
   },
   "slotMap": [
     {

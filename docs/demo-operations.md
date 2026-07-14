@@ -88,9 +88,10 @@ curl -fsS https://demo.kaspa-x402.org/supported
 
 When inventory is available, `/supported` advertises `exact` and an unpaid
 `/exact` request leases one inventory item until the advertised reservation
-expires. A paid exact settlement consumes the inventory item. Expired
-reservations are retired for operator reconciliation rather than automatically
-reused.
+expires. An accepted exact settlement consumes the original item and atomically
+registers its transaction's verified KIP-10 continuation as fresh available
+inventory. Expired unpaid reservations are retired for operator reconciliation
+rather than automatically reused.
 
 ## Rollback
 

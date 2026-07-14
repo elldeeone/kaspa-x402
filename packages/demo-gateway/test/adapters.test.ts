@@ -1,7 +1,12 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { blake2b } from "@noble/hashes/blake2.js";
-import { payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import {
+  buildKip10AdditiveBorrowSignatureScript,
+  buildKip10AdditiveRedeemScript,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import {
   KaspaPnnClient,
   KaspaRestClient,
@@ -190,7 +195,7 @@ describe("KaspaPnnClient", () => {
     expect(request.transaction.inputs[0]).toMatchObject({
       previousOutpoint: { transactionId: exact.borrowTxid, index: 0 },
       computeBudget: 10,
-      signatureScript: "00",
+      signatureScript: buildKip10AdditiveBorrowSignatureScript(exact.reservation.borrowRedeemScript),
     });
     expect(request.transaction.outputs[0]).toMatchObject({
       value: 110000000,
@@ -334,6 +339,11 @@ describe("RestExactTransactionVerifier", () => {
         scriptPublicKey: exact.payToScriptPublicKey,
         address: exact.payTo,
       },
+      continuation: {
+        outpoint: { txid: exact.txid, index: 0 },
+        amount: "110000000",
+        scriptPublicKey: exact.reservation.borrowScriptPublicKey,
+      },
     });
   });
 
@@ -358,6 +368,63 @@ describe("RestExactTransactionVerifier", () => {
     });
 
     expect(verified.finality).toBe("accepted");
+  });
+
+  it("rejects non-canonical or mismatched KIP-10 reservation scripts", async () => {
+    const exact = exactTransactionFixture();
+    const verifier = offlineExactVerifier();
+
+    await expect(
+      verifier.verifyExactPayment(exactVerificationRequest(exact, { reservation: { ...exact.reservation, borrowRedeemScript: "51" } })),
+    ).rejects.toThrow("canonical KIP-10 additive template");
+    await expect(
+      verifier.verifyExactPayment(
+        exactVerificationRequest(exact, { reservation: { ...exact.reservation, additiveThresholdSompi: "10000001" } }),
+      ),
+    ).rejects.toThrow("script threshold does not match reservation");
+  });
+
+  it("rejects unsafe exact transaction envelopes before chain submission", async () => {
+    const exact = exactTransactionFixture();
+    const base = JSON.parse(exact.artifact) as Record<string, unknown>;
+    const verifier = offlineExactVerifier();
+    const variants: Array<[string, Record<string, unknown>, string]> = [
+      ["legacy version", { ...base, version: 0 }, "version must be 1"],
+      ["non-native subnetwork", { ...base, subnetworkId: "11".repeat(20) }, "native subnetwork"],
+      ["nonzero gas", { ...base, gas: "1" }, "gas must be 0"],
+      ["payload", { ...base, payload: "00" }, "payload must be empty"],
+      ["lock time", { ...base, lockTime: "1" }, "lockTime must be 0"],
+    ];
+
+    for (const [label, artifact, message] of variants) {
+      await expect(
+        verifier.verifyExactPayment(exactVerificationRequest(exact, { transaction: JSON.stringify(artifact) })),
+        label,
+      ).rejects.toThrow(message);
+    }
+  });
+
+  it("rejects ambiguous payments, excessive fees, and a non-borrower signature script", async () => {
+    const exact = exactTransactionFixture();
+    const verifier = offlineExactVerifier();
+    const duplicate = JSON.parse(exact.artifact) as { inputs: Array<{ utxo: { amount: string } }>; outputs: unknown[] };
+    duplicate.inputs[1]!.utxo.amount = "60000000";
+    duplicate.outputs.push(duplicate.outputs[1]);
+    await expect(
+      verifier.verifyExactPayment(exactVerificationRequest(exact, { transaction: JSON.stringify(duplicate) })),
+    ).rejects.toThrow("ambiguous duplicate payment output");
+
+    const excessiveFee = JSON.parse(exact.artifact) as { inputs: Array<{ utxo: { amount: string } }> };
+    excessiveFee.inputs[1]!.utxo.amount = "1000000000";
+    await expect(
+      verifier.verifyExactPayment(exactVerificationRequest(exact, { transaction: JSON.stringify(excessiveFee) })),
+    ).rejects.toThrow("fee exceeds the configured maximum");
+
+    const wrongBranch = JSON.parse(exact.artifact) as { inputs: Array<{ signatureScript: string }> };
+    wrongBranch.inputs[0]!.signatureScript = "00";
+    await expect(
+      verifier.verifyExactPayment(exactVerificationRequest(exact, { transaction: JSON.stringify(wrongBranch) })),
+    ).rejects.toThrow("canonical KIP-10 borrower branch");
   });
 });
 
@@ -499,7 +566,7 @@ function pnnPaymentUtxo(exact: ReturnType<typeof exactTransactionFixture>) {
 function exactTransactionFixture() {
   const payTo = "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh";
   const payToScriptPublicKey = scriptPublicKeyForAddress(payTo, "kaspa:testnet-10");
-  const borrowRedeemScript = "51";
+  const borrowRedeemScript = buildKip10AdditiveRedeemScript({ ownerPublicKey: "55".repeat(32), amount: "10000000" });
   const borrowScriptPublicKey = serializedScriptPublicKey(payToScriptHashScript(borrowRedeemScript)).toLowerCase();
   const txid = "11".repeat(32);
   const borrowTxid = "22".repeat(32);
@@ -514,7 +581,7 @@ function exactTransactionFixture() {
         sequence: "0",
         sigOpCount: 0,
         computeBudget: 10,
-        signatureScript: "00",
+        signatureScript: buildKip10AdditiveBorrowSignatureScript(borrowRedeemScript),
         utxo: {
           amount: "100000000",
           scriptPublicKey: borrowScriptPublicKey,
@@ -575,7 +642,7 @@ function exactTransactionFixture() {
         {
           previous_outpoint_hash: borrowTxid,
           previous_outpoint_index: "0",
-          signature_script: "00",
+          signature_script: buildKip10AdditiveBorrowSignatureScript(borrowRedeemScript),
           sig_op_count: "0",
           compute_budget: 10,
         },
@@ -601,4 +668,30 @@ function exactTransactionFixture() {
       ],
     },
   };
+}
+
+function offlineExactVerifier(): RestExactTransactionVerifier {
+  return new RestExactTransactionVerifier(
+    new KaspaRestClient("https://api.example.test", {
+      fetch: vi.fn(async () => new Response(JSON.stringify({ detail: "Transaction not found" }), { status: 404 })) as typeof fetch,
+    }),
+  );
+}
+
+function exactVerificationRequest(
+  exact: ReturnType<typeof exactTransactionFixture>,
+  overrides: Record<string, unknown> = {},
+): Parameters<RestExactTransactionVerifier["verifyExactPayment"]>[0] {
+  return {
+    network: "kaspa:testnet-10",
+    transaction: exact.artifact,
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    paymentOutputIndex: 1,
+    amount: "20000000",
+    payTo: exact.payTo,
+    payToScriptPublicKey: exact.payToScriptPublicKey,
+    requiredFinality: "accepted",
+    reservation: exact.reservation,
+    ...overrides,
+  } as Parameters<RestExactTransactionVerifier["verifyExactPayment"]>[0];
 }

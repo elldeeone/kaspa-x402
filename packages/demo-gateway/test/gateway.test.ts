@@ -1,10 +1,13 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { buildKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
 import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
 import { dispatchGatewayState, GatewayLedger, type GatewayStateRequest, type GatewayStorage } from "../src/state.js";
 import type { GatewayEnv } from "../src/config.js";
 
 const FUNDING_TX = "88".repeat(32);
 const SCRIPT = "0000" + "99".repeat(34);
+const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({ ownerPublicKey: "aa".repeat(32), amount: "10000000" });
+const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(payToScriptHashScript(KIP10_REDEEM_SCRIPT));
 
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_NETWORK: "kaspa:testnet-10",
@@ -262,8 +265,8 @@ function exactInventoryBase() {
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     borrowOutpoint: { txid: FUNDING_TX, index: 0 },
     borrowAmount: "100000000",
-    borrowScriptPublicKey: SCRIPT,
-    borrowRedeemScript: "51",
+    borrowScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+    borrowRedeemScript: KIP10_REDEEM_SCRIPT,
     additiveThresholdSompi: "10000000",
     paymentOutputIndex: 0,
   };

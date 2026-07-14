@@ -1,23 +1,24 @@
 # Live Testnet Report
 
-Status: current alpha.6 full live harness run.
+Status: current `0.1.0-alpha.7` full live harness run.
 
-Generated: `2026-07-09T01:52:34.497Z`
+Generated: `2026-07-14T04:23:40.272Z`
 
 Network: `kaspa:testnet-10`
 
-Node: private `kaspa:testnet-10` node, synced with UTXO index enabled.
+Node: private TN10 node, synced with UTXO index enabled.
 
-Virtual DAA score at run start: `512033363`
+Virtual DAA score at run start: `516441994`
 
-The 2026-07-09 live proof runner validated the preferred alpha.6 KIP-10
-`exact-transaction` payload shape, the `10000000` sompi additive-threshold
-floor, and the batch-settlement covenant lifecycle. Hosted-gateway evidence is
-tracked separately in `docs/testnet-gateway.md`.
+The live proof used the NodeJS SDK built from reviewed `rusty-kaspa` commit
+`78257f273a26c4be085bab0f79437dee99ca8835`. It validated the preferred KIP-10
+`exact-transaction` payload, the `10000000` sompi additive-threshold policy,
+reservation replay protection, and the full batch-settlement lifecycle.
+Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 
 ## Exact KIP-10 Transaction
 
-- Transaction id: `8339c688683f3d472e146b095d3aecc720d78ca01f26ec69436ae6d0655b7738`
+- Transaction id: `28212a4ec66c9283b63079878d62ea4ef50739b3ad018c07a510b39c78f1e22b`
 - Transaction version: `1`
 - Version evidence source: `adapter-submitted-transaction-shape`
 - Output index: `1`
@@ -25,88 +26,64 @@ tracked separately in `docs/testnet-gateway.md`.
 - Finality: `accepted`
 - Payload evidence type: `kip10-exact-transaction`
 - Transaction encoding: `kaspa-sdk-safe-json-v2.0.0`
-- Reservation id: `90984c654bd8cce0c2c47bb9939bcf5351e98cf2ee68b5bb61404da80193c119`
+- Reservation id: `5b4f7a9643df002c21113237773684aa81f1be1cf114699463b20ac64a9e2765`
 - Borrow outpoint:
-  `739a5a5ff3928b6db8d1a0fc65b75a0ce9a9c343bef3f7cef80d89302517e68f:0`
+  `22f03bb33c7918fd59c3a00e40fd209416e67c93134ab5f2023592b701d6755e:0`
 - Additive threshold: `10000000` sompi
 - Transaction artifact SHA-256:
-  `d496f11501d203af08a0b8ffd475b1ae1eea64256ebb99483b2e99dc43ea4d0a`
-- Payload payment output index: `1`
-- Server broadcast transaction id:
-  `8339c688683f3d472e146b095d3aecc720d78ca01f26ec69436ae6d0655b7738`
+  `75bfb0c48a324e9250c37f42d8fdb4b662f61634cfc9a8b2fbaf7771b4bfb387`
 - Server broadcast finality: `accepted`
 - Replay rejection: HTTP `409`, `invalid_transaction_state`
 
-## Batch Deposit-Voucher
+## Batch Deposit And Voucher
 
-- Funding transaction id: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868`
-- Transaction version: `0`
-- Version evidence source: `sdk-generated-transaction`
-- Escrow output: index `0`
-- Deposit outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
-- Escrow address: `kaspatest:pz7prpc3hk3e7y3t8dk7hcjq4xjnsffq03w2e553eh7xh03yaenxukthx0f20`
+- Funding transaction id: `53f334006e6f67d86fea92c0ba321d1605462c0b3a962a294233ac0d66487306`
+- Transaction version: `0` (`sdk-generated-transaction`)
+- Deposit outpoint: `53f334006e6f67d86fea92c0ba321d1605462c0b3a962a294233ac0d66487306:0`
 - Funding amount: `400000000` sompi
-- Channel id: `b7394746555fd09d53d4a975354ad3394affb6983412cd14d685f44a7c706ed2`
-- Settlement commitment: `b79452478e8a218e7e132bc7e292e12c5ede24abb79db0724488f5da628484fd`
-- Finality: `accepted`
-- Charged amount: `100000000` sompi
-- Top-level settlement amount: `100000000` sompi
-- Extension charged amount: `100000000` sompi
-- Cumulative charge: `0` to `100000000` sompi
-
-## Batch Voucher-Only
-
-- Reused existing channel: yes
-- Channel id: `b7394746555fd09d53d4a975354ad3394affb6983412cd14d685f44a7c706ed2`
-- Active outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
-- Settlement commitment: `b068ef7cb9202e9f7551c6fd0a69793458f457f2bcabb118bdd98c7c5a7258dc`
-- Charged amount: `100000000` sompi
-- Top-level settlement amount: `100000000` sompi
-- Extension charged amount: `100000000` sompi
-- Cumulative charge: `100000000` to `200000000` sompi
-- Signed maximum claimable: `200000000` sompi
+- Channel id: `1b0b63070762cd78b310d7abe99910444fa4bc582e245e8e2b36da2e71296c53`
+- Initial charge: `100000000` sompi
+- Voucher-only charge: `100000000` sompi
+- Cumulative charge after both requests: `200000000` sompi
+- Voucher-only request reused the accepted active outpoint and did not open a
+  second channel.
 
 ## Batch Claim
 
-- Claim transaction id: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4`
+- Claim transaction id: `a03177800689ebcaca879b018129904bcb47d90613ef05eb49bce44217c946a3`
 - Transaction version: `1`
-- Version evidence source: `adapter-submitted-transaction-shape`
 - Finality: `accepted`
-- Original outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
-- Continuation outpoint: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4:1`
+- Original outpoint: `53f334006e6f67d86fea92c0ba321d1605462c0b3a962a294233ac0d66487306:0`
+- Continuation outpoint: `a03177800689ebcaca879b018129904bcb47d90613ef05eb49bce44217c946a3:1`
 - Input amount: `400000000` sompi
-- Claimed cumulative amount before claim: `0` sompi
-- Active charged amount: `200000000` sompi
-- Claim amount: `200000000` sompi
-- Server output amount: `198000000` sompi
-- Claim fee: `2000000` sompi
+- Authorized claim: `200000000` sompi
+- Server output: `198000000` sompi
+- Fee: `2000000` sompi
 - Continuation amount: `200000000` sompi
 
-## Batch Replay Rejection
+The continuation exactly equalled `fundingAmount - authorizedClaimAmount`.
+The server fee reduced the payout, not the covenant continuation.
 
-- Old outpoint: `6f06e7f40f466959f08ab93d176dd5d463ce1f1f7e270e6a1ee71ca3b3938868:0`
-- Old script public key: `0000aa20bc118711bda39f122b3b6debe240a9a53825207c5cacd291cdfc6bbe24ee666e87`
-- Attempted input outpoint: `d1437aa76b583721e2531d98eecfd8bcc37492d45baf83347ffb1cc66f0f7bf4:1`
-- Attempted transaction version: `1`
-- Version evidence source: `adapter-submitted-transaction-shape`
-- Finality: `rejected`
-- Rejected: yes
-- Rejection class: signature-script verification failure
-- Rejection reason: `failed to verify the signature script: script ran, but verificat`
-- Attempted server output: `98000000` sompi
-- Attempted continuation output: `100000000` sompi
+## Replay Rejection
+
+The harness deliberately attempted to apply the old voucher/script state to the
+claim continuation. TN10 rejected transaction
+`695afc3dde495f6012dd988530514a541c8b86fb64fbab7a67851d37d2bf84b6`
+with a signature-script verification failure. The rejection proves that the
+voucher is bound to the full active outpoint and script epoch.
 
 ## Batch Refund
 
-- Refund transaction id: `9688335e6a9b7f3a001beeb0d05925ea412324862c1b61049d46c353ddbf4cda`
+- Absolute refund DAA score: `516443794`
+- Refund transaction id: `d42da50ac72e977448aa8a817055e0a2ceac934f9e8f2b29c3454c5ad2560a95`
 - Transaction version: `1`
-- Version evidence source: `adapter-submitted-transaction-shape`
 - Finality: `accepted`
-- Refund address: `kaspatest:qq2n2shqkghczyel57af242ffs50x5uj07w7ezg7kwm8frwt5xhljqa3d68et`
 - Input amount: `200000000` sompi
 - Refund amount: `198000000` sompi
-- Refund fee: `2000000` sompi
-- Output index: `0`
+- Fee: `2000000` sompi
+
+The harness waited until contextual DAA was strictly greater than the absolute
+timeout before broadcasting the refund.
 
 ## Required Flow Status
 
@@ -117,7 +94,12 @@ tracked separately in `docs/testnet-gateway.md`.
 - replay rejection across exact and batch-settlement: passed
 - batch refund transaction construction and broadcast after timeout: passed
 
-## Mainnet Status
+## Mainnet Read-Only Check
 
-This report is not a mainnet readiness claim. Mainnet remains blocked by the
-audit, operational, and release gates in `docs/mainnet-readiness.md`.
+The supplied mainnet node was queried over gRPC without submitting a
+transaction. At the check it reported `rusty-kaspa 2.0.1`, network `mainnet`,
+synced status, UTXO indexing enabled, and virtual DAA score `485831781`.
+
+This connectivity check is not a mainnet readiness claim. Mainnet remains
+subject to the audit, custody, operational, and release gates in
+`docs/mainnet-readiness.md`.

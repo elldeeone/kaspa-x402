@@ -2,6 +2,7 @@ import {
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
   KaspaX402Error,
+  KASPA_LOCK_TIME_THRESHOLD,
   toX402ErrorReason,
   type ResourceInfo,
 } from "@kaspa-x402/core";
@@ -62,7 +63,12 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
   if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
 
   const exactAvailable = await hostedExactAvailable(config, state);
-  const gateway = createGateway(config, state, { exactAvailable });
+  let gateway: { server: DirectModeServer };
+  try {
+    gateway = await createGateway(config, state, { exactAvailable });
+  } catch (error) {
+    return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(config) });
+  }
   if (url.pathname === "/supported" && request.method === "GET") {
     return json({ ok: true, enabled: config.enabled, kinds: gateway.server.supportedKinds() }, { headers: corsHeaders(config) });
   }
@@ -223,10 +229,19 @@ async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateCl
   return stats.available > 0;
 }
 
-function createGateway(config: GatewayConfig, state: GatewayStateClient, options: { exactAvailable: boolean }): { server: DirectModeServer } {
+async function createGateway(
+  config: GatewayConfig,
+  state: GatewayStateClient,
+  options: { exactAvailable: boolean },
+): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
+  const currentDaa = BigInt(await rest.getVirtualDaaScore());
+  const refundTimeoutDaa = currentDaa + BigInt(config.refundTimeoutDaaDelta);
+  if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new Error("computed refund DAA crosses the consensus timestamp boundary");
+  }
   const restChainProvider = new RestKaspaChainProvider(rest, book, config.claimFeeSompi);
   const store = new AddressRecordingStore(state, book);
   const server = new DirectModeServer({
@@ -235,7 +250,10 @@ function createGateway(config: GatewayConfig, state: GatewayStateClient, options
     serverPublicKey: config.serverPublicKey,
     minDepositSompi: config.minDepositSompi,
     amount: config.batchAmount,
-    refundTimeoutDaa: config.refundTimeoutDaa,
+    refundTimeoutDaa: refundTimeoutDaa.toString(),
+    minimumRefundLeadDaa: config.minimumRefundLeadDaa,
+    allowRollingRefundTimeoutDaa: true,
+    maximumRefundHorizonDaa: config.refundTimeoutDaaDelta,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     store,
     chainProvider:
@@ -333,8 +351,12 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.loadExactReservation(reservationId);
   }
 
-  consumeExactReservation(reservationId: string, transactionId: string) {
-    return this.#inner.consumeExactReservation(reservationId, transactionId);
+  consumeExactReservation(
+    reservationId: string,
+    transactionId: string,
+    continuation?: Parameters<ServerStateStore["consumeExactReservation"]>[2],
+  ) {
+    return this.#inner.consumeExactReservation(reservationId, transactionId, continuation);
   }
 
   loadOpenClaimAttempt(channelId: string) {

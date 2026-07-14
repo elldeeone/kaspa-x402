@@ -84,6 +84,63 @@ describe("direct-mode server", () => {
     expect(server.supportedKinds().every((kind) => kind.network === "kaspa:mainnet")).toBe(true);
   });
 
+  it("rejects refund locks that cross Kaspa's lock-time timestamp boundary", () => {
+    expect(() => makeServer({ refundTimeoutDaa: "500000000000" })).toThrow("timestamp boundary");
+  });
+
+  it("fails closed before advertising a batch channel too close to refund", async () => {
+    const setup = makeServer({ refundTimeoutDaa: "1100", minimumRefundLeadDaa: "100" });
+    setup.chain.daa = "1000";
+
+    const response = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, paymentScheme: "batch-settlement" },
+      async () => ({ body: "secret" }),
+    );
+
+    expect(response.status).toBe(503);
+    expect(response.body).toEqual({ error: "invalid_payload" });
+  });
+
+  it("accepts a rolling absolute timeout only inside the configured DAA window", async () => {
+    const config = {
+      refundTimeoutDaa: "2000",
+      minimumRefundLeadDaa: "100",
+      allowRollingRefundTimeoutDaa: true,
+      maximumRefundHorizonDaa: "1000",
+    } as const;
+    const setup = makeServer(config);
+    setup.chain.daa = "1000";
+    const validAccepted = structuredClone(
+      setup.server.buildPaymentRequired({ resource: RESOURCE }).accepts[0] as BatchPaymentRequirements,
+    );
+    validAccepted.extra.refundTimeoutDaa = "1900";
+    const validPayment = makeDepositPayment(setup, { accepted: validAccepted });
+    let executed = false;
+
+    const valid = await setup.server.handlePaidRequest(requestWithPayment(validPayment.payload), async () => {
+      executed = true;
+      return { body: "secret", chargedAmount: "100" };
+    });
+    expect(valid.status).toBe(200);
+    expect(executed).toBe(true);
+
+    const outside = makeServer(config);
+    outside.chain.daa = "1000";
+    const tooFarAccepted = structuredClone(
+      outside.server.buildPaymentRequired({ resource: RESOURCE }).accepts[0] as BatchPaymentRequirements,
+    );
+    tooFarAccepted.extra.refundTimeoutDaa = "2001";
+    const tooFar = makeDepositPayment(outside, { accepted: tooFarAccepted });
+    let rejectedHandlerExecuted = false;
+    const rejected = await outside.server.handlePaidRequest(requestWithPayment(tooFar.payload), async () => {
+      rejectedHandlerExecuted = true;
+      return { body: "secret", chargedAmount: "100" };
+    });
+    expect(rejected.status).toBe(402);
+    expect(rejected.body).toEqual({ error: "invalid_payload" });
+    expect(rejectedHandlerExecuted).toBe(false);
+  });
+
   it("offers exact requirements for exact paid routes", async () => {
     const { server } = makeServer({ amount: "100" });
 
@@ -1651,6 +1708,32 @@ describe("direct-mode server", () => {
     await expect(setup.store.loadOpenClaimAttempt(payment.channelId)).resolves.toBeUndefined();
   });
 
+  it("rejects a claim builder that deducts fees from the covenant continuation", async () => {
+    const setup = makeServer({
+      claimBuilder: {
+        async buildClaimTransaction({ claimAmount }) {
+          return {
+            transaction: "ab".repeat(32),
+            claimAmount,
+            continuationOutpoint: { txid: CLAIM_TX, index: 1 },
+            continuationScriptPublicKey: "0000" + "77".repeat(34),
+            continuationFundingAmount: "899",
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(requestWithPayment(payment.payload), async () => ({
+      chargedAmount: "100",
+    }));
+
+    await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
+      "continuation amount must equal funding minus the authorized claim",
+    );
+    await expect(setup.store.loadOpenClaimAttempt(payment.channelId)).resolves.toBeUndefined();
+    expect(setup.chain.sentTransactions).toHaveLength(0);
+  });
+
   it("does not mutate claim state when atomic claim apply fails", async () => {
     const store = new FailingApplyClaimStore();
     const setup = makeServer({
@@ -2079,6 +2162,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
     minDepositSompi: "1000",
     amount: "100",
     refundTimeoutDaa: "1000",
+    minimumRefundLeadDaa: "0",
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
@@ -2371,7 +2455,7 @@ class FakeAddressCodec implements AddressCodec {
 class FakeChainProvider implements ServerChainProvider {
   readonly utxos = new Map<string, ChainUtxo>();
   claimFee = "10";
-  daa = "1000";
+  daa = "0";
   finality: SettlementFinality = "accepted";
   sendCount = 0;
   sendTransactionId = CLAIM_TX;

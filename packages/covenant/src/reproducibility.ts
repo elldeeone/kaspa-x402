@@ -22,7 +22,7 @@ import {
 import type { EscrowTemplateParams, FundingOutpoint, ScriptPublicKey } from "./template.js";
 
 export const ESCROW_FIXTURE_COMPILER_NAME = "silverc";
-export const ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT = "bf04c35b7ec74b0dce12815d78075af1c42ae2dd";
+export const ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT = "956868ea63a2af4176889f1331449b5f4f9e1df8";
 export const ESCROW_FIXTURE_COMPILER_COMMAND =
   "SILVERSCRIPT_DIR=<silverscript-checkout> cargo run --quiet -p silverscript-lang --bin silverc -- contracts/kaspa-x402-escrow-v1.sil --constructor-args <args.json> -o <out.json>";
 

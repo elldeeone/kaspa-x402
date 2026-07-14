@@ -1,7 +1,7 @@
 # Alpha Publish Checklist
 
-Status: preparing `0.1.0-alpha.6`. `0.1.0-alpha.5` was published on
-2026-07-06. Publishes require npm authorization and must not happen
+Status: preparing `0.1.0-alpha.7`. `0.1.0-alpha.6` remains the latest recorded
+live release snapshot. Publishes require npm authorization and must not happen
 accidentally from CI or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
@@ -30,6 +30,9 @@ including the reserved borrow outpoint, redeem script, additive threshold, and
 expected payment output index; clients return a signed transaction artifact
 encoded as `kaspa-sdk-safe-json-v2.0.0`; and servers verify, broadcast, observe,
 and consume the reservation before releasing protected content.
+`0.1.0-alpha.7` hardens that path with canonical transaction-envelope and
+reservation checks, atomic continuation recycling, rolling DAA refund safety,
+full-outpoint voucher binding, and recovery-safe claim accounting.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -50,9 +53,12 @@ npm run validate:schemas
 npm run site:build
 npm run site:check
 npm run check:browser-demo
+npm run check:pnn-browser
+npm run check:vendor-wasm
 npm run check:demo-gateway
 npm run proof:offline
 npm run check:covenant-fixtures
+npm run validate:tx-v1-consensus
 npm --workspace @kaspa-x402/core pack --dry-run --json
 npm --workspace @kaspa-x402/covenant pack --dry-run --json
 npm --workspace @kaspa-x402/client pack --dry-run --json
@@ -77,6 +83,26 @@ links.
 The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
+
+## Alpha.7 Registry And Tarball Recheck
+
+Checked locally for alpha.7 on 2026-07-14:
+
+- all public package manifests and internal public-package dependencies use
+  exactly `0.1.0-alpha.7`;
+- the full release matrix, consensus harness, browser checks, offline proof,
+  schemas, immutable site snapshot, and clean tarball-import smoke pass;
+- the funded TN10 exact, deposit-voucher, voucher-only, claim, replay-rejection,
+  and refund flows pass using a NodeJS SDK built from reviewed current
+  `rusty-kaspa` source;
+- the supplied mainnet node reports `mainnet`, synced status, and UTXO indexing
+  in a read-only gRPC check; this is not a mainnet readiness claim;
+- `npm audit --omit=dev --audit-level=high` reports no production dependency
+  vulnerabilities. The full development tree retains transitive
+  Wrangler/Miniflare advisories.
+
+No alpha.7 package has been published by this review. Registry and dist-tag
+checks remain a release-operator step after publication.
 
 ## Alpha.6 Registry And Tarball Recheck
 
@@ -122,8 +148,8 @@ Checked for alpha.5 on 2026-07-06:
 
 ## Hosted Evidence Gate
 
-For alpha.6, the source release gate is not the same as the public hosted
-gateway gate. Alpha.6 source adds the KIP-10 exact transaction-artifact path for
+For alpha.7, the source release gate is not the same as the public hosted
+gateway gate. Alpha.7 source hardens the KIP-10 exact transaction-artifact path for
 direct-mode servers that advertise reservations. The hosted
 `demo.kaspa-x402.org` gateway may advertise exact evidence only while it is
 deployed with working exact reservations, PNN broadcast, finality observation,
@@ -141,7 +167,7 @@ Before advertising hosted exact evidence, run:
 KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS npm run proof:hosted-exact
 ```
 
-The expected alpha.6 live proof must include:
+The expected alpha.7 live proof must include:
 
 - KIP-10 exact reservation terms with `additiveThresholdSompi` at or above
   `10000000` sompi;
@@ -152,6 +178,20 @@ The expected alpha.6 live proof must include:
 - batch claim transaction construction and broadcast;
 - replay rejection across exact and batch-settlement;
 - batch refund transaction construction and broadcast after timeout.
+
+Checked for alpha.7 on 2026-07-14:
+
+- the funded TN10 live proof completed with status `complete`;
+- exact KIP-10 settlement used adapter-submitted transaction-v1 evidence,
+  server broadcast finality `accepted`, and a `10000000` sompi additive
+  threshold;
+- exact replay rejection, batch deposit-voucher, voucher-only, claim,
+  continuation replay rejection, and post-timeout refund all passed;
+- the sanitized evidence and transaction ids are recorded in
+  `docs/live-testnet-report.md`;
+- the hosted gateway was not redeployed or represented as fresh alpha.7
+  evidence. Its last recorded hosted proof remains the historical alpha.6 run
+  in `docs/testnet-gateway.md`.
 
 Checked for alpha.6 on 2026-07-09:
 
@@ -245,5 +285,6 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
-- alpha.6 exact supports preferred KIP-10 `exact-transaction` artifacts;
+- alpha.7 exact supports preferred KIP-10 `exact-transaction` artifacts with
+  durable reservation continuation and replay requirements;
 - live proof evidence is testnet-only.

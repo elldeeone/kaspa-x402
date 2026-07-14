@@ -47,7 +47,7 @@ function matchesScope(channel: DirectModeChannel, scope: ChannelLookupScope): bo
 
 function isRefundable(channel: DirectModeChannel, nowDaa?: string): boolean {
   if (!["active", "retired", "refundable"].includes(channel.status)) return false;
-  return nowDaa === undefined || parseSompiString(nowDaa) >= parseSompiString(channel.refundTimeoutDaa);
+  return nowDaa === undefined || parseSompiString(nowDaa) > parseSompiString(channel.refundTimeoutDaa);
 }
 
 function cloneChannel(channel: DirectModeChannel): DirectModeChannel {

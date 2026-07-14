@@ -14,7 +14,7 @@ the site without repository context.
 | Can a reader find the supported schemes and networks? | Yes. The homepage, specs, and gateway docs state `exact`, `batch-settlement`, `kaspa:testnet-10`, and `KAS`. |
 | Can a reader run fixture validation? | Yes. `/vectors/` groups fixtures by directory and `npm run validate:schemas` validates committed fixtures locally. |
 | Can a reader hit a real endpoint? | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch`. |
-| Does the endpoint advertise payable amounts? | Yes. Exact and batch deposit values are configured above the Kaspa standard-output storage-mass floor. |
+| Does the endpoint advertise payable amounts? | Yes. Exact and batch deposit values satisfy the reference gateway's conservative on-chain output policy; KIP-9 mass remains transaction-shape-dependent. |
 | Does the endpoint publish operational status? | Yes. `/health` exposes chain evidence, metrics, enabled state, and latest canary when present; `/canary` exposes enabled state and the stored canary report after the scheduled job has run, including a release-snapshot freshness check. |
 | Does the public material imply mainnet readiness? | No. The site and gateway docs frame the deployment as alpha and `kaspa:testnet-10` only. |
 | Does the site publish internal planning or review drafts? | No. The site checker blocks ignored planning files, review files, and private announcement drafts. |

@@ -16,6 +16,7 @@ import {
   buildClaimArgs,
   buildEscrowRedeemScript,
   buildKip10AdditiveBorrowArgs,
+  buildKip10AdditiveBorrowSignatureScript,
   buildKip10AdditiveRedeemScript,
   buildRefundArgs,
   checkEscrowFixtureReproducibility,
@@ -24,6 +25,7 @@ import {
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
   kip10AdditiveScriptPublicKey,
+  parseKip10AdditiveRedeemScript,
   scriptUnitAllowance,
   serializedScriptPublicKey,
   validateClaimOutputPlan,
@@ -262,12 +264,30 @@ describe("escrow covenant template", () => {
     const redeemScript = buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "100" });
     expect(redeemScript).toBe(`6320${ownerPublicKey}ac67b9bfb9c388b9c2016494b9bea268`);
     expect(buildKip10AdditiveBorrowArgs()).toBe("00");
+    expect(buildKip10AdditiveBorrowSignatureScript(redeemScript)).toBe(`0032${redeemScript}`);
 
     const scriptPublicKey = kip10AdditiveScriptPublicKey({ ownerPublicKey, amount: "100" });
     expect(scriptPublicKey.version).toBe(0);
     expect(scriptPublicKey.script).toMatch(/^aa20[0-9a-f]{64}87$/);
+    expect(parseKip10AdditiveRedeemScript(redeemScript)).toEqual({ ownerPublicKey, amount: "100" });
+    expect(parseKip10AdditiveRedeemScript(buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "0" }))).toEqual({
+      ownerPublicKey,
+      amount: "0",
+    });
+    expect(parseKip10AdditiveRedeemScript(buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "16" }))).toEqual({
+      ownerPublicKey,
+      amount: "16",
+    });
+    expect(parseKip10AdditiveRedeemScript(buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "9223372036854775807" }))).toEqual({
+      ownerPublicKey,
+      amount: "9223372036854775807",
+    });
     expect(() => buildKip10AdditiveRedeemScript({ ownerPublicKey, amount: "9223372036854775808" })).toThrow(
       "signed 64-bit script number",
+    );
+    expect(() => parseKip10AdditiveRedeemScript("51")).toThrow("canonical KIP-10 additive template");
+    expect(() => parseKip10AdditiveRedeemScript(redeemScript.replace("0164", "026400"))).toThrow(
+      "canonical KIP-10 script-number encoding",
     );
   });
 

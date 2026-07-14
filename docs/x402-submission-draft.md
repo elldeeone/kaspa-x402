@@ -62,17 +62,17 @@ gates.
   expected payment output index; the client returns a signed SDK-safe JSON
   transaction artifact as an `exact-transaction` payload for the server or
   facilitator to verify, broadcast if needed, and observe. Amounts are decimal
-  strings in sompi. Advertised prices
-  must sit above Kaspa's standard-output storage-mass floor (about 0.1 KAS);
-  the docs state this constraint prominently. Reference reservation providers
-  use merchant-owned borrow UTXOs and an additive threshold of at least the same
-  floor to avoid dust-churn of reusable borrow inventory.
+  strings in sompi. KIP-9 storage mass is transaction-shape-dependent and does
+  not define a universal dust constant. The reference implementation applies a
+  conservative `10000000` sompi on-chain output and additive-threshold policy;
+  alternative values require transaction-specific mass analysis. Reference
+  reservation providers use merchant-owned borrow UTXOs.
 - `batch-settlement` (`extra.binding: "kaspa-escrow-v1"`): the client funds
   a covenant-backed escrow once, signs a cumulative Schnorr voucher per paid
   request, and the chain is touched again only at claim or refund time. This
   is the same escrow-plus-off-chain-voucher model as the upstream EVM
   batch-settlement binding, implemented with UTXO covenants. Per-request
-  prices below the on-chain floor are possible here (the demo gateway charges 500
+  prices below that reference on-chain policy are possible here (the demo gateway charges 500
   sompi per request).
 - `upto`: I prototyped a capped-authorisation profile and archived it
   because Kaspa cannot natively guarantee an authorisation-expiry bound;
