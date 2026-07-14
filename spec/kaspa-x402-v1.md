@@ -5,7 +5,8 @@ Status: draft
 This document defines common rules for x402 v2 payments on Kaspa. Active
 scheme-specific behavior is defined in sibling documents:
 
-- [Kaspa x402 Exact Binding v1](kaspa-exact-v1.md)
+- [Kaspa x402 Exact Binding v2](kaspa-exact-v2.md)
+- [Kaspa x402 Exact Binding v1](kaspa-exact-v1.md) (superseded alpha.7 profile)
 - [Kaspa x402 Batch Settlement Binding v1](kaspa-batch-settlement-v1.md)
 
 ## x402 Relationship
@@ -37,7 +38,7 @@ gates in `docs/mainnet-readiness.md`.
 
 | Scheme | Use when | Settlement |
 | ------ | -------- | ---------- |
-| `exact` | The price is known before the request. Example: buy a file or one fixed-price API result. | One immediate native KAS transfer for the exact amount. |
+| `exact` | The price is known before the request. Example: buy a file or one fixed-price API result. | One immediate native KAS transfer using default `standard-native` or optional `additive`. |
 | `batch-settlement` | The client expects repeated or variable-cost requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later. |
 
 The active schemes are separate. `batch-settlement` can represent
@@ -141,7 +142,7 @@ because each voucher does not create a new on-chain output.
 
 | Scheme | `extra.binding` |
 | ------ | --------------- |
-| `exact` | `kaspa-exact-v1` |
+| `exact` | `kaspa-exact-v2` for new implementations; `kaspa-exact-v1` is the superseded alpha.7 profile. |
 | `batch-settlement` | `kaspa-escrow-v1` |
 
 Unknown `extra` fields may be preserved by transports, but verifiers must ignore unknown fields unless the selected binding explicitly marks them as critical.
@@ -165,8 +166,11 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "payTo": "kaspatest:...",
       "maxTimeoutSeconds": 60,
       "extra": {
-        "binding": "kaspa-exact-v1",
-        "finality": "accepted"
+        "binding": "kaspa-exact-v2",
+        "profile": "standard-native",
+        "finality": "accepted",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "payToScriptPublicKey": "0000..."
       }
     },
     {

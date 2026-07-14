@@ -70,6 +70,7 @@ export const SCHEMA_FILES = [
 
 export const SPEC_FILES = [
   "spec/kaspa-x402-v1.md",
+  "spec/kaspa-exact-v2.md",
   "spec/kaspa-exact-v1.md",
   "spec/kaspa-batch-settlement-v1.md",
   "spec/http-profile.md",
@@ -124,8 +125,10 @@ export const ARTIFACT_NOTES = {
     "Escrow channel state document used by batch-settlement stores.",
   "spec/kaspa-x402-v1.md":
     "Core binding: common rules for x402 v2 payments on Kaspa — networks, asset, amounts, envelopes.",
+  "spec/kaspa-exact-v2.md":
+    "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-exact-v1.md":
-    "`exact` profile: fixed-price one-shot native KAS transfer.",
+    "Superseded alpha.7 `exact` profile retained as the KIP-10 reservation record.",
   "spec/kaspa-batch-settlement-v1.md":
     "`batch-settlement` profile: escrow funding, cumulative vouchers, claim and refund.",
   "spec/http-profile.md":

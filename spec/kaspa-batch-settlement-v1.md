@@ -14,7 +14,9 @@ Use `batch-settlement` for:
 - high-frequency MCP tool calls;
 - metered agent sessions where per-request on-chain settlement would be wasteful.
 
-Use [exact](kaspa-exact-v1.md) for fixed-price one-shot purchases. Use `batch-settlement` for repeated or variable-cost requests where the server can settle from a funded escrow/channel.
+Use [exact](kaspa-exact-v2.md) for fixed-price one-shot purchases. Use
+`batch-settlement` for repeated or variable-cost requests where the server can
+settle from a funded escrow/channel.
 
 ## Scheme and Network Pair
 

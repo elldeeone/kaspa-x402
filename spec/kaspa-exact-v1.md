@@ -1,6 +1,8 @@
 # Kaspa x402 Exact Binding v1
 
-Status: draft
+Status: superseded for new implementations by
+[Kaspa x402 Exact Binding v2](kaspa-exact-v2.md). This file remains the
+alpha.7 KIP-10 reservation profile record.
 
 This document defines the Kaspa network binding for x402 v2 `exact`.
 
