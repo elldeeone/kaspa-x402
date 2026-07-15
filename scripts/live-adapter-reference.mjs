@@ -11,6 +11,7 @@ import {
 } from "@kaspa-x402/client";
 import {
   bytesToHex,
+  decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   encodePaymentRequiredHeader,
   encodePaymentSignatureHeader,
@@ -45,12 +46,15 @@ const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
 const DEFAULT_FEE_SOMPI = 2_000_000n;
 const EXACT_AMOUNT = "100000000";
+const EXACT_TINY_AMOUNT = "10000000";
 const EXACT_KIP10_HEAD_AMOUNT = "100000000";
 const EXACT_KIP10_ADDITIVE_THRESHOLD = "10000000";
 const EXACT_KIP10_COMPUTE_BUDGET = 10;
 const P2PK_COMPUTE_BUDGET = 10;
 const BATCH_REQUEST_AMOUNT = "100000000";
 const BATCH_DEPOSIT_AMOUNT = "400000000";
+const FUNDING_SPLIT_SHARDS = 16;
+const FUNDING_SPLIT_SHARD_AMOUNT = 500_000_000n;
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
 const ADAPTER_SUBMITTED_TX_VERSION_SOURCE =
   "adapter-submitted-transaction-shape";
@@ -170,6 +174,24 @@ export async function runLiveProof(context) {
         });
       },
     };
+    const fundingSplit = await createFundingSplit({
+      rpc,
+      sdk,
+      networkId,
+      fundingPrivateKey,
+      fundingAddress,
+      spentOutpoints,
+    });
+    const externalHeadProofs = new Map();
+    const exactSettlementReconciler = makeExactSettlementReconciler({
+      rpc,
+      paymentAddress: serverPayoutAddress,
+    });
+    const exactHeadReconciler = makeExactHeadReconciler({
+      rpc,
+      sdk,
+      externalHeadProofs,
+    });
     const baseServerConfig = {
       network: context.network,
       payTo: serverPayoutAddress,
@@ -181,6 +203,7 @@ export async function runLiveProof(context) {
       addressCodec,
       voucherVerifier,
       exactTransactionVerifier,
+      exactSettlementReconciler,
       acceptedFinality: "accepted",
     };
     const standardServer = new DirectModeServer({
@@ -204,23 +227,31 @@ export async function runLiveProof(context) {
         },
       },
     });
-    const additiveHead = await createKip10Head({
-      rpc,
-      sdk,
-      addressCodec,
-      network: context.network,
-      fundingPrivateKey,
-      fundingAddress,
-      fundingPublicKey,
-      knownUtxos,
-      spentOutpoints,
-    });
-    await serverStore.registerExactHead(additiveHead.record);
+    const additiveHeads = [];
+    for (let index = 0; index < 2; index += 1) {
+      additiveHeads.push(
+        await createKip10Head({
+          rpc,
+          sdk,
+          addressCodec,
+          network: context.network,
+          fundingPrivateKey,
+          fundingAddress,
+          fundingPublicKey,
+          knownUtxos,
+          spentOutpoints,
+        }),
+      );
+    }
+    for (const additiveHead of additiveHeads) {
+      await serverStore.registerExactHead(additiveHead.record);
+    }
     const additiveServer = new DirectModeServer({
       ...baseServerConfig,
-      payTo: additiveHead.record.payTo,
+      payTo: additiveHeads[0].record.payTo,
       store: serverStore,
       exactProfile: "additive",
+      exactHeadReconciler,
     });
     const client = new DirectModeClient({
       fundingProvider,
@@ -240,8 +271,9 @@ export async function runLiveProof(context) {
       addresses: {
         funding: fundingAddress,
         serverPayout: serverPayoutAddress,
-        additiveHead: additiveHead.record.payTo,
+        additiveHeads: additiveHeads.map((head) => head.record.payTo),
       },
+      fundingSplit,
       timeout: {
         deltaDaa: timeoutDelta.toString(),
         refundTimeoutDaa,
@@ -250,18 +282,64 @@ export async function runLiveProof(context) {
     let flow = "exact";
     try {
       report.exact = {
+        standardNativeTiny: await runExact({
+          client,
+          server: standardServer,
+          profile: "standard-native",
+          amount: EXACT_TINY_AMOUNT,
+          label: "tiny",
+          sdk,
+          networkId,
+        }),
         standardNative: await runExact({
           client,
           server: standardServer,
           profile: "standard-native",
+          amount: EXACT_AMOUNT,
+          label: "normal",
+          sdk,
+          networkId,
         }),
         additive: await runExact({
           client,
           server: additiveServer,
           profile: "additive",
+          amount: EXACT_AMOUNT,
+          label: "normal",
+          preferredHeadId: additiveHeads[0].record.headId,
+          sdk,
+          networkId,
         }),
-        headFunding: additiveHead.funding,
+        headFunding: additiveHeads[0].funding,
+        headFundings: additiveHeads.map((head) => head.funding),
       };
+      report.exact.conflict = await runAdditiveConflict({
+        client,
+        server: additiveServer,
+        preferredHeadId: additiveHeads[1].record.headId,
+        sdk,
+        networkId,
+      });
+      report.exact.invalidSignature = await runInvalidExactSignature({
+        client,
+        server: standardServer,
+        pendingBroadcasts,
+      });
+      report.exact.recovery = await runExactRestartRecovery({
+        client,
+        baseServerConfig,
+        store: serverStore,
+        chain,
+      });
+      report.exact.externalAdvance = await runExternalHeadAdvance({
+        client,
+        server: additiveServer,
+        store: serverStore,
+        chain,
+        sdk,
+        preferredHeadId: additiveHeads[0].record.headId,
+        externalHeadProofs,
+      });
       flow = "batch";
       report.batch = await runBatch({
         client,
@@ -300,67 +378,58 @@ export async function runLiveProof(context) {
   }
 }
 
-async function runExact({ client, server, profile }) {
-  const resource = {
-    url: `https://live.kaspa-x402.local/exact/${profile}`,
-    description: `Live ${profile} exact proof`,
-  };
-  const unpaid = await server.handlePaidRequest(
-    {
-      method: "GET",
-      url: resource.url,
-      body: null,
-      headers: {},
-      resource,
-      paymentAmount: EXACT_AMOUNT,
-      paymentScheme: "exact",
-    },
-    async () => ({
-      status: 200,
-      body: { ok: false },
-    }),
-  );
-  const paymentRequired = unpaid.headers?.[PAYMENT_REQUIRED_HEADER];
-  if (unpaid.status !== 402 || !paymentRequired) {
-    throw new Error(
-      `${profile} exact unpaid request did not return a payment challenge: ${unpaid.status}`,
-    );
-  }
+async function runExact({
+  client,
+  server,
+  profile,
+  amount,
+  label,
+  preferredHeadId,
+  sdk,
+  networkId,
+}) {
+  const challenge = await exactChallenge({
+    server,
+    profile,
+    amount,
+    label,
+    preferredHeadId,
+  });
+  const { resource, paymentRequired } = challenge;
+  const requestHash = hash({ flow: `exact-${profile}-${label}`, request: 1 });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    requestHash,
   });
   if (payment.paymentPayload.payload.type !== "exact-transaction") {
     throw new Error(
       `${profile} exact challenge produced ${payment.paymentPayload.payload.type} instead of exact-transaction`,
     );
   }
-  const requestHash = payment.paymentPayload.payload.requestHash;
-  if (!requestHash)
+  if (payment.paymentPayload.payload.requestHash !== requestHash)
     throw new Error("exact payment did not include a request hash");
-  try {
-    await server.verifyPayment({
-      resource,
-      paymentRequirements: payment.paymentPayload.accepted,
-      paymentPayload: payment.paymentPayload,
-      requestHash,
-    });
-  } catch (error) {
-    throw new Error(
-      `${profile} exact preflight verify failed: ${error?.code ?? "error"} ${error?.message ?? String(error)}`,
-    );
-  }
+  const economics = exactTransactionEconomics({
+    sdk,
+    networkId,
+    transactionArtifact: payment.paymentPayload.payload.transaction,
+    profile,
+    amount,
+    headAmount: payment.paymentPayload.accepted.extra.headAmount,
+  });
+  let handlerExecutions = 0;
+  const handler = async () => {
+    handlerExecutions += 1;
+    return { status: 200, body: { ok: true, profile, label } };
+  };
   const response = await server.handlePaidRequest(
     requestWithPayment(payment.paymentPayload, {
       url: resource.url,
       resource,
       scheme: "exact",
-      amount: EXACT_AMOUNT,
+      amount,
       requestHash,
     }),
-    async () => ({
-      status: 200,
-      body: { ok: true },
-    }),
+    handler,
   );
   if (response.status !== 200) {
     throw new Error(
@@ -370,6 +439,21 @@ async function runExact({ client, server, profile }) {
   const settlement = decodeResponse(response);
   const settlementExtra = requireSettlementExtension(settlement);
   await client.applySettlement(payment, settlement);
+  const duplicate = await server.handlePaidRequest(
+    requestWithPayment(payment.paymentPayload, {
+      url: resource.url,
+      resource,
+      scheme: "exact",
+      amount,
+      requestHash,
+    }),
+    handler,
+  );
+  if (duplicate.status !== 200 || handlerExecutions !== 1) {
+    throw new Error(
+      `${profile} exact duplicate was not idempotent: ${duplicate.status}/${handlerExecutions}`,
+    );
+  }
   const replayPayload = JSON.parse(JSON.stringify(payment.paymentPayload));
   delete replayPayload.payload.requestHash;
   const replay = await server.handlePaidRequest(
@@ -377,7 +461,7 @@ async function runExact({ client, server, profile }) {
       url: `${resource.url}/replay`,
       resource,
       scheme: "exact",
-      amount: EXACT_AMOUNT,
+      amount,
       requestHash: hash({ flow: `exact-${profile}`, request: 2 }),
     }),
     async () => ({
@@ -397,7 +481,7 @@ async function runExact({ client, server, profile }) {
   const headAmount = accepted.extra.headAmount;
   const successorAmount =
     profile === "additive" && headAmount
-      ? (BigInt(headAmount) + BigInt(EXACT_AMOUNT)).toString()
+      ? (BigInt(headAmount) + BigInt(amount)).toString()
       : undefined;
   return {
     profile,
@@ -434,7 +518,367 @@ async function runExact({ client, server, profile }) {
       txid: settlement.transaction,
       finality: settlementExtra.finality,
     },
+    economics,
+    duplicate: { status: duplicate.status, handlerExecutions },
     replay: { status: replay.status, error: replay.body.error },
+  };
+}
+
+async function exactChallenge({
+  server,
+  profile,
+  amount,
+  label,
+  preferredHeadId,
+}) {
+  for (let attempt = 0; attempt < 64; attempt += 1) {
+    const resource = {
+      url: `https://live.kaspa-x402.local/exact/${profile}/${label}?offer=${attempt}`,
+      description: `Live ${label} ${profile} exact proof`,
+    };
+    const unpaid = await server.handlePaidRequest(
+      {
+        method: "GET",
+        url: resource.url,
+        body: null,
+        headers: {},
+        resource,
+        paymentAmount: amount,
+        paymentScheme: "exact",
+      },
+      async () => ({ status: 200, body: { ok: false } }),
+    );
+    const paymentRequired = unpaid.headers?.[PAYMENT_REQUIRED_HEADER];
+    if (unpaid.status !== 402 || !paymentRequired) {
+      throw new Error(
+        `${profile} exact unpaid request did not return a payment challenge: ${unpaid.status}`,
+      );
+    }
+    if (!preferredHeadId) return { resource, paymentRequired };
+    const accepted = decodePaymentRequired(paymentRequired);
+    if (accepted.extra.headId === preferredHeadId) {
+      return { resource, paymentRequired, accepted };
+    }
+  }
+  throw new Error(`could not select additive head ${preferredHeadId}`);
+}
+
+async function runAdditiveConflict({
+  client,
+  server,
+  preferredHeadId,
+  sdk,
+  networkId,
+}) {
+  const { resource, paymentRequired, accepted } = await exactChallenge({
+    server,
+    profile: "additive",
+    amount: EXACT_AMOUNT,
+    label: "conflict",
+    preferredHeadId,
+  });
+  const requestHashes = [
+    hash({ flow: "additive-conflict", contender: 1 }),
+    hash({ flow: "additive-conflict", contender: 2 }),
+  ];
+  const payments = [];
+  for (const requestHash of requestHashes) {
+    payments.push(
+      await client.createPayment(paymentRequired, {
+        url: resource.url,
+        requestHash,
+      }),
+    );
+  }
+  const transactionIds = payments.map((payment) =>
+    exactArtifactTransactionId(sdk, payment.paymentPayload.payload.transaction),
+  );
+  if (transactionIds[0] === transactionIds[1]) {
+    throw new Error(
+      "additive conflict contenders must use distinct transactions",
+    );
+  }
+  let handlerExecutions = 0;
+  const handler = async () => {
+    handlerExecutions += 1;
+    return { status: 200, body: { ok: true, flow: "conflict" } };
+  };
+  const responses = await Promise.all(
+    payments.map((payment, index) =>
+      server.handlePaidRequest(
+        requestWithPayment(payment.paymentPayload, {
+          url: resource.url,
+          resource,
+          scheme: "exact",
+          amount: EXACT_AMOUNT,
+          requestHash: requestHashes[index],
+        }),
+        handler,
+      ),
+    ),
+  );
+  const winnerIndex = responses.findIndex(
+    (response) => response.status === 200,
+  );
+  const loserIndex = responses.findIndex((response) => response.status === 402);
+  if (winnerIndex < 0 || loserIndex < 0 || handlerExecutions !== 1) {
+    throw new Error(
+      `additive conflict did not produce one winner and one refreshed loser: ${responses.map((response) => response.status).join(",")}`,
+    );
+  }
+  const winnerSettlement = decodeResponse(responses[winnerIndex]);
+  await client.applySettlement(payments[winnerIndex], winnerSettlement);
+  const refreshedHeader =
+    responses[loserIndex].headers?.[PAYMENT_REQUIRED_HEADER];
+  if (!refreshedHeader)
+    throw new Error("additive loser did not receive refreshed terms");
+  const refreshed = decodePaymentRequired(refreshedHeader);
+  if (
+    refreshed.extra.headId === accepted.extra.headId &&
+    BigInt(refreshed.extra.headVersion ?? "0") <=
+      BigInt(accepted.extra.headVersion ?? "0")
+  ) {
+    throw new Error(
+      "additive loser did not receive an advanced or alternate head",
+    );
+  }
+  const retryPayment = await client.createPayment(refreshedHeader, {
+    url: resource.url,
+    requestHash: requestHashes[loserIndex],
+  });
+  const retryResponse = await server.handlePaidRequest(
+    requestWithPayment(retryPayment.paymentPayload, {
+      url: resource.url,
+      resource,
+      scheme: "exact",
+      amount: EXACT_AMOUNT,
+      requestHash: requestHashes[loserIndex],
+    }),
+    handler,
+  );
+  if (retryResponse.status !== 200 || handlerExecutions !== 2) {
+    throw new Error(
+      `refreshed additive loser failed: ${retryResponse.status}/${handlerExecutions}`,
+    );
+  }
+  const retrySettlement = decodeResponse(retryResponse);
+  await client.applySettlement(retryPayment, retrySettlement);
+  return {
+    initialHeadId: accepted.extra.headId,
+    initialHeadVersion: accepted.extra.headVersion,
+    transactionIds,
+    winnerTransactionId: winnerSettlement.transaction,
+    winnerStatus: responses[winnerIndex].status,
+    loserStatus: responses[loserIndex].status,
+    refreshedHeadId: refreshed.extra.headId,
+    refreshedHeadVersion: refreshed.extra.headVersion,
+    retryTransactionId: retrySettlement.transaction,
+    retryStatus: retryResponse.status,
+    handlerExecutions,
+    contenderEconomics: payments.map((payment) =>
+      exactTransactionEconomics({
+        sdk,
+        networkId,
+        transactionArtifact: payment.paymentPayload.payload.transaction,
+        profile: "additive",
+        amount: EXACT_AMOUNT,
+        headAmount: payment.paymentPayload.accepted.extra.headAmount,
+      }),
+    ),
+  };
+}
+
+async function runInvalidExactSignature({ client, server, pendingBroadcasts }) {
+  const { resource, paymentRequired } = await exactChallenge({
+    server,
+    profile: "standard-native",
+    amount: EXACT_TINY_AMOUNT,
+    label: "invalid-signature",
+  });
+  const requestHash = hash({ flow: "invalid-signature" });
+  const payment = await client.createPayment(paymentRequired, {
+    url: resource.url,
+    requestHash,
+  });
+  const forged = JSON.parse(JSON.stringify(payment.paymentPayload));
+  const signature = forged.payload.authorization.signature;
+  forged.payload.authorization.signature = `${signature[0] === "0" ? "1" : "0"}${signature.slice(1)}`;
+  let handlerExecutions = 0;
+  const broadcastsBefore = pendingBroadcasts.size;
+  const response = await server.handlePaidRequest(
+    requestWithPayment(forged, {
+      url: resource.url,
+      resource,
+      scheme: "exact",
+      amount: EXACT_TINY_AMOUNT,
+      requestHash,
+    }),
+    async () => {
+      handlerExecutions += 1;
+      return { status: 200, body: { ok: false } };
+    },
+  );
+  const broadcasts = pendingBroadcasts.size - broadcastsBefore;
+  if (response.status < 400 || handlerExecutions !== 0 || broadcasts !== 0) {
+    throw new Error(
+      "invalid exact authorization reached protected work or broadcast",
+    );
+  }
+  return {
+    status: response.status,
+    error: response.body?.error,
+    handlerExecutions,
+    broadcasts,
+  };
+}
+
+async function runExactRestartRecovery({
+  client,
+  baseServerConfig,
+  store,
+  chain,
+}) {
+  let injected = false;
+  const faultingChain = {
+    ...chain,
+    async sendTransaction(transaction) {
+      const result = await chain.sendTransaction(transaction);
+      if (!injected) {
+        injected = true;
+        throw new Error("injected post-broadcast process failure");
+      }
+      return result;
+    },
+  };
+  const beforeRestart = new DirectModeServer({
+    ...baseServerConfig,
+    store,
+    chainProvider: faultingChain,
+    exactProfile: "standard-native",
+  });
+  const { resource, paymentRequired } = await exactChallenge({
+    server: beforeRestart,
+    profile: "standard-native",
+    amount: EXACT_AMOUNT,
+    label: "restart-recovery",
+  });
+  const requestHash = hash({ flow: "restart-recovery" });
+  const payment = await client.createPayment(paymentRequired, {
+    url: resource.url,
+    requestHash,
+  });
+  let handlerExecutions = 0;
+  const request = requestWithPayment(payment.paymentPayload, {
+    url: resource.url,
+    resource,
+    scheme: "exact",
+    amount: EXACT_AMOUNT,
+    requestHash,
+  });
+  const handler = async () => {
+    handlerExecutions += 1;
+    return { status: 200, body: { ok: true, flow: "restart-recovery" } };
+  };
+  const first = await beforeRestart.handlePaidRequest(request, handler);
+  if (
+    first.status !== 503 ||
+    first.body?.error !== "exact_settlement_recovery_required" ||
+    handlerExecutions !== 0
+  ) {
+    throw new Error("post-broadcast failure did not enter durable recovery");
+  }
+  const transactionId = payment.transactionId;
+  if (!transactionId)
+    throw new Error("recovery payment did not expose a transaction id");
+  const afterRestart = new DirectModeServer({
+    ...baseServerConfig,
+    store,
+    chainProvider: chain,
+    exactProfile: "standard-native",
+  });
+  const reconciled = await afterRestart.reconcileExactSettlement(transactionId);
+  if (reconciled?.status !== "accepted") {
+    throw new Error(
+      "restarted server did not reconcile the accepted transaction",
+    );
+  }
+  const retry = await afterRestart.handlePaidRequest(request, handler);
+  if (retry.status !== 200 || handlerExecutions !== 1) {
+    throw new Error(
+      "reconciled exact retry did not execute protected work once",
+    );
+  }
+  await client.applySettlement(payment, decodeResponse(retry));
+  return {
+    transactionId,
+    initialStatus: first.status,
+    recoveryError: first.body.error,
+    reconciledStatus: reconciled.status,
+    reconciledFinality: reconciled.finality,
+    retryStatus: retry.status,
+    handlerExecutions,
+    runtimeReinstantiated: true,
+    durableStorePreserved: true,
+  };
+}
+
+async function runExternalHeadAdvance({
+  client,
+  server,
+  store,
+  chain,
+  sdk,
+  preferredHeadId,
+  externalHeadProofs,
+}) {
+  const before = await store.loadExactHead(preferredHeadId);
+  if (!before || before.status !== "available") {
+    throw new Error("external advancement target head is unavailable");
+  }
+  const { resource, paymentRequired } = await exactChallenge({
+    server,
+    profile: "additive",
+    amount: EXACT_AMOUNT,
+    label: "external-advance",
+    preferredHeadId,
+  });
+  const requestHash = hash({ flow: "external-head-advance" });
+  const payment = await client.createPayment(paymentRequired, {
+    url: resource.url,
+    requestHash,
+  });
+  const transaction = payment.paymentPayload.payload.transaction;
+  const transactionId = exactArtifactTransactionId(sdk, transaction);
+  externalHeadProofs.set(transactionId.toLowerCase(), { transaction });
+  const broadcast = await chain.sendTransaction(transaction);
+  if (
+    broadcast.transactionId.toLowerCase() !== transactionId.toLowerCase() ||
+    broadcast.finality !== "accepted"
+  ) {
+    throw new Error(
+      "external head advancement did not reach accepted finality",
+    );
+  }
+  const after = await server.reconcileExactHead(preferredHeadId, [
+    transactionId,
+  ]);
+  if (
+    BigInt(after.version) !== BigInt(before.version) + 1n ||
+    after.currentOutpoint.txid.toLowerCase() !== transactionId.toLowerCase()
+  ) {
+    throw new Error(
+      "trusted external head reconciliation did not advance state",
+    );
+  }
+  return {
+    headId: preferredHeadId,
+    transactionId,
+    finality: broadcast.finality,
+    beforeVersion: before.version,
+    afterVersion: after.version,
+    beforeOutpoint: before.currentOutpoint,
+    afterOutpoint: after.currentOutpoint,
+    trustedCandidateCount: 1,
   };
 }
 
@@ -667,6 +1111,108 @@ function exactPaymentArtifact({
     },
     payerAddress,
     fundingSource: "hot-wallet",
+  };
+}
+
+function exactArtifactTransactionId(sdk, transactionArtifact) {
+  return sdk.Transaction.deserializeFromSafeJSON(transactionArtifact).id;
+}
+
+function exactTransactionEconomics({
+  sdk,
+  networkId,
+  transactionArtifact,
+  profile,
+  amount,
+  headAmount,
+}) {
+  const transaction =
+    sdk.Transaction.deserializeFromSafeJSON(transactionArtifact);
+  const object = transaction.serializeToObject();
+  const inputAmount = object.inputs.reduce(
+    (sum, input) => sum + BigInt(input.utxo?.amount ?? 0),
+    0n,
+  );
+  const outputAmount = object.outputs.reduce(
+    (sum, output) => sum + BigInt(output.value ?? 0),
+    0n,
+  );
+  const fee = inputAmount - outputAmount;
+  if (fee < 0n) throw new Error("exact transaction outputs exceed inputs");
+  const mass = sdk.calculateTransactionMass(networkId, transaction);
+  const minimumFee = sdk.calculateTransactionFee(networkId, transaction);
+  const merchantGain =
+    profile === "additive"
+      ? BigInt(object.outputs[0]?.value ?? 0) - BigInt(headAmount ?? 0)
+      : BigInt(object.outputs[0]?.value ?? 0);
+  if (merchantGain !== BigInt(amount)) {
+    throw new Error(
+      `${profile} merchant gain ${merchantGain} does not equal ${amount}`,
+    );
+  }
+  return {
+    inputAmountSompi: inputAmount.toString(),
+    outputAmountSompi: outputAmount.toString(),
+    feeSompi: fee.toString(),
+    minimumFeeSompi: BigInt(minimumFee ?? 0).toString(),
+    payerCostSompi: (BigInt(amount) + fee).toString(),
+    merchantGainSompi: merchantGain.toString(),
+    mass: BigInt(mass).toString(),
+    storageMass: BigInt(
+      object.storageMass ?? transaction.storageMass ?? 0,
+    ).toString(),
+    computeBudgets: object.inputs.map((input) =>
+      Number(input.computeBudget ?? 0),
+    ),
+    inputCount: object.inputs.length,
+    outputCount: object.outputs.length,
+  };
+}
+
+async function createFundingSplit({
+  rpc,
+  sdk,
+  networkId,
+  fundingPrivateKey,
+  fundingAddress,
+  spentOutpoints,
+}) {
+  const sent = await sendFromFunding({
+    rpc,
+    sdk,
+    networkId,
+    fundingPrivateKey,
+    fundingAddress,
+    spentOutpoints,
+    outputs: Array.from({ length: FUNDING_SPLIT_SHARDS }, () => ({
+      address: fundingAddress,
+      amount: FUNDING_SPLIT_SHARD_AMOUNT,
+    })),
+  });
+  const started = Date.now();
+  let observed = [];
+  while (Date.now() - started < DEFAULT_CONFIRMATION_TIMEOUT_MS) {
+    observed = (await getAddressUtxos(rpc, fundingAddress)).filter(
+      (utxo) => utxo.outpoint.txid.toLowerCase() === sent.txid.toLowerCase(),
+    );
+    if (observed.length >= FUNDING_SPLIT_SHARDS) break;
+    await sleep(1_000);
+  }
+  if (observed.length < FUNDING_SPLIT_SHARDS) {
+    throw new Error(
+      `funding split exposed ${observed.length} outputs instead of at least ${FUNDING_SPLIT_SHARDS}`,
+    );
+  }
+  return {
+    txid: sent.txid,
+    txVersion: sent.txVersion,
+    txVersionSource: sent.txVersionSource,
+    requestedShards: FUNDING_SPLIT_SHARDS,
+    shardAmountSompi: FUNDING_SPLIT_SHARD_AMOUNT.toString(),
+    observedOutputs: observed.map((utxo) => ({
+      outpoint: utxo.outpoint,
+      amount: utxo.amount,
+    })),
   };
 }
 
@@ -1368,6 +1914,114 @@ function makeChainProvider({
   };
 }
 
+function makeExactSettlementReconciler({ rpc, paymentAddress }) {
+  return {
+    async reconcileExactSettlement(attempt) {
+      const entries = await getAddressUtxos(rpc, paymentAddress);
+      const payment = entries.find(
+        (utxo) =>
+          utxo.outpoint.txid.toLowerCase() ===
+            attempt.transactionId.toLowerCase() &&
+          utxo.outpoint.index === attempt.paymentOutputIndex &&
+          utxo.amount === attempt.amount &&
+          utxo.scriptPublicKey.toLowerCase() ===
+            attempt.payToScriptPublicKey.toLowerCase(),
+      );
+      if (!payment) {
+        return {
+          status: "unknown",
+          transactionId: attempt.transactionId,
+          reason:
+            "payment output is not yet visible in the selected-chain UTXO set",
+        };
+      }
+      return {
+        status: "accepted",
+        transactionId: attempt.transactionId,
+        finality: "accepted",
+        paymentOutput: {
+          amount: payment.amount,
+          scriptPublicKey: payment.scriptPublicKey,
+          address: paymentAddress,
+        },
+      };
+    },
+  };
+}
+
+function makeExactHeadReconciler({ rpc, sdk, externalHeadProofs }) {
+  return {
+    async reconcileExactHead(head, candidateTransactionIds = []) {
+      const current = (await getAddressUtxos(rpc, head.payTo)).find(
+        (utxo) =>
+          outpointKey(utxo.outpoint) === outpointKey(head.currentOutpoint) &&
+          utxo.amount === head.currentAmount &&
+          utxo.scriptPublicKey.toLowerCase() ===
+            head.scriptPublicKey.toLowerCase(),
+      );
+      if (current) {
+        return {
+          status: "current",
+          outpoint: current.outpoint,
+          amount: current.amount,
+          scriptPublicKey: current.scriptPublicKey,
+          finality: "accepted",
+        };
+      }
+      for (const candidate of candidateTransactionIds) {
+        const proof = externalHeadProofs.get(candidate.toLowerCase());
+        if (!proof) continue;
+        const transaction = sdk.Transaction.deserializeFromSafeJSON(
+          proof.transaction,
+        );
+        if (transaction.id.toLowerCase() !== candidate.toLowerCase()) continue;
+        const object = transaction.serializeToObject();
+        const spent = transactionInputOutpoint(object.inputs[0]);
+        const successor = object.outputs[0];
+        if (
+          !spent ||
+          outpointKey(spent) !== outpointKey(head.currentOutpoint) ||
+          !successor ||
+          String(successor.scriptPublicKey).toLowerCase() !==
+            head.scriptPublicKey.toLowerCase() ||
+          BigInt(successor.value) <
+            BigInt(head.currentAmount) + BigInt(head.additiveThresholdSompi)
+        ) {
+          continue;
+        }
+        const observed = (await getAddressUtxos(rpc, head.payTo)).find(
+          (utxo) =>
+            utxo.outpoint.txid.toLowerCase() === candidate.toLowerCase() &&
+            utxo.outpoint.index === 0 &&
+            utxo.amount === String(successor.value) &&
+            utxo.scriptPublicKey.toLowerCase() ===
+              head.scriptPublicKey.toLowerCase(),
+        );
+        if (!observed) continue;
+        return {
+          status: "advanced",
+          steps: [
+            {
+              transactionId: candidate,
+              spentOutpoint: head.currentOutpoint,
+              successor: {
+                outpoint: observed.outpoint,
+                amount: observed.amount,
+                scriptPublicKey: observed.scriptPublicKey,
+              },
+              finality: "accepted",
+            },
+          ],
+        };
+      }
+      return {
+        status: "unknown",
+        reason: "no trusted candidate proved the current head successor",
+      };
+    },
+  };
+}
+
 function exactTransactionPaymentEvidence({
   transaction,
   addressCodec,
@@ -2040,6 +2694,15 @@ function escrowParams(channel, addressCodec) {
 
 function paymentRequiredFor(server, input) {
   return encodePaymentRequiredHeader(server.buildPaymentRequired(input));
+}
+
+function decodePaymentRequired(header) {
+  const required = decodePaymentRequiredHeader(header);
+  const accepted = required.accepts?.[0];
+  if (!accepted || accepted.scheme !== "exact") {
+    throw new Error("payment challenge is missing exact requirements");
+  }
+  return accepted;
 }
 
 function requestWithPayment(paymentPayload, input) {

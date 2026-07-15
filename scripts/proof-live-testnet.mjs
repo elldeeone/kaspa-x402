@@ -21,8 +21,14 @@ const config = {
 };
 
 const requiredFlows = [
-  "standard-native exact transaction settlement and replay rejection",
+  "tiny and normal standard-native exact settlement",
   "KIP-10 additive-head exact-delta settlement and replay rejection",
+  "multiple additive head shards",
+  "concurrent additive conflict and loser refresh",
+  "duplicate exact settlement idempotency",
+  "invalid exact signature rejected before protected work",
+  "post-broadcast exact restart and trusted settlement reconciliation",
+  "external additive head advancement and trusted reconciliation",
   "batch deposit-voucher settlement",
   "batch voucher-only settlement",
   "batch claim transaction construction and broadcast",
@@ -183,12 +189,31 @@ function validateLiveProofResult(result, flows) {
   }
 
   validateExactProfile(
+    result.exact?.standardNativeTiny,
+    "standard-native",
+    0,
+    "exact.standardNativeTiny",
+  );
+  validateExactProfile(
     result.exact?.standardNative,
     "standard-native",
     0,
     "exact.standardNative",
   );
   validateExactProfile(result.exact?.additive, "additive", 1, "exact.additive");
+  require(Array.isArray(result.exact?.headFundings) &&
+    result.exact.headFundings.length >=
+      2, "exact.headFundings", "must contain at least two independently funded head shards");
+  for (const [index, funding] of (result.exact?.headFundings ?? []).entries()) {
+    require(isHash32(
+      funding?.txid,
+    ), `exact.headFundings[${index}].txid`, "must be a transaction id");
+    require(funding?.txVersion ===
+      0, `exact.headFundings[${index}].txVersion`, "must be transaction v0");
+    require(validOutpoint(
+      funding?.outpoint,
+    ), `exact.headFundings[${index}].outpoint`, "must be an outpoint");
+  }
   require(isHash32(
     result.exact?.headFunding?.txid,
   ), "exact.headFunding.txid", "must be a transaction id");
@@ -293,7 +318,51 @@ function validateLiveProofResult(result, flows) {
       409, `${basePath}.replay.status`, "must be 409");
     require(exact?.replay?.error ===
       "invalid_transaction_state", `${basePath}.replay.error`, "must be invalid_transaction_state");
+    require(exact?.duplicate?.status ===
+      200, `${basePath}.duplicate.status`, "must return the cached successful response");
+    require(exact?.duplicate?.handlerExecutions ===
+      1, `${basePath}.duplicate.handlerExecutions`, "must not run the protected handler twice");
+    require(isPositiveSompi(
+      exact?.economics?.mass,
+    ), `${basePath}.economics.mass`, "must record calculated transaction mass");
+    require(isSompi(
+      exact?.economics?.feeSompi,
+    ), `${basePath}.economics.feeSompi`, "must record the paid fee");
+    require(sameAmount(
+      exact?.economics?.merchantGainSompi,
+      exact?.amount,
+    ), `${basePath}.economics.merchantGainSompi`, "must equal the advertised exact amount");
+    if (
+      isSompi(exact?.economics?.payerCostSompi) &&
+      isSompi(exact?.economics?.feeSompi) &&
+      isSompi(exact?.amount)
+    ) {
+      require(BigInt(exact.economics.payerCostSompi) ===
+        BigInt(exact.amount) +
+          BigInt(
+            exact.economics.feeSompi,
+          ), `${basePath}.economics.payerCostSompi`, "must equal the exact amount plus fee");
+    }
   }
+
+  require(result.exact?.conflict?.winnerStatus === 200 &&
+    result.exact?.conflict?.loserStatus === 402 &&
+    result.exact?.conflict?.retryStatus ===
+      200, "exact.conflict", "must prove one winner, one refreshed loser, and one successful retry");
+  require(result.exact?.conflict?.handlerExecutions ===
+    2, "exact.conflict.handlerExecutions", "must execute protected work only for the winner and retry");
+  require(result.exact?.invalidSignature?.handlerExecutions === 0 &&
+    result.exact?.invalidSignature?.broadcasts ===
+      0, "exact.invalidSignature", "must reject before protected work or broadcast");
+  require(result.exact?.recovery?.initialStatus === 503 &&
+    result.exact?.recovery?.retryStatus === 200 &&
+    result.exact?.recovery?.handlerExecutions ===
+      1, "exact.recovery", "must recover an accepted broadcast after runtime re-instantiation");
+  require(isHash32(result.exact?.externalAdvance?.transactionId) &&
+    result.exact?.externalAdvance?.finality === "accepted" &&
+    BigInt(result.exact?.externalAdvance?.afterVersion ?? "0") ===
+      BigInt(result.exact?.externalAdvance?.beforeVersion ?? "0") +
+        1n, "exact.externalAdvance", "must prove one trusted externally observed head advancement");
 
   require(isHash32(
     result.batch?.deposit?.txid,
