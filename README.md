@@ -6,7 +6,8 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Live alpha.7 testnet integration gateway: https://demo.kaspa-x402.org
+- Live testnet integration gateway (currently deployed alpha.7):
+  https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 
 Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
@@ -21,7 +22,11 @@ The binding ships two x402 schemes:
   "scheme": "exact",
   "network": "kaspa:<network>",
   "asset": "KAS",
-  "amount": "<sompi>"
+  "amount": "<sompi>",
+  "extra": {
+    "binding": "kaspa-exact-v2",
+    "profile": "standard-native"
+  }
 }
 ```
 
@@ -37,10 +42,11 @@ The binding ships two x402 schemes:
 }
 ```
 
-`exact` is a fixed-price one-shot native transfer. The current alpha uses the
-KIP-10 `exact-transaction` artifact path for reservation-backed direct exact
-settlement. Reservation providers are expected to use merchant-owned borrow
-UTXOs and a policy-bounded additive top-up threshold.
+`exact` is a fixed-price one-shot native transfer. `standard-native` is the
+default ordinary KAS payment. Optional `additive` spends and recreates a
+merchant-owned KIP-10 head; the successor increase equals the advertised exact
+amount and is the only merchant payment. Unpaid offers do not reserve or retire
+heads.
 `batch-settlement` funds a covenant-backed escrow once and meters repeated or
 variable-cost requests with off-chain vouchers. KIP-9 storage mass makes very
 small on-chain outputs uneconomic or non-constructible depending on the full
@@ -92,8 +98,8 @@ node examples/self-hosted-facilitator/index.mjs
 node examples/recovery/index.mjs
 ```
 
-`npm run proof:offline` exercises exact replay rejection, KIP-10
-`exact-transaction` settlement, batch settlement idempotency, corrective
+`npm run proof:offline` exercises both exact profiles, exact replay rejection,
+KIP-10 exact-delta settlement, batch settlement idempotency, corrective
 stale-voucher handling, and tx-v1 claim/refund artifacts against mock
 adapters. Live testnet proof is fail-closed and adapter-driven; see
 [docs/live-testnet-proof.md](docs/live-testnet-proof.md).

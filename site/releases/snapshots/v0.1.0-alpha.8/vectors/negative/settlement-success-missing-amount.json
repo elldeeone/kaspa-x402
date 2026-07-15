@@ -1,0 +1,19 @@
+{
+  "kind": "negative",
+  "name": "settlement-success-missing-amount",
+  "description": "Successful settlement responses must include the top-level actual amount.",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "expectedError": "invalid_kaspa_settlement_response",
+  "value": {
+    "success": true,
+    "transaction": "83cf2f63b8ac56846a9d9ab9651fcb445e9db52f8019fc0c95f94433d3cad1a2",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "extensions": {
+      "kaspa": {
+        "paymentOutputIndex": 0,
+        "finality": "accepted"
+      }
+    }
+  }
+}

@@ -25,6 +25,8 @@ import {
 } from "./types.js";
 
 export interface PaidMcpToolOptions {
+  /** Trusted server identity that payer authorizations must target. */
+  audience: string;
   name: string;
   resource?: ResourceInfo;
   amount?: SompiString;
@@ -83,6 +85,7 @@ export async function handlePaidMcpToolCall(
 
   const requestHash = paymentPayload
     ? mcpToolCallFingerprint({
+        audience: options.audience,
         toolName: options.name,
         arguments: params.arguments,
         accepted: paymentPayload.accepted,

@@ -1,0 +1,35 @@
+{
+  "kind": "settlement-response",
+  "description": "Claim success returns post-continuation channel state.",
+  "response": {
+    "success": true,
+    "transaction": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "amount": "1700000",
+    "extensions": {
+      "kaspa": {
+        "claimOutpoint": {
+          "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "index": 0
+        },
+        "continuationOutpoint": {
+          "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+          "index": 1
+        },
+        "channelState": {
+          "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+          "activeOutpoint": {
+            "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
+            "index": 1
+          },
+          "activeScriptPublicKey": "00002079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+          "fundingAmount": "88300000",
+          "chargedCumulativeAmount": "1700000",
+          "claimedCumulativeAmount": "1700000",
+          "signedMaxClaimable": "0"
+        }
+      }
+    }
+  }
+}

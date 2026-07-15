@@ -41,6 +41,8 @@ export interface McpToolResourceInput {
 }
 
 export interface McpToolCallFingerprintInput {
+  /** Authenticated, operator-configured identity of the intended MCP server. */
+  audience: string;
   toolName: string;
   arguments?: unknown;
   accepted: PaymentRequirements;
@@ -50,7 +52,9 @@ export interface McpToolPaymentFingerprintInput extends McpToolCallFingerprintIn
   paymentPayload: PaymentPayload;
 }
 
-export function mcpToolResource(input: McpToolResourceInput): PaymentRequired["resource"] {
+export function mcpToolResource(
+  input: McpToolResourceInput,
+): PaymentRequired["resource"] {
   return {
     url: `mcp://tool/${encodeURIComponent(input.name)}`,
     ...(input.description ? { description: input.description } : {}),
@@ -58,10 +62,19 @@ export function mcpToolResource(input: McpToolResourceInput): PaymentRequired["r
   };
 }
 
-export function mcpToolCallFingerprint(input: McpToolCallFingerprintInput): Hash32Hex {
+export function mcpToolCallFingerprint(
+  input: McpToolCallFingerprintInput,
+): Hash32Hex {
+  if (input.audience.length === 0 || input.audience.length > 2_048) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "MCP payment audience must be a non-empty string of at most 2048 characters",
+    );
+  }
   return sha256Hex(
     stableStringify({
-      scope: "kaspa:x402:mcp-tool-call:v1",
+      scope: "kaspa:x402:mcp-tool-call:v2",
+      audience: input.audience,
       toolName: input.toolName,
       arguments: input.arguments ?? null,
       paymentRequirementsHash: sha256Hex(stableStringify(input.accepted)),
@@ -69,7 +82,9 @@ export function mcpToolCallFingerprint(input: McpToolCallFingerprintInput): Hash
   );
 }
 
-export function mcpToolPaymentFingerprint(input: McpToolPaymentFingerprintInput): Hash32Hex {
+export function mcpToolPaymentFingerprint(
+  input: McpToolPaymentFingerprintInput,
+): Hash32Hex {
   return sha256Hex(
     stableStringify({
       scope: "kaspa:x402:mcp-tool-payment:v1",

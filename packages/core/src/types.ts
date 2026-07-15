@@ -8,9 +8,18 @@ export type SignatureHex = string;
 export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v1" | "kaspa-escrow-v1";
+export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v1";
 export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
+export type ExactProfile = "standard-native" | "additive";
+
+export interface ExactRequestAuthorization extends JsonRecord {
+  version: "kaspa-x402-exact-request-authorization-v1";
+  inputIndex: number;
+  expiresAt: string;
+  digest: Hash32Hex;
+  signature: SignatureHex;
+}
 
 export type JsonRecord = Record<string, unknown>;
 
@@ -20,7 +29,10 @@ export interface ResourceInfo extends JsonRecord {
   mimeType?: string;
 }
 
-export interface BasePaymentRequirements<TScheme extends PaymentScheme, TExtra extends JsonRecord> extends JsonRecord {
+export interface BasePaymentRequirements<
+  TScheme extends PaymentScheme,
+  TExtra extends JsonRecord,
+> extends JsonRecord {
   scheme: TScheme;
   network: NetworkId;
   amount: SompiString;
@@ -31,18 +43,22 @@ export interface BasePaymentRequirements<TScheme extends PaymentScheme, TExtra e
 }
 
 export interface ExactRequirementsExtra extends JsonRecord {
-  binding: "kaspa-exact-v1";
+  binding: "kaspa-exact-v2";
+  profile: ExactProfile;
   finality?: "mempool" | "accepted" | "confirmed";
+  payToScriptPublicKey?: ByteHex;
   templateId?: ExactAdditiveTemplateId;
   transactionEncoding?: ExactTransactionEncoding;
-  borrowOutpoint?: FundingOutpoint;
-  borrowAmount?: SompiString;
-  borrowScriptPublicKey?: ByteHex;
-  borrowRedeemScript?: ByteHex;
+  headId?: Hash32Hex;
+  headVersion?: SompiString;
+  expectedHeadOutpoint?: FundingOutpoint;
+  headAmount?: SompiString;
+  headScriptPublicKey?: ByteHex;
+  headRedeemScript?: ByteHex;
+  challengeId?: Hash32Hex;
+  challengeExpiresAt?: string;
   additiveThresholdSompi?: SompiString;
   paymentOutputIndex?: number;
-  reservationId?: Hash32Hex;
-  reservationExpiresAt?: string;
   assetKind?: "native";
   assetDecimals?: 8;
 }
@@ -65,10 +81,18 @@ export interface BatchRequirementsExtra extends JsonRecord {
   assetDecimals?: 8;
 }
 
-export type ExactPaymentRequirements = BasePaymentRequirements<"exact", ExactRequirementsExtra>;
-export type BatchPaymentRequirements = BasePaymentRequirements<"batch-settlement", BatchRequirementsExtra>;
-export type KaspaRequirementsExtra = ExactRequirementsExtra | BatchRequirementsExtra;
-export type PaymentRequirements = ExactPaymentRequirements | BatchPaymentRequirements;
+export type ExactPaymentRequirements = BasePaymentRequirements<
+  "exact",
+  ExactRequirementsExtra
+>;
+export type BatchPaymentRequirements = BasePaymentRequirements<
+  "batch-settlement",
+  BatchRequirementsExtra
+>;
+export type KaspaRequirementsExtra =
+  ExactRequirementsExtra | BatchRequirementsExtra;
+export type PaymentRequirements =
+  ExactPaymentRequirements | BatchPaymentRequirements;
 
 export interface PaymentRequired extends JsonRecord {
   x402Version: typeof X402_VERSION;
@@ -127,11 +151,14 @@ export interface ChannelState extends JsonRecord {
 
 export interface ExactTransactionPayload extends JsonRecord {
   type: "exact-transaction";
+  profile?: ExactProfile;
+  challengeId?: Hash32Hex;
   payerAddress?: string;
   transaction: string;
   transactionEncoding: ExactTransactionEncoding;
   paymentOutputIndex: number;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
+  authorization: ExactRequestAuthorization;
 }
 
 export interface DepositVoucherPayload extends JsonRecord {
@@ -189,9 +216,11 @@ export interface SettlementResponseExtra extends JsonRecord {
   finality?: "mempool" | "accepted" | "confirmed";
   requestHash?: Hash32Hex;
   transactionEncoding?: ExactTransactionEncoding;
+  exactProfile?: ExactProfile;
   templateId?: ExactAdditiveTemplateId;
-  reservationId?: Hash32Hex;
-  borrowOutpoint?: FundingOutpoint;
+  headId?: Hash32Hex;
+  headVersion?: SompiString;
+  headOutpoint?: FundingOutpoint;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;
@@ -220,7 +249,8 @@ export interface PaymentExtension<TInfo extends JsonRecord> extends JsonRecord {
   schema: JsonRecord;
 }
 
-export type PaymentIdentifierExtension = PaymentExtension<PaymentIdentifierInfo>;
+export type PaymentIdentifierExtension =
+  PaymentExtension<PaymentIdentifierInfo>;
 
 export type PaymentExtensions = JsonRecord & {
   "payment-identifier"?: PaymentIdentifierExtension;

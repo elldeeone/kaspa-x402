@@ -1,0 +1,5 @@
+{
+  "version": "0.1.0-alpha.8",
+  "contentSha256": "5d76ca9a7496f59a89badd699d3dab70a1eaa0df57b64f1a55eb89d4bd497de8",
+  "description": "Locks the immutable release snapshot content for this alpha version. If public artifacts change, bump the alpha version or intentionally update this lock."
+}

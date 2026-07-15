@@ -3,6 +3,8 @@ import type {
   ByteHex,
   ChannelConfig,
   ExactPaymentRequirements,
+  ExactProfile,
+  ExactRequestAuthorization,
   ExactTransactionEncoding,
   FundingOutpoint,
   Hash32Hex,
@@ -23,8 +25,10 @@ export const PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
 export const PAYMENT_RESPONSE_HEADER = "PAYMENT-RESPONSE";
 
-export type FundingSourceKind = "hot-wallet" | "vault-treasury" | "external-wallet-adapter";
-export type ChannelStatus = "active" | "retired" | "refundable" | "refunded" | "suspicious";
+export type FundingSourceKind =
+  "hot-wallet" | "vault-treasury" | "external-wallet-adapter";
+export type ChannelStatus =
+  "active" | "retired" | "refundable" | "refunded" | "suspicious";
 
 export interface PublicIdentity {
   address: string;
@@ -59,28 +63,33 @@ export interface EscrowDepositResult {
 
 export interface ExactPaymentRequest {
   network: NetworkId;
+  profile: ExactProfile;
+  origin: string;
+  resourceUrl: string;
   amount: SompiString;
   payTo: string;
-  requestHash?: Hash32Hex;
+  payToScriptPublicKey: ByteHex;
+  paymentOutputIndex?: number;
+  requestHash: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  authorizationExpiresAt: string;
   requiredFinality?: "mempool" | "accepted" | "confirmed";
   fundingSource?: FundingSourceKind;
-  reservation?: Pick<
-    ExactPaymentRequirements["extra"],
-    | "templateId"
-    | "transactionEncoding"
-    | "borrowOutpoint"
-    | "borrowAmount"
-    | "borrowScriptPublicKey"
-    | "borrowRedeemScript"
-    | "additiveThresholdSompi"
-    | "paymentOutputIndex"
-    | "reservationId"
-    | "reservationExpiresAt"
-  >;
+  head?: {
+    headId: Hash32Hex;
+    headVersion: SompiString;
+    expectedHeadOutpoint: FundingOutpoint;
+    headAmount: SompiString;
+    headScriptPublicKey: ByteHex;
+    headRedeemScript: ByteHex;
+    additiveThresholdSompi: SompiString;
+    challengeId: Hash32Hex;
+    challengeExpiresAt: string;
+  };
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
-  reservation: NonNullable<ExactPaymentRequest["reservation"]>;
+  head?: NonNullable<ExactPaymentRequest["head"]>;
 }
 
 export interface ExactTransactionPaymentResult {
@@ -88,6 +97,7 @@ export interface ExactTransactionPaymentResult {
   transactionEncoding: ExactTransactionEncoding;
   transactionId: Hash32Hex;
   paymentOutputIndex: number;
+  authorization: ExactRequestAuthorization;
   payerAddress?: string;
   fundingSource?: FundingSourceKind;
 }
@@ -113,8 +123,14 @@ export interface FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
-  fundEscrowDeposit(request: EscrowDepositRequest): Promise<EscrowDepositResult>;
-  payExactTransaction?(request: ExactTransactionPaymentRequest): Promise<ExactTransactionPaymentResult>;
+  /** Explicit policy boundary invoked before any exact signing operation. */
+  authorizeExactPayment(request: ExactTransactionPaymentRequest): Promise<void>;
+  fundEscrowDeposit(
+    request: EscrowDepositRequest,
+  ): Promise<EscrowDepositResult>;
+  payExactTransaction?(
+    request: ExactTransactionPaymentRequest,
+  ): Promise<ExactTransactionPaymentResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
@@ -123,6 +139,10 @@ export interface FundingProvider {
 
 export interface FundingPolicy {
   requiredSource?: FundingSourceKind;
+  allowedOrigins?: readonly string[];
+  allowedExactProfiles?: readonly ExactProfile[];
+  allowedPayTo?: readonly string[];
+  maximumExactAmountSompi?: SompiString;
 }
 
 export interface ChannelKey {
@@ -234,19 +254,30 @@ export interface HeaderBag {
 export interface HttpResponseLike {
   status: number;
   headers: HeaderBag;
+  /** Effective response URL. Fetch adapters must expose this so paid flows can reject redirects. */
+  url: string;
+  /** True when the adapter followed a redirect. Paid flows require this to remain false. */
+  redirected: boolean;
 }
 
 export interface HttpRequestInitLike {
   headers?: HeadersInitLike;
   method?: string;
   body?: unknown;
+  redirect?: "error";
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
   [key: string]: unknown;
 }
 
-export type HeadersInitLike = Record<string, string> | Array<[string, string]> | { entries(): IterableIterator<[string, string]> };
-export type FetchLike = (input: string, init?: HttpRequestInitLike) => Promise<HttpResponseLike>;
+export type HeadersInitLike =
+  | Record<string, string>
+  | Array<[string, string]>
+  | { entries(): IterableIterator<[string, string]> };
+export type FetchLike = (
+  input: string,
+  init?: HttpRequestInitLike,
+) => Promise<HttpResponseLike>;
 
 export interface PaidFetchResult {
   response: HttpResponseLike;
@@ -266,7 +297,9 @@ export interface RefundTransactionResult {
 }
 
 export interface RefundTransactionBuilder {
-  buildRefundTransaction(request: RefundTransactionRequest): Promise<RefundTransactionResult>;
+  buildRefundTransaction(
+    request: RefundTransactionRequest,
+  ): Promise<RefundTransactionResult>;
 }
 
 export interface RefundResult {
@@ -288,7 +321,10 @@ export interface DirectModeClientOptions {
   fundingPolicy?: FundingPolicy;
   fetch?: FetchLike;
   refundBuilder?: RefundTransactionBuilder;
-  verifyVoucherSignature?: (voucher: Voucher, channel: DirectModeChannel) => Promise<boolean> | boolean;
+  verifyVoucherSignature?: (
+    voucher: Voucher,
+    channel: DirectModeChannel,
+  ) => Promise<boolean> | boolean;
   maxPaymentRetries?: number;
   supportedSchemes?: readonly PaymentScheme[];
 }

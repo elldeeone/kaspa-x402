@@ -16,6 +16,7 @@ import {
   voucherDigest,
 } from "./template.js";
 import type { FundingOutpoint, NetworkId, ScriptPublicKey } from "./template.js";
+import { calculateKaspaStorageMass } from "./storage-mass.js";
 
 export type Uint64Value = bigint | number | string;
 
@@ -122,6 +123,13 @@ export interface TxV1SighashDebug extends TxV1DigestDebug {
   hashType: "all";
 }
 
+export interface TxV1SignatureEvidence {
+  publicKey: string;
+  signature: string;
+  hashType: 1;
+  digest: string;
+}
+
 export interface BatchClaimTxV1Artifact {
   format: "kaspa-x402-tx-v1-reference-v1";
   kind: "batch-claim";
@@ -186,14 +194,39 @@ export interface BatchRefundTransactionBuilder {
   buildBatchRefundTxV1(input: BatchRefundTxV1Input): BatchRefundTxV1Artifact;
 }
 
+/** Recomputes Rusty Kaspa's version-1 transaction ID. */
+export function transactionV1Id(transaction: TxV1ReferenceTransaction): string {
+  return buildDigestDebug(transaction).txid.digest;
+}
+
+/** Recomputes the version-1 Schnorr SIGHASH_ALL digest for a P2PK input. */
+export function transactionV1SchnorrSignatureEvidence(
+  transaction: TxV1ReferenceTransaction,
+  inputIndex: number,
+): TxV1SignatureEvidence {
+  const input = transaction.inputs[inputIndex];
+  if (!input) throw new Error("sighash input index is out of range");
+  const signatureScript = hexToBytes(input.signatureScript, undefined, "signatureScript");
+  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65 || signatureScript[65] !== SIG_HASH_ALL) {
+    throw new Error("transaction-v1 P2PK input must use a canonical 65-byte Schnorr SIGHASH_ALL push");
+  }
+  const scriptPublicKey = parseSerializedScriptPublicKey(input.utxo.scriptPublicKey, "inputScriptPublicKey");
+  const script = hexToBytes(scriptPublicKey.script, undefined, "inputScriptPublicKey.script");
+  if (scriptPublicKey.version !== 0 || script.byteLength !== 34 || script[0] !== 32 || script[33] !== 0xac) {
+    throw new Error("transaction-v1 funding input must be a version-0 Schnorr P2PK script");
+  }
+  return {
+    publicKey: bytesToHex(script.slice(1, 33)),
+    signature: bytesToHex(signatureScript.slice(1, 65)),
+    hashType: SIG_HASH_ALL,
+    digest: blake2bKeyed("TransactionSigningHash", writeSighashAllPreimage(transaction, inputIndex)),
+  };
+}
+
 const FORMAT = "kaspa-x402-tx-v1-reference-v1" as const;
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const SIG_HASH_ALL = 0x01;
 const ZERO_HASH = "00".repeat(32);
-const STORAGE_MASS_PARAMETER = 1_000_000_000_000n;
-const UTXO_CONST_STORAGE = 63n;
-const UTXO_COVENANT_STORAGE = 32n;
-const UTXO_UNIT_SIZE = 100n;
 const U16_MAX = 0xffff;
 const U32_MAX = 0xffff_ffff;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
@@ -638,8 +671,7 @@ function resolveStorageMass(input: {
   inputScriptPublicKey: string;
   outputs: readonly TxV1ReferenceOutput[];
 }): bigint {
-  const computedMass = calculateStorageMass({
-    stormParam: STORAGE_MASS_PARAMETER,
+  const computedMass = calculateKaspaStorageMass({
     inputs: [
       {
         amount: input.inputAmount,
@@ -658,56 +690,6 @@ function resolveStorageMass(input: {
     throw new Error("storage mass must match contextual storage mass");
   }
   return computedMass;
-}
-
-function calculateStorageMass(input: {
-  stormParam: bigint;
-  inputs: readonly TxV1UtxoCellInput[];
-  outputs: readonly TxV1UtxoCellInput[];
-}): bigint {
-  const outputCells = input.outputs.map(toUtxoCell);
-  const inputCells = input.inputs.map(toUtxoCell);
-  const outsPlurality = outputCells.reduce((sum, cell) => sum + cell.plurality, 0n);
-  const harmonicOuts = outputCells.reduce((sum, cell) => sum + (input.stormParam * cell.plurality * cell.plurality) / cell.amount, 0n);
-  const insPlurality = inputCells.reduce((sum, cell) => sum + cell.plurality, 0n);
-  const relaxedFormulaPath = outsPlurality === 1n || (inputCells.length <= 2 && (insPlurality === 1n || (outsPlurality === 2n && insPlurality === 2n)));
-
-  if (relaxedFormulaPath) {
-    const harmonicIns = inputCells.reduce((sum, cell) => sum + (input.stormParam * cell.plurality * cell.plurality) / cell.amount, 0n);
-    return harmonicOuts > harmonicIns ? harmonicOuts - harmonicIns : 0n;
-  }
-
-  const sumIns = inputCells.reduce((sum, cell) => sum + cell.amount, 0n);
-  const meanIns = maxBigInt(sumIns / insPlurality, 1n);
-  const arithmeticIns = insPlurality * (input.stormParam / meanIns);
-  return harmonicOuts > arithmeticIns ? harmonicOuts - arithmeticIns : 0n;
-}
-
-interface TxV1UtxoCellInput {
-  amount: bigint;
-  scriptPublicKey: string;
-  hasCovenant: boolean;
-}
-
-interface TxV1UtxoCell {
-  amount: bigint;
-  plurality: bigint;
-}
-
-function toUtxoCell(input: TxV1UtxoCellInput): TxV1UtxoCell {
-  if (input.amount === 0n) {
-    throw new Error("storage mass cannot be calculated for zero-value UTXO cells");
-  }
-  return {
-    amount: input.amount,
-    plurality: utxoPlurality(input.scriptPublicKey, input.hasCovenant),
-  };
-}
-
-function utxoPlurality(serializedScriptPublicKey: string, hasCovenant: boolean): bigint {
-  const scriptLength = BigInt(hexToBytes(parseSerializedScriptPublicKey(serializedScriptPublicKey, "scriptPublicKey").script, undefined, "scriptPublicKey.script").byteLength);
-  const covenantSize = hasCovenant ? UTXO_COVENANT_STORAGE : 0n;
-  return divCeil(UTXO_CONST_STORAGE + scriptLength + covenantSize, UTXO_UNIT_SIZE);
 }
 
 function normalizeNoCovenant(covenant: TxV1CovenantBinding | null, label: string): null {
@@ -801,14 +783,6 @@ function stringToUint64(value: string, label: string): bigint {
     throw new Error(`${label} must be a canonical uint64 decimal string`);
   }
   return BigInt(value);
-}
-
-function divCeil(value: bigint, divisor: bigint): bigint {
-  return (value + divisor - 1n) / divisor;
-}
-
-function maxBigInt(a: bigint, b: bigint): bigint {
-  return a >= b ? a : b;
 }
 
 function requireComputeBudget(actual: number | undefined, expected: number, label: string): void {

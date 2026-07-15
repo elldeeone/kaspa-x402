@@ -12,8 +12,11 @@ Implemented:
 - exported TypeScript types for the public wire objects;
 - canonical sompi, network, hex, LE32, LE64, and SHA-256 helpers;
 - x402 HTTP header encoding and decoding for `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE`;
-- MCP `_meta` key constants, payment-required result helpers, payment metadata readers, and deterministic tool-call fingerprints;
-- x402 v2 facilitator request, response, and supported-kind TypeScript types;
+- MCP `_meta` key constants, payment-required result helpers, payment metadata
+  readers, and deterministic tool-call fingerprints bound to a canonical
+  server audience;
+- x402 v2 facilitator request, response, and supported-kind TypeScript types,
+  including mandatory independent `requestHash` binding for exact requests;
 - voucher preimage and digest helpers;
 - channel ID preimage and digest helpers;
 - schema validation via pregenerated standalone validators (Ajv at build time only, safe for runtimes that forbid dynamic code generation);

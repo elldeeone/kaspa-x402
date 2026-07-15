@@ -38,14 +38,15 @@ gates.
   error-reason vocabulary. MCP transport uses the standard
   `_meta["x402/payment"]` and `_meta["x402/payment-response"]` keys.
 - Hosted testnet gateway: https://demo.kaspa-x402.org is a Cloudflare Worker
-  with Durable Object state serving public `batch-settlement` and KIP-10
+  with Durable Object state serving public `batch-settlement` and
   `exact-transaction` integration endpoints against live `kaspa:testnet-10`
-  chain evidence, with a scheduled public canary at `/canary`. The Worker holds
-  no spending keys; funded exact borrow inventory is registered by operator
-  admin command, and exact transaction artifacts are submitted through TN10
-  PNN/WSS.
+  chain evidence, with a scheduled public canary at `/canary`. The alpha.8
+  source defaults to ordinary `standard-native` exact transfers. Optional
+  KIP-10 `additive` uses operator-registered durable head chains. The Worker
+  holds no spending keys, and exact transaction artifacts are submitted through
+  TN10 PNN/WSS.
 - Recorded live paid evidence is split intentionally: gateway docs cover hosted
-  batch evidence and the hosted KIP-10 exact proof; the alpha.6 private TN10
+  batch evidence and the hosted exact proof; the alpha.8 private TN10
   live harness covers replay handling and the batch escrow claim/refund
   lifecycle.
 - Reference implementation on npm under prerelease tags:
@@ -56,17 +57,17 @@ gates.
 
 ### How the bindings work (short version)
 
-- `exact` (`extra.binding: "kaspa-exact-v1"`): fixed-price one-shot native
-  KAS transfer. The alpha.6 path advertises KIP-10 buildable reservation terms,
-  including borrow outpoint, borrow redeem script, additive threshold, and
-  expected payment output index; the client returns a signed SDK-safe JSON
-  transaction artifact as an `exact-transaction` payload for the server or
+- `exact` (`extra.binding: "kaspa-exact-v2"`): fixed-price one-shot native KAS
+  transfer with an explicit profile. `standard-native` is the default ordinary
+  transfer: the merchant receives exactly the advertised amount in the
+  canonical payment output. Optional KIP-10 `additive` consumes a reusable
+  merchant head and recreates the same script at index zero; its successor
+  increase must equal the advertised amount exactly and is the only merchant
+  payment. Unpaid 402s do not reserve or retire heads. The client returns a
+  signed SDK-safe JSON `exact-transaction` artifact for the server or
   facilitator to verify, broadcast if needed, and observe. Amounts are decimal
-  strings in sompi. KIP-9 storage mass is transaction-shape-dependent and does
-  not define a universal dust constant. The reference implementation applies a
-  conservative `10000000` sompi on-chain output and additive-threshold policy;
-  alternative values require transaction-specific mass analysis. Reference
-  reservation providers use merchant-owned borrow UTXOs.
+  sompi strings. KIP-9 storage mass is transaction-shape-dependent and does not
+  define a universal dust constant.
 - `batch-settlement` (`extra.binding: "kaspa-escrow-v1"`): the client funds
   a covenant-backed escrow once, signs a cumulative Schnorr voucher per paid
   request, and the chain is touched again only at claim or refund time. This
@@ -92,7 +93,7 @@ gates.
    ChainAgnostic/namespaces is in flight. Do maintainers have a preference
    between named references and genesis-hash references for new namespaces?
 3. Native-asset expectations: KAS is a native asset priced in sompi. This alpha
-   uses the native-KAS output check in `kaspa-exact-v1`. I am not requesting
+   uses the native-KAS output check in `kaspa-exact-v2`. I am not requesting
    default-asset (dollar-string) registry entries. Is runtime registration the
    expected long-term posture for native-asset ecosystems, or is there a listing
    path I should follow?

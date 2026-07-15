@@ -17,6 +17,7 @@ import {
   isKaspaX402Network,
   mcpPaymentRequiredResult,
   mcpSettlementFailureResult,
+  mcpToolCallFingerprint,
   MCP_PAYMENT_RESPONSE_META_KEY,
   narrowPaymentRequiredEnvelope,
   paymentIdentifierExtension,
@@ -42,7 +43,10 @@ import type {
   SettlementResponse,
 } from "../src/index.js";
 
-const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
+const repoRoot = path.resolve(
+  path.dirname(fileURLToPath(import.meta.url)),
+  "../../..",
+);
 
 type VoucherVector = {
   cases: Array<{
@@ -74,12 +78,33 @@ type HttpVector = {
   };
 };
 
+type ExactConsensusVector = {
+  expected: {
+    standardNative: ExactConsensusProfile;
+    additive: ExactConsensusProfile;
+    mutations: Record<string, string>;
+  };
+};
+
+type ExactConsensusProfile = {
+  profile: "standard-native" | "additive";
+  version: 0 | 1;
+  amount: string;
+  fee: string;
+  transaction: {
+    version: 0 | 1;
+    inputs: Array<{ utxo: { amount: string; scriptPublicKey: string } }>;
+    outputs: Array<{ amount: string; scriptPublicKey: string; covenant: null }>;
+  };
+};
+
 type NegativeVector =
   | {
       kind: "negative";
       schema: string;
       value: unknown;
       expectedError: string;
+      expectedMissingProperty?: string;
     }
   | {
       kind: "semantic-negative";
@@ -97,7 +122,9 @@ type NegativeVector =
     };
 
 function readJson<T>(relativePath: string): T {
-  return JSON.parse(fs.readFileSync(path.join(repoRoot, relativePath), "utf8")) as T;
+  return JSON.parse(
+    fs.readFileSync(path.join(repoRoot, relativePath), "utf8"),
+  ) as T;
 }
 
 function foreignEvmEntry(): Record<string, unknown> {
@@ -134,7 +161,10 @@ function listJson(relativeDir: string): string[] {
     .map((entry) => path.join(relativeDir, entry));
 }
 
-function expectFailureCode(result: { ok: true } | { ok: false; error: { code: string } }, code: string): void {
+function expectFailureCode(
+  result: { ok: true } | { ok: false; error: { code: string } },
+  code: string,
+): void {
   expect(result.ok).toBe(false);
   if (result.ok) throw new Error(`expected failure ${code}`);
   expect(result.error.code).toBe(code);
@@ -160,7 +190,9 @@ describe("amount and network primitives", () => {
 });
 
 describe("voucher digest vectors", () => {
-  const vector = readJson<VoucherVector>("vectors/voucher/full-outpoint-binding.json");
+  const vector = readJson<VoucherVector>(
+    "vectors/voucher/full-outpoint-binding.json",
+  );
 
   for (const item of vector.cases) {
     it(`matches ${item.name}`, () => {
@@ -187,7 +219,9 @@ describe("channel id vectors", () => {
     const vector = readJson<ChannelVector>("vectors/channel-id/base.json");
     expect(channelIdPreimageHex(vector.input)).toBe(vector.expected.preimage);
     expect(channelId(vector.input)).toBe(vector.expected.channelId);
-    expect(validateChannelId(vector.input, vector.expected.channelId)).toBe(true);
+    expect(validateChannelId(vector.input, vector.expected.channelId)).toBe(
+      true,
+    );
   });
 });
 
@@ -196,13 +230,25 @@ describe("x402 HTTP vectors", () => {
     it(`roundtrips deterministic base64 headers for ${file}`, () => {
       const vector = readJson<HttpVector>(file);
 
-      expect(encodePaymentRequiredHeader(vector.paymentRequired)).toBe(vector.headers.paymentRequired);
-      expect(encodePaymentSignatureHeader(vector.paymentPayload)).toBe(vector.headers.paymentSignature);
-      expect(encodePaymentResponseHeader(vector.settlementResponse)).toBe(vector.headers.paymentResponse);
+      expect(encodePaymentRequiredHeader(vector.paymentRequired)).toBe(
+        vector.headers.paymentRequired,
+      );
+      expect(encodePaymentSignatureHeader(vector.paymentPayload)).toBe(
+        vector.headers.paymentSignature,
+      );
+      expect(encodePaymentResponseHeader(vector.settlementResponse)).toBe(
+        vector.headers.paymentResponse,
+      );
 
-      expect(decodePaymentRequiredHeader(vector.headers.paymentRequired)).toEqual(vector.paymentRequired);
-      expect(decodePaymentSignatureHeader(vector.headers.paymentSignature)).toEqual(vector.paymentPayload);
-      expect(decodePaymentResponseHeader(vector.headers.paymentResponse)).toEqual(vector.settlementResponse);
+      expect(
+        decodePaymentRequiredHeader(vector.headers.paymentRequired),
+      ).toEqual(vector.paymentRequired);
+      expect(
+        decodePaymentSignatureHeader(vector.headers.paymentSignature),
+      ).toEqual(vector.paymentPayload);
+      expect(
+        decodePaymentResponseHeader(vector.headers.paymentResponse),
+      ).toEqual(vector.settlementResponse);
     });
   }
 
@@ -234,59 +280,104 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("accepts mixed exact and batch-settlement offers in one envelope", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const batch = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const paymentRequired: PaymentRequired = {
       ...exact.paymentRequired,
-      accepts: [exact.paymentRequired.accepts[0]!, batch.paymentRequired.accepts[0]!],
+      accepts: [
+        exact.paymentRequired.accepts[0]!,
+        batch.paymentRequired.accepts[0]!,
+      ],
     };
 
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", paymentRequired).ok).toBe(true);
-    expect(decodePaymentRequiredHeader(encodePaymentRequiredHeader(paymentRequired))).toEqual(paymentRequired);
-    expect(validatePaymentRetry({ paymentRequired, paymentPayload: exact.paymentPayload }).ok).toBe(true);
-    expect(validatePaymentRetry({ paymentRequired, paymentPayload: batch.paymentPayload }).ok).toBe(true);
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/payment-required.schema.json",
+        paymentRequired,
+      ).ok,
+    ).toBe(true);
+    expect(
+      decodePaymentRequiredHeader(encodePaymentRequiredHeader(paymentRequired)),
+    ).toEqual(paymentRequired);
+    expect(
+      validatePaymentRetry({
+        paymentRequired,
+        paymentPayload: exact.paymentPayload,
+      }).ok,
+    ).toBe(true);
+    expect(
+      validatePaymentRetry({
+        paymentRequired,
+        paymentPayload: batch.paymentPayload,
+      }).ok,
+    ).toBe(true);
   });
 
   it("rejects empty recipients and zero timeout requirements", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
 
     expectFailureCode(
-      validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", {
-        ...exact.paymentRequired,
-        accepts: [{ ...exact.paymentRequired.accepts[0]!, payTo: "" }],
-      }),
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/payment-required.schema.json",
+        {
+          ...exact.paymentRequired,
+          accepts: [{ ...exact.paymentRequired.accepts[0]!, payTo: "" }],
+        },
+      ),
       "invalid_kaspa_x402_payload",
     );
     expectFailureCode(
       validatePaymentRequired({
         ...exact.paymentRequired,
-        accepts: [{ ...exact.paymentRequired.accepts[0]!, maxTimeoutSeconds: 0 }],
+        accepts: [
+          { ...exact.paymentRequired.accepts[0]!, maxTimeoutSeconds: 0 },
+        ],
       }),
       "invalid_kaspa_x402_payload",
     );
   });
 
   it("narrows envelopes that mix Kaspa entries with entries from other schemes or networks", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const kaspaEntry = exact.paymentRequired.accepts[0]!;
     const envelope = {
       ...exact.paymentRequired,
       accepts: [foreignEvmEntry(), kaspaEntry, foreignUptoEntry()],
     };
 
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", envelope).ok).toBe(false);
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/payment-required.schema.json",
+        envelope,
+      ).ok,
+    ).toBe(false);
 
-    const decoded = decodePaymentRequiredEnvelopeHeader(encodePaymentRequiredEnvelopeHeader(envelope));
+    const decoded = decodePaymentRequiredEnvelopeHeader(
+      encodePaymentRequiredEnvelopeHeader(envelope),
+    );
     const narrowed = narrowPaymentRequiredEnvelope(decoded);
     expect(narrowed.ok).toBe(true);
     if (!narrowed.ok) return;
     expect(narrowed.value.paymentRequired.accepts).toEqual([kaspaEntry]);
     expect(narrowed.value.skippedAccepts).toHaveLength(2);
-    expect(validatePaymentRetry({ paymentRequired: narrowed.value.paymentRequired, paymentPayload: exact.paymentPayload }).ok).toBe(true);
+    expect(
+      validatePaymentRetry({
+        paymentRequired: narrowed.value.paymentRequired,
+        paymentPayload: exact.paymentPayload,
+      }).ok,
+    ).toBe(true);
   });
 
   it("rejects envelopes without any Kaspa entry instead of narrowing to an empty offer", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const envelope = {
       ...exact.paymentRequired,
       accepts: [foreignEvmEntry(), foreignUptoEntry()],
@@ -299,27 +390,71 @@ describe("x402 HTTP vectors", () => {
   });
 
   it("keeps single Kaspa requirement validation strict for narrowed entries", () => {
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
-    expect(validateKaspaPaymentRequirement(exact.paymentRequired.accepts[0]).ok).toBe(true);
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    expect(
+      validateKaspaPaymentRequirement(exact.paymentRequired.accepts[0]).ok,
+    ).toBe(true);
     expect(validateKaspaPaymentRequirement(foreignEvmEntry()).ok).toBe(false);
     expect(validateKaspaPaymentRequirement(foreignUptoEntry()).ok).toBe(false);
   });
 });
 
 describe("MCP helpers", () => {
+  it("binds tool-call fingerprints to the configured server audience", () => {
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    const input = {
+      toolName: "download",
+      arguments: { id: "same-object" },
+      accepted: vector.paymentRequired.accepts[0]!,
+    };
+
+    const serverA = mcpToolCallFingerprint({
+      ...input,
+      audience: "https://mcp-a.example.test",
+    });
+    const serverB = mcpToolCallFingerprint({
+      ...input,
+      audience: "https://mcp-b.example.test",
+    });
+
+    expect(serverA).not.toBe(serverB);
+    expect(() => mcpToolCallFingerprint({ ...input, audience: "" })).toThrow(
+      "audience",
+    );
+  });
+
   it("only parses payment requirements from error tool results", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const challenge = mcpPaymentRequiredResult(vector.paymentRequired);
 
     expect(challenge.structuredContent).toEqual(vector.paymentRequired);
-    expect(challenge.content?.[0]?.text).toBe(JSON.stringify(vector.paymentRequired));
-    expect(readMcpPaymentRequired(challenge)?.accepts[0]).toEqual(vector.paymentRequired.accepts[0]);
-    expect(readMcpPaymentRequired({ ...challenge, isError: false })).toBeUndefined();
-    expect(readMcpPaymentRequired({ structuredContent: challenge.structuredContent, content: challenge.content })).toBeUndefined();
+    expect(challenge.content?.[0]?.text).toBe(
+      JSON.stringify(vector.paymentRequired),
+    );
+    expect(readMcpPaymentRequired(challenge)?.accepts[0]).toEqual(
+      vector.paymentRequired.accepts[0],
+    );
+    expect(
+      readMcpPaymentRequired({ ...challenge, isError: false }),
+    ).toBeUndefined();
+    expect(
+      readMcpPaymentRequired({
+        structuredContent: challenge.structuredContent,
+        content: challenge.content,
+      }),
+    ).toBeUndefined();
   });
 
   it("reads mixed challenges from upstream servers without rejecting the envelope", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const kaspaEntry = vector.paymentRequired.accepts[0]!;
     const mixed = {
       ...vector.paymentRequired,
@@ -341,7 +476,9 @@ describe("MCP helpers", () => {
   });
 
   it("emits settlement failures as payment challenges with settlement metadata", () => {
-    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
     const settlement: SettlementResponse = {
       success: false,
       transaction: "",
@@ -349,13 +486,21 @@ describe("MCP helpers", () => {
       errorReason: "invalid_transaction_state",
     };
 
-    const result = mcpSettlementFailureResult(vector.paymentRequired, settlement);
-    const expectedChallenge = { ...vector.paymentRequired, error: "invalid_transaction_state" };
+    const result = mcpSettlementFailureResult(
+      vector.paymentRequired,
+      settlement,
+    );
+    const expectedChallenge = {
+      ...vector.paymentRequired,
+      error: "invalid_transaction_state",
+    };
 
     expect(result.isError).toBe(true);
     expect(result.structuredContent).toEqual(expectedChallenge);
     expect(result.content?.[0]?.text).toBe(JSON.stringify(expectedChallenge));
-    expect(readMcpPaymentRequired(result)?.error).toBe("invalid_transaction_state");
+    expect(readMcpPaymentRequired(result)?.error).toBe(
+      "invalid_transaction_state",
+    );
     expect(readMcpPaymentResponse(result)).toEqual(settlement);
   });
 });
@@ -363,10 +508,23 @@ describe("MCP helpers", () => {
 describe("settlement response vectors", () => {
   for (const file of listJson("vectors/settlement-response")) {
     it(`validates ${file}`, () => {
-      const vector = readJson<{ response: SettlementResponse; correctivePaymentRequired?: PaymentRequired }>(file);
-      expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", vector.response).ok).toBe(true);
+      const vector = readJson<{
+        response: SettlementResponse;
+        correctivePaymentRequired?: PaymentRequired;
+      }>(file);
+      expect(
+        validateSchemaById(
+          "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+          vector.response,
+        ).ok,
+      ).toBe(true);
       if (vector.correctivePaymentRequired) {
-        expect(validateSchemaById("https://kaspa-x402.org/schemas/payment-required.schema.json", vector.correctivePaymentRequired).ok).toBe(true);
+        expect(
+          validateSchemaById(
+            "https://kaspa-x402.org/schemas/payment-required.schema.json",
+            vector.correctivePaymentRequired,
+          ).ok,
+        ).toBe(true);
       }
     });
   }
@@ -378,21 +536,152 @@ describe("settlement response vectors", () => {
       network: "kaspa:testnet-10",
       amount: "700000",
     };
-    const header = Buffer.from(JSON.stringify(malformed), "utf8").toString("base64");
+    const header = Buffer.from(JSON.stringify(malformed), "utf8").toString(
+      "base64",
+    );
 
     expectFailureCode(
-      validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", malformed),
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+        malformed,
+      ),
       "invalid_kaspa_settlement_response",
     );
-    expect(() => decodePaymentResponseHeader(header)).toThrow("settlement-response.schema.json");
-    expect(() => readMcpPaymentResponse({ _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: malformed } })).toThrow(
+    expect(() => decodePaymentResponseHeader(header)).toThrow(
       "settlement-response.schema.json",
     );
+    expect(() =>
+      readMcpPaymentResponse({
+        _meta: { [MCP_PAYMENT_RESPONSE_META_KEY]: malformed },
+      }),
+    ).toThrow("settlement-response.schema.json");
 
-    const exact = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
-    const voucher = readJson<{ response: SettlementResponse }>("vectors/settlement-response/voucher-only-success.json");
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", exact.settlementResponse).ok).toBe(true);
-    expect(validateSchemaById("https://kaspa-x402.org/schemas/settlement-response.schema.json", voucher.response).ok).toBe(true);
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    const voucher = readJson<{ response: SettlementResponse }>(
+      "vectors/settlement-response/voucher-only-success.json",
+    );
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+        exact.settlementResponse,
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+        voucher.response,
+      ).ok,
+    ).toBe(true);
+  });
+});
+
+describe("full-consensus exact profile vectors", () => {
+  it("keeps standard-native and additive merchant gain exact", () => {
+    const vector = readJson<ExactConsensusVector>(
+      "vectors/exact/consensus-profiles.json",
+    );
+    const standard = vector.expected.standardNative;
+    const additive = vector.expected.additive;
+
+    expect(standard).toMatchObject({ profile: "standard-native", version: 0 });
+    expect(standard.transaction.outputs[0]?.amount).toBe(standard.amount);
+    const standardInputTotal = standard.transaction.inputs.reduce(
+      (total, input) => total + BigInt(input.utxo.amount),
+      0n,
+    );
+    const standardChange = BigInt(standard.transaction.outputs[1]!.amount);
+    expect(standardInputTotal - standardChange).toBe(
+      BigInt(standard.amount) + BigInt(standard.fee),
+    );
+    expect(
+      standard.transaction.outputs.every((output) => output.covenant === null),
+    ).toBe(true);
+
+    expect(additive).toMatchObject({ profile: "additive", version: 1 });
+    expect(
+      BigInt(additive.transaction.outputs[0]!.amount) -
+        BigInt(additive.transaction.inputs[0]!.utxo.amount),
+    ).toBe(BigInt(additive.amount));
+    const additivePayerInputTotal = additive.transaction.inputs
+      .slice(1)
+      .reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
+    const additiveChange = BigInt(additive.transaction.outputs[1]!.amount);
+    expect(additivePayerInputTotal - additiveChange).toBe(
+      BigInt(additive.amount) + BigInt(additive.fee),
+    );
+    expect(additive.transaction.outputs).toHaveLength(2);
+    expect(
+      additive.transaction.outputs.every((output) => output.covenant === null),
+    ).toBe(true);
+    expect(vector.expected.mutations.additiveExcessiveDelta).toBe(
+      "profile-rejected-after-consensus-acceptance",
+    );
+    expect(vector.expected.mutations.additiveDuplicateMerchantBenefit).toBe(
+      "profile-rejected-after-consensus-acceptance",
+    );
+  });
+});
+
+describe("exact v2 profile schemas", () => {
+  const standardExtra = {
+    binding: "kaspa-exact-v2",
+    profile: "standard-native",
+    finality: "accepted",
+    transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+    payToScriptPublicKey: `0000${"11".repeat(34)}`,
+  };
+
+  it("accepts inventory-free standard-native terms and rejects additive head fields", () => {
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+        standardExtra,
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+        {
+          ...standardExtra,
+          headId: "22".repeat(32),
+        },
+      ).ok,
+    ).toBe(false);
+  });
+
+  it("keeps additive head versions and amounts within uint64", () => {
+    const additiveExtra = {
+      ...standardExtra,
+      profile: "additive",
+      templateId: "kaspa-x402-kip10-additive-v1",
+      headId: "22".repeat(32),
+      headVersion: "1",
+      expectedHeadOutpoint: { txid: "33".repeat(32), index: 0 },
+      headAmount: "100000000",
+      headScriptPublicKey: `0000${"44".repeat(34)}`,
+      headRedeemScript: "51",
+      additiveThresholdSompi: "10000000",
+      challengeId: "55".repeat(32),
+      challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+      paymentOutputIndex: 0,
+    };
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+        additiveExtra,
+      ).ok,
+    ).toBe(true);
+    expect(
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+        {
+          ...additiveExtra,
+          headVersion: "18446744073709551616",
+        },
+      ).ok,
+    ).toBe(false);
   });
 });
 
@@ -402,12 +691,31 @@ describe("negative vectors", () => {
       const vector = readJson<NegativeVector>(file);
 
       if (vector.kind === "negative") {
-        expectFailureCode(validateSchemaById(vector.schema, vector.value), vector.expectedError);
+        const validation = validateSchemaById(vector.schema, vector.value);
+        expectFailureCode(validation, vector.expectedError);
+        if (vector.expectedMissingProperty) {
+          expect(validation.ok).toBe(false);
+          if (!validation.ok) {
+            expect(validation.error.details).toEqual(
+              expect.arrayContaining([
+                expect.objectContaining({
+                  keyword: "required",
+                  params: expect.objectContaining({
+                    missingProperty: vector.expectedMissingProperty,
+                  }),
+                }),
+              ]),
+            );
+          }
+        }
         return;
       }
 
       if (vector.scenario === "payment-identifier-conflict") {
-        expectFailureCode(validatePaymentIdentifierReuse(vector.first, vector.second), vector.expectedError);
+        expectFailureCode(
+          validatePaymentIdentifierReuse(vector.first, vector.second),
+          vector.expectedError,
+        );
         return;
       }
 
@@ -429,14 +737,16 @@ describe("payment-identifier semantic validation", () => {
         required: true,
         id: "pay_7d5d747be160e280504c099d984bcfe0",
       },
-      requestHash: "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      requestHash:
+        "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
     };
     const second: PaymentIdentifierObservation = {
       extensionInfo: {
         required: true,
         id: "pay_7d5d747be160e280504c099d984bcfe0",
       },
-      requestHash: "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
+      requestHash:
+        "AAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAAA",
     };
 
     expect(validatePaymentIdentifierReuse(first, second).ok).toBe(true);
@@ -560,7 +870,10 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema,
           },
         },
@@ -596,7 +909,11 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, tenant: "tenant-b", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              tenant: "tenant-b",
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema,
           },
         },
@@ -635,7 +952,11 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, tenant: "tenant-a", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              tenant: "tenant-a",
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema,
           },
         },
@@ -644,7 +965,9 @@ describe("payment-identifier semantic validation", () => {
 
     expectFailureCode(result, "invalid_kaspa_payment_identifier");
     if (result.ok) throw new Error("expected unsupported schema failure");
-    expect(result.error.message).toBe("payment-identifier extension schema is invalid");
+    expect(result.error.message).toBe(
+      "payment-identifier extension schema is invalid",
+    );
   });
 
   it("rejects unsupported advertised payment-identifier schema composition", () => {
@@ -672,7 +995,10 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema,
           },
         },
@@ -708,7 +1034,11 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, tenant: "tenant-a", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              tenant: "tenant-a",
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema,
           },
         },
@@ -745,7 +1075,10 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema: looseSchema,
           },
         },
@@ -791,7 +1124,11 @@ describe("payment-identifier semantic validation", () => {
         ...vector.paymentPayload,
         extensions: {
           "payment-identifier": {
-            info: { required: true, tenant: "tenant-a", id: "pay_7d5d747be160e280504c099d984bcfe0" },
+            info: {
+              required: true,
+              tenant: "tenant-a",
+              id: "pay_7d5d747be160e280504c099d984bcfe0",
+            },
             schema: swappedSchema,
           },
         },
@@ -800,7 +1137,9 @@ describe("payment-identifier semantic validation", () => {
 
     expectFailureCode(result, "invalid_kaspa_payment_identifier");
     if (result.ok) throw new Error("expected schema echo failure");
-    expect(result.error.message).toBe("payment-identifier extension schema must echo the advertised schema");
+    expect(result.error.message).toBe(
+      "payment-identifier extension schema must echo the advertised schema",
+    );
   });
 
   it("returns a stable validation error for non-JSON accepted fields", () => {
@@ -826,9 +1165,17 @@ describe("payment-identifier semantic validation", () => {
 describe("schema dispatch", () => {
   it("validates PaymentRequirements extra by schema id", () => {
     expect(
-      validateSchemaById("https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", {
-        binding: "kaspa-exact-v1",
-      }).ok,
+      validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+        {
+          binding: "kaspa-exact-v2",
+          profile: "standard-native",
+          finality: "accepted",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          payToScriptPublicKey:
+            "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac",
+        },
+      ).ok,
     ).toBe(true);
   });
 });

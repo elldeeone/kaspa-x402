@@ -14,18 +14,31 @@ import {
   type PaymentScheme,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
+import {
+  parseKip10AdditiveRedeemScript,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
 import type { ParsedPaymentRequired } from "./types.js";
 
 export interface ParsePaymentRequiredOptions {
   supportedNetworks?: readonly NetworkId[];
   supportedSchemes?: readonly PaymentScheme[];
-  supportsRequirement?: (requirement: ExactPaymentRequirements | BatchPaymentRequirements) => boolean;
+  supportsRequirement?: (
+    requirement: ExactPaymentRequirements | BatchPaymentRequirements,
+  ) => boolean;
 }
 
 const DEFAULT_SUPPORTED_NETWORKS: readonly NetworkId[] = ["kaspa:testnet-10"];
-const DEFAULT_SUPPORTED_SCHEMES: readonly PaymentScheme[] = ["exact", "batch-settlement"];
+const DEFAULT_SUPPORTED_SCHEMES: readonly PaymentScheme[] = [
+  "exact",
+  "batch-settlement",
+];
 
-export function parsePaymentRequiredHeaderValue(header: string, options: ParsePaymentRequiredOptions = {}): ParsedPaymentRequired {
+export function parsePaymentRequiredHeaderValue(
+  header: string,
+  options: ParsePaymentRequiredOptions = {},
+): ParsedPaymentRequired {
   const paymentRequired = decodePaymentRequiredEnvelopeHeader(header);
   return selectPaymentRequirement(paymentRequired, options);
 }
@@ -36,16 +49,29 @@ export function selectPaymentRequirement(
 ): ParsedPaymentRequired {
   const narrowed = narrowKaspaPaymentRequired(paymentRequired);
 
-  const supportedNetworks = options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
-  const supportedSchemes = options.supportedSchemes ?? DEFAULT_SUPPORTED_SCHEMES;
-  const accepted = narrowed.accepts.find((requirement): requirement is ExactPaymentRequirements | BatchPaymentRequirements => {
-    if (!supportedNetworks.includes(requirement.network) || !supportedSchemes.includes(requirement.scheme)) return false;
-    if (!isSupportedKaspaRequirement(requirement)) return false;
-    return options.supportsRequirement?.(requirement) ?? true;
-  });
+  const supportedNetworks =
+    options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
+  const supportedSchemes =
+    options.supportedSchemes ?? DEFAULT_SUPPORTED_SCHEMES;
+  const accepted = narrowed.accepts.find(
+    (
+      requirement,
+    ): requirement is ExactPaymentRequirements | BatchPaymentRequirements => {
+      if (
+        !supportedNetworks.includes(requirement.network) ||
+        !supportedSchemes.includes(requirement.scheme)
+      )
+        return false;
+      if (!isSupportedKaspaRequirement(requirement)) return false;
+      return options.supportsRequirement?.(requirement) ?? true;
+    },
+  );
 
   if (!accepted) {
-    throw new KaspaX402Error("invalid_kaspa_x402_accepted", "no supported Kaspa x402 requirement was offered");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_accepted",
+      "no supported Kaspa x402 requirement was offered",
+    );
   }
 
   validateSupportedRequirement(accepted);
@@ -62,19 +88,25 @@ export function selectBatchPaymentRequired(
 ): ParsedPaymentRequired {
   const narrowed = narrowKaspaPaymentRequired(paymentRequired);
 
-  const supportedNetworks = options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
-  const accepted = narrowed.accepts.find((requirement): requirement is BatchPaymentRequirements => {
-    return (
-      requirement.scheme === "batch-settlement" &&
-      supportedNetworks.includes(requirement.network) &&
-      requirement.asset === "KAS" &&
-      requirement.extra.binding === "kaspa-escrow-v1" &&
-      requirement.extra.templateId === "kaspa-x402-escrow-v1"
-    );
-  });
+  const supportedNetworks =
+    options.supportedNetworks ?? DEFAULT_SUPPORTED_NETWORKS;
+  const accepted = narrowed.accepts.find(
+    (requirement): requirement is BatchPaymentRequirements => {
+      return (
+        requirement.scheme === "batch-settlement" &&
+        supportedNetworks.includes(requirement.network) &&
+        requirement.asset === "KAS" &&
+        requirement.extra.binding === "kaspa-escrow-v1" &&
+        requirement.extra.templateId === "kaspa-x402-escrow-v1"
+      );
+    },
+  );
 
   if (!accepted) {
-    throw new KaspaX402Error("invalid_kaspa_x402_accepted", "no supported Kaspa batch-settlement requirement was offered");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_accepted",
+      "no supported Kaspa batch-settlement requirement was offered",
+    );
   }
 
   parseSompiString(accepted.amount);
@@ -87,9 +119,14 @@ export function selectBatchPaymentRequired(
   };
 }
 
-function narrowKaspaPaymentRequired(paymentRequired: PaymentRequired | PaymentRequiredEnvelope): PaymentRequired {
+function narrowKaspaPaymentRequired(
+  paymentRequired: PaymentRequired | PaymentRequiredEnvelope,
+): PaymentRequired {
   if (paymentRequired.x402Version !== X402_VERSION) {
-    throw new KaspaX402Error("invalid_kaspa_x402_version", "only x402 v2 payment requirements are supported");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_version",
+      "only x402 v2 payment requirements are supported",
+    );
   }
 
   const narrowed = narrowPaymentRequiredEnvelope(paymentRequired);
@@ -97,9 +134,13 @@ function narrowKaspaPaymentRequired(paymentRequired: PaymentRequired | PaymentRe
   return narrowed.value.paymentRequired;
 }
 
-function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirement is ExactPaymentRequirements | BatchPaymentRequirements {
+function isSupportedKaspaRequirement(
+  requirement: PaymentRequirements,
+): requirement is ExactPaymentRequirements | BatchPaymentRequirements {
   if (requirement.asset !== "KAS") return false;
-  if (requirement.scheme === "exact") return requirement.extra.binding === "kaspa-exact-v1";
+  if (requirement.scheme === "exact") {
+    return requirement.extra.binding === "kaspa-exact-v2";
+  }
   return (
     requirement.scheme === "batch-settlement" &&
     requirement.extra.binding === "kaspa-escrow-v1" &&
@@ -107,10 +148,12 @@ function isSupportedKaspaRequirement(requirement: PaymentRequirements): requirem
   );
 }
 
-function validateSupportedRequirement(accepted: ExactPaymentRequirements | BatchPaymentRequirements): void {
+function validateSupportedRequirement(
+  accepted: ExactPaymentRequirements | BatchPaymentRequirements,
+): void {
   parseSompiString(accepted.amount);
   if (accepted.scheme === "exact") {
-    validateExactReservationTerms(accepted);
+    validateExactTerms(accepted);
   }
   if (accepted.scheme === "batch-settlement") {
     parseSompiString(accepted.extra.minDepositSompi);
@@ -118,46 +161,95 @@ function validateSupportedRequirement(accepted: ExactPaymentRequirements | Batch
   }
 }
 
-function validateExactReservationTerms(accepted: ExactPaymentRequirements): void {
+function validateExactTerms(accepted: ExactPaymentRequirements): void {
+  if (parseSompiString(accepted.amount) <= 0n) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "exact payment amount must be positive",
+    );
+  }
   const extra = accepted.extra;
-  const hasReservation =
-    extra.templateId !== undefined ||
-    extra.transactionEncoding !== undefined ||
-    extra.borrowOutpoint !== undefined ||
-    extra.borrowAmount !== undefined ||
-    extra.borrowScriptPublicKey !== undefined ||
-    extra.borrowRedeemScript !== undefined ||
-    extra.additiveThresholdSompi !== undefined ||
-    extra.paymentOutputIndex !== undefined ||
-    extra.reservationId !== undefined ||
-    extra.reservationExpiresAt !== undefined;
-  if (!hasReservation) return;
+  if (extra.profile !== "standard-native" && extra.profile !== "additive") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "exact v2 requirements must select a profile",
+    );
+  }
+  if (
+    extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
+    typeof extra.payToScriptPublicKey !== "string"
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "exact v2 requirements must bind transaction encoding and payTo script",
+    );
+  }
+  if (extra.profile === "standard-native") return;
   if (
     extra.templateId !== "kaspa-x402-kip10-additive-v1" ||
-    extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
-    !isFundingOutpoint(extra.borrowOutpoint) ||
-    typeof extra.borrowAmount !== "string" ||
-    typeof extra.borrowScriptPublicKey !== "string" ||
-    typeof extra.borrowRedeemScript !== "string" ||
+    !isFundingOutpoint(extra.expectedHeadOutpoint) ||
+    typeof extra.headId !== "string" ||
+    typeof extra.headVersion !== "string" ||
+    typeof extra.headAmount !== "string" ||
+    typeof extra.headScriptPublicKey !== "string" ||
+    typeof extra.headRedeemScript !== "string" ||
     typeof extra.additiveThresholdSompi !== "string" ||
-    !Number.isInteger(extra.paymentOutputIndex) ||
-    typeof extra.reservationId !== "string"
+    typeof extra.challengeId !== "string" ||
+    typeof extra.challengeExpiresAt !== "string" ||
+    extra.paymentOutputIndex !== 0
   ) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation terms are incomplete");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "additive exact head challenge terms are incomplete",
+    );
   }
-  parseSompiString(extra.borrowAmount);
-  parseSompiString(extra.additiveThresholdSompi);
-  if (!/^[0-9a-fA-F]{64}$/.test(extra.reservationId)) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation id must be a transaction-like 32-byte hex string");
+  parseSompiString(extra.headVersion);
+  if (parseSompiString(extra.headAmount) <= 0n) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "additive exact head amount must be positive",
+    );
   }
-  if (!/^(?:[0-9a-fA-F]{2})+$/.test(extra.borrowScriptPublicKey)) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation script public key must be hex");
+  const threshold = parseSompiString(extra.additiveThresholdSompi);
+  if (threshold <= 0n || parseSompiString(accepted.amount) < threshold) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "additive exact amount must meet the positive head threshold",
+    );
   }
-  if (!/^(?:[0-9a-fA-F]{2})+$/.test(extra.borrowRedeemScript)) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation redeem script must be hex");
+  if (
+    !/^[0-9a-fA-F]{64}$/.test(extra.headId) ||
+    !/^[0-9a-fA-F]{64}$/.test(extra.challengeId)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "additive exact head and challenge ids must be 32-byte hex",
+    );
   }
-  if (extra.reservationExpiresAt !== undefined && Number.isNaN(Date.parse(extra.reservationExpiresAt))) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation expiry must be an ISO date string");
+  const expiresAt = Date.parse(extra.challengeExpiresAt);
+  if (Number.isNaN(expiresAt) || expiresAt <= Date.now()) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "additive exact challenge expiry must be a future ISO date string",
+    );
+  }
+  try {
+    const template = parseKip10AdditiveRedeemScript(extra.headRedeemScript);
+    const expectedScript = serializedScriptPublicKey(
+      payToScriptHashScript(extra.headRedeemScript),
+    ).toLowerCase();
+    if (
+      template.amount !== extra.additiveThresholdSompi ||
+      expectedScript !== extra.headScriptPublicKey.toLowerCase() ||
+      expectedScript !== extra.payToScriptPublicKey.toLowerCase()
+    ) {
+      throw new Error("head challenge script terms do not match");
+    }
+  } catch {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "additive exact challenge must bind the canonical KIP-10 script, threshold, head, and payTo script",
+    );
   }
 }
 

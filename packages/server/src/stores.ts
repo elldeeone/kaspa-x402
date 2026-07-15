@@ -1,11 +1,27 @@
 import { parseSompiString, type Hash32Hex } from "@kaspa-x402/core";
+import {
+  acceptExactHead,
+  applyExactHeadLineage as applyExactHeadLineageRecord,
+  claimExactHead,
+  exactHeadMatchesSelection as sharedExactHeadMatchesSelection,
+  exactSettlementAttemptsMatch,
+  normalizeExactHeadRecord,
+  normalizeExactSettlementAttempt,
+  releaseExactHeadClaim,
+} from "./exact-heads.js";
 import type {
   BatchCommitmentRecord,
   ChannelLockManager,
   ClaimAttemptRecord,
-  ExactReservationRecord,
   ExactPaymentRecord,
   ExactSettlementCommit,
+  ExactHeadRecord,
+  ExactHeadLineageApply,
+  ExactHeadUnavailableApply,
+  ExactHeadUnavailableResult,
+  ExactHeadSelectionRequest,
+  ExactSettlementAttemptRecord,
+  ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ServerChannelRecord,
   ServerStateStore,
@@ -16,15 +32,19 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
-  readonly #exactReservations = new Map<Hash32Hex, ExactReservationRecord>();
+  readonly #exactHeads = new Map<Hash32Hex, ExactHeadRecord>();
+  readonly #exactAttempts = new Map<Hash32Hex, ExactSettlementAttemptRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
   constructor(channels: readonly ServerChannelRecord[] = []) {
-    for (const channel of channels) this.#channels.set(channel.channelId, clone(channel));
+    for (const channel of channels)
+      this.#channels.set(channel.channelId, clone(channel));
   }
 
-  async loadChannel(channelId: Hash32Hex): Promise<ServerChannelRecord | undefined> {
+  async loadChannel(
+    channelId: Hash32Hex,
+  ): Promise<ServerChannelRecord | undefined> {
     const channel = this.#channels.get(channelId);
     return channel ? clone(channel) : undefined;
   }
@@ -43,17 +63,23 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return Array.from(this.#channels.values()).map(clone);
   }
 
-  async loadCommitment(commitmentId: Hash32Hex): Promise<BatchCommitmentRecord | undefined> {
+  async loadCommitment(
+    commitmentId: Hash32Hex,
+  ): Promise<BatchCommitmentRecord | undefined> {
     const record = this.#commitments.get(commitmentId);
     return record ? clone(record) : undefined;
   }
 
-  async loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined> {
+  async loadPaymentIdentifier(
+    id: string,
+  ): Promise<PaymentIdentifierRecord | undefined> {
     const record = this.#paymentIdentifiers.get(id);
     return record ? clone(record) : undefined;
   }
 
-  async loadExactPayment(transactionId: Hash32Hex): Promise<ExactPaymentRecord | undefined> {
+  async loadExactPayment(
+    transactionId: Hash32Hex,
+  ): Promise<ExactPaymentRecord | undefined> {
     const record = this.#exactPayments.get(exactPaymentKey(transactionId));
     return record ? clone(record) : undefined;
   }
@@ -63,12 +89,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
     if (!matchesExpectedChannel(current, record.expected)) {
       throw new Error("channel state changed before settlement commit");
     }
-    const paymentIdentifier = record.paymentIdentifier ? clone(record.paymentIdentifier) : undefined;
+    const paymentIdentifier = record.paymentIdentifier
+      ? clone(record.paymentIdentifier)
+      : undefined;
     const commitment = clone(record.commitment);
     const channel = clone(record.channel);
-    if (paymentIdentifier) this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    if (paymentIdentifier)
+      this.#assertPaymentIdentifierAvailable(paymentIdentifier);
     this.#commitments.set(commitment.commitmentId, commitment);
-    if (paymentIdentifier) this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
+    if (paymentIdentifier)
+      this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
     this.#channels.set(channel.channelId, channel);
   }
 
@@ -82,86 +112,327 @@ export class MemoryServerChannelStore implements ServerStateStore {
         existing.paymentPayloadHash !== payment.paymentPayloadHash ||
         existing.paymentOutputIndex !== payment.paymentOutputIndex
       ) {
-        throw new Error("exact payment transaction was already committed for a different request");
+        throw new Error(
+          "exact payment transaction was already committed for a different request",
+        );
       }
       return;
     }
     if (record.paymentIdentifier) {
-      const existingIdentifier = this.#paymentIdentifiers.get(record.paymentIdentifier.id);
+      const existingIdentifier = this.#paymentIdentifiers.get(
+        record.paymentIdentifier.id,
+      );
       if (
         existingIdentifier &&
-        (existingIdentifier.fingerprint !== record.paymentIdentifier.fingerprint ||
-          existingIdentifier.paymentPayloadHash !== record.paymentIdentifier.paymentPayloadHash ||
-          existingIdentifier.paymentScopeId !== record.paymentIdentifier.paymentScopeId)
+        (existingIdentifier.fingerprint !==
+          record.paymentIdentifier.fingerprint ||
+          existingIdentifier.paymentPayloadHash !==
+            record.paymentIdentifier.paymentPayloadHash ||
+          existingIdentifier.paymentScopeId !==
+            record.paymentIdentifier.paymentScopeId)
       ) {
-        throw new Error("payment identifier was already committed for a different payment");
+        throw new Error(
+          "payment identifier was already committed for a different payment",
+        );
       }
-      this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
+      this.#paymentIdentifiers.set(
+        record.paymentIdentifier.id,
+        clone(record.paymentIdentifier),
+      );
+    }
+    const attempt = this.#exactAttempts.get(
+      payment.transactionId.toLowerCase(),
+    );
+    if (attempt) {
+      if (
+        attempt.status !== "accepted" ||
+        !attempt.handlerStartedAt ||
+        !attempt.handlerResult
+      ) {
+        throw new Error("exact settlement attempt is not ready to apply");
+      }
+      this.#exactAttempts.set(payment.transactionId, {
+        ...attempt,
+        status: "applied",
+        updatedAt: new Date().toISOString(),
+      });
     }
     this.#exactPayments.set(key, payment);
   }
 
-  async saveExactReservation(record: ExactReservationRecord): Promise<void> {
-    const existing = this.#exactReservations.get(record.reservationId);
-    if (existing && existing.status !== "reserved") {
-      throw new Error("exact reservation was already consumed");
+  async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
+    const record = normalizeExactHeadRecord(input);
+    const existing = this.#exactHeads.get(record.headId);
+    if (existing) {
+      if (stableJson(existing) !== stableJson(record))
+        throw new Error(
+          "exact head id is already registered for different state",
+        );
+      return clone(existing);
     }
-    if (existing && stableJson(exactReservationTerms(existing)) !== stableJson(exactReservationTerms(record))) {
-      throw new Error("exact reservation id is already reserved for different terms");
+    for (const current of this.#exactHeads.values()) {
+      if (sameOutpoint(current.currentOutpoint, record.currentOutpoint)) {
+        throw new Error("exact head outpoint is already registered");
+      }
     }
-    this.#exactReservations.set(record.reservationId, clone(record));
+    this.#exactHeads.set(record.headId, clone(record));
+    return clone(record);
   }
 
-  async loadExactReservation(reservationId: Hash32Hex): Promise<ExactReservationRecord | undefined> {
-    const record = this.#exactReservations.get(reservationId);
+  async loadExactHead(headId: Hash32Hex): Promise<ExactHeadRecord | undefined> {
+    const record = this.#exactHeads.get(headId.toLowerCase());
     return record ? clone(record) : undefined;
   }
 
-  async consumeExactReservation(
-    reservationId: Hash32Hex,
-    transactionId: Hash32Hex,
-    _continuation?: import("./types.js").ExactBorrowContinuation,
-  ): Promise<void> {
-    const current = this.#exactReservations.get(reservationId);
-    if (!current) {
-      throw new Error("exact reservation was not found");
-    }
-    if (current.status === "consumed") {
-      if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) return;
-      throw new Error("exact reservation was already consumed by a different transaction");
-    }
-    this.#exactReservations.set(reservationId, { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
+  async listExactHeads(): Promise<ExactHeadRecord[]> {
+    return Array.from(this.#exactHeads.values())
+      .map(clone)
+      .sort((left, right) => left.headId.localeCompare(right.headId));
   }
 
-  #assertPaymentIdentifierAvailable(paymentIdentifier: PaymentIdentifierRecord): void {
-    const existingIdentifier = this.#paymentIdentifiers.get(paymentIdentifier.id);
+  async selectExactHead(
+    request: ExactHeadSelectionRequest,
+  ): Promise<ExactHeadRecord | undefined> {
+    const candidates = Array.from(this.#exactHeads.values())
+      .filter((head) => sharedExactHeadMatchesSelection(head, request))
+      .sort((left, right) => left.headId.localeCompare(right.headId));
+    if (candidates.length === 0) return undefined;
+    const index = Number(
+      BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length),
+    );
+    return clone(candidates[index]!);
+  }
+
+  async claimExactSettlement(
+    input: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementClaimResult> {
+    const attempt = normalizeExactSettlementAttempt(input);
+    const existing = this.#exactAttempts.get(attempt.transactionId);
+    if (existing) {
+      if (!exactSettlementAttemptsMatch(existing, attempt))
+        throw new Error(
+          "exact transaction is already claimed for a different request",
+        );
+      return { attempt: clone(existing), created: false };
+    }
+    if (attempt.profile === "additive") {
+      if (!attempt.head)
+        throw new Error("additive exact settlement requires a head claim");
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (!head) throw new Error("exact head changed before settlement claim");
+      this.#exactHeads.set(head.headId, claimExactHead(head, attempt));
+    } else if (attempt.head) {
+      throw new Error("standard-native exact settlement cannot claim a head");
+    }
+    this.#exactAttempts.set(attempt.transactionId, clone(attempt));
+    return { attempt: clone(attempt), created: true };
+  }
+
+  async loadExactSettlementAttempt(
+    transactionId: Hash32Hex,
+  ): Promise<ExactSettlementAttemptRecord | undefined> {
+    const attempt = this.#exactAttempts.get(transactionId.toLowerCase());
+    return attempt ? clone(attempt) : undefined;
+  }
+
+  async recordExactSettlementBroadcast(
+    transactionId: Hash32Hex,
+    finality: import("./types.js").SettlementFinality,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "accepted" || attempt.status === "applied") return;
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      status: "broadcast",
+      finality,
+      updatedAt: observedAt,
+    });
+  }
+
+  async acceptExactSettlement(
+    transactionId: Hash32Hex,
+    finality: "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "applied") return;
+    if (attempt.head) {
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (!head)
+        throw new Error(
+          "exact head was not found during settlement acceptance",
+        );
+      this.#exactHeads.set(
+        head.headId,
+        acceptExactHead(head, attempt, observedAt),
+      );
+    }
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      status: "accepted",
+      finality,
+      updatedAt: observedAt,
+    });
+  }
+
+  async beginExactHandler(
+    transactionId: Hash32Hex,
+    startedAt: string,
+  ): Promise<boolean> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status !== "accepted" || attempt.handlerStartedAt) return false;
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      handlerStartedAt: startedAt,
+      updatedAt: startedAt,
+    });
+    return true;
+  }
+
+  async recordExactHandlerResult(
+    transactionId: Hash32Hex,
+    result: import("./types.js").ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    assertExactHandlerResultTransition(attempt, result, completedAt);
+    if (attempt.handlerResult) {
+      if (stableJson(attempt.handlerResult) !== stableJson(result))
+        throw new Error("exact handler result conflicts with durable state");
+      return;
+    }
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      handlerResult: clone(result),
+      handlerCompletedAt: completedAt,
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
+  }
+
+  async markExactHandlerRecoveryRequired(
+    transactionId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (
+      attempt.status !== "accepted" ||
+      !attempt.handlerStartedAt ||
+      attempt.handlerResult
+    ) {
+      throw new Error("exact handler is not awaiting recovery");
+    }
+    this.#exactAttempts.set(attempt.transactionId, {
+      ...attempt,
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
+  }
+
+  async abandonExactSettlement(
+    transactionId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireExactAttempt(transactionId);
+    if (attempt.status === "accepted" || attempt.status === "applied")
+      throw new Error("accepted exact settlement cannot be abandoned");
+    if (attempt.head) {
+      const head = this.#exactHeads.get(attempt.head.headId);
+      if (head)
+        this.#exactHeads.set(
+          head.headId,
+          releaseExactHeadClaim(head, attempt, observedAt),
+        );
+    }
+    this.#exactAttempts.delete(attempt.transactionId);
+    void reason;
+  }
+
+  async markExactHeadUnavailable(
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    const head = this.#exactHeads.get(input.headId.toLowerCase());
+    if (!head) throw new Error("exact head was not found");
+    if (head.status === "retired")
+      throw new Error("retired exact head cannot be marked unavailable");
+    if (!exactHeadMatchesUnavailableSnapshot(head, input)) {
+      return { applied: false, head: clone(head) };
+    }
+    const unavailable = {
+      ...head,
+      status: "unavailable",
+      unavailableReason: input.reason,
+      updatedAt: input.observedAt,
+    } as const;
+    this.#exactHeads.set(head.headId, unavailable);
+    return { applied: true, head: clone(unavailable) };
+  }
+
+  async applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    const head = this.#exactHeads.get(input.headId.toLowerCase());
+    if (!head) throw new Error("exact head was not found");
+    const advanced = applyExactHeadLineageRecord(head, input);
+    this.#exactHeads.set(advanced.headId, clone(advanced));
+    return clone(advanced);
+  }
+
+  #requireExactAttempt(transactionId: Hash32Hex): ExactSettlementAttemptRecord {
+    const attempt = this.#exactAttempts.get(transactionId.toLowerCase());
+    if (!attempt) throw new Error("exact settlement attempt was not found");
+    return attempt;
+  }
+
+  #assertPaymentIdentifierAvailable(
+    paymentIdentifier: PaymentIdentifierRecord,
+  ): void {
+    const existingIdentifier = this.#paymentIdentifiers.get(
+      paymentIdentifier.id,
+    );
     if (
       existingIdentifier &&
       (existingIdentifier.fingerprint !== paymentIdentifier.fingerprint ||
-        existingIdentifier.paymentPayloadHash !== paymentIdentifier.paymentPayloadHash ||
+        existingIdentifier.paymentPayloadHash !==
+          paymentIdentifier.paymentPayloadHash ||
         existingIdentifier.paymentScopeId !== paymentIdentifier.paymentScopeId)
     ) {
-      throw new Error("payment identifier was already committed for a different payment");
+      throw new Error(
+        "payment identifier was already committed for a different payment",
+      );
     }
   }
 
-  async loadOpenClaimAttempt(channelId: Hash32Hex): Promise<ClaimAttemptRecord | undefined> {
+  async loadOpenClaimAttempt(
+    channelId: Hash32Hex,
+  ): Promise<ClaimAttemptRecord | undefined> {
     for (const record of this.#claimAttempts.values()) {
-      if (record.channelId === channelId && record.status !== "applied") return clone(record);
+      if (record.channelId === channelId && record.status !== "applied")
+        return clone(record);
     }
     return undefined;
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     for (const existing of this.#claimAttempts.values()) {
-      if (existing.channelId === record.channelId && existing.status !== "applied" && existing.attemptId !== record.attemptId) {
+      if (
+        existing.channelId === record.channelId &&
+        existing.status !== "applied" &&
+        existing.attemptId !== record.attemptId
+      ) {
         throw new Error("claim attempt is already pending");
       }
     }
     this.#claimAttempts.set(record.attemptId, clone(record));
   }
 
-  async applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void> {
+  async applyClaimAttempt(
+    channel: ServerChannelRecord,
+    attempt: ClaimAttemptRecord,
+  ): Promise<void> {
     const currentAttempt = this.#claimAttempts.get(attempt.attemptId);
     if (!currentAttempt || currentAttempt.status === "applied") {
       throw new Error("claim attempt is not open");
@@ -169,12 +440,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const currentChannel = this.#channels.get(channel.channelId);
     if (
       !currentChannel ||
-      currentChannel.activeOutpoint.txid.toLowerCase() !== attempt.activeOutpoint.txid.toLowerCase() ||
+      currentChannel.activeOutpoint.txid.toLowerCase() !==
+        attempt.activeOutpoint.txid.toLowerCase() ||
       currentChannel.activeOutpoint.index !== attempt.activeOutpoint.index ||
-      currentChannel.activeScriptPublicKey.toLowerCase() !== attempt.activeScriptPublicKey.toLowerCase() ||
+      currentChannel.activeScriptPublicKey.toLowerCase() !==
+        attempt.activeScriptPublicKey.toLowerCase() ||
       currentChannel.fundingAmount !== attempt.fundingAmount ||
-      currentChannel.chargedCumulativeAmount !== attempt.chargedCumulativeAmount ||
-      currentChannel.claimedCumulativeAmount !== attempt.claimedCumulativeAmount ||
+      currentChannel.chargedCumulativeAmount !==
+        attempt.chargedCumulativeAmount ||
+      currentChannel.claimedCumulativeAmount !==
+        attempt.claimedCumulativeAmount ||
       currentChannel.signedMaxClaimable !== attempt.signedMaxClaimable ||
       currentChannel.voucherSignature !== attempt.voucherSignature ||
       currentChannel.status !== attempt.channelStatus
@@ -182,7 +457,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
       throw new Error("channel state changed before claim apply");
     }
     this.#channels.set(channel.channelId, clone(channel));
-    this.#claimAttempts.set(attempt.attemptId, { ...clone(attempt), status: "applied" });
+    this.#claimAttempts.set(attempt.attemptId, {
+      ...clone(attempt),
+      status: "applied",
+    });
   }
 
   async abandonClaimAttempt(attemptId: Hash32Hex): Promise<void> {
@@ -195,7 +473,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
 export class MemoryChannelLockManager implements ChannelLockManager {
   readonly #tails = new Map<Hash32Hex, Promise<void>>();
 
-  async runExclusive<T>(channelId: Hash32Hex, fn: () => Promise<T>): Promise<T> {
+  async runExclusive<T>(
+    channelId: Hash32Hex,
+    fn: () => Promise<T>,
+  ): Promise<T> {
     const previous = this.#tails.get(channelId) ?? Promise.resolve();
     let release!: () => void;
     const next = new Promise<void>((resolve) => {
@@ -216,7 +497,8 @@ export class MemoryChannelLockManager implements ChannelLockManager {
 export function activeChargedAmount(channel: ServerChannelRecord): bigint {
   const charged = parseSompiString(channel.chargedCumulativeAmount);
   const claimed = parseSompiString(channel.claimedCumulativeAmount);
-  if (claimed > charged) throw new Error("claimed amount cannot exceed charged amount");
+  if (claimed > charged)
+    throw new Error("claimed amount cannot exceed charged amount");
   return charged - claimed;
 }
 
@@ -228,9 +510,26 @@ function exactPaymentKey(transactionId: Hash32Hex): string {
   return transactionId.toLowerCase();
 }
 
-function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
-  const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
-  return terms;
+function sameOutpoint(
+  left: { txid: string; index: number },
+  right: { txid: string; index: number },
+): boolean {
+  return (
+    left.txid.toLowerCase() === right.txid.toLowerCase() &&
+    left.index === right.index
+  );
+}
+
+function exactHeadMatchesUnavailableSnapshot(
+  head: ExactHeadRecord,
+  input: ExactHeadUnavailableApply,
+): boolean {
+  return (
+    head.version === input.expectedVersion &&
+    sameOutpoint(head.currentOutpoint, input.expectedOutpoint) &&
+    head.currentAmount === input.expectedAmount &&
+    head.status === input.expectedStatus
+  );
 }
 
 function stableJson(value: unknown): string {
@@ -243,9 +542,57 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
-function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {
+function assertExactHandlerResultTransition(
+  attempt: ExactSettlementAttemptRecord,
+  result: import("./types.js").ProtectedHandlerResult,
+  completedAt: string,
+): void {
+  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
+    throw new Error("exact handler has not started on an accepted settlement");
+  if (Number.isNaN(Date.parse(completedAt)))
+    throw new Error("exact handler completion time must be an ISO date string");
+  if (
+    result.status !== undefined &&
+    (!Number.isInteger(result.status) ||
+      result.status < 100 ||
+      result.status > 599)
+  ) {
+    throw new Error("exact handler status is invalid");
+  }
+  if (
+    result.headers &&
+    Object.values(result.headers).some((value) => typeof value !== "string")
+  ) {
+    throw new Error("exact handler headers are invalid");
+  }
+  if (result.headers && Object.keys(result.headers).length > 64)
+    throw new Error("exact handler has too many response headers");
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(result);
+  } catch {
+    throw new Error("exact handler result must be JSON serializable");
+  }
+  if (new TextEncoder().encode(serialized).byteLength > 256 * 1024)
+    throw new Error("exact handler result exceeds the durable size limit");
+  if (
+    result.chargedAmount !== undefined &&
+    result.chargedAmount !== attempt.amount
+  ) {
+    throw new Error("exact handler charge must equal the accepted amount");
+  }
+}
+
+function matchesExpectedChannel(
+  current: ServerChannelRecord | undefined,
+  expected: SettlementCommit["expected"],
+): boolean {
   if (!current) {
-    return expected.chargedCumulativeAmount === "0" && expected.claimedCumulativeAmount === "0" && expected.signedMaxClaimable === "0";
+    return (
+      expected.chargedCumulativeAmount === "0" &&
+      expected.claimedCumulativeAmount === "0" &&
+      expected.signedMaxClaimable === "0"
+    );
   }
   return (
     current.channelId === expected.channelId &&
@@ -253,8 +600,10 @@ function matchesExpectedChannel(current: ServerChannelRecord | undefined, expect
     current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
     current.signedMaxClaimable === expected.signedMaxClaimable &&
     current.status === expected.status &&
-    current.activeOutpoint.txid.toLowerCase() === expected.activeOutpoint.txid.toLowerCase() &&
+    current.activeOutpoint.txid.toLowerCase() ===
+      expected.activeOutpoint.txid.toLowerCase() &&
     current.activeOutpoint.index === expected.activeOutpoint.index &&
-    current.activeScriptPublicKey.toLowerCase() === expected.activeScriptPublicKey.toLowerCase()
+    current.activeScriptPublicKey.toLowerCase() ===
+      expected.activeScriptPublicKey.toLowerCase()
   );
 }

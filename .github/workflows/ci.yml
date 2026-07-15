@@ -24,6 +24,21 @@ jobs:
         run: npm test
       - name: Schema and vector validation
         run: npm run validate:schemas
+      - name: Generated schema validator drift
+        run: npm run generate:schema-validators && git diff --exit-code -- packages/core/src/generated
+      - name: Checkout pinned Rusty Kaspa consensus source
+        run: |
+          git init --quiet "$RUNNER_TEMP/rusty-kaspa"
+          git -C "$RUNNER_TEMP/rusty-kaspa" remote add origin https://github.com/kaspanet/rusty-kaspa.git
+          git -C "$RUNNER_TEMP/rusty-kaspa" fetch --quiet --depth=1 origin 78257f273a26c4be085bab0f79437dee99ca8835
+          git -C "$RUNNER_TEMP/rusty-kaspa" checkout --quiet --detach FETCH_HEAD
+      - name: Rusty Kaspa consensus oracle and generated vector checks
+        env:
+          KASPA_X402_KASPA_CONSENSUS_ROOT: ${{ runner.temp }}/rusty-kaspa
+        run: |
+          npm run validate:tx-v1-consensus
+          npm run check:exact-consensus-vector
+          npm run check:exact-http-vector
       - name: Offline proof
         run: npm run proof:offline
       - name: Covenant fixture checks
@@ -34,6 +49,10 @@ jobs:
         run: npm run site:check
       - name: Gateway Worker dry-run build
         run: npm --workspace @kaspa-x402/demo-gateway run build
+      - name: Admin CLI secret and transport checks
+        run: npm run check:admin-security
+      - name: Hosted proof offer-pin checks
+        run: npm run check:hosted-offer-pins
       - name: Public package pack dry-run
         run: npm run pack:public:dry-run
       - name: Whitespace and diff checks

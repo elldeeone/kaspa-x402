@@ -1,4 +1,4 @@
-import { KaspaX402Error, type NetworkId, type SompiString } from "@kaspa-x402/core";
+import { KaspaX402Error, type ExactProfile, type NetworkId, type SompiString } from "@kaspa-x402/core";
 
 /** Reference gateway policy, not a universal Kaspa consensus dust constant. */
 export const MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI = 10_000_000n;
@@ -11,6 +11,7 @@ export interface GatewayEnv {
   KASPA_X402_PAY_TO?: string;
   KASPA_X402_SERVER_PUBLIC_KEY?: string;
   KASPA_X402_EXACT_AMOUNT?: string;
+  KASPA_X402_EXACT_PROFILE?: string;
   KASPA_X402_BATCH_AMOUNT?: string;
   KASPA_X402_MIN_DEPOSIT_SOMPI?: string;
   KASPA_X402_REFUND_TIMEOUT_DAA_DELTA?: string;
@@ -36,6 +37,7 @@ export interface GatewayConfig {
   payTo: string;
   serverPublicKey: string;
   exactAmount: SompiString;
+  exactProfile: ExactProfile;
   batchAmount: SompiString;
   minDepositSompi: SompiString;
   refundTimeoutDaaDelta: SompiString;
@@ -90,6 +92,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     payTo,
     serverPublicKey,
     exactAmount,
+    exactProfile: exactProfile(env.KASPA_X402_EXACT_PROFILE ?? "standard-native"),
     batchAmount: sompi(env.KASPA_X402_BATCH_AMOUNT ?? "500", "KASPA_X402_BATCH_AMOUNT"),
     minDepositSompi,
     refundTimeoutDaaDelta,
@@ -110,6 +113,12 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     pnnAttempts: uint(env.KASPA_X402_PNN_ATTEMPTS ?? "2", "KASPA_X402_PNN_ATTEMPTS", 1, 5),
     ...(env.KASPA_X402_ADMIN_TOKEN?.trim() ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() } : {}),
   };
+}
+
+function exactProfile(value: string): ExactProfile {
+  const normalized = value.trim().toLowerCase();
+  if (normalized === "standard-native" || normalized === "additive") return normalized;
+  throw new Error("KASPA_X402_EXACT_PROFILE must be standard-native or additive");
 }
 
 function required(value: string | undefined, name: string): string {

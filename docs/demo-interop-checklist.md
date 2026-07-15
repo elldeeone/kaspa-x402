@@ -14,7 +14,7 @@ the site without repository context.
 | Can a reader find the supported schemes and networks? | Yes. The homepage, specs, and gateway docs state `exact`, `batch-settlement`, `kaspa:testnet-10`, and `KAS`. |
 | Can a reader run fixture validation? | Yes. `/vectors/` groups fixtures by directory and `npm run validate:schemas` validates committed fixtures locally. |
 | Can a reader hit a real endpoint? | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch` from the paid-canary-proven alpha.7 Worker. |
-| Does the endpoint advertise current payable terms? | Yes. Exact is inventory-gated; batch advertises a persisted absolute DAA timeout that remains within the configured rolling horizon and stable for channel reuse. |
+| Does the endpoint advertise current payable terms? | The public endpoint advertises its deployed alpha.7 terms. After alpha.8 deployment, exact advertises `standard-native` by default or availability-gated `additive`; batch retains its persisted absolute DAA timeout. |
 | Does the endpoint publish operational status? | Yes. `/health` exposes chain evidence, metrics, enabled state, and latest canary when present; `/canary` exposes enabled state and the stored canary report after the scheduled job has run, including a release-snapshot freshness check. |
 | Does the public material imply mainnet readiness? | No. The site and gateway docs frame the deployment as alpha and `kaspa:testnet-10` only. |
 | Does the site publish internal planning or review drafts? | No. The site checker blocks ignored planning files, review files, and private announcement drafts. |

@@ -44,14 +44,26 @@ export interface VerifyResponse extends JsonRecord {
 
 export type SettleResponse = SettlementResponse;
 
-export function isFacilitatorRequest(value: unknown): value is FacilitatorRequest {
-  const record = value as { x402Version?: unknown; paymentPayload?: unknown; paymentRequirements?: unknown };
+export function isFacilitatorRequest(
+  value: unknown,
+): value is FacilitatorRequest {
+  if (!isRecord(value)) return false;
+  const record = value as {
+    x402Version?: unknown;
+    paymentPayload?: unknown;
+    paymentRequirements?: unknown;
+  };
+  const requestHash = recordWithRequestHash(value).requestHash;
+  const exact =
+    isRecord(record.paymentRequirements) &&
+    record.paymentRequirements.scheme === "exact";
   return (
-    isRecord(value) &&
     record.x402Version === X402_VERSION &&
     isRecord(record.paymentPayload) &&
     isRecord(record.paymentRequirements) &&
-    (recordWithRequestHash(value).requestHash === undefined || isHash32Hex(recordWithRequestHash(value).requestHash))
+    (exact
+      ? isHash32Hex(requestHash)
+      : requestHash === undefined || isHash32Hex(requestHash))
   );
 }
 

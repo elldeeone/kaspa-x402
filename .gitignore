@@ -9,6 +9,7 @@ site/dist/
 .DS_Store
 .kaspa-x402-live/
 .kaspa-x402-consensus-target/
+.kaspa-x402-consensus-cargo-home/
 docs/standard-plan.md
 docs/goal.md
 docs/*-review.md

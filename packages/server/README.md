@@ -11,13 +11,18 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - builds x402 v2 `PAYMENT-REQUIRED` offers;
 - extracts and validates `PAYMENT-SIGNATURE` retries;
 - verifies exact transaction output amount, pay-to script, transaction id, and finality through an injected verifier;
+- defaults exact offers to `standard-native` and can optionally select, claim,
+  and atomically advance reusable KIP-10 additive heads;
 - verifies funding outpoints, escrow scripts, and cumulative vouchers through injected adapters;
 - serializes per-transaction or per-channel verification, handler execution, and state commit;
 - stores exact transaction replay records before returning protected content;
 - stores per-request settlement commitments before advancing channel charge state;
 - supports payment identifier idempotency for exact and batch payment-payload retries;
 - returns corrective `402` responses with channel state where possible;
-- returns MCP payment-required tool results, reads `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]` without exposing protected content on settlement failure;
+- returns MCP payment-required tool results, requires a trusted configured MCP
+  server `audience` in the tool-call fingerprint, reads
+  `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]`
+  without exposing protected content on settlement failure;
 - exposes direct verifier and settlement helpers used by optional self-hosted facilitator endpoints;
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
 - exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.

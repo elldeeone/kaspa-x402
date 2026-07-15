@@ -39,10 +39,18 @@ describe("gateway config", () => {
       }),
     ).toMatchObject({
       exactAmount: "20000000",
+      exactProfile: "standard-native",
       minDepositSompi: "20000000",
       refundTimeoutDaaDelta: "36000",
       minimumRefundLeadDaa: "1000",
     });
+  });
+
+  it("parses and validates the exact profile", () => {
+    expect(readGatewayConfig({ ...BASE_ENV, KASPA_X402_EXACT_PROFILE: "additive" })).toMatchObject({ exactProfile: "additive" });
+    expect(() => readGatewayConfig({ ...BASE_ENV, KASPA_X402_EXACT_PROFILE: "legacy" })).toThrow(
+      "KASPA_X402_EXACT_PROFILE must be standard-native or additive",
+    );
   });
 
   it("requires an absolute refund timeout delta beyond the server safety lead", () => {

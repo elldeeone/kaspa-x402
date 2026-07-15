@@ -17,6 +17,12 @@ Implemented:
 - `handleFacilitatorRequest()` for framework-neutral `GET /supported`, `POST /verify`, and `POST /settle` routing;
 - optional claim/refund action hooks for operator-specific settlement flows.
 
+Every exact `/verify` or `/settle` request must include the resource server's
+independently computed `requestHash`. The facilitator never substitutes the
+hash embedded in the payment artifact, because doing so would let the artifact
+authorize itself for a different resource. Batch requests may retain the
+documented deterministic local fallback.
+
 ```ts
 import { DirectModeFacilitator, handleFacilitatorRequest } from "@kaspa-x402/facilitator";
 

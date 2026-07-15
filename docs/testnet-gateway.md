@@ -1,17 +1,19 @@
 # Testnet Gateway
 
-Status: live, paid-canary-proven alpha.7 `kaspa:testnet-10` integration
-deployment. Funded exact, replay, batch, and absolute-DAA canaries passed on
-2026-07-14.
+Status: the public URL remains the paid-canary-proven alpha.7
+`kaspa:testnet-10` deployment. This document also records the alpha.8 source
+contract; alpha.8 is not live until an explicit post-merge deployment and paid
+canary.
 
 The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
-Source status: alpha.7 hardens the KIP-10 `exact-transaction` path, exact
-continuation recycling, absolute DAA refund handling, and claim recovery. The
-separate TN10 full live harness passed from alpha.7 source on 2026-07-14 and is
-recorded in `docs/live-testnet-report.md`.
+Source status: alpha.8 introduces `kaspa-exact-v2`: default
+`standard-native` exact settlement and an optional reusable KIP-10 `additive`
+head profile whose successor delta is the sole payment. Batch settlement,
+absolute DAA handling, and claim recovery remain intact. Fresh alpha.8 live
+evidence is required before deployment.
 
 Hosted status: Worker version `38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built
 from commit `4d53d02`, is live. The funded run on its immediate predecessor
@@ -19,8 +21,9 @@ settled a KIP-10 exact transaction through TN10 PNN,
 confirmed idempotent replay and cross-resource rejection, reused one batch
 channel for deposit-voucher and voucher-only payments, rejected a stale batch
 replay, and verified a stable absolute refund timeout against the operator node.
-Exact remains inventory-gated; `/exact` returns `503 exact_unavailable` whenever
-the operator has no funded reservation available.
+That historical alpha.7 Worker remains inventory-gated. The alpha.8 source
+defaults to `standard-native`; only optional `additive` is head-availability
+gated.
 
 ## Base URL
 
@@ -32,22 +35,23 @@ https://demo.kaspa-x402.org
 
 ## Endpoints
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `GET` | `/` | Returns a JSON endpoint index. |
-| `GET` | `/health` | Returns configuration health and current `kaspa:testnet-10` chain evidence. |
-| `GET` | `/canary` | Returns the enabled state and latest scheduled canary report. |
-| `GET` | `/supported` | Returns the direct-mode supported-kind list. |
-| `GET` | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED` only while hosted KIP-10 inventory is available; otherwise returns `503 exact_unavailable`. |
-| `GET` | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`. |
-| `GET` | `/metrics` | Returns coarse gateway counters for smoke testing and operations. |
+| Method | Path                         | Purpose                                                                                                                                                     |
+| ------ | ---------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `GET`  | `/`                          | Returns a JSON endpoint index.                                                                                                                              |
+| `GET`  | `/health`                    | Returns configuration health and current `kaspa:testnet-10` chain evidence.                                                                                 |
+| `GET`  | `/canary`                    | Returns the enabled state and latest scheduled canary report.                                                                                               |
+| `GET`  | `/supported`                 | Returns the direct-mode supported-kind list.                                                                                                                |
+| `GET`  | `/exact` and `/exact/report` | Protected exact-payment JSON resource. Alpha.8 `standard-native` returns `402` while exact is enabled; optional `additive` also requires an available head. |
+| `GET`  | `/batch` and `/batch/report` | Protected batch-settlement JSON resource. Unpaid requests return `402` with `PAYMENT-REQUIRED`.                                                             |
+| `GET`  | `/metrics`                   | Returns coarse gateway counters for smoke testing and operations.                                                                                           |
 
-The Worker also exposes admin-only exact inventory endpoints:
+The alpha.8 Worker source exposes admin-only additive-head endpoints:
 
-| Method | Path | Purpose |
-| ------ | ---- | ------- |
-| `GET` | `/admin/exact-inventory` | Requires `Authorization: Bearer <token>`; returns inventory stats and records. |
-| `POST` | `/admin/exact-inventory/register` | Requires `Authorization: Bearer <token>`; registers funded KIP-10 borrow UTXO terms. |
+| Method | Path                           | Purpose                                                                                                                                    |
+| ------ | ------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------ |
+| `GET`  | `/admin/exact-heads`           | Requires `Authorization: Bearer <token>`; returns head stats and records.                                                                  |
+| `POST` | `/admin/exact-heads/register`  | Requires `Authorization: Bearer <token>`; registers funded reusable KIP-10 head terms.                                                     |
+| `POST` | `/admin/exact-heads/reconcile` | Requires `Authorization: Bearer <token>`; proves an ordered accepted successor lineage and atomically restores the resulting current head. |
 
 The admin token is a Worker secret and is not committed to the repository.
 
@@ -64,13 +68,15 @@ The gateway always uses:
 - a testnet pay-to address configured in the Worker environment.
 
 The hosted gateway always advertises `batch-settlement` with `extra.binding:
-"kaspa-escrow-v1"`. It advertises `exact` only when hosted exact settlement is
-enabled and at least one funded KIP-10 borrow UTXO is available in inventory.
+"kaspa-escrow-v1"`. Alpha.8 exact uses `extra.binding: "kaspa-exact-v2"` and
+an explicit profile. `standard-native` needs no inventory. `additive` is
+advertised only when hosted exact settlement is enabled and a matching durable
+head is available.
 
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
 
-Deployed alpha.7 terms:
+Historical deployed alpha.7 terms:
 
 - exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
@@ -83,8 +89,9 @@ mass depends on the complete input/output composition, Kaspa has no universal
 `10000000` sompi consensus dust floor. The reference Worker nevertheless uses
 `10000000` sompi as a conservative on-chain output policy and fails closed at
 startup below it.
-Hosted exact uses merchant-owned borrow UTXO inventory and advertises an
-`additiveThresholdSompi` of at least `10000000` sompi.
+Alpha.8 additive uses merchant-owned reusable heads and advertises a positive
+`additiveThresholdSompi`; application verification additionally requires the
+successor delta to equal the advertised amount exactly.
 
 `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA` defines the maximum duration from a
 freshly read virtual DAA score. The Durable Object persists one absolute offer
@@ -96,42 +103,71 @@ lock time `T` is eligible only once the contextual DAA score is greater than
 `T`. All DAA-mode timeouts must remain below the `500000000000` consensus
 timestamp boundary.
 
-Exact inventory records are public transaction terms, not wallet secrets. A
-registration record has this shape:
+Exact head records are public transaction terms, not wallet secrets. An
+alpha.8 registration record has this shape:
 
 ```json
 {
+  "headId": "<deterministic-lineage-id>",
   "network": "kaspa:testnet-10",
+  "payTo": "kaspatest:<p2sh-head-address>",
   "templateId": "kaspa-x402-kip10-additive-v1",
   "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
-  "borrowOutpoint": { "txid": "<funded-borrow-txid>", "index": 0 },
-  "borrowAmount": "100000000",
-  "borrowScriptPublicKey": "0000...",
-  "borrowRedeemScript": "...",
+  "currentOutpoint": { "txid": "<funded-head-txid>", "index": 0 },
+  "currentAmount": "100000000",
+  "scriptPublicKey": "0000...",
+  "redeemScript": "...",
   "additiveThresholdSompi": "10000000",
-  "paymentOutputIndex": 1
+  "version": "0",
+  "status": "available",
+  "createdAt": "<ISO-8601>",
+  "updatedAt": "<ISO-8601>"
 }
 ```
 
-Register inventory with:
+Register heads with:
 
 ```sh
 KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
-  npm run demo:exact-inventory -- register --file inventory.json
+  npm run demo:exact-heads -- register --file heads.json
 ```
+
+The admin helper accepts the bearer token only through
+`KASPA_X402_DEMO_ADMIN_TOKEN`; command-line token arguments are rejected because
+process arguments may be visible to other users. It also refuses non-loopback
+plain HTTP so the bearer token is never sent over an unencrypted remote link.
 
 Check availability with:
 
 ```sh
-KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-inventory -- stats
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> npm run demo:exact-heads -- stats
 ```
 
-Registration enables public exact offers only when the hosted exact settlement
-flag is also enabled. An accepted settlement consumes the leased outpoint and
-atomically registers its verified KIP-10 continuation as the next available
-inventory item. Expired unpaid reservations are retired for operator
-reconciliation rather than automatically reused, because a late or
-already-propagating transaction may still consume the original outpoint.
+The Worker checks only a bounded selected additive head against the accepted
+address UTXO set before issuing a challenge. Anonymous request work does not
+scan the full inventory. A missing or conflicting selected outpoint is marked
+unavailable only if the durable version/outpoint/amount/status still match the
+checked snapshot. If an external transaction legitimately advanced that head,
+restore it only with the complete ordered lineage:
+
+```sh
+KASPA_X402_DEMO_ADMIN_TOKEN=<token> \
+  npm run demo:exact-heads -- reconcile \
+  --head-id <head-id> \
+  --transactions <first-txid>,<next-txid>
+```
+
+Each accepted transaction must spend the preceding outpoint, recreate the same
+script at the same output index with at least the fixed KIP-10 increase, and
+end at the current unspent UTXO. A same-address output without that lineage is
+never adopted. Calling `reconcile` without `--transactions` performs a
+current-head check and fails closed if the durable outpoint is missing.
+
+Registration enables additive offers only when hosted exact settlement is also
+enabled. Unpaid offers only read a head. An accepted settlement atomically
+claims the expected outpoint and advances the lineage to its verifier-derived
+same-script successor. Expired unanswered challenges do not retire the head;
+stale clients refresh against the current version.
 
 Operational details, rollback steps, the gateway disable switch, and manual
 paid canary procedure are covered in the
@@ -158,9 +194,10 @@ KIP-10 broadcast evidence.
 Failure modes are fail-closed:
 
 - if REST chain health fails, paid endpoints do not settle payments;
-- exact payments are unavailable unless the gateway can reserve KIP-10 borrow
-  terms, verify an `exact-transaction` artifact, broadcast it if needed, observe
-  finality, and consume the reservation;
+- exact payments are unavailable unless the gateway can verify an
+  `exact-transaction` artifact, broadcast it if needed, and observe finality;
+  optional additive settlement also requires a current durable head and atomic
+  lineage advancement;
 - batch deposits and vouchers must reference an accepted active escrow UTXO;
 - claim broadcasting is disabled on the hosted gateway.
 
@@ -169,9 +206,9 @@ Failure modes are fail-closed:
 Gateway state is held in a SQLite-backed Cloudflare Durable Object. The ledger
 records:
 
-- exact transaction replay reservations;
-- exact KIP-10 borrow UTXO inventory, active reservation leases, and verified
-  continuation rotation;
+- exact transaction replay claims;
+- reusable KIP-10 additive heads, atomic settlement claims, and verified
+  continuation advancement;
 - payment-identifier response cache entries;
 - batch channel state and settlement commitments;
 - one open claim attempt per channel, though public claim execution is disabled;
@@ -203,10 +240,11 @@ domain. Send it only over TLS to the intended gateway, and do not publish or log
 unused payment headers or transaction material before the paid retry has been
 settled.
 
-The alpha.7 `exact-transaction` path requires server-advertised buildable
-reservation terms, including the borrow redeem script and additive threshold,
-plus a signed SDK-safe JSON transaction artifact. The hosted gateway rejects
-observe-only `exact-transfer` evidence on reserved offers.
+The alpha.8 `exact-transaction` path requires an explicit profile plus a signed
+SDK-safe JSON transaction artifact. `standard-native` binds the exact output.
+`additive` also binds a complete head challenge and requires the successor
+delta to be the sole exact payment. The gateway rejects the superseded alpha.7
+reservation envelope and observe-only `exact-transfer` evidence.
 
 ## Testnet Funding
 

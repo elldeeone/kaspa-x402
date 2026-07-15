@@ -1,7 +1,18 @@
-import { KaspaX402Error, type FundingOutpoint, type NetworkId, type SompiString } from "@kaspa-x402/core";
+import {
+  exactRequestAuthorizationDigest,
+  exactRequestAuthorizationId,
+  KaspaX402Error,
+  type FundingOutpoint,
+  type Hash32Hex,
+  type NetworkId,
+  type SompiString,
+} from "@kaspa-x402/core";
 import type {
   AddressCodec,
   ChainUtxo,
+  ExactHeadReconciler,
+  ExactHeadReconciliation,
+  ExactHeadRecord,
   PreparedTransaction,
   ExactTransactionVerification,
   ExactTransactionVerificationRequest,
@@ -14,28 +25,54 @@ import type {
 import {
   KIP10_EXACT_TRANSACTION_ENCODING,
   buildKip10AdditiveBorrowSignatureScript,
+  calculateKaspaStorageMass,
+  exactV0SchnorrSignatureEvidence,
+  exactV0TransactionId,
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
+  transactionV1Id,
+  transactionV1SchnorrSignatureEvidence,
   type DeriveEscrowAddressInput,
+  type ExactV0ReferenceTransaction,
+  type TxV1ReferenceTransaction,
 } from "@kaspa-x402/covenant";
-import { encodeScriptAddress, scriptPublicKeyForAddress, verifyKaspaSchnorrDigest } from "./kaspa-native.js";
+import {
+  addressForScriptPublicKey,
+  encodeScriptAddress,
+  scriptPublicKeyForAddress,
+  verifyKaspaSchnorrDigest,
+} from "./kaspa-native.js";
 
 type FetchLike = typeof fetch;
 type SleepLike = (ms: number) => Promise<void>;
 
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const MAX_SAFE_TRANSACTION_ARTIFACT_CHARS = 128 * 1024;
-const MAX_SAFE_TRANSACTION_INPUTS = 64;
+const MAX_SAFE_TRANSACTION_INPUTS = 16;
 const MAX_SAFE_TRANSACTION_OUTPUTS = 64;
 const MAX_SAFE_TRANSACTION_FEE_SOMPI = 100_000_000n;
+const MAX_KASPA_REST_RESPONSE_BYTES = 512 * 1024;
+const MAX_KASPA_REST_UTXOS_PER_ADDRESS = 512;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
+
+type TrustedInputReadCache = {
+  transactions: Map<string, Promise<RestTransaction | null>>;
+  utxosByAddress: Map<string, Promise<ChainUtxo[]>>;
+};
 
 type PnnRpc = {
   connect(): Promise<void>;
   disconnect(): Promise<void>;
-  getServerInfo(): Promise<{ networkId?: unknown; isSynced?: unknown; virtualDaaScore?: unknown }>;
-  submitTransaction(request: { transaction: unknown; allowOrphan: boolean }): Promise<{ transactionId?: unknown }>;
+  getServerInfo(): Promise<{
+    networkId?: unknown;
+    isSynced?: unknown;
+    virtualDaaScore?: unknown;
+  }>;
+  submitTransaction(request: {
+    transaction: unknown;
+    allowOrphan: boolean;
+  }): Promise<{ transactionId?: unknown }>;
   getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
 };
 
@@ -92,16 +129,25 @@ export class RestKaspaChainProvider implements ServerChainProvider {
   readonly #book: ScriptAddressBook;
   readonly #claimFeeSompi: SompiString;
 
-  constructor(client: KaspaRestClient, book: ScriptAddressBook, claimFeeSompi: SompiString) {
+  constructor(
+    client: KaspaRestClient,
+    book: ScriptAddressBook,
+    claimFeeSompi: SompiString,
+  ) {
     this.#client = client;
     this.#book = book;
     this.#claimFeeSompi = claimFeeSompi;
   }
 
-  async getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null> {
+  async getUtxo(
+    outpoint: FundingOutpoint,
+    network: NetworkId,
+  ): Promise<ChainUtxo | null> {
     assertTestnet(network);
     for (const address of this.#book.addresses()) {
-      const match = (await this.#client.getUtxosForAddress(address)).find((utxo) => sameOutpoint(utxo.outpoint, outpoint));
+      const match = (await this.#client.getUtxosForAddress(address)).find(
+        (utxo) => sameOutpoint(utxo.outpoint, outpoint),
+      );
       if (match) return match;
     }
     return null;
@@ -115,7 +161,9 @@ export class RestKaspaChainProvider implements ServerChainProvider {
     return this.#claimFeeSompi;
   }
 
-  async sendTransaction(transaction: PreparedTransaction): Promise<TransactionBroadcast> {
+  async sendTransaction(
+    transaction: PreparedTransaction,
+  ): Promise<TransactionBroadcast> {
     const parsed = parseSafeTransactionArtifact(transaction);
     const accepted = await this.#client.getTransaction(parsed.id);
     if (accepted?.is_accepted) {
@@ -131,10 +179,133 @@ export class RestKaspaChainProvider implements ServerChainProvider {
       transactionId = parsed.id;
     }
     if (transactionId.toLowerCase() !== parsed.id) {
-      throw new KaspaX402Error("invalid_kaspa_transaction", "Kaspa REST returned a transaction id that does not match the exact artifact");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "Kaspa REST returned a transaction id that does not match the exact artifact",
+      );
     }
     await this.#client.waitForTransactionAccepted(parsed);
     return { transactionId: parsed.id, finality: "accepted" };
+  }
+}
+
+export class RestExactHeadReconciler implements ExactHeadReconciler {
+  readonly #client: KaspaRestClient;
+
+  constructor(client: KaspaRestClient) {
+    this.#client = client;
+  }
+
+  async reconcileExactHead(
+    head: ExactHeadRecord,
+    candidateTransactionIds: readonly Hash32Hex[] = [],
+  ): Promise<ExactHeadReconciliation> {
+    assertTestnet(head.network);
+    const current = (await this.#client.getUtxosForAddress(head.payTo)).find(
+      (utxo) => sameOutpoint(utxo.outpoint, head.currentOutpoint),
+    );
+    if (current) {
+      if (
+        current.amount !== head.currentAmount ||
+        current.scriptPublicKey.toLowerCase() !==
+          head.scriptPublicKey.toLowerCase()
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "current head outpoint conflicts with durable amount or script",
+        };
+      }
+      return {
+        status: "current",
+        outpoint: current.outpoint,
+        amount: current.amount,
+        scriptPublicKey: current.scriptPublicKey,
+        finality: "accepted",
+      };
+    }
+    if (candidateTransactionIds.length === 0) {
+      return {
+        status: "unknown",
+        reason:
+          "current head outpoint is spent or missing and no trusted successor lineage was supplied",
+      };
+    }
+
+    const steps = [];
+    let expectedOutpoint = head.currentOutpoint;
+    for (const candidateId of candidateTransactionIds) {
+      const transaction = await this.#client.getTransaction(candidateId);
+      if (!transaction?.is_accepted) {
+        return {
+          status: "unknown",
+          reason: `candidate head transaction ${candidateId} is not accepted`,
+        };
+      }
+      if (
+        transaction.transaction_id?.toLowerCase() !== candidateId.toLowerCase()
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "candidate head transaction id does not match trusted evidence",
+        };
+      }
+      const spendsExpected = (transaction.inputs ?? []).some(
+        (input) =>
+          input.previous_outpoint_hash?.toLowerCase() ===
+            expectedOutpoint.txid.toLowerCase() &&
+          Number(input.previous_outpoint_index) === expectedOutpoint.index,
+      );
+      const successor = (transaction.outputs ?? []).find(
+        (output, index) =>
+          Number(output.index ?? index) === expectedOutpoint.index,
+      );
+      if (
+        !spendsExpected ||
+        !successor ||
+        successor.amount === undefined ||
+        typeof successor.script_public_key !== "string"
+      ) {
+        return {
+          status: "unknown",
+          reason:
+            "candidate transaction does not prove the expected same-index successor",
+        };
+      }
+      const step = {
+        transactionId: candidateId.toLowerCase(),
+        spentOutpoint: structuredClone(expectedOutpoint),
+        successor: {
+          outpoint: {
+            txid: candidateId.toLowerCase(),
+            index: expectedOutpoint.index,
+          },
+          amount: String(successor.amount),
+          scriptPublicKey: normalizeRestScript(successor.script_public_key),
+        },
+        finality: "accepted" as const,
+      };
+      steps.push(step);
+      expectedOutpoint = step.successor.outpoint;
+    }
+
+    const finalStep = steps.at(-1)!;
+    const finalUtxo = (await this.#client.getUtxosForAddress(head.payTo)).find(
+      (utxo) => sameOutpoint(utxo.outpoint, finalStep.successor.outpoint),
+    );
+    if (
+      !finalUtxo ||
+      finalUtxo.amount !== finalStep.successor.amount ||
+      finalUtxo.scriptPublicKey.toLowerCase() !==
+        finalStep.successor.scriptPublicKey.toLowerCase()
+    ) {
+      return {
+        status: "unknown",
+        reason: "proven successor is not the current unspent head",
+      };
+    }
+    return { status: "advanced", steps };
   }
 }
 
@@ -143,13 +314,20 @@ export class PnnBroadcastChainProvider implements ServerChainProvider {
   readonly #book: ScriptAddressBook;
   readonly #pnn: KaspaPnnClient;
 
-  constructor(reads: RestKaspaChainProvider, book: ScriptAddressBook, pnn: KaspaPnnClient) {
+  constructor(
+    reads: RestKaspaChainProvider,
+    book: ScriptAddressBook,
+    pnn: KaspaPnnClient,
+  ) {
     this.#reads = reads;
     this.#book = book;
     this.#pnn = pnn;
   }
 
-  getUtxo(outpoint: FundingOutpoint, network: NetworkId): Promise<ChainUtxo | null> {
+  getUtxo(
+    outpoint: FundingOutpoint,
+    network: NetworkId,
+  ): Promise<ChainUtxo | null> {
     return this.#reads.getUtxo(outpoint, network);
   }
 
@@ -161,7 +339,9 @@ export class PnnBroadcastChainProvider implements ServerChainProvider {
     return this.#reads.estimateClaimFee();
   }
 
-  sendTransaction(transaction: PreparedTransaction): Promise<TransactionBroadcast> {
+  sendTransaction(
+    transaction: PreparedTransaction,
+  ): Promise<TransactionBroadcast> {
     return this.#pnn.submitTransaction(transaction, this.#book);
   }
 }
@@ -177,23 +357,35 @@ export class KaspaPnnClient {
     this.#endpoints = options.endpoints;
     this.#timeoutMs = options.timeoutMs ?? 15_000;
     this.#attempts = options.attempts ?? 2;
-    this.#rpcFactory = options.rpcFactory ?? ((endpoint, timeoutMs) => new JsonPnnRpc(endpoint, timeoutMs));
+    this.#rpcFactory =
+      options.rpcFactory ??
+      ((endpoint, timeoutMs) => new JsonPnnRpc(endpoint, timeoutMs));
     this.#sleep = options.sleep ?? sleep;
   }
 
-  async health(): Promise<{ ok: true; networkId: string; endpoint: string; virtualDaaScore?: string }> {
+  async health(): Promise<{
+    ok: true;
+    networkId: string;
+    endpoint: string;
+    virtualDaaScore?: string;
+  }> {
     return this.#withRpc(async ({ rpc, endpoint }) => {
       const info = await this.#checkedServerInfo(rpc, endpoint);
       return {
         ok: true,
         networkId: "testnet-10",
         endpoint,
-        ...(info.virtualDaaScore !== undefined ? { virtualDaaScore: String(info.virtualDaaScore) } : {}),
+        ...(info.virtualDaaScore !== undefined
+          ? { virtualDaaScore: String(info.virtualDaaScore) }
+          : {}),
       };
     });
   }
 
-  async submitTransaction(transaction: PreparedTransaction, book: ScriptAddressBook): Promise<TransactionBroadcast> {
+  async submitTransaction(
+    transaction: PreparedTransaction,
+    book: ScriptAddressBook,
+  ): Promise<TransactionBroadcast> {
     const safe = parseSafeTransactionArtifact(transaction);
     const evidence = pnnPaymentEvidence(safe, book);
     return this.#withRpc(async ({ rpc, endpoint }) => {
@@ -201,8 +393,15 @@ export class KaspaPnnClient {
       const parsed = pnnTransactionFromSafe(safe);
       let transactionId = safe.id;
       try {
-        const result = await withTimeout(rpc.submitTransaction({ transaction: parsed, allowOrphan: false }), this.#timeoutMs, "pnn submitTransaction");
-        if (typeof result.transactionId !== "string" || !/^[0-9a-fA-F]{64}$/.test(result.transactionId)) {
+        const result = await withTimeout(
+          rpc.submitTransaction({ transaction: parsed, allowOrphan: false }),
+          this.#timeoutMs,
+          "pnn submitTransaction",
+        );
+        if (
+          typeof result.transactionId !== "string" ||
+          !/^[0-9a-fA-F]{64}$/.test(result.transactionId)
+        ) {
           throw invalidTransaction("Kaspa PNN did not return a transaction id");
         }
         transactionId = result.transactionId.toLowerCase();
@@ -210,20 +409,29 @@ export class KaspaPnnClient {
         if (!isDuplicateTransactionError(error)) throw error;
       }
       if (transactionId !== safe.id) {
-        throw invalidTransaction("Kaspa PNN returned a transaction id that does not match the exact artifact");
+        throw invalidTransaction(
+          "Kaspa PNN returned a transaction id that does not match the exact artifact",
+        );
       }
       await this.#waitForAcceptedPayment(rpc, safe.id, evidence);
       return { transactionId: safe.id, finality: "accepted" };
     });
   }
 
-  async #withRpc<T>(fn: (input: { rpc: PnnRpc; endpoint: string }) => Promise<T>): Promise<T> {
-    if (this.#endpoints.length === 0) throw invalidTransaction("Kaspa PNN endpoints are not configured");
+  async #withRpc<T>(
+    fn: (input: { rpc: PnnRpc; endpoint: string }) => Promise<T>,
+  ): Promise<T> {
+    if (this.#endpoints.length === 0)
+      throw invalidTransaction("Kaspa PNN endpoints are not configured");
     const errors: string[] = [];
     for (const endpoint of this.#endpoints) {
       const rpc = this.#rpcFactory(endpoint, this.#timeoutMs);
       try {
-        await withTimeout(rpc.connect(), this.#timeoutMs, `pnn connect ${endpoint}`);
+        await withTimeout(
+          rpc.connect(),
+          this.#timeoutMs,
+          `pnn connect ${endpoint}`,
+        );
         return await fn({ rpc, endpoint });
       } catch (error) {
         errors.push(`${endpoint}: ${errorMessage(error)}`);
@@ -234,14 +442,29 @@ export class KaspaPnnClient {
     throw invalidTransaction(`Kaspa PNN request failed: ${errors.join(" | ")}`);
   }
 
-  async #checkedServerInfo(rpc: PnnRpc, endpoint: string): Promise<{ virtualDaaScore?: unknown }> {
-    const info = await withTimeout(rpc.getServerInfo(), this.#timeoutMs, `pnn getServerInfo ${endpoint}`);
-    if (info.networkId !== "testnet-10") throw invalidTransaction(`Kaspa PNN endpoint returned network ${String(info.networkId)}`);
-    if (info.isSynced === false) throw invalidTransaction("Kaspa PNN endpoint is not synced");
+  async #checkedServerInfo(
+    rpc: PnnRpc,
+    endpoint: string,
+  ): Promise<{ virtualDaaScore?: unknown }> {
+    const info = await withTimeout(
+      rpc.getServerInfo(),
+      this.#timeoutMs,
+      `pnn getServerInfo ${endpoint}`,
+    );
+    if (info.networkId !== "testnet-10")
+      throw invalidTransaction(
+        `Kaspa PNN endpoint returned network ${String(info.networkId)}`,
+      );
+    if (info.isSynced === false)
+      throw invalidTransaction("Kaspa PNN endpoint is not synced");
     return info;
   }
 
-  async #waitForAcceptedPayment(rpc: PnnRpc, txid: string, evidence: PnnPaymentEvidence): Promise<void> {
+  async #waitForAcceptedPayment(
+    rpc: PnnRpc,
+    txid: string,
+    evidence: PnnPaymentEvidence,
+  ): Promise<void> {
     let last = "not checked";
     for (let attempt = 0; attempt < this.#attempts; attempt += 1) {
       const match = await this.#findAcceptedPayment(rpc, txid, evidence);
@@ -256,11 +479,21 @@ export class KaspaPnnClient {
       last = "payment output not accepted yet";
       await this.#sleep(1_000);
     }
-    throw invalidTransaction(`exact transaction did not reach accepted finality through PNN: ${last}`);
+    throw invalidTransaction(
+      `exact transaction did not reach accepted finality through PNN: ${last}`,
+    );
   }
 
-  async #findAcceptedPayment(rpc: PnnRpc, txid: string, evidence: PnnPaymentEvidence): Promise<boolean> {
-    const result = await withTimeout(rpc.getUtxosByAddresses([evidence.address]), this.#timeoutMs, "pnn getUtxosByAddresses");
+  async #findAcceptedPayment(
+    rpc: PnnRpc,
+    txid: string,
+    evidence: PnnPaymentEvidence,
+  ): Promise<boolean> {
+    const result = await withTimeout(
+      rpc.getUtxosByAddresses([evidence.address]),
+      this.#timeoutMs,
+      "pnn getUtxosByAddresses",
+    );
     const entries = Array.isArray(result.entries) ? result.entries : [];
     return entries.some((entry) => {
       const utxo = pnnUtxo(entry);
@@ -279,7 +512,14 @@ class JsonPnnRpc implements PnnRpc {
   readonly #timeoutMs: number;
   #ws: WebSocket | undefined;
   #nextId = 1;
-  readonly #pending = new Map<number, { resolve: (value: unknown) => void; reject: (error: Error) => void; timeoutId: ReturnType<typeof setTimeout> }>();
+  readonly #pending = new Map<
+    number,
+    {
+      resolve: (value: unknown) => void;
+      reject: (error: Error) => void;
+      timeoutId: ReturnType<typeof setTimeout>;
+    }
+  >();
 
   constructor(endpoint: string, timeoutMs: number) {
     this.#endpoint = endpoint;
@@ -287,7 +527,8 @@ class JsonPnnRpc implements PnnRpc {
   }
 
   connect(): Promise<void> {
-    if (this.#ws && this.#ws.readyState === WebSocket.OPEN) return Promise.resolve();
+    if (this.#ws && this.#ws.readyState === WebSocket.OPEN)
+      return Promise.resolve();
     return new Promise((resolve, reject) => {
       const ws = new WebSocket(this.#endpoint);
       this.#ws = ws;
@@ -306,7 +547,11 @@ class JsonPnnRpc implements PnnRpc {
         } catch {
           // Ignore close failures while failing the connection attempt.
         }
-        reject(new Error(`pnn websocket connect timed out after ${this.#timeoutMs}ms`));
+        reject(
+          new Error(
+            `pnn websocket connect timed out after ${this.#timeoutMs}ms`,
+          ),
+        );
       }, this.#timeoutMs);
       const handleOpen = () => {
         if (settled) return;
@@ -314,8 +559,12 @@ class JsonPnnRpc implements PnnRpc {
         clearTimeout(timeoutId);
         cleanup();
         ws.addEventListener("message", (event) => this.#handleMessage(event));
-        ws.addEventListener("close", () => this.#rejectPending("pnn websocket closed"));
-        ws.addEventListener("error", () => this.#rejectPending("pnn websocket error"));
+        ws.addEventListener("close", () =>
+          this.#rejectPending("pnn websocket closed"),
+        );
+        ws.addEventListener("error", () =>
+          this.#rejectPending("pnn websocket error"),
+        );
         resolve();
       };
       const handleError = () => {
@@ -340,18 +589,29 @@ class JsonPnnRpc implements PnnRpc {
 
   disconnect(): Promise<void> {
     this.#rejectPending("pnn websocket disconnected");
-    if (this.#ws && this.#ws.readyState !== WebSocket.CLOSED && this.#ws.readyState !== WebSocket.CLOSING) {
+    if (
+      this.#ws &&
+      this.#ws.readyState !== WebSocket.CLOSED &&
+      this.#ws.readyState !== WebSocket.CLOSING
+    ) {
       this.#ws.close();
     }
     this.#ws = undefined;
     return Promise.resolve();
   }
 
-  getServerInfo(): Promise<{ networkId?: unknown; isSynced?: unknown; virtualDaaScore?: unknown }> {
+  getServerInfo(): Promise<{
+    networkId?: unknown;
+    isSynced?: unknown;
+    virtualDaaScore?: unknown;
+  }> {
     return this.#request("getServerInfo", {});
   }
 
-  submitTransaction(request: { transaction: unknown; allowOrphan: boolean }): Promise<{ transactionId?: unknown }> {
+  submitTransaction(request: {
+    transaction: unknown;
+    allowOrphan: boolean;
+  }): Promise<{ transactionId?: unknown }> {
     return this.#request("submitTransaction", request);
   }
 
@@ -361,7 +621,8 @@ class JsonPnnRpc implements PnnRpc {
 
   #request<T>(method: string, params: unknown): Promise<T> {
     const ws = this.#ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN) return Promise.reject(new Error("pnn websocket is not connected"));
+    if (!ws || ws.readyState !== WebSocket.OPEN)
+      return Promise.reject(new Error("pnn websocket is not connected"));
     const id = this.#nextId;
     this.#nextId += 1;
     return new Promise<T>((resolve, reject) => {
@@ -369,7 +630,11 @@ class JsonPnnRpc implements PnnRpc {
         this.#pending.delete(id);
         reject(new Error(`pnn ${method} timed out after ${this.#timeoutMs}ms`));
       }, this.#timeoutMs);
-      this.#pending.set(id, { resolve: resolve as (value: unknown) => void, reject, timeoutId });
+      this.#pending.set(id, {
+        resolve: resolve as (value: unknown) => void,
+        reject,
+        timeoutId,
+      });
       ws.send(JSON.stringify({ id, method, params }));
     });
   }
@@ -410,92 +675,396 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
   readonly #client: KaspaRestClient;
   readonly #maxFeeSompi: bigint;
 
-  constructor(client: KaspaRestClient, options: { maxFeeSompi?: bigint | string } = {}) {
+  constructor(
+    client: KaspaRestClient,
+    options: { maxFeeSompi?: bigint | string } = {},
+  ) {
     this.#client = client;
-    this.#maxFeeSompi = BigInt(options.maxFeeSompi ?? MAX_SAFE_TRANSACTION_FEE_SOMPI);
+    this.#maxFeeSompi = BigInt(
+      options.maxFeeSompi ?? MAX_SAFE_TRANSACTION_FEE_SOMPI,
+    );
     if (this.#maxFeeSompi < 0n || this.#maxFeeSompi > U64_MAX) {
       throw new Error("maxFeeSompi must fit in uint64");
     }
   }
 
-  async verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
+  async verifyExactPayment(
+    request: ExactTransactionVerificationRequest,
+  ): Promise<ExactTransactionVerification> {
     assertTestnet(request.network);
-    void this.#client;
     if (request.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) {
       throw invalidTransaction("unsupported exact transaction encoding");
     }
-    if (!request.reservation) {
-      throw invalidTransaction("hosted exact verification requires KIP-10 reservation terms");
+    if (request.profile === "standard-native") {
+      return this.#verifyStandardNative(request);
     }
-    const transaction = parseSafeTransactionArtifact(request.transaction);
-    assertExactTransactionEnvelope(transaction, this.#maxFeeSompi);
-    const paymentOutput = transaction.outputs[request.paymentOutputIndex];
-    if (!paymentOutput) throw invalidTransaction("exact transaction is missing payment output");
-    if (paymentOutput.scriptPublicKey !== request.payToScriptPublicKey.toLowerCase()) {
-      throw invalidTransaction("exact transaction payment output script does not match payTo");
+    if (!request.head)
+      throw invalidTransaction(
+        "additive exact verification requires head challenge terms",
+      );
+    return this.#verifyAdditiveHead(request);
+  }
+
+  async #verifyAdditiveHead(
+    request: ExactTransactionVerificationRequest,
+  ): Promise<ExactTransactionVerification> {
+    const head = request.head!;
+    if (request.paymentOutputIndex !== 0 || head.paymentOutputIndex !== 0) {
+      throw invalidTransaction(
+        "additive exact successor must remain at output index 0",
+      );
     }
-    if (paymentOutput.value !== request.amount) {
-      throw invalidTransaction("exact transaction payment output amount does not match accepted amount");
+    if (
+      request.payToScriptPublicKey.toLowerCase() !==
+      head.headScriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "additive exact payTo script must identify the head script",
+      );
+    }
+    const template = parseKip10AdditiveRedeemScript(head.headRedeemScript);
+    if (
+      template.amount !== head.additiveThresholdSompi ||
+      BigInt(head.additiveThresholdSompi) <= 0n
+    ) {
+      throw invalidTransaction(
+        "additive exact KIP-10 threshold does not match the positive head threshold",
+      );
+    }
+    if (BigInt(request.amount) < BigInt(head.additiveThresholdSompi)) {
+      throw invalidTransaction(
+        "additive exact payment is below the head threshold",
+      );
+    }
+    const expectedHeadScript = serializedScriptPublicKey(
+      payToScriptHashScript(head.headRedeemScript),
+    ).toLowerCase();
+    if (expectedHeadScript !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction(
+        "additive exact redeem script does not derive the advertised head script",
+      );
     }
 
-    const reservation = request.reservation;
-    const template = parseKip10AdditiveRedeemScript(reservation.borrowRedeemScript);
-    if (template.amount !== reservation.additiveThresholdSompi) {
-      throw invalidTransaction("exact transaction KIP-10 script threshold does not match reservation");
+    const transaction = parseSafeTransactionArtifact(request.transaction);
+    assertAdditiveTransactionEnvelope(transaction, this.#maxFeeSompi);
+    const reference = exactV1ReferenceTransaction(transaction);
+    const transactionId = transactionV1Id(reference);
+    if (transaction.id !== transactionId)
+      throw invalidTransaction(
+        "additive exact transaction id does not match canonical fields",
+      );
+
+    const headInput = transaction.inputs[0]!;
+    if (
+      !sameOutpoint(
+        { txid: headInput.transactionId, index: headInput.index },
+        head.expectedHeadOutpoint,
+      )
+    ) {
+      throw invalidTransaction(
+        "additive exact transaction does not spend the expected head outpoint at input 0",
+      );
     }
-    const borrowInputIndex = transaction.inputs.findIndex(
-      (input) => input.transactionId === reservation.borrowOutpoint.txid.toLowerCase() && input.index === reservation.borrowOutpoint.index,
-    );
-    if (borrowInputIndex < 0) throw invalidTransaction("exact transaction does not spend the reserved borrow outpoint");
-    if (borrowInputIndex === request.paymentOutputIndex) {
-      throw invalidTransaction("exact transaction payment output cannot replace the KIP-10 continuation output");
+    if (
+      headInput.utxo.amount !== head.headAmount ||
+      headInput.utxo.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "additive exact embedded head evidence does not match challenge terms",
+      );
     }
-    const advertisedBorrowScript = serializedScriptPublicKey(payToScriptHashScript(reservation.borrowRedeemScript)).toLowerCase();
-    if (advertisedBorrowScript !== reservation.borrowScriptPublicKey.toLowerCase()) {
-      throw invalidTransaction("exact transaction borrow redeem script does not match reservation script public key");
+    if (
+      headInput.signatureScript !==
+      buildKip10AdditiveBorrowSignatureScript(head.headRedeemScript)
+    ) {
+      throw invalidTransaction(
+        "additive exact head input does not select the canonical KIP-10 borrower branch",
+      );
     }
-    const borrowInput = transaction.inputs[borrowInputIndex];
-    if (borrowInput.utxo?.scriptPublicKey !== reservation.borrowScriptPublicKey.toLowerCase()) {
-      throw invalidTransaction("exact transaction borrow input script does not match reservation");
+    const successor = transaction.outputs[0]!;
+    if (successor.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()) {
+      throw invalidTransaction(
+        "additive exact successor script does not match the head",
+      );
     }
-    if (borrowInput.utxo.amount !== reservation.borrowAmount) {
-      throw invalidTransaction("exact transaction borrow input amount does not match reservation");
+    if (
+      BigInt(successor.value) !==
+      BigInt(head.headAmount) + BigInt(request.amount)
+    ) {
+      throw invalidTransaction(
+        "additive exact successor delta must equal the advertised amount",
+      );
     }
-    if (borrowInput.signatureScript !== buildKip10AdditiveBorrowSignatureScript(reservation.borrowRedeemScript)) {
-      throw invalidTransaction("exact transaction borrow input does not select the canonical KIP-10 borrower branch");
+
+    // Reject forged funding signatures before any attacker-amplified chain
+    // reads. The embedded UTXOs are not trusted for value, but they are the
+    // canonical sighash inputs and can safely prove signature invalidity.
+    const fundingEvidence = new Map<
+      number,
+      ReturnType<typeof transactionV1SchnorrSignatureEvidence>
+    >();
+    for (let index = 1; index < transaction.inputs.length; index += 1) {
+      const evidence = transactionV1SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence))
+        throw invalidTransaction("additive exact payer signature is invalid");
+      fundingEvidence.set(index, evidence);
     }
-    const continuation = transaction.outputs[borrowInputIndex];
-    if (!continuation) throw invalidTransaction("exact transaction is missing KIP-10 continuation output");
-    if (continuation.scriptPublicKey !== reservation.borrowScriptPublicKey.toLowerCase()) {
-      throw invalidTransaction("exact transaction KIP-10 continuation script does not match reservation");
-    }
-    if (BigInt(continuation.value) < BigInt(reservation.borrowAmount) + BigInt(reservation.additiveThresholdSompi)) {
-      throw invalidTransaction("exact transaction KIP-10 continuation amount is below the additive threshold");
-    }
-    const duplicatePayment = transaction.outputs.some(
-      (output, index) =>
-        index !== request.paymentOutputIndex && output.scriptPublicKey === paymentOutput.scriptPublicKey && output.value === paymentOutput.value,
-    );
-    if (duplicatePayment) throw invalidTransaction("exact transaction contains an ambiguous duplicate payment output");
 
     const accepted = await this.#client.getTransaction(transaction.id);
     const finality = accepted?.is_accepted ? "accepted" : undefined;
-    if (accepted?.is_accepted) assertChainTransactionMatchesSafe(accepted, transaction);
+    if (accepted?.is_accepted)
+      assertChainTransactionMatchesSafe(accepted, transaction);
+    if (!finality && Date.parse(head.expiresAt) <= Date.now())
+      throw invalidTransaction("additive exact challenge has expired");
+
+    const readCache = trustedInputReadCache();
+    const trustedHead = await this.#trustedInput(
+      headInput,
+      request.network,
+      finality === "accepted",
+      readCache,
+    );
+    if (
+      trustedHead.amount !== head.headAmount ||
+      trustedHead.scriptPublicKey !== head.headScriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "additive exact head challenge does not match trusted chain state",
+      );
+    }
+
+    const payerScripts = new Set<string>();
+    for (let index = 1; index < transaction.inputs.length; index += 1) {
+      const input = transaction.inputs[index]!;
+      const trusted = await this.#trustedInput(
+        input,
+        request.network,
+        finality === "accepted",
+        readCache,
+      );
+      if (
+        trusted.amount !== input.utxo.amount ||
+        trusted.scriptPublicKey !== input.utxo.scriptPublicKey
+      ) {
+        throw invalidTransaction(
+          "additive exact embedded payer UTXO evidence does not match trusted chain state",
+        );
+      }
+      payerScripts.add(trusted.scriptPublicKey);
+    }
+    if (
+      request.authorization.inputIndex < 1 ||
+      request.authorization.inputIndex >= transaction.inputs.length
+    ) {
+      throw invalidTransaction(
+        "additive exact request authorization must select a payer input",
+      );
+    }
+    const authorizationEvidence = fundingEvidence.get(
+      request.authorization.inputIndex,
+    );
+    if (!authorizationEvidence)
+      throw invalidTransaction(
+        "additive exact request authorization input is not signed",
+      );
+    const requestAuthorization = verifyExactRequestAuthorization(
+      request,
+      transactionId,
+      authorizationEvidence.publicKey,
+    );
+    const change = transaction.outputs[1];
+    if (change && !payerScripts.has(change.scriptPublicKey)) {
+      throw invalidTransaction(
+        "additive exact change output is not controlled by a verified payer input",
+      );
+    }
 
     return {
-      transactionId: transaction.id,
+      transactionId,
       paymentOutput: {
-        amount: paymentOutput.value,
-        scriptPublicKey: paymentOutput.scriptPublicKey,
+        amount: request.amount,
+        scriptPublicKey: successor.scriptPublicKey,
         address: request.payTo,
       },
       continuation: {
-        outpoint: { txid: transaction.id, index: borrowInputIndex },
-        amount: continuation.value,
-        scriptPublicKey: continuation.scriptPublicKey,
+        outpoint: { txid: transactionId, index: 0 },
+        amount: successor.value,
+        scriptPublicKey: successor.scriptPublicKey,
       },
+      requestAuthorization,
       ...(finality ? { finality } : {}),
     };
+  }
+
+  async #verifyStandardNative(
+    request: ExactTransactionVerificationRequest,
+  ): Promise<ExactTransactionVerification> {
+    const transaction = parseSafeTransactionArtifact(request.transaction);
+    assertStandardNativeTransactionEnvelope(transaction, this.#maxFeeSompi);
+    const reference = exactV0ReferenceTransaction(transaction);
+    const transactionId = exactV0TransactionId(reference);
+    if (transaction.id !== transactionId)
+      throw invalidTransaction(
+        "standard-native transaction id does not match canonical fields",
+      );
+
+    const merchantOutputs = transaction.outputs
+      .map((output, index) => ({ output, index }))
+      .filter(
+        ({ output }) =>
+          output.scriptPublicKey === request.payToScriptPublicKey.toLowerCase(),
+      );
+    if (merchantOutputs.length !== 1)
+      throw invalidTransaction(
+        "standard-native transaction must contain exactly one merchant output",
+      );
+    const merchant = merchantOutputs[0]!;
+    if (merchant.index !== request.paymentOutputIndex)
+      throw invalidTransaction(
+        "standard-native payment output index is not canonical",
+      );
+    if (merchant.output.value !== request.amount)
+      throw invalidTransaction(
+        "standard-native merchant output must equal the accepted amount",
+      );
+
+    const fundingEvidence = transaction.inputs.map((_, index) => {
+      const evidence = exactV0SchnorrSignatureEvidence(reference, index);
+      if (!verifyKaspaSchnorrDigest(evidence))
+        throw invalidTransaction(
+          "standard-native funding signature is invalid",
+        );
+      return evidence;
+    });
+
+    const accepted = await this.#client.getTransaction(transaction.id);
+    const finality = accepted?.is_accepted ? "accepted" : undefined;
+    if (accepted?.is_accepted)
+      assertChainTransactionMatchesSafe(accepted, transaction);
+
+    const payerScripts = new Set<string>();
+    const readCache = trustedInputReadCache();
+    for (let index = 0; index < transaction.inputs.length; index += 1) {
+      const input = transaction.inputs[index]!;
+      const previous = await this.#trustedInput(
+        input,
+        request.network,
+        finality === "accepted",
+        readCache,
+      );
+      if (
+        previous.amount !== input.utxo.amount ||
+        previous.scriptPublicKey !== input.utxo.scriptPublicKey
+      ) {
+        throw invalidTransaction(
+          "standard-native embedded UTXO evidence does not match trusted chain state",
+        );
+      }
+      payerScripts.add(previous.scriptPublicKey);
+    }
+    if (
+      request.authorization.inputIndex < 0 ||
+      request.authorization.inputIndex >= transaction.inputs.length
+    ) {
+      throw invalidTransaction(
+        "standard-native request authorization input is outside the transaction",
+      );
+    }
+    const authorizationEvidence =
+      fundingEvidence[request.authorization.inputIndex];
+    if (!authorizationEvidence)
+      throw invalidTransaction(
+        "standard-native request authorization input is not signed",
+      );
+    const requestAuthorization = verifyExactRequestAuthorization(
+      request,
+      transactionId,
+      authorizationEvidence.publicKey,
+    );
+
+    const changeOutputs = transaction.outputs.filter(
+      (_, index) => index !== merchant.index,
+    );
+    if (changeOutputs.length > 1)
+      throw invalidTransaction(
+        "standard-native transaction may contain at most one payer change output",
+      );
+    if (
+      changeOutputs[0] &&
+      !payerScripts.has(changeOutputs[0].scriptPublicKey)
+    ) {
+      throw invalidTransaction(
+        "standard-native change output is not controlled by a verified payer input",
+      );
+    }
+
+    return {
+      transactionId,
+      paymentOutput: {
+        amount: merchant.output.value,
+        scriptPublicKey: merchant.output.scriptPublicKey,
+        address: request.payTo,
+      },
+      requestAuthorization,
+      ...(finality ? { finality } : {}),
+    };
+  }
+
+  async #trustedInput(
+    input: SafeTransactionInput,
+    network: NetworkId,
+    acceptedCandidateSpendsInput: boolean,
+    cache: TrustedInputReadCache,
+  ): Promise<{ amount: string; scriptPublicKey: string }> {
+    const transactionKey = input.transactionId.toLowerCase();
+    let previousRead = cache.transactions.get(transactionKey);
+    if (!previousRead) {
+      previousRead = this.#client.getTransaction(transactionKey);
+      cache.transactions.set(transactionKey, previousRead);
+    }
+    const previous = await previousRead;
+    if (!previous?.is_accepted || !Array.isArray(previous.outputs)) {
+      throw invalidTransaction(
+        "standard-native input origin is not accepted chain state",
+      );
+    }
+    const output =
+      previous.outputs.find((candidate) => candidate.index === input.index) ??
+      previous.outputs[input.index];
+    if (
+      !output ||
+      output.amount === undefined ||
+      typeof output.script_public_key !== "string"
+    ) {
+      throw invalidTransaction(
+        "standard-native input origin output is missing",
+      );
+    }
+    const trusted = {
+      amount: String(output.amount),
+      scriptPublicKey: normalizeRestScript(output.script_public_key),
+    };
+    if (acceptedCandidateSpendsInput) return trusted;
+    const address = addressForScriptPublicKey(trusted.scriptPublicKey, network);
+    let utxoRead = cache.utxosByAddress.get(address);
+    if (!utxoRead) {
+      utxoRead = this.#client.getUtxosForAddress(address);
+      cache.utxosByAddress.set(address, utxoRead);
+    }
+    const unspent = (await utxoRead).some(
+      (utxo) =>
+        sameOutpoint(utxo.outpoint, {
+          txid: input.transactionId,
+          index: input.index,
+        }) &&
+        utxo.amount === trusted.amount &&
+        utxo.scriptPublicKey === trusted.scriptPublicKey,
+    );
+    if (!unspent)
+      throw invalidTransaction(
+        "standard-native input is not currently unspent",
+      );
+    return trusted;
   }
 }
 
@@ -509,25 +1078,119 @@ export class NativeVoucherVerifier implements VoucherVerifier {
   }
 }
 
+function verifyExactRequestAuthorization(
+  request: ExactTransactionVerificationRequest,
+  transactionId: Hash32Hex,
+  publicKey: string,
+): ExactTransactionVerification["requestAuthorization"] {
+  const authorization = request.authorization;
+  if (
+    authorization.version !== "kaspa-x402-exact-request-authorization-v1" ||
+    !Number.isInteger(authorization.inputIndex) ||
+    authorization.inputIndex < 0 ||
+    !/^[0-9a-fA-F]{128}$/.test(authorization.signature)
+  ) {
+    throw invalidTransaction("exact request authorization is malformed");
+  }
+  const expiresAt = Date.parse(authorization.expiresAt);
+  if (!Number.isFinite(expiresAt))
+    throw invalidTransaction("exact request authorization expiry is invalid");
+  if (expiresAt <= Date.now())
+    throw invalidTransaction("exact request authorization has expired");
+  const digest = exactRequestAuthorizationDigest({
+    network: request.network,
+    profile: request.profile,
+    transactionId,
+    paymentOutputIndex: request.paymentOutputIndex,
+    amount: request.amount,
+    payTo: request.payTo,
+    payToScriptPublicKey: request.payToScriptPublicKey,
+    paymentRequirementsHash: request.paymentRequirementsHash,
+    requestHash: request.requestHash,
+    challengeId: request.head?.challengeId,
+    inputIndex: authorization.inputIndex,
+    expiresAt: authorization.expiresAt,
+  });
+  if (
+    authorization.digest.toLowerCase() !== digest ||
+    !verifyKaspaSchnorrDigest({
+      digest,
+      signature: authorization.signature,
+      publicKey,
+    })
+  ) {
+    throw invalidTransaction(
+      "exact request authorization signature is invalid",
+    );
+  }
+  return {
+    authorizationId: exactRequestAuthorizationId(authorization),
+    digest,
+    inputIndex: authorization.inputIndex,
+    publicKey,
+  };
+}
+
+function trustedInputReadCache(): TrustedInputReadCache {
+  return {
+    transactions: new Map(),
+    utxosByAddress: new Map(),
+  };
+}
+
 export class KaspaRestClient {
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
   readonly #timeoutMs: number;
   readonly #acceptanceTimeoutMs: number;
   readonly #acceptancePollMs: number;
+  readonly #maxResponseBytes: number;
+  readonly #maxUtxosPerAddress: number;
 
-  constructor(baseUrl: string, options: { fetch?: FetchLike; timeoutMs?: number; acceptanceTimeoutMs?: number; acceptancePollMs?: number } = {}) {
+  constructor(
+    baseUrl: string,
+    options: {
+      fetch?: FetchLike;
+      timeoutMs?: number;
+      acceptanceTimeoutMs?: number;
+      acceptancePollMs?: number;
+      maxResponseBytes?: number;
+      maxUtxosPerAddress?: number;
+    } = {},
+  ) {
     this.#baseUrl = baseUrl.replace(/\/+$/, "");
-    this.#fetch = options.fetch ?? ((input, init) => globalThis.fetch(input, init));
+    this.#fetch =
+      options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#timeoutMs = options.timeoutMs ?? 8_000;
     this.#acceptanceTimeoutMs = options.acceptanceTimeoutMs ?? 60_000;
     this.#acceptancePollMs = options.acceptancePollMs ?? 1_000;
+    this.#maxResponseBytes =
+      options.maxResponseBytes ?? MAX_KASPA_REST_RESPONSE_BYTES;
+    this.#maxUtxosPerAddress =
+      options.maxUtxosPerAddress ?? MAX_KASPA_REST_UTXOS_PER_ADDRESS;
+    if (
+      !Number.isSafeInteger(this.#maxResponseBytes) ||
+      this.#maxResponseBytes <= 0
+    )
+      throw new Error("maxResponseBytes must be a positive safe integer");
+    if (
+      !Number.isSafeInteger(this.#maxUtxosPerAddress) ||
+      this.#maxUtxosPerAddress <= 0
+    )
+      throw new Error("maxUtxosPerAddress must be a positive safe integer");
   }
 
-  async health(): Promise<{ ok: true; networkName: string; virtualDaaScore: SompiString }> {
+  async health(): Promise<{
+    ok: true;
+    networkName: string;
+    virtualDaaScore: SompiString;
+  }> {
     const blockdag = await this.#json<RestBlockdag>("/info/blockdag");
     if (blockdag.networkName !== "kaspa-testnet-10") {
-      throw new KaspaX402Error("invalid_kaspa_x402_network", `unexpected Kaspa REST network ${blockdag.networkName}`);
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_network",
+        `unexpected Kaspa REST network ${blockdag.networkName}`,
+      );
     }
     return {
       ok: true,
@@ -541,30 +1204,52 @@ export class KaspaRestClient {
   }
 
   async getUtxosForAddress(address: string): Promise<ChainUtxo[]> {
-    const utxos = await this.#json<RestUtxo[]>(`/addresses/${encodeURIComponent(address)}/utxos`);
+    const utxos = await this.#json<RestUtxo[]>(
+      `/addresses/${encodeURIComponent(address)}/utxos`,
+    );
+    if (!Array.isArray(utxos))
+      throw invalidTransaction("Kaspa REST UTXO response must be an array");
+    if (utxos.length > this.#maxUtxosPerAddress)
+      throw invalidTransaction(
+        `Kaspa REST UTXO response exceeds ${this.#maxUtxosPerAddress} entries`,
+      );
     return utxos.map((utxo) => ({
       outpoint: {
         txid: String(utxo.outpoint.transactionId).toLowerCase(),
         index: Number(utxo.outpoint.index),
       },
       amount: String(utxo.utxoEntry.amount),
-      scriptPublicKey: normalizeRestScript(utxo.utxoEntry.scriptPublicKey.scriptPublicKey),
+      scriptPublicKey: normalizeRestScript(
+        utxo.utxoEntry.scriptPublicKey.scriptPublicKey,
+      ),
       finality: "accepted",
     }));
   }
 
   async submitTransaction(transaction: PreparedTransaction): Promise<string> {
     const parsed = parseSafeTransactionArtifact(transaction);
-    const result = await this.#json<RestSubmitTransactionResponse>("/transactions", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({
-        transaction: restSubmitTransactionFromSafe(parsed),
-        allowOrphan: false,
-      }),
-    });
-    if (typeof result.error === "string" && result.error) throw invalidTransaction(`Kaspa REST rejected transaction: ${result.error}`);
-    if (typeof result.transactionId !== "string" || !/^[0-9a-fA-F]{64}$/.test(result.transactionId)) {
+    const result = await this.#json<RestSubmitTransactionResponse>(
+      "/transactions",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({
+          transaction: restSubmitTransactionFromSafe(parsed),
+          allowOrphan: false,
+        }),
+      },
+    );
+    if (typeof result.error === "string" && result.error)
+      throw invalidTransaction(
+        `Kaspa REST rejected transaction: ${result.error}`,
+      );
+    if (
+      typeof result.transactionId !== "string" ||
+      !/^[0-9a-fA-F]{64}$/.test(result.transactionId)
+    ) {
       throw invalidTransaction("Kaspa REST did not return a transaction id");
     }
     return result.transactionId.toLowerCase();
@@ -581,7 +1266,9 @@ export class KaspaRestClient {
     }
   }
 
-  async waitForTransactionAccepted(transaction: SafeTransaction): Promise<void> {
+  async waitForTransactionAccepted(
+    transaction: SafeTransaction,
+  ): Promise<void> {
     const deadline = Date.now() + this.#acceptanceTimeoutMs;
     let last = "not checked";
     while (Date.now() <= deadline) {
@@ -591,20 +1278,34 @@ export class KaspaRestClient {
         return;
       }
       const acceptance = await this.#transactionAccepted(transaction.id);
-      if (acceptance) last = "acceptance endpoint returned true before transaction details were indexed";
+      if (acceptance)
+        last =
+          "acceptance endpoint returned true before transaction details were indexed";
       else last = "transaction not accepted yet";
       await sleep(this.#acceptancePollMs);
     }
-    throw invalidTransaction(`exact transaction did not reach accepted finality: ${last}`);
+    throw invalidTransaction(
+      `exact transaction did not reach accepted finality: ${last}`,
+    );
   }
 
   async #transactionAccepted(transactionId: string): Promise<boolean> {
-    const result = await this.#json<RestTxAcceptanceResponse[]>("/transactions/acceptance", {
-      method: "POST",
-      headers: { "content-type": "application/json", accept: "application/json" },
-      body: JSON.stringify({ transactionIds: [transactionId.toLowerCase()] }),
-    });
-    return result.some((entry) => entry.transactionId?.toLowerCase() === transactionId.toLowerCase() && entry.accepted === true);
+    const result = await this.#json<RestTxAcceptanceResponse[]>(
+      "/transactions/acceptance",
+      {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+          accept: "application/json",
+        },
+        body: JSON.stringify({ transactionIds: [transactionId.toLowerCase()] }),
+      },
+    );
+    return result.some(
+      (entry) =>
+        entry.transactionId?.toLowerCase() === transactionId.toLowerCase() &&
+        entry.accepted === true,
+    );
   }
 
   async #json<T>(path: string, init: RequestInit = {}): Promise<T> {
@@ -614,15 +1315,25 @@ export class KaspaRestClient {
       const response = await this.#fetch(`${this.#baseUrl}${path}`, {
         ...init,
         headers: { accept: "application/json" },
-        ...("headers" in init ? { headers: { accept: "application/json", ...init.headers } } : {}),
+        ...("headers" in init
+          ? { headers: { accept: "application/json", ...init.headers } }
+          : {}),
         signal: controller.signal,
       });
       if (response.status === 404) throw new RestNotFoundError(path);
-      const text = await response.text();
+      const text = await readBoundedResponseText(
+        response,
+        this.#maxResponseBytes,
+      );
       const body = parseJson(text);
       if (!response.ok) {
-        const detail = isRecord(body) && typeof body.error === "string" ? `: ${body.error}` : "";
-        throw invalidTransaction(`Kaspa REST request failed: ${response.status}${detail}`);
+        const detail =
+          isRecord(body) && typeof body.error === "string"
+            ? `: ${body.error}`
+            : "";
+        throw invalidTransaction(
+          `Kaspa REST request failed: ${response.status}${detail}`,
+        );
       }
       return body as T;
     } finally {
@@ -632,6 +1343,42 @@ export class KaspaRestClient {
 }
 
 class RestNotFoundError extends Error {}
+
+async function readBoundedResponseText(
+  response: Response,
+  maxBytes: number,
+): Promise<string> {
+  const declaredLength = response.headers.get("content-length");
+  if (
+    declaredLength !== null &&
+    /^\d+$/.test(declaredLength) &&
+    Number(declaredLength) > maxBytes
+  ) {
+    throw invalidTransaction(`Kaspa REST response exceeds ${maxBytes} bytes`);
+  }
+  if (!response.body) return "";
+
+  const reader = response.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel();
+      throw invalidTransaction(`Kaspa REST response exceeds ${maxBytes} bytes`);
+    }
+    chunks.push(value);
+  }
+  const bytes = new Uint8Array(total);
+  let offset = 0;
+  for (const chunk of chunks) {
+    bytes.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return new TextDecoder().decode(bytes);
+}
 
 type RestBlockdag = {
   networkName: string;
@@ -716,6 +1463,7 @@ type SafeTransactionInput = {
 type SafeTransactionOutput = {
   value: string;
   scriptPublicKey: string;
+  covenant: null;
 };
 
 type PnnPaymentEvidence = {
@@ -731,8 +1479,15 @@ type PnnUtxo = {
   scriptPublicKey: string;
 };
 
-function pnnPaymentEvidence(transaction: SafeTransaction, book: ScriptAddressBook): PnnPaymentEvidence {
-  for (let outputIndex = 0; outputIndex < transaction.outputs.length; outputIndex += 1) {
+function pnnPaymentEvidence(
+  transaction: SafeTransaction,
+  book: ScriptAddressBook,
+): PnnPaymentEvidence {
+  for (
+    let outputIndex = 0;
+    outputIndex < transaction.outputs.length;
+    outputIndex += 1
+  ) {
     const output = transaction.outputs[outputIndex];
     const address = book.addressForScriptPublicKey(output.scriptPublicKey);
     if (address) {
@@ -744,37 +1499,63 @@ function pnnPaymentEvidence(transaction: SafeTransaction, book: ScriptAddressBoo
       };
     }
   }
-  throw invalidTransaction("exact transaction artifact does not pay a known gateway address");
+  throw invalidTransaction(
+    "exact transaction artifact does not pay a known gateway address",
+  );
 }
 
 function pnnUtxo(entry: unknown): PnnUtxo {
-  if (!isRecord(entry)) throw invalidTransaction("Kaspa PNN UTXO entry is not an object");
+  if (!isRecord(entry))
+    throw invalidTransaction("Kaspa PNN UTXO entry is not an object");
   const raw = isRecord(entry.entry) ? entry.entry : entry;
-  const utxoEntry = isRecord(raw.utxoEntry) ? raw.utxoEntry : isRecord(raw.utxo) ? raw.utxo : raw;
-  const outpoint = isRecord(raw.outpoint) ? raw.outpoint : isRecord(entry.outpoint) ? entry.outpoint : undefined;
-  if (!outpoint) throw invalidTransaction("Kaspa PNN UTXO entry is missing outpoint");
+  const utxoEntry = isRecord(raw.utxoEntry)
+    ? raw.utxoEntry
+    : isRecord(raw.utxo)
+      ? raw.utxo
+      : raw;
+  const outpoint = isRecord(raw.outpoint)
+    ? raw.outpoint
+    : isRecord(entry.outpoint)
+      ? entry.outpoint
+      : undefined;
+  if (!outpoint)
+    throw invalidTransaction("Kaspa PNN UTXO entry is missing outpoint");
   return {
     outpoint: {
       txid: hashValue(outpoint.transactionId, "Kaspa PNN UTXO transactionId"),
       index: uint32Value(outpoint.index, "Kaspa PNN UTXO index"),
     },
-    amount: uintStringValue(utxoEntry.amount ?? raw.amount ?? entry.amount, "Kaspa PNN UTXO amount"),
-    scriptPublicKey: serializeSdkScriptPublicKey(utxoEntry.scriptPublicKey ?? raw.scriptPublicKey ?? entry.scriptPublicKey),
+    amount: uintStringValue(
+      utxoEntry.amount ?? raw.amount ?? entry.amount,
+      "Kaspa PNN UTXO amount",
+    ),
+    scriptPublicKey: serializeSdkScriptPublicKey(
+      utxoEntry.scriptPublicKey ?? raw.scriptPublicKey ?? entry.scriptPublicKey,
+    ),
   };
 }
 
 function serializeSdkScriptPublicKey(value: unknown): string {
-  if (typeof value === "string") return serializedScriptValue(value, "Kaspa PNN UTXO scriptPublicKey");
-  if (!isRecord(value)) throw invalidTransaction("Kaspa PNN UTXO scriptPublicKey is not an object");
+  if (typeof value === "string")
+    return serializedScriptValue(value, "Kaspa PNN UTXO scriptPublicKey");
+  if (!isRecord(value))
+    throw invalidTransaction("Kaspa PNN UTXO scriptPublicKey is not an object");
   const script = hexValue(value.script, "Kaspa PNN UTXO script");
-  const version = uint32Value(value.version ?? 0, "Kaspa PNN UTXO script version");
-  if (version > 0xffff) throw invalidTransaction("Kaspa PNN UTXO script version exceeds uint16");
+  const version = uint32Value(
+    value.version ?? 0,
+    "Kaspa PNN UTXO script version",
+  );
+  if (version > 0xffff)
+    throw invalidTransaction("Kaspa PNN UTXO script version exceeds uint16");
   return `${((version >>> 8) & 0xff).toString(16).padStart(2, "0")}${(version & 0xff).toString(16).padStart(2, "0")}${script}`.toLowerCase();
 }
 
 function assertTestnet(network: NetworkId): void {
   if (network !== "kaspa:testnet-10") {
-    throw new KaspaX402Error("invalid_kaspa_x402_network", "hosted gateway only supports kaspa:testnet-10");
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "hosted gateway only supports kaspa:testnet-10",
+    );
   }
 }
 
@@ -784,95 +1565,471 @@ function normalizeRestScript(script: string): string {
 }
 
 function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
-  return left.txid.toLowerCase() === right.txid.toLowerCase() && left.index === right.index;
+  return (
+    left.txid.toLowerCase() === right.txid.toLowerCase() &&
+    left.index === right.index
+  );
 }
 
-function parseSafeTransactionArtifact(transaction: PreparedTransaction): SafeTransaction {
+function parseSafeTransactionArtifact(
+  transaction: PreparedTransaction,
+): SafeTransaction {
   if (transaction.length > MAX_SAFE_TRANSACTION_ARTIFACT_CHARS) {
-    throw invalidTransaction("exact transaction artifact exceeds the 128 KiB limit");
+    throw invalidTransaction(
+      "exact transaction artifact exceeds the 128 KiB limit",
+    );
   }
   let parsed: unknown;
   try {
     parsed = JSON.parse(transaction);
   } catch {
-    throw invalidTransaction("exact transaction artifact is not valid safe JSON");
+    throw invalidTransaction(
+      "exact transaction artifact is not valid safe JSON",
+    );
   }
-  if (!isRecord(parsed)) throw invalidTransaction("exact transaction artifact must be a JSON object");
+  if (!isRecord(parsed))
+    throw invalidTransaction(
+      "exact transaction artifact must be a JSON object",
+    );
   const inputValues = arrayValue(parsed.inputs, "inputs");
   const outputValues = arrayValue(parsed.outputs, "outputs");
-  if (inputValues.length > MAX_SAFE_TRANSACTION_INPUTS) throw invalidTransaction("exact transaction has too many inputs");
-  if (outputValues.length > MAX_SAFE_TRANSACTION_OUTPUTS) throw invalidTransaction("exact transaction has too many outputs");
-  const inputs = inputValues.map((input, index) => parseSafeInput(input, index));
-  const outputs = outputValues.map((output, index) => parseSafeOutput(output, index));
-  if (inputs.length === 0) throw invalidTransaction("exact transaction artifact must have inputs");
-  if (outputs.length === 0) throw invalidTransaction("exact transaction artifact must have outputs");
+  if (inputValues.length > MAX_SAFE_TRANSACTION_INPUTS)
+    throw invalidTransaction("exact transaction has too many inputs");
+  if (outputValues.length > MAX_SAFE_TRANSACTION_OUTPUTS)
+    throw invalidTransaction("exact transaction has too many outputs");
+  const inputs = inputValues.map((input, index) =>
+    parseSafeInput(input, index),
+  );
+  const seenInputs = new Set<string>();
+  for (const input of inputs) {
+    const key = `${input.transactionId.toLowerCase()}:${input.index}`;
+    if (seenInputs.has(key)) {
+      throw invalidTransaction(
+        "exact transaction contains a duplicate input outpoint",
+      );
+    }
+    seenInputs.add(key);
+  }
+  const outputs = outputValues.map((output, index) =>
+    parseSafeOutput(output, index),
+  );
+  if (inputs.length === 0)
+    throw invalidTransaction("exact transaction artifact must have inputs");
+  if (outputs.length === 0)
+    throw invalidTransaction("exact transaction artifact must have outputs");
   return {
     id: hashValue(parsed.id, "transaction id"),
     version: uint32Value(parsed.version, "transaction version"),
     inputs,
     outputs,
-    ...(parsed.lockTime !== undefined ? { lockTime: uintStringValue(parsed.lockTime, "lockTime") } : {}),
-    ...(parsed.subnetworkId !== undefined ? { subnetworkId: hexValue(parsed.subnetworkId, "subnetworkId") } : {}),
-    ...(parsed.gas !== undefined ? { gas: uintStringValue(parsed.gas, "gas") } : {}),
-    ...(parsed.payload !== undefined ? { payload: hexValue(parsed.payload, "payload") } : {}),
-    ...(parsed.storageMass !== undefined ? { storageMass: uintStringValue(parsed.storageMass, "storageMass") } : {}),
+    ...(parsed.lockTime !== undefined
+      ? { lockTime: uintStringValue(parsed.lockTime, "lockTime") }
+      : {}),
+    ...(parsed.subnetworkId !== undefined
+      ? { subnetworkId: hexValue(parsed.subnetworkId, "subnetworkId") }
+      : {}),
+    ...(parsed.gas !== undefined
+      ? { gas: uintStringValue(parsed.gas, "gas") }
+      : {}),
+    ...(parsed.payload !== undefined
+      ? { payload: hexValue(parsed.payload, "payload") }
+      : {}),
+    ...(parsed.storageMass !== undefined
+      ? { storageMass: uintStringValue(parsed.storageMass, "storageMass") }
+      : {}),
   };
 }
 
-function assertExactTransactionEnvelope(transaction: SafeTransaction, maxFeeSompi: bigint): void {
-  if (transaction.version !== 1) throw invalidTransaction("KIP-10 exact transaction version must be 1");
-  if ((transaction.lockTime ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction lockTime must be 0");
-  if ((transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID) {
-    throw invalidTransaction("KIP-10 exact transaction must use the native subnetwork");
+function assertExactTransactionEnvelope(
+  transaction: SafeTransaction,
+  maxFeeSompi: bigint,
+): void {
+  if (transaction.version !== 1)
+    throw invalidTransaction("KIP-10 exact transaction version must be 1");
+  if ((transaction.lockTime ?? "0") !== "0")
+    throw invalidTransaction("KIP-10 exact transaction lockTime must be 0");
+  if (
+    (transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID
+  ) {
+    throw invalidTransaction(
+      "KIP-10 exact transaction must use the native subnetwork",
+    );
   }
-  if ((transaction.gas ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction gas must be 0");
-  if ((transaction.payload ?? "") !== "") throw invalidTransaction("KIP-10 exact transaction payload must be empty");
-  if ((transaction.storageMass ?? "0") !== "0") throw invalidTransaction("KIP-10 exact transaction storageMass must be 0");
+  if ((transaction.gas ?? "0") !== "0")
+    throw invalidTransaction("KIP-10 exact transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "")
+    throw invalidTransaction("KIP-10 exact transaction payload must be empty");
+  if ((transaction.storageMass ?? "0") !== "0")
+    throw invalidTransaction("KIP-10 exact transaction storageMass must be 0");
   for (const [index, input] of transaction.inputs.entries()) {
     if (!input.utxo.scriptPublicKey.startsWith("0000")) {
-      throw invalidTransaction(`transaction input ${index} UTXO script public key version must be 0`);
+      throw invalidTransaction(
+        `transaction input ${index} UTXO script public key version must be 0`,
+      );
     }
   }
   for (const [index, output] of transaction.outputs.entries()) {
     if (!output.scriptPublicKey.startsWith("0000")) {
-      throw invalidTransaction(`transaction output ${index} script public key version must be 0`);
+      throw invalidTransaction(
+        `transaction output ${index} script public key version must be 0`,
+      );
     }
   }
 
-  const inputAmount = transaction.inputs.reduce((total, input) => total + BigInt(input.utxo.amount), 0n);
-  const outputAmount = transaction.outputs.reduce((total, output) => total + BigInt(output.value), 0n);
-  if (outputAmount > inputAmount) throw invalidTransaction("exact transaction outputs exceed input amounts");
-  if (inputAmount - outputAmount > maxFeeSompi) throw invalidTransaction("exact transaction fee exceeds the configured maximum");
+  const inputAmount = transaction.inputs.reduce(
+    (total, input) => total + BigInt(input.utxo.amount),
+    0n,
+  );
+  const outputAmount = transaction.outputs.reduce(
+    (total, output) => total + BigInt(output.value),
+    0n,
+  );
+  if (outputAmount > inputAmount)
+    throw invalidTransaction("exact transaction outputs exceed input amounts");
+  if (inputAmount - outputAmount > maxFeeSompi)
+    throw invalidTransaction(
+      "exact transaction fee exceeds the configured maximum",
+    );
 }
 
-function parseSafeInput(value: unknown, position: number): SafeTransactionInput {
-  if (!isRecord(value)) throw invalidTransaction(`transaction input ${position} must be an object`);
-  const previous = isRecord(value.previousOutpoint) ? value.previousOutpoint : value;
-  const utxo = isRecord(value.utxo) ? value.utxo : undefined;
-  if (!utxo) throw invalidTransaction(`transaction input ${position} is missing UTXO evidence`);
+function assertStandardNativeTransactionEnvelope(
+  transaction: SafeTransaction,
+  maxFeeSompi: bigint,
+): void {
+  if (transaction.version !== 0)
+    throw invalidTransaction("standard-native transaction version must be 0");
+  if ((transaction.lockTime ?? "0") !== "0")
+    throw invalidTransaction("standard-native transaction lockTime must be 0");
+  if (
+    (transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID
+  ) {
+    throw invalidTransaction(
+      "standard-native transaction must use the native subnetwork",
+    );
+  }
+  if ((transaction.gas ?? "0") !== "0")
+    throw invalidTransaction("standard-native transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "")
+    throw invalidTransaction(
+      "standard-native transaction payload must be empty",
+    );
+  if (transaction.inputs.length === 0)
+    throw invalidTransaction(
+      "standard-native transaction must have payer inputs",
+    );
+  if (transaction.outputs.length < 1 || transaction.outputs.length > 2) {
+    throw invalidTransaction(
+      "standard-native transaction must contain merchant output and optional change only",
+    );
+  }
+  for (const [index, input] of transaction.inputs.entries()) {
+    if (input.computeBudget !== undefined)
+      throw invalidTransaction(
+        `standard-native input ${index} cannot carry a compute budget`,
+      );
+    if (input.sigOpCount !== 1)
+      throw invalidTransaction(
+        `standard-native input ${index} sigOpCount must be 1`,
+      );
+    if (!input.utxo.scriptPublicKey.startsWith("0000"))
+      throw invalidTransaction(
+        `standard-native input ${index} script version must be 0`,
+      );
+  }
+  for (const [index, output] of transaction.outputs.entries()) {
+    if (!output.scriptPublicKey.startsWith("0000"))
+      throw invalidTransaction(
+        `standard-native output ${index} script version must be 0`,
+      );
+    if (output.covenant !== null)
+      throw invalidTransaction(
+        `standard-native output ${index} cannot carry a covenant`,
+      );
+  }
+  if (transaction.storageMass === undefined)
+    throw invalidTransaction(
+      "standard-native transaction must commit contextual storage mass",
+    );
+  const storageMass = calculateKaspaStorageMass({
+    inputs: transaction.inputs.map((input) => ({
+      amount: input.utxo.amount,
+      scriptPublicKey: input.utxo.scriptPublicKey,
+      hasCovenant: false,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      hasCovenant: false,
+    })),
+  });
+  if (BigInt(transaction.storageMass) !== storageMass) {
+    throw invalidTransaction(
+      "standard-native transaction storage mass does not match contextual KIP-9 mass",
+    );
+  }
+  const inputAmount = transaction.inputs.reduce(
+    (total, input) => total + BigInt(input.utxo.amount),
+    0n,
+  );
+  const outputAmount = transaction.outputs.reduce(
+    (total, output) => total + BigInt(output.value),
+    0n,
+  );
+  if (outputAmount > inputAmount)
+    throw invalidTransaction("standard-native outputs exceed input amounts");
+  const fee = inputAmount - outputAmount;
+  if (fee > maxFeeSompi)
+    throw invalidTransaction(
+      "standard-native transaction fee exceeds the configured maximum",
+    );
+}
+
+function assertAdditiveTransactionEnvelope(
+  transaction: SafeTransaction,
+  maxFeeSompi: bigint,
+): void {
+  if (transaction.version !== 1)
+    throw invalidTransaction("additive exact transaction version must be 1");
+  if ((transaction.lockTime ?? "0") !== "0")
+    throw invalidTransaction("additive exact transaction lockTime must be 0");
+  if (
+    (transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID) !== NATIVE_SUBNETWORK_ID
+  ) {
+    throw invalidTransaction(
+      "additive exact transaction must use the native subnetwork",
+    );
+  }
+  if ((transaction.gas ?? "0") !== "0")
+    throw invalidTransaction("additive exact transaction gas must be 0");
+  if ((transaction.payload ?? "") !== "")
+    throw invalidTransaction(
+      "additive exact transaction payload must be empty",
+    );
+  if (transaction.inputs.length < 2)
+    throw invalidTransaction(
+      "additive exact requires the head input and payer funding inputs",
+    );
+  if (transaction.outputs.length < 1 || transaction.outputs.length > 2) {
+    throw invalidTransaction(
+      "additive exact permits only the successor and optional payer change",
+    );
+  }
+  for (const [index, input] of transaction.inputs.entries()) {
+    if (input.sigOpCount !== 0)
+      throw invalidTransaction(
+        `additive exact input ${index} sigOpCount must be 0`,
+      );
+    const expectedBudget = index === 0 ? 0 : 10;
+    if (input.computeBudget !== expectedBudget) {
+      throw invalidTransaction(
+        `additive exact input ${index} compute budget must be ${expectedBudget}`,
+      );
+    }
+    if (!input.utxo.scriptPublicKey.startsWith("0000"))
+      throw invalidTransaction(
+        `additive exact input ${index} script version must be 0`,
+      );
+  }
+  for (const [index, output] of transaction.outputs.entries()) {
+    if (!output.scriptPublicKey.startsWith("0000"))
+      throw invalidTransaction(
+        `additive exact output ${index} script version must be 0`,
+      );
+    if (output.covenant !== null)
+      throw invalidTransaction(
+        `additive exact output ${index} cannot carry a covenant`,
+      );
+  }
+  if (transaction.storageMass === undefined)
+    throw invalidTransaction(
+      "additive exact transaction must commit contextual storage mass",
+    );
+  const storageMass = calculateKaspaStorageMass({
+    inputs: transaction.inputs.map((input) => ({
+      amount: input.utxo.amount,
+      scriptPublicKey: input.utxo.scriptPublicKey,
+      hasCovenant: false,
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      hasCovenant: false,
+    })),
+  });
+  if (BigInt(transaction.storageMass) !== storageMass) {
+    throw invalidTransaction(
+      "additive exact transaction storage mass does not match contextual KIP-9 mass",
+    );
+  }
+  const inputAmount = transaction.inputs.reduce(
+    (total, input) => total + BigInt(input.utxo.amount),
+    0n,
+  );
+  const outputAmount = transaction.outputs.reduce(
+    (total, output) => total + BigInt(output.value),
+    0n,
+  );
+  if (outputAmount > inputAmount)
+    throw invalidTransaction("additive exact outputs exceed input amounts");
+  if (inputAmount - outputAmount > maxFeeSompi)
+    throw invalidTransaction(
+      "additive exact transaction fee exceeds the configured maximum",
+    );
+}
+
+function exactV0ReferenceTransaction(
+  transaction: SafeTransaction,
+): ExactV0ReferenceTransaction {
+  if (transaction.version !== 0)
+    throw invalidTransaction("standard-native transaction version must be 0");
   return {
-    transactionId: hashValue(previous.transactionId, `transaction input ${position} outpoint transactionId`),
-    index: uint32Value(previous.index, `transaction input ${position} outpoint index`),
-    sequence: uintStringValue(value.sequence, `transaction input ${position} sequence`),
-    sigOpCount: uint32Value(value.sigOpCount, `transaction input ${position} sigOpCount`),
-    ...(value.computeBudget !== undefined ? { computeBudget: uint32Value(value.computeBudget, `transaction input ${position} computeBudget`) } : {}),
-    signatureScript: hexValue(value.signatureScript, `transaction input ${position} signatureScript`),
+    version: 0,
+    inputs: transaction.inputs.map((input) => ({
+      previousOutpoint: { txid: input.transactionId, index: input.index },
+      signatureScript: input.signatureScript,
+      sequence: input.sequence,
+      sigOpCount: input.sigOpCount,
+      utxo: { ...input.utxo },
+    })),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant,
+    })),
+    lockTime: transaction.lockTime ?? "0",
+    subnetworkId: transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID,
+    gas: transaction.gas ?? "0",
+    payload: transaction.payload ?? "",
+    ...(transaction.storageMass !== undefined
+      ? { storageMass: transaction.storageMass }
+      : {}),
+  };
+}
+
+function exactV1ReferenceTransaction(
+  transaction: SafeTransaction,
+): TxV1ReferenceTransaction {
+  if (transaction.version !== 1 || transaction.storageMass === undefined) {
+    throw invalidTransaction(
+      "additive exact transaction must be version 1 with contextual storage mass",
+    );
+  }
+  return {
+    version: 1,
+    inputs: transaction.inputs.map((input, index) => {
+      if (input.computeBudget === undefined)
+        throw invalidTransaction(
+          `additive exact input ${index} is missing compute budget`,
+        );
+      return {
+        previousOutpoint: { txid: input.transactionId, index: input.index },
+        signatureScript: input.signatureScript,
+        sequence: input.sequence,
+        computeBudget: input.computeBudget,
+        utxo: {
+          amount: input.utxo.amount,
+          scriptPublicKey: input.utxo.scriptPublicKey,
+          blockDaaScore: "0",
+          isCoinbase: false,
+        },
+      };
+    }),
+    outputs: transaction.outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: output.scriptPublicKey,
+      covenant: output.covenant,
+    })),
+    lockTime: transaction.lockTime ?? "0",
+    subnetworkId: transaction.subnetworkId ?? NATIVE_SUBNETWORK_ID,
+    gas: transaction.gas ?? "0",
+    payload: transaction.payload ?? "",
+    mass: transaction.storageMass,
+    estimatedSerializedSize: 0,
+  };
+}
+
+function parseSafeInput(
+  value: unknown,
+  position: number,
+): SafeTransactionInput {
+  if (!isRecord(value))
+    throw invalidTransaction(`transaction input ${position} must be an object`);
+  const previous = isRecord(value.previousOutpoint)
+    ? value.previousOutpoint
+    : value;
+  const utxo = isRecord(value.utxo) ? value.utxo : undefined;
+  if (!utxo)
+    throw invalidTransaction(
+      `transaction input ${position} is missing UTXO evidence`,
+    );
+  return {
+    transactionId: hashValue(
+      previous.transactionId,
+      `transaction input ${position} outpoint transactionId`,
+    ),
+    index: uint32Value(
+      previous.index,
+      `transaction input ${position} outpoint index`,
+    ),
+    sequence: uintStringValue(
+      value.sequence,
+      `transaction input ${position} sequence`,
+    ),
+    sigOpCount: uint32Value(
+      value.sigOpCount,
+      `transaction input ${position} sigOpCount`,
+    ),
+    ...(value.computeBudget !== undefined
+      ? {
+          computeBudget: uint32Value(
+            value.computeBudget,
+            `transaction input ${position} computeBudget`,
+          ),
+        }
+      : {}),
+    signatureScript: hexValue(
+      value.signatureScript,
+      `transaction input ${position} signatureScript`,
+    ),
     utxo: {
-      amount: uintStringValue(utxo.amount, `transaction input ${position} utxo amount`),
-      scriptPublicKey: serializedScriptValue(utxo.scriptPublicKey, `transaction input ${position} utxo scriptPublicKey`),
+      amount: uintStringValue(
+        utxo.amount,
+        `transaction input ${position} utxo amount`,
+      ),
+      scriptPublicKey: serializedScriptValue(
+        utxo.scriptPublicKey,
+        `transaction input ${position} utxo scriptPublicKey`,
+      ),
     },
   };
 }
 
-function parseSafeOutput(value: unknown, position: number): SafeTransactionOutput {
-  if (!isRecord(value)) throw invalidTransaction(`transaction output ${position} must be an object`);
+function parseSafeOutput(
+  value: unknown,
+  position: number,
+): SafeTransactionOutput {
+  if (!isRecord(value))
+    throw invalidTransaction(
+      `transaction output ${position} must be an object`,
+    );
+  if (value.covenant !== undefined && value.covenant !== null) {
+    throw invalidTransaction(
+      `transaction output ${position} covenant must be null`,
+    );
+  }
   return {
     value: uintStringValue(value.value, `transaction output ${position} value`),
-    scriptPublicKey: serializedScriptValue(value.scriptPublicKey, `transaction output ${position} scriptPublicKey`),
+    scriptPublicKey: serializedScriptValue(
+      value.scriptPublicKey,
+      `transaction output ${position} scriptPublicKey`,
+    ),
+    covenant: null,
   };
 }
 
-function restSubmitTransactionFromSafe(transaction: SafeTransaction): Record<string, unknown> {
+function restSubmitTransactionFromSafe(
+  transaction: SafeTransaction,
+): Record<string, unknown> {
   return {
     version: transaction.version,
     inputs: transaction.inputs.map((input) => ({
@@ -883,20 +2040,30 @@ function restSubmitTransactionFromSafe(transaction: SafeTransaction): Record<str
       signatureScript: input.signatureScript,
       sequence: input.sequence,
       sigOpCount: input.sigOpCount,
-      ...(input.computeBudget !== undefined ? { computeBudget: input.computeBudget } : {}),
+      ...(input.computeBudget !== undefined
+        ? { computeBudget: input.computeBudget }
+        : {}),
     })),
     outputs: transaction.outputs.map((output) => ({
       amount: output.value,
       scriptPublicKey: restScriptPublicKey(output.scriptPublicKey),
     })),
-    ...(transaction.lockTime !== undefined ? { lockTime: transaction.lockTime } : {}),
-    ...(transaction.subnetworkId !== undefined ? { subnetworkId: transaction.subnetworkId } : {}),
+    ...(transaction.lockTime !== undefined
+      ? { lockTime: transaction.lockTime }
+      : {}),
+    ...(transaction.subnetworkId !== undefined
+      ? { subnetworkId: transaction.subnetworkId }
+      : {}),
     ...(transaction.gas !== undefined ? { gas: transaction.gas } : {}),
-    ...(transaction.payload !== undefined ? { payload: transaction.payload } : {}),
+    ...(transaction.payload !== undefined
+      ? { payload: transaction.payload }
+      : {}),
   };
 }
 
-function pnnTransactionFromSafe(transaction: SafeTransaction): Record<string, unknown> {
+function pnnTransactionFromSafe(
+  transaction: SafeTransaction,
+): Record<string, unknown> {
   return {
     version: transaction.version,
     inputs: transaction.inputs.map((input) => ({
@@ -925,112 +2092,200 @@ function pnnTransactionFromSafe(transaction: SafeTransaction): Record<string, un
   };
 }
 
-function restScriptPublicKey(serialized: string): { version: number; scriptPublicKey: string } {
-  if (serialized.length < 4) throw invalidTransaction("serialized script public key is too short");
+function restScriptPublicKey(serialized: string): {
+  version: number;
+  scriptPublicKey: string;
+} {
+  if (serialized.length < 4)
+    throw invalidTransaction("serialized script public key is too short");
   return {
     version: Number.parseInt(serialized.slice(0, 4), 16),
     scriptPublicKey: serialized.slice(4),
   };
 }
 
-function assertChainTransactionMatchesSafe(chain: RestTransaction, safe: SafeTransaction): void {
-  if (chain.transaction_id?.toLowerCase() !== safe.id) throw invalidTransaction("accepted transaction id does not match exact artifact");
-  if (chain.version !== undefined && chain.version !== safe.version) throw invalidTransaction("accepted transaction version does not match exact artifact");
-  if (chain.lock_time != null && String(chain.lock_time) !== (safe.lockTime ?? "0")) {
-    throw invalidTransaction("accepted transaction lockTime does not match exact artifact");
+function assertChainTransactionMatchesSafe(
+  chain: RestTransaction,
+  safe: SafeTransaction,
+): void {
+  if (chain.transaction_id?.toLowerCase() !== safe.id)
+    throw invalidTransaction(
+      "accepted transaction id does not match exact artifact",
+    );
+  if (chain.version !== undefined && chain.version !== safe.version)
+    throw invalidTransaction(
+      "accepted transaction version does not match exact artifact",
+    );
+  if (
+    chain.lock_time != null &&
+    String(chain.lock_time) !== (safe.lockTime ?? "0")
+  ) {
+    throw invalidTransaction(
+      "accepted transaction lockTime does not match exact artifact",
+    );
   }
-  if (chain.subnetwork_id != null && chain.subnetwork_id.toLowerCase() !== (safe.subnetworkId ?? NATIVE_SUBNETWORK_ID)) {
-    throw invalidTransaction("accepted transaction subnetwork does not match exact artifact");
+  if (
+    chain.subnetwork_id != null &&
+    chain.subnetwork_id.toLowerCase() !==
+      (safe.subnetworkId ?? NATIVE_SUBNETWORK_ID)
+  ) {
+    throw invalidTransaction(
+      "accepted transaction subnetwork does not match exact artifact",
+    );
   }
   if (chain.gas != null && String(chain.gas) !== (safe.gas ?? "0")) {
-    throw invalidTransaction("accepted transaction gas does not match exact artifact");
+    throw invalidTransaction(
+      "accepted transaction gas does not match exact artifact",
+    );
   }
-  if (chain.payload != null && chain.payload.toLowerCase() !== (safe.payload ?? "")) {
-    throw invalidTransaction("accepted transaction payload does not match exact artifact");
+  if (
+    chain.payload != null &&
+    chain.payload.toLowerCase() !== (safe.payload ?? "")
+  ) {
+    throw invalidTransaction(
+      "accepted transaction payload does not match exact artifact",
+    );
   }
-  if (!Array.isArray(chain.inputs) || chain.inputs.length !== safe.inputs.length) {
-    throw invalidTransaction("accepted transaction inputs do not match exact artifact");
+  if (
+    !Array.isArray(chain.inputs) ||
+    chain.inputs.length !== safe.inputs.length
+  ) {
+    throw invalidTransaction(
+      "accepted transaction inputs do not match exact artifact",
+    );
   }
-  if (!Array.isArray(chain.outputs) || chain.outputs.length !== safe.outputs.length) {
-    throw invalidTransaction("accepted transaction outputs do not match exact artifact");
+  if (
+    !Array.isArray(chain.outputs) ||
+    chain.outputs.length !== safe.outputs.length
+  ) {
+    throw invalidTransaction(
+      "accepted transaction outputs do not match exact artifact",
+    );
   }
   for (let index = 0; index < safe.inputs.length; index += 1) {
     const expected = safe.inputs[index];
     const actual = chain.inputs[index];
-    if (!actual) throw invalidTransaction("accepted transaction input is missing");
-    if (actual.previous_outpoint_hash?.toLowerCase() !== expected.transactionId) {
-      throw invalidTransaction("accepted transaction input outpoint does not match exact artifact");
+    if (!actual)
+      throw invalidTransaction("accepted transaction input is missing");
+    if (
+      actual.previous_outpoint_hash?.toLowerCase() !== expected.transactionId
+    ) {
+      throw invalidTransaction(
+        "accepted transaction input outpoint does not match exact artifact",
+      );
     }
     if (Number(actual.previous_outpoint_index) !== expected.index) {
-      throw invalidTransaction("accepted transaction input index does not match exact artifact");
+      throw invalidTransaction(
+        "accepted transaction input index does not match exact artifact",
+      );
     }
-    if (typeof actual.signature_script === "string" && actual.signature_script.toLowerCase() !== expected.signatureScript) {
-      throw invalidTransaction("accepted transaction signature script does not match exact artifact");
+    if (
+      typeof actual.signature_script === "string" &&
+      actual.signature_script.toLowerCase() !== expected.signatureScript
+    ) {
+      throw invalidTransaction(
+        "accepted transaction signature script does not match exact artifact",
+      );
     }
-    if (actual.sequence != null && String(actual.sequence) !== expected.sequence) {
-      throw invalidTransaction("accepted transaction sequence does not match exact artifact");
+    if (
+      actual.sequence != null &&
+      String(actual.sequence) !== expected.sequence
+    ) {
+      throw invalidTransaction(
+        "accepted transaction sequence does not match exact artifact",
+      );
     }
-    if (actual.sig_op_count !== undefined && Number(actual.sig_op_count) !== expected.sigOpCount) {
-      throw invalidTransaction("accepted transaction sigOpCount does not match exact artifact");
+    if (
+      actual.sig_op_count !== undefined &&
+      Number(actual.sig_op_count) !== expected.sigOpCount
+    ) {
+      throw invalidTransaction(
+        "accepted transaction sigOpCount does not match exact artifact",
+      );
     }
-    if (expected.computeBudget !== undefined && actual.compute_budget !== undefined && actual.compute_budget !== expected.computeBudget) {
-      throw invalidTransaction("accepted transaction computeBudget does not match exact artifact");
+    if (
+      expected.computeBudget !== undefined &&
+      actual.compute_budget !== undefined &&
+      actual.compute_budget !== expected.computeBudget
+    ) {
+      throw invalidTransaction(
+        "accepted transaction computeBudget does not match exact artifact",
+      );
     }
   }
   for (let index = 0; index < safe.outputs.length; index += 1) {
     const expected = safe.outputs[index];
-    const actual = chain.outputs.find((output) => output.index === index) ?? chain.outputs[index];
-    if (!actual) throw invalidTransaction("accepted transaction output is missing");
+    const actual =
+      chain.outputs.find((output) => output.index === index) ??
+      chain.outputs[index];
+    if (!actual)
+      throw invalidTransaction("accepted transaction output is missing");
     if (String(actual.amount) !== expected.value) {
-      throw invalidTransaction("accepted transaction output amount does not match exact artifact");
+      throw invalidTransaction(
+        "accepted transaction output amount does not match exact artifact",
+      );
     }
-    if (typeof actual.script_public_key === "string" && normalizeRestScript(actual.script_public_key) !== expected.scriptPublicKey) {
-      throw invalidTransaction("accepted transaction output script does not match exact artifact");
+    if (
+      typeof actual.script_public_key === "string" &&
+      normalizeRestScript(actual.script_public_key) !== expected.scriptPublicKey
+    ) {
+      throw invalidTransaction(
+        "accepted transaction output script does not match exact artifact",
+      );
     }
   }
 }
 
 function arrayValue(value: unknown, label: string): unknown[] {
-  if (!Array.isArray(value)) throw invalidTransaction(`transaction ${label} must be an array`);
+  if (!Array.isArray(value))
+    throw invalidTransaction(`transaction ${label} must be an array`);
   return value;
 }
 
 function hashValue(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^[0-9a-fA-F]{64}$/.test(value)) throw invalidTransaction(`${label} must be 32-byte hex`);
+  if (typeof value !== "string" || !/^[0-9a-fA-F]{64}$/.test(value))
+    throw invalidTransaction(`${label} must be 32-byte hex`);
   return value.toLowerCase();
 }
 
 function hexValue(value: unknown, label: string): string {
-  if (typeof value !== "string" || !/^(?:[0-9a-fA-F]{2})*$/.test(value)) throw invalidTransaction(`${label} must be byte hex`);
+  if (typeof value !== "string" || !/^(?:[0-9a-fA-F]{2})*$/.test(value))
+    throw invalidTransaction(`${label} must be byte hex`);
   return value.toLowerCase();
 }
 
 function serializedScriptValue(value: unknown, label: string): string {
   const hex = hexValue(value, label);
-  if (hex.length < 4) throw invalidTransaction(`${label} must include a uint16 version prefix`);
+  if (hex.length < 4)
+    throw invalidTransaction(`${label} must include a uint16 version prefix`);
   return hex;
 }
 
 function uint32Value(value: unknown, label: string): number {
   const text = uintStringValue(value, label);
   const bigint = BigInt(text);
-  if (bigint > 0xffff_ffffn) throw invalidTransaction(`${label} exceeds uint32`);
+  if (bigint > 0xffff_ffffn)
+    throw invalidTransaction(`${label} exceeds uint32`);
   return Number(bigint);
 }
 
 function uintStringValue(value: unknown, label: string): string {
   if (typeof value === "number") {
-    if (!Number.isSafeInteger(value) || value < 0) throw invalidTransaction(`${label} must be a safe unsigned integer`);
+    if (!Number.isSafeInteger(value) || value < 0)
+      throw invalidTransaction(`${label} must be a safe unsigned integer`);
     return String(value);
   }
-  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(value)) throw invalidTransaction(`${label} must be an unsigned integer`);
-  if (BigInt(value) > U64_MAX) throw invalidTransaction(`${label} exceeds uint64`);
+  if (typeof value !== "string" || !/^(?:0|[1-9][0-9]{0,19})$/.test(value))
+    throw invalidTransaction(`${label} must be an unsigned integer`);
+  if (BigInt(value) > U64_MAX)
+    throw invalidTransaction(`${label} exceeds uint64`);
   return value;
 }
 
 function uintSafeNumber(value: string, label: string): number {
   const number = Number(value);
-  if (!Number.isSafeInteger(number) || number < 0) throw invalidTransaction(`${label} exceeds JSON-safe integer range`);
+  if (!Number.isSafeInteger(number) || number < 0)
+    throw invalidTransaction(`${label} exceeds JSON-safe integer range`);
   return number;
 }
 
@@ -1066,10 +2321,17 @@ function pnnErrorMessage(error: unknown): string {
   return JSON.stringify(error);
 }
 
-async function withTimeout<T>(promise: Promise<T>, timeoutMs: number, label: string): Promise<T> {
+async function withTimeout<T>(
+  promise: Promise<T>,
+  timeoutMs: number,
+  label: string,
+): Promise<T> {
   let timeoutId: ReturnType<typeof setTimeout> | undefined;
   const timeout = new Promise<never>((_, reject) => {
-    timeoutId = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+    timeoutId = setTimeout(
+      () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+      timeoutMs,
+    );
   });
   try {
     return await Promise.race([promise, timeout]);

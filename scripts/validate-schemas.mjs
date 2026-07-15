@@ -10,6 +10,7 @@ const U64_DECIMAL_PATTERN =
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
 const TX_V1_CONSENSUS_COMMIT = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
+const EXACT_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
@@ -74,7 +75,7 @@ function isUint64String(value) {
 
 function expectedBindingForScheme(scheme) {
   return {
-    exact: "kaspa-exact-v1",
+    exact: "kaspa-exact-v2",
     "batch-settlement": "kaspa-escrow-v1",
   }[scheme];
 }
@@ -87,41 +88,86 @@ function expectedPayloadTypesForScheme(scheme) {
 }
 
 function classifyInvalidValue(schemaId, value) {
-  if (schemaId === "https://kaspa-x402.org/schemas/payment-required.schema.json") {
+  if (
+    schemaId === "https://kaspa-x402.org/schemas/payment-required.schema.json"
+  ) {
     const requirement = value?.accepts?.[0];
     if (value?.x402Version !== 2) return "invalid_kaspa_x402_version";
-    if (!requirement || !["exact", "batch-settlement"].includes(requirement.scheme)) return "invalid_kaspa_x402_scheme";
-    if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(requirement.network)) return "invalid_kaspa_x402_network";
+    if (
+      !requirement ||
+      !["exact", "batch-settlement"].includes(requirement.scheme)
+    )
+      return "invalid_kaspa_x402_scheme";
+    if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(requirement.network))
+      return "invalid_kaspa_x402_network";
     if (requirement.asset !== "KAS") return "invalid_kaspa_x402_asset";
     if (!isUint64String(requirement.amount)) return "invalid_kaspa_x402_amount";
-    if (requirement.extra?.binding !== expectedBindingForScheme(requirement.scheme)) return "invalid_kaspa_x402_binding";
+    if (
+      requirement.extra?.binding !==
+      expectedBindingForScheme(requirement.scheme)
+    )
+      return "invalid_kaspa_x402_binding";
     return "invalid_kaspa_x402_payload";
   }
 
-  if (schemaId === "https://kaspa-x402.org/schemas/payment-payload.schema.json") {
-    const expectedTypes = expectedPayloadTypesForScheme(value?.accepted?.scheme);
-    if (expectedTypes && !expectedTypes.includes(value?.payload?.type)) return "invalid_kaspa_payment_payload_type";
+  if (
+    schemaId === "https://kaspa-x402.org/schemas/payment-payload.schema.json"
+  ) {
+    const expectedTypes = expectedPayloadTypesForScheme(
+      value?.accepted?.scheme,
+    );
+    if (expectedTypes && !expectedTypes.includes(value?.payload?.type))
+      return "invalid_kaspa_payment_payload_type";
     return "invalid_kaspa_x402_payload";
   }
 
-  if (schemaId === "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json") {
-    if (value?.clientPublicKey !== undefined && !HEX32_PATTERN.test(value.clientPublicKey)) return "invalid_kaspa_public_key";
+  if (
+    schemaId ===
+    "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
+  ) {
+    if (
+      value?.clientPublicKey !== undefined &&
+      !HEX32_PATTERN.test(value.clientPublicKey)
+    )
+      return "invalid_kaspa_public_key";
     if (
       value?.fundingOutpoint !== undefined &&
-      (!HEX32_PATTERN.test(value.fundingOutpoint.txid) || !isUint32(value.fundingOutpoint.index))
+      (!HEX32_PATTERN.test(value.fundingOutpoint.txid) ||
+        !isUint32(value.fundingOutpoint.index))
     ) {
       return "invalid_kaspa_outpoint";
     }
-    if (value?.voucher?.signature !== undefined && !SIGNATURE64_PATTERN.test(value.voucher.signature)) return "invalid_kaspa_signature";
-    if (value?.voucher?.amount !== undefined && !isUint64String(value.voucher.amount)) return "invalid_kaspa_x402_amount";
-    if (value?.claimAmount !== undefined && !isUint64String(value.claimAmount)) return "invalid_kaspa_x402_amount";
-    if (value?.refundAmount !== undefined && !isUint64String(value.refundAmount)) return "invalid_kaspa_x402_amount";
+    if (
+      value?.voucher?.signature !== undefined &&
+      !SIGNATURE64_PATTERN.test(value.voucher.signature)
+    )
+      return "invalid_kaspa_signature";
+    if (
+      value?.voucher?.amount !== undefined &&
+      !isUint64String(value.voucher.amount)
+    )
+      return "invalid_kaspa_x402_amount";
+    if (value?.claimAmount !== undefined && !isUint64String(value.claimAmount))
+      return "invalid_kaspa_x402_amount";
+    if (
+      value?.refundAmount !== undefined &&
+      !isUint64String(value.refundAmount)
+    )
+      return "invalid_kaspa_x402_amount";
     return "invalid_kaspa_x402_payload";
   }
 
-  if (schemaId === "https://kaspa-x402.org/schemas/settlement-response.schema.json") {
-    if (value?.success === true && value?.transaction === "") return "invalid_kaspa_settlement_response";
-    if (typeof value?.transaction === "string" && !/^(?:|[0-9a-fA-F]{64})$/.test(value.transaction)) return "invalid_kaspa_transaction";
+  if (
+    schemaId ===
+    "https://kaspa-x402.org/schemas/settlement-response.schema.json"
+  ) {
+    if (value?.success === true && value?.transaction === "")
+      return "invalid_kaspa_settlement_response";
+    if (
+      typeof value?.transaction === "string" &&
+      !/^(?:|[0-9a-fA-F]{64})$/.test(value.transaction)
+    )
+      return "invalid_kaspa_transaction";
     return "invalid_kaspa_settlement_response";
   }
 
@@ -156,7 +202,9 @@ function channelIdPreimage(input) {
 
 function assertEqual(actual, expected, label) {
   if (actual !== expected) {
-    throw new Error(`${label} mismatch\nexpected: ${expected}\nactual:   ${actual}`);
+    throw new Error(
+      `${label} mismatch\nexpected: ${expected}\nactual:   ${actual}`,
+    );
   }
 }
 
@@ -164,7 +212,9 @@ function assertValid(ajv, schemaId, value, label) {
   const validate = ajv.getSchema(schemaId);
   if (!validate) throw new Error(`schema not loaded: ${schemaId}`);
   if (!validate(value)) {
-    throw new Error(`${label} failed ${schemaId}: ${ajv.errorsText(validate.errors)}`);
+    throw new Error(
+      `${label} failed ${schemaId}: ${ajv.errorsText(validate.errors)}`,
+    );
   }
 }
 
@@ -182,9 +232,13 @@ function assertInvalid(ajv, schemaId, value, label, expectedError) {
 
 function assertAcceptedOffered(paymentRequired, paymentPayload, label) {
   const accepted = stableStringify(paymentPayload.accepted);
-  const offered = paymentRequired.accepts.some((requirement) => stableStringify(requirement) === accepted);
+  const offered = paymentRequired.accepts.some(
+    (requirement) => stableStringify(requirement) === accepted,
+  );
   if (!offered) {
-    throw new Error(`${label}: accepted PaymentRequirements is not present in PaymentRequired.accepts`);
+    throw new Error(
+      `${label}: accepted PaymentRequirements is not present in PaymentRequired.accepts`,
+    );
   }
 }
 
@@ -215,16 +269,37 @@ function assertTxV1Vector(file, vector, expectedKind) {
   if (artifact.transaction?.version !== 1) {
     throw new Error(`${file}: transaction version must be 1`);
   }
-  if (!isUint64String(artifact.transaction.mass)) throw new Error(`${file}: transaction.mass must be a uint64 string`);
-  if (!Number.isSafeInteger(artifact.transaction.estimatedSerializedSize) || artifact.transaction.estimatedSerializedSize <= 0) {
-    throw new Error(`${file}: estimatedSerializedSize must be a positive safe integer`);
+  if (!isUint64String(artifact.transaction.mass))
+    throw new Error(`${file}: transaction.mass must be a uint64 string`);
+  if (
+    !Number.isSafeInteger(artifact.transaction.estimatedSerializedSize) ||
+    artifact.transaction.estimatedSerializedSize <= 0
+  ) {
+    throw new Error(
+      `${file}: estimatedSerializedSize must be a positive safe integer`,
+    );
   }
-  assertHexBytes(artifact.serializedTransaction, `${file}:serializedTransaction`);
+  assertHexBytes(
+    artifact.serializedTransaction,
+    `${file}:serializedTransaction`,
+  );
   assertHash32(artifact.transactionId, `${file}:transactionId`);
   assertHash32(artifact.transactionHash, `${file}:transactionHash`);
-  assertEqual(artifact.serializedTransaction, artifact.hash?.preimage, `${file}:hash.preimage`);
-  assertEqual(artifact.transactionId, artifact.txid?.digest, `${file}:txid.digest`);
-  assertEqual(artifact.transactionHash, artifact.hash?.digest, `${file}:hash.digest`);
+  assertEqual(
+    artifact.serializedTransaction,
+    artifact.hash?.preimage,
+    `${file}:hash.preimage`,
+  );
+  assertEqual(
+    artifact.transactionId,
+    artifact.txid?.digest,
+    `${file}:txid.digest`,
+  );
+  assertEqual(
+    artifact.transactionHash,
+    artifact.hash?.digest,
+    `${file}:hash.digest`,
+  );
   assertHash32(artifact.txid?.payloadDigest, `${file}:txid.payloadDigest`);
   assertHexBytes(artifact.txid?.restPreimage, `${file}:txid.restPreimage`);
   assertHash32(artifact.txid?.restDigest, `${file}:txid.restDigest`);
@@ -236,40 +311,96 @@ function assertTxV1Vector(file, vector, expectedKind) {
   const computeBudget = artifact.compute?.computeBudget;
   const scriptUnitsEstimate = artifact.compute?.scriptUnitsEstimate;
   const scriptUnitAllowance = artifact.compute?.scriptUnitAllowance;
-  if (!Number.isInteger(computeBudget) || computeBudget < 0 || computeBudget > 0xffff) {
+  if (
+    !Number.isInteger(computeBudget) ||
+    computeBudget < 0 ||
+    computeBudget > 0xffff
+  ) {
     throw new Error(`${file}: compute budget must fit in uint16`);
   }
   if (!Number.isSafeInteger(scriptUnitsEstimate) || scriptUnitsEstimate < 0) {
-    throw new Error(`${file}: script-unit estimate must be a non-negative integer`);
+    throw new Error(
+      `${file}: script-unit estimate must be a non-negative integer`,
+    );
   }
-  assertEqual(computeBudget * 10000 + 9999, scriptUnitAllowance, `${file}:scriptUnitAllowance`);
+  assertEqual(
+    computeBudget * 10000 + 9999,
+    scriptUnitAllowance,
+    `${file}:scriptUnitAllowance`,
+  );
   if (scriptUnitAllowance < scriptUnitsEstimate) {
-    throw new Error(`${file}: compute budget does not cover script-unit estimate`);
+    throw new Error(
+      `${file}: compute budget does not cover script-unit estimate`,
+    );
   }
   for (const [index, input] of (artifact.transaction.inputs ?? []).entries()) {
-    assertHash32(input.previousOutpoint?.txid, `${file}:inputs[${index}].previousOutpoint.txid`);
-    if (!isUint32(input.previousOutpoint?.index)) throw new Error(`${file}:inputs[${index}].previousOutpoint.index must fit in uint32`);
-    assertHexBytes(input.signatureScript, `${file}:inputs[${index}].signatureScript`);
-    if (!isUint64String(input.sequence)) throw new Error(`${file}:inputs[${index}].sequence must be a uint64 string`);
-    if (input.computeBudget !== computeBudget) throw new Error(`${file}:inputs[${index}].computeBudget must match artifact compute budget`);
-    assertHexBytes(input.utxo?.scriptPublicKey, `${file}:inputs[${index}].utxo.scriptPublicKey`);
-    if (!isUint64String(input.utxo?.amount)) throw new Error(`${file}:inputs[${index}].utxo.amount must be a uint64 string`);
+    assertHash32(
+      input.previousOutpoint?.txid,
+      `${file}:inputs[${index}].previousOutpoint.txid`,
+    );
+    if (!isUint32(input.previousOutpoint?.index))
+      throw new Error(
+        `${file}:inputs[${index}].previousOutpoint.index must fit in uint32`,
+      );
+    assertHexBytes(
+      input.signatureScript,
+      `${file}:inputs[${index}].signatureScript`,
+    );
+    if (!isUint64String(input.sequence))
+      throw new Error(
+        `${file}:inputs[${index}].sequence must be a uint64 string`,
+      );
+    if (input.computeBudget !== computeBudget)
+      throw new Error(
+        `${file}:inputs[${index}].computeBudget must match artifact compute budget`,
+      );
+    assertHexBytes(
+      input.utxo?.scriptPublicKey,
+      `${file}:inputs[${index}].utxo.scriptPublicKey`,
+    );
+    if (!isUint64String(input.utxo?.amount))
+      throw new Error(
+        `${file}:inputs[${index}].utxo.amount must be a uint64 string`,
+      );
   }
-  for (const [index, output] of (artifact.transaction.outputs ?? []).entries()) {
-    if (!isUint64String(output.amount)) throw new Error(`${file}:outputs[${index}].amount must be a uint64 string`);
-    assertHexBytes(output.scriptPublicKey, `${file}:outputs[${index}].scriptPublicKey`);
-    if (output.covenant !== null) throw new Error(`${file}:outputs[${index}].covenant must be null unless explicitly supported`);
+  for (const [index, output] of (
+    artifact.transaction.outputs ?? []
+  ).entries()) {
+    if (!isUint64String(output.amount))
+      throw new Error(
+        `${file}:outputs[${index}].amount must be a uint64 string`,
+      );
+    assertHexBytes(
+      output.scriptPublicKey,
+      `${file}:outputs[${index}].scriptPublicKey`,
+    );
+    if (output.covenant !== null)
+      throw new Error(
+        `${file}:outputs[${index}].covenant must be null unless explicitly supported`,
+      );
   }
 
   if (expectedKind === "batch-claim") {
-    if (artifact.fee?.source !== "server-output") throw new Error(`${file}: claim fee source must be server-output`);
-    if ((artifact.transaction.outputs ?? []).length !== 2) throw new Error(`${file}: claim vector must have two outputs`);
+    if (artifact.fee?.source !== "server-output")
+      throw new Error(`${file}: claim fee source must be server-output`);
+    if ((artifact.transaction.outputs ?? []).length !== 2)
+      throw new Error(`${file}: claim vector must have two outputs`);
     assertHash32(artifact.voucherDigest, `${file}:voucherDigest`);
-    assertEqual(artifact.continuation?.outputIndex, 1, `${file}:continuation.outputIndex`);
-    assertEqual(artifact.continuation?.outpoint?.txid, artifact.transactionId, `${file}:continuation.outpoint.txid`);
+    assertEqual(
+      artifact.continuation?.outputIndex,
+      1,
+      `${file}:continuation.outputIndex`,
+    );
+    assertEqual(
+      artifact.continuation?.outpoint?.txid,
+      artifact.transactionId,
+      `${file}:continuation.outpoint.txid`,
+    );
   } else if (expectedKind === "batch-refund") {
-    if (artifact.fee?.source !== "refund-output") throw new Error(`${file}: refund fee source must be refund-output`);
-    if ((artifact.transaction.outputs ?? []).length !== 1) throw new Error(`${file}: refund vector must have one output`);
+    if (artifact.fee?.source !== "refund-output")
+      throw new Error(`${file}: refund fee source must be refund-output`);
+    if ((artifact.transaction.outputs ?? []).length !== 1)
+      throw new Error(`${file}: refund vector must have one output`);
   }
 }
 
@@ -278,22 +409,38 @@ function assertTxV1Validation(file, validation) {
     throw new Error(`${file}: tx-v1 vector requires validation metadata`);
   }
   if (validation.status !== "consensus-cross-validated") {
-    throw new Error(`${file}: tx-v1 validation.status must be consensus-cross-validated`);
+    throw new Error(
+      `${file}: tx-v1 validation.status must be consensus-cross-validated`,
+    );
   }
   if (validation.tool !== "kaspa-consensus-core") {
-    throw new Error(`${file}: tx-v1 validation.tool must be kaspa-consensus-core`);
+    throw new Error(
+      `${file}: tx-v1 validation.tool must be kaspa-consensus-core`,
+    );
   }
   if (validation.toolVersion !== "2.0.1") {
     throw new Error(`${file}: tx-v1 validation.toolVersion must be 2.0.1`);
   }
-  if (typeof validation.sourceCommit !== "string" || !GIT_COMMIT_PATTERN.test(validation.sourceCommit)) {
-    throw new Error(`${file}: tx-v1 validation.sourceCommit must be a git commit id`);
+  if (
+    typeof validation.sourceCommit !== "string" ||
+    !GIT_COMMIT_PATTERN.test(validation.sourceCommit)
+  ) {
+    throw new Error(
+      `${file}: tx-v1 validation.sourceCommit must be a git commit id`,
+    );
   }
   if (validation.sourceCommit !== TX_V1_CONSENSUS_COMMIT) {
-    throw new Error(`${file}: tx-v1 validation.sourceCommit must match the pinned consensus source`);
+    throw new Error(
+      `${file}: tx-v1 validation.sourceCommit must match the pinned consensus source`,
+    );
   }
-  if (typeof validation.command !== "string" || !validation.command.includes("validate:tx-v1-consensus")) {
-    throw new Error(`${file}: tx-v1 validation.command must name validate:tx-v1-consensus`);
+  if (
+    typeof validation.command !== "string" ||
+    !validation.command.includes("validate:tx-v1-consensus")
+  ) {
+    throw new Error(
+      `${file}: tx-v1 validation.command must name validate:tx-v1-consensus`,
+    );
   }
   const checkedFields = validation.checkedFields;
   if (!Array.isArray(checkedFields)) {
@@ -315,10 +462,14 @@ function assertTxV1Validation(file, validation) {
     "transaction.outputs[].covenant",
   ]) {
     if (!checkedFields.includes(field)) {
-      throw new Error(`${file}: tx-v1 validation.checkedFields must include ${field}`);
+      throw new Error(
+        `${file}: tx-v1 validation.checkedFields must include ${field}`,
+      );
     }
   }
-  if (!["offline-reference", "node-broadcast"].includes(validation.liveStatus)) {
+  if (
+    !["offline-reference", "node-broadcast"].includes(validation.liveStatus)
+  ) {
     throw new Error(`${file}: tx-v1 validation.liveStatus is invalid`);
   }
 }
@@ -328,48 +479,137 @@ function validateVector(ajv, file, vector, rootDir = root) {
     case "voucher-digest": {
       for (const item of vector.cases) {
         const preimage = voucherPreimage(item.input).toString("hex");
-        assertEqual(preimage, item.expected.preimage, `${file}:${item.name}:preimage`);
-        assertEqual(sha256(Buffer.from(preimage, "hex")).toString("hex"), item.expected.digest, `${file}:${item.name}:digest`);
+        assertEqual(
+          preimage,
+          item.expected.preimage,
+          `${file}:${item.name}:preimage`,
+        );
+        assertEqual(
+          sha256(Buffer.from(preimage, "hex")).toString("hex"),
+          item.expected.digest,
+          `${file}:${item.name}:digest`,
+        );
       }
       break;
     }
     case "channel-id": {
       const preimage = channelIdPreimage(vector.input).toString("hex");
       assertEqual(preimage, vector.expected.preimage, `${file}:preimage`);
-      assertEqual(sha256(Buffer.from(preimage, "hex")).toString("hex"), vector.expected.channelId, `${file}:channelId`);
+      assertEqual(
+        sha256(Buffer.from(preimage, "hex")).toString("hex"),
+        vector.expected.channelId,
+        `${file}:channelId`,
+      );
       break;
     }
     case "x402-http": {
-      assertValid(ajv, "https://kaspa-x402.org/schemas/payment-required.schema.json", vector.paymentRequired, `${file}:paymentRequired`);
-      assertValid(ajv, "https://kaspa-x402.org/schemas/payment-payload.schema.json", vector.paymentPayload, `${file}:paymentPayload`);
-      assertValid(ajv, "https://kaspa-x402.org/schemas/settlement-response.schema.json", vector.settlementResponse, `${file}:settlementResponse`);
-      assertAcceptedOffered(vector.paymentRequired, vector.paymentPayload, file);
-      assertEqual(Buffer.from(stableStringify(vector.paymentRequired)).toString("base64"), vector.headers.paymentRequired, `${file}:PAYMENT-REQUIRED`);
-      assertEqual(Buffer.from(stableStringify(vector.paymentPayload)).toString("base64"), vector.headers.paymentSignature, `${file}:PAYMENT-SIGNATURE`);
-      assertEqual(Buffer.from(stableStringify(vector.settlementResponse)).toString("base64"), vector.headers.paymentResponse, `${file}:PAYMENT-RESPONSE`);
+      assertValid(
+        ajv,
+        "https://kaspa-x402.org/schemas/payment-required.schema.json",
+        vector.paymentRequired,
+        `${file}:paymentRequired`,
+      );
+      assertValid(
+        ajv,
+        "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+        vector.paymentPayload,
+        `${file}:paymentPayload`,
+      );
+      assertValid(
+        ajv,
+        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+        vector.settlementResponse,
+        `${file}:settlementResponse`,
+      );
+      assertAcceptedOffered(
+        vector.paymentRequired,
+        vector.paymentPayload,
+        file,
+      );
+      assertEqual(
+        Buffer.from(stableStringify(vector.paymentRequired)).toString("base64"),
+        vector.headers.paymentRequired,
+        `${file}:PAYMENT-REQUIRED`,
+      );
+      assertEqual(
+        Buffer.from(stableStringify(vector.paymentPayload)).toString("base64"),
+        vector.headers.paymentSignature,
+        `${file}:PAYMENT-SIGNATURE`,
+      );
+      assertEqual(
+        Buffer.from(stableStringify(vector.settlementResponse)).toString(
+          "base64",
+        ),
+        vector.headers.paymentResponse,
+        `${file}:PAYMENT-RESPONSE`,
+      );
       break;
     }
     case "settlement-response": {
-      assertValid(ajv, "https://kaspa-x402.org/schemas/settlement-response.schema.json", vector.response, `${file}:response`);
+      assertValid(
+        ajv,
+        "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+        vector.response,
+        `${file}:response`,
+      );
       if (vector.correctivePaymentRequired) {
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-required.schema.json", vector.correctivePaymentRequired, `${file}:correctivePaymentRequired`);
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-required.schema.json",
+          vector.correctivePaymentRequired,
+          `${file}:correctivePaymentRequired`,
+        );
       }
       break;
     }
     case "negative": {
       if (!vector.name || !vector.expectedError) {
-        throw new Error(`${file}: negative vectors require name and expectedError`);
+        throw new Error(
+          `${file}: negative vectors require name and expectedError`,
+        );
       }
-      assertInvalid(ajv, vector.schema, vector.value, `${file}:${vector.name}`, vector.expectedError);
+      assertInvalid(
+        ajv,
+        vector.schema,
+        vector.value,
+        `${file}:${vector.name}`,
+        vector.expectedError,
+      );
+      if (vector.expectedMissingProperty) {
+        const validate = ajv.getSchema(vector.schema);
+        validate(vector.value);
+        const matched = validate.errors?.some(
+          (error) =>
+            error.keyword === "required" &&
+            error.params?.missingProperty === vector.expectedMissingProperty,
+        );
+        if (!matched) {
+          throw new Error(
+            `${file}: expected missing property ${vector.expectedMissingProperty}`,
+          );
+        }
+      }
       break;
     }
     case "semantic-negative": {
       if (!vector.name || !vector.expectedError) {
-        throw new Error(`${file}: semantic-negative vectors require name and expectedError`);
+        throw new Error(
+          `${file}: semantic-negative vectors require name and expectedError`,
+        );
       }
       if (vector.scenario === "payment-identifier-conflict") {
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-identifier.schema.json", vector.first.extensionInfo, `${file}:first.extensionInfo`);
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-identifier.schema.json", vector.second.extensionInfo, `${file}:second.extensionInfo`);
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-identifier.schema.json",
+          vector.first.extensionInfo,
+          `${file}:first.extensionInfo`,
+        );
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-identifier.schema.json",
+          vector.second.extensionInfo,
+          `${file}:second.extensionInfo`,
+        );
         const firstId = vector.first.extensionInfo.id;
         const secondId = vector.second.extensionInfo.id;
         if (
@@ -380,62 +620,133 @@ function validateVector(ajv, file, vector, rootDir = root) {
           !/^[0-9a-fA-F]{64}$/.test(vector.first.requestHash) ||
           !/^[0-9a-fA-F]{64}$/.test(vector.second.requestHash)
         ) {
-          throw new Error(`${file}: payment-identifier-conflict must reuse id with a changed requestHash`);
+          throw new Error(
+            `${file}: payment-identifier-conflict must reuse id with a changed requestHash`,
+          );
         }
-        assertEqual("kaspa_payment_identifier_conflict", vector.expectedError, `${file}:expectedError`);
+        assertEqual(
+          "kaspa_payment_identifier_conflict",
+          vector.expectedError,
+          `${file}:expectedError`,
+        );
       } else if (vector.scenario === "missing-payment-identifier") {
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-required.schema.json", vector.paymentRequired, `${file}:paymentRequired`);
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-payload.schema.json", vector.paymentPayload, `${file}:paymentPayload`);
-        const paymentIdentifierInfo = vector.paymentRequired?.extensions?.["payment-identifier"]?.info;
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-identifier.schema.json", paymentIdentifierInfo, `${file}:paymentRequired.payment-identifier.info`);
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-required.schema.json",
+          vector.paymentRequired,
+          `${file}:paymentRequired`,
+        );
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+          vector.paymentPayload,
+          `${file}:paymentPayload`,
+        );
+        const paymentIdentifierInfo =
+          vector.paymentRequired?.extensions?.["payment-identifier"]?.info;
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-identifier.schema.json",
+          paymentIdentifierInfo,
+          `${file}:paymentRequired.payment-identifier.info`,
+        );
         const required = paymentIdentifierInfo.required;
-        const id = vector.paymentPayload?.extensions?.["payment-identifier"]?.info?.id;
+        const id =
+          vector.paymentPayload?.extensions?.["payment-identifier"]?.info?.id;
         if (required !== true || typeof id === "string") {
-          throw new Error(`${file}: missing-payment-identifier must advertise required:true and omit payload id`);
+          throw new Error(
+            `${file}: missing-payment-identifier must advertise required:true and omit payload id`,
+          );
         }
-        assertEqual("missing_kaspa_payment_identifier", vector.expectedError, `${file}:expectedError`);
+        assertEqual(
+          "missing_kaspa_payment_identifier",
+          vector.expectedError,
+          `${file}:expectedError`,
+        );
       } else if (vector.scenario === "accepted-not-offered") {
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-required.schema.json", vector.paymentRequired, `${file}:paymentRequired`);
-        assertValid(ajv, "https://kaspa-x402.org/schemas/payment-payload.schema.json", vector.paymentPayload, `${file}:paymentPayload`);
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-required.schema.json",
+          vector.paymentRequired,
+          `${file}:paymentRequired`,
+        );
+        assertValid(
+          ajv,
+          "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+          vector.paymentPayload,
+          `${file}:paymentPayload`,
+        );
         const accepted = stableStringify(vector.paymentPayload.accepted);
-        const offered = vector.paymentRequired.accepts.some((requirement) => stableStringify(requirement) === accepted);
+        const offered = vector.paymentRequired.accepts.some(
+          (requirement) => stableStringify(requirement) === accepted,
+        );
         if (offered) {
-          throw new Error(`${file}: accepted-not-offered must use an accepted object absent from PaymentRequired.accepts`);
+          throw new Error(
+            `${file}: accepted-not-offered must use an accepted object absent from PaymentRequired.accepts`,
+          );
         }
-        assertEqual("invalid_kaspa_x402_accepted", vector.expectedError, `${file}:expectedError`);
+        assertEqual(
+          "invalid_kaspa_x402_accepted",
+          vector.expectedError,
+          `${file}:expectedError`,
+        );
       } else {
-        throw new Error(`${file}: unknown semantic-negative scenario ${vector.scenario}`);
+        throw new Error(
+          `${file}: unknown semantic-negative scenario ${vector.scenario}`,
+        );
       }
       break;
     }
     case "tx-v1-plan": {
       if (stableStringify(vector).includes("blocked-until-")) {
-        throw new Error(`${file}: tx-v1 plan must not contain blocked-until entries`);
+        throw new Error(
+          `${file}: tx-v1 plan must not contain blocked-until entries`,
+        );
       }
-      if (!Array.isArray(vector.coveredVectors) || vector.coveredVectors.length === 0) {
+      if (
+        !Array.isArray(vector.coveredVectors) ||
+        vector.coveredVectors.length === 0
+      ) {
         throw new Error(`${file}: tx-v1 plan must list covered vectors`);
       }
       const coveredPaths = new Set();
       const requiredValidationByPath = new Map([
-        ["vectors/tx-v1/batch-claim.json", "consensus-cross-validated-offline-reference"],
-        ["vectors/tx-v1/batch-refund.json", "consensus-cross-validated-offline-reference"],
+        [
+          "vectors/tx-v1/batch-claim.json",
+          "consensus-cross-validated-offline-reference",
+        ],
+        [
+          "vectors/tx-v1/batch-refund.json",
+          "consensus-cross-validated-offline-reference",
+        ],
       ]);
       for (const item of vector.coveredVectors) {
-        if (typeof item.path !== "string" || typeof item.validation !== "string") {
-          throw new Error(`${file}: tx-v1 covered vectors require path and validation`);
+        if (
+          typeof item.path !== "string" ||
+          typeof item.validation !== "string"
+        ) {
+          throw new Error(
+            `${file}: tx-v1 covered vectors require path and validation`,
+          );
         }
         if (!fs.existsSync(path.join(rootDir, item.path))) {
-          throw new Error(`${file}: tx-v1 covered vector file is missing: ${item.path}`);
+          throw new Error(
+            `${file}: tx-v1 covered vector file is missing: ${item.path}`,
+          );
         }
         const requiredValidation = requiredValidationByPath.get(item.path);
         if (requiredValidation && item.validation !== requiredValidation) {
-          throw new Error(`${file}: tx-v1 covered vector ${item.path} must use validation ${requiredValidation}`);
+          throw new Error(
+            `${file}: tx-v1 covered vector ${item.path} must use validation ${requiredValidation}`,
+          );
         }
         coveredPaths.add(item.path);
       }
       for (const requiredPath of requiredValidationByPath.keys()) {
         if (!coveredPaths.has(requiredPath)) {
-          throw new Error(`${file}: tx-v1 plan missing covered vector ${requiredPath}`);
+          throw new Error(
+            `${file}: tx-v1 plan missing covered vector ${requiredPath}`,
+          );
         }
       }
       break;
@@ -448,8 +759,116 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertTxV1Vector(file, vector, "batch-refund");
       break;
     }
+    case "exact-consensus-profiles": {
+      assertExactConsensusProfiles(file, vector);
+      break;
+    }
     default:
       throw new Error(`${file}: unknown vector kind ${vector.kind}`);
+  }
+}
+
+function assertExactConsensusProfiles(file, vector) {
+  const validation = vector.validation;
+  if (
+    validation?.status !== "full-consensus-cross-validated" ||
+    validation?.tool !== "kaspa-consensus" ||
+    validation?.toolVersion !== "2.0.1" ||
+    validation?.sourceCommit !== EXACT_CONSENSUS_COMMIT ||
+    typeof validation?.command !== "string" ||
+    !validation.command.includes("validate:tx-v1-consensus")
+  ) {
+    throw new Error(
+      `${file}: exact profiles require pinned full-consensus validation metadata`,
+    );
+  }
+  const profiles = [
+    ["standardNative", "standard-native", 0],
+    ["additive", "additive", 1],
+  ];
+  for (const [field, profile, version] of profiles) {
+    const item = vector.expected?.[field];
+    if (
+      item?.profile !== profile ||
+      item?.version !== version ||
+      item?.transaction?.version !== version
+    ) {
+      throw new Error(`${file}: ${field} profile/version mismatch`);
+    }
+    assertHash32(item.transactionId, `${file}:${field}:transactionId`);
+    assertHash32(item.transactionHash, `${file}:${field}:transactionHash`);
+    for (const amountField of [
+      "amount",
+      "fee",
+      "storageMass",
+      "computeMass",
+      "transientMass",
+    ]) {
+      if (!isUint64String(item[amountField]))
+        throw new Error(
+          `${file}:${field}:${amountField} must be a uint64 string`,
+        );
+    }
+    if (
+      !Array.isArray(item.transaction.inputs) ||
+      item.transaction.inputs.length !== item.inputs
+    ) {
+      throw new Error(`${file}:${field}: input evidence mismatch`);
+    }
+    if (
+      !Array.isArray(item.transaction.outputs) ||
+      item.transaction.outputs.length !== item.outputs
+    ) {
+      throw new Error(`${file}:${field}: output evidence mismatch`);
+    }
+    for (const [index, input] of item.transaction.inputs.entries()) {
+      assertHash32(
+        input.previousOutpoint?.txid,
+        `${file}:${field}:input[${index}].txid`,
+      );
+      assertHexBytes(
+        input.signatureScript,
+        `${file}:${field}:input[${index}].signatureScript`,
+      );
+      assertHexBytes(
+        input.utxo?.scriptPublicKey,
+        `${file}:${field}:input[${index}].utxo.scriptPublicKey`,
+      );
+      if (!isUint64String(input.utxo?.amount))
+        throw new Error(
+          `${file}:${field}:input[${index}].utxo.amount must be uint64`,
+        );
+    }
+    for (const [index, output] of item.transaction.outputs.entries()) {
+      if (!isUint64String(output.amount))
+        throw new Error(
+          `${file}:${field}:output[${index}].amount must be uint64`,
+        );
+      assertHexBytes(
+        output.scriptPublicKey,
+        `${file}:${field}:output[${index}].scriptPublicKey`,
+      );
+      if (output.covenant !== null)
+        throw new Error(
+          `${file}:${field}:output[${index}] must not have a covenant binding`,
+        );
+    }
+  }
+  if (
+    vector.expected.standardNative.transaction.outputs[0].amount !==
+    vector.expected.standardNative.amount
+  ) {
+    throw new Error(
+      `${file}: standard-native merchant output must equal the exact amount`,
+    );
+  }
+  const additive = vector.expected.additive;
+  const headInput = BigInt(additive.transaction.inputs[0].utxo.amount);
+  const successor = BigInt(additive.transaction.outputs[0].amount);
+  if (successor - headInput !== BigInt(additive.amount)) {
+    throw new Error(
+      `${file}: additive successor delta must equal the exact amount`,
+    );
   }
 }
 
@@ -484,7 +903,10 @@ export function validateSchemasAndVectors(options = {}) {
   };
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
+if (
+  process.argv[1] &&
+  path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
+) {
   validateSchemasAndVectors();
   console.log("schemas and vectors ok");
 }

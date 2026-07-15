@@ -9,9 +9,10 @@ upstream v2 specification (`specs/x402-specification-v2.md`) and transports
 
 ## Verdict
 
-The Kaspa binding is wire-compatible with upstream x402 v2. Alpha.6 keeps the
-Kaspa exact evidence inside the ecosystem-defined `exact` payload as a reserved
-KIP-10 `exact-transaction` artifact. One cosmetic delta remains
+The Kaspa binding is wire-compatible with upstream x402 v2. Alpha.8 keeps the
+Kaspa exact evidence inside the ecosystem-defined `exact` payload as a signed
+`exact-transaction` artifact, with explicit `standard-native` and optional
+KIP-10 `additive` profiles. One cosmetic delta remains
 (`PaymentRequired.error` content convention) plus one conformant extension
 (settlement failures also carried in MCP `_meta`). No blocking divergence was
 found. Submission can proceed after CASA namespace filing is in review.
@@ -67,9 +68,8 @@ upstream cares.
   `unexpected_settle_error`) exist in the upstream v2 vocabulary.
 - Scheme-specific `payload` content is explicitly ecosystem-defined upstream
   (EVM uses EIP-3009 authorization; SVM, Aptos, Hedera differ). Kaspa's
-  reserved KIP-10 transaction artifact is the same pattern applied to a UTXO
-  chain.
-- `extra.binding` identifiers (`kaspa-exact-v1`, `kaspa-escrow-v1`) live in
+  signed transaction artifact is the same pattern applied to a UTXO chain.
+- `extra.binding` identifiers (`kaspa-exact-v2`, `kaspa-escrow-v1`) live in
   the scheme-defined `extra` object, which upstream leaves to bindings.
 
 ## Spec-Snapshot Constraint

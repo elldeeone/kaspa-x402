@@ -1,8 +1,10 @@
 # Alpha Publish Checklist
 
-Status: preparing `0.1.0-alpha.7`. `0.1.0-alpha.6` remains the latest recorded
-live release snapshot. Publishes require npm authorization and must not happen
-accidentally from CI or an unauthenticated shell.
+Status: the local `0.1.0-alpha.8` source candidate is cut and validated.
+`0.1.0-alpha.7` remains the latest published and deployed alpha. Nothing from
+the alpha.8 branch has been published, tagged, deployed, or announced.
+Publishes require npm authorization and must not happen accidentally from CI
+or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
@@ -39,6 +41,10 @@ and consume the reservation before releasing protected content.
 `0.1.0-alpha.7` hardens that path with canonical transaction-envelope and
 reservation checks, atomic continuation recycling, rolling DAA refund safety,
 full-outpoint voucher binding, and recovery-safe claim accounting.
+`0.1.0-alpha.8` preserves those controls while replacing the alpha.7 exact
+contract with `kaspa-exact-v2`: default `standard-native` exact transfers and
+an optional durable KIP-10 `additive` head profile whose exact successor delta
+is the sole merchant payment. Unanswered 402s no longer consume inventory.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -89,6 +95,36 @@ links.
 The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
+
+## Alpha.8 Source Candidate And Tarball Recheck
+
+Checked locally for alpha.8 on 2026-07-15:
+
+- all seven workspace manifests use `0.1.0-alpha.8`, and every internal
+  `@kaspa-x402/*` dependency is pinned to that exact version;
+- `npm run validate:release` passes from a clean tree with all workspace builds,
+  353 tests, schemas and vectors, the immutable site, browser/PNN/WASM checks,
+  the Worker dry run and smoke, admin and hosted-offer checks, 22 SilverScript
+  fixture checks, Rusty Kaspa full-consensus vectors, the 19-check offline
+  proof, non-spending live-run readiness, package dry runs, and diff hygiene;
+- the immutable `v0.1.0-alpha.8` snapshot is locked at
+  `5d76ca9a7496f59a89badd699d3dab70a1eaa0df57b64f1a55eb89d4bd497de8`;
+- real tarballs for the four public packages install together in a clean
+  temporary project and all four ESM entrypoints import successfully;
+- each public tarball contains only `LICENSE`, `README.md`, `package.json`,
+  `dist/index.js`, and `dist/index.d.ts`;
+- the local tarball SHA-1 values are `e366270978d7fb5fb5b97914e1199ec36e1862e6`
+  (core), `4df4834812837dbd029ed8e6bb944c2dfb6f459e` (covenant),
+  `2fc49ce591857b68d3d07c91541229cf9b2e415b` (client), and
+  `1309639ec781d6a9b777a5b286856fe85eea6f8d` (server);
+- `npm audit --omit=dev --audit-level=high` reports zero production dependency
+  vulnerabilities. The development tree still reports transitive
+  Wrangler/Miniflare advisories;
+- funded TN10 evidence proves both exact profiles and the retained batch
+  lifecycle, while mainnet checks remain read-only or deterministic synthetic
+  construction only;
+- no npm stage, publish, dist-tag change, Git tag, GitHub release, Worker/site
+  deployment, or public announcement was performed.
 
 ## Alpha.7 Registry And Tarball Recheck
 
@@ -157,14 +193,13 @@ Checked for alpha.5 on 2026-07-06:
 
 ## Hosted Evidence Gate
 
-For alpha.7, the source release gate is not the same as the public hosted
-gateway gate. Alpha.7 source hardens the KIP-10 exact transaction-artifact path for
-direct-mode servers that advertise reservations. The hosted
-`demo.kaspa-x402.org` gateway may advertise exact evidence only while it is
-deployed with working exact reservations, PNN broadcast, finality observation,
-and funded TN10 borrow-UTXO inventory.
+For alpha.8, the source release gate is not the same as the public hosted
+gateway gate. The hosted `demo.kaspa-x402.org` gateway remains alpha.7 until a
+post-merge cutover. Alpha.8 `standard-native` needs working verification, PNN
+broadcast, and finality observation but no merchant inventory. Optional
+`additive` also needs an available durable KIP-10 head.
 
-Before advertising alpha.6 source live evidence, run:
+Before advertising alpha.8 source live evidence, run:
 
 ```sh
 npm run proof:live:check -- --live --write-report
@@ -173,20 +208,47 @@ npm run proof:live:check -- --live --write-report
 Before advertising hosted exact evidence, run:
 
 ```sh
-KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS npm run proof:hosted-exact
+KASPA_X402_EXPECTED_GATEWAY_ORIGIN=https://demo.kaspa-x402.org \
+KASPA_X402_EXPECTED_EXACT_PROFILE=standard-native \
+KASPA_X402_EXPECTED_EXACT_AMOUNT=20000000 \
+KASPA_X402_EXPECTED_EXACT_PAY_TO=<expected-merchant-address> \
+KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
+  npm run proof:hosted-exact
 ```
 
-The expected alpha.7 live proof must include:
+The expected alpha.8 live proof must include:
 
-- KIP-10 exact reservation terms with `additiveThresholdSompi` at or above
-  `10000000` sompi;
-
-- exact KIP-10 transaction artifact settlement and replay rejection;
+- tiny and normal standard-native exact settlement and replay rejection;
+- additive exact settlement proving the KIP-10 successor delta equals the
+  advertised amount and no second merchant payment output exists;
+- at least two durable head shards, concurrent conflict, loser refresh, and
+  successful retry;
+- duplicate idempotency and invalid-signature rejection before protected work;
+- post-broadcast runtime recovery and trusted external head reconciliation;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
 - replay rejection across exact and batch-settlement;
 - batch refund transaction construction and broadcast after timeout.
+
+Checked for alpha.8 on 2026-07-15:
+
+- the funded TN10 live proof completed with status `complete` across all flows
+  above;
+- standard-native `10000000` and `100000000` sompi payments both settled with
+  exact merchant gain and explicit payer-cost/fee accounting;
+- the corrected additive transaction used the successor delta as the sole
+  `100000000` sompi merchant payment;
+- two head shards, one concurrent winner, loser refresh/retry, invalid
+  authorization rejection, post-broadcast recovery, and trusted external
+  advancement all passed;
+- the batch deposit/voucher, claim, old-voucher rejection, and strict
+  post-timeout refund passed;
+- the sanitized evidence and transaction ids are recorded in
+  `docs/live-testnet-report.md`;
+- the supplied mainnet node passed a read-only gRPC check, and deterministic
+  synthetic mainnet standard/additive shapes passed offline with no real UTXO,
+  funds, or broadcast.
 
 Checked for alpha.7 on 2026-07-14:
 
@@ -299,6 +361,6 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
-- alpha.7 exact supports preferred KIP-10 `exact-transaction` artifacts with
-  durable reservation continuation and replay requirements;
+- alpha.8 exact supports signed `exact-transaction` artifacts under default
+  standard-native or optional durable additive-head semantics;
 - live proof evidence is testnet-only.

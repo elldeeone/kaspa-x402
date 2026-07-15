@@ -1,26 +1,44 @@
-import { parseSompiString, sha256Hex, type NetworkId } from "@kaspa-x402/core";
-import { parseKip10AdditiveRedeemScript, payToScriptHashScript, serializedScriptPublicKey } from "@kaspa-x402/covenant";
+import { parseSompiString, sha256Hex } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
   ChannelLockManager,
-  ExactBorrowContinuation,
-  ExactBorrowReservation,
-  ExactBorrowReservationRequest,
   ClaimAttemptRecord,
   ExactPaymentRecord,
-  ExactReservationRecord,
   ExactSettlementCommit,
+  ExactHeadRecord,
+  ExactHeadLineageApply,
+  ExactHeadUnavailableApply,
+  ExactHeadUnavailableResult,
+  ExactHeadSelectionRequest,
+  ExactSettlementAttemptRecord,
+  ExactSettlementClaimResult,
   PaymentIdentifierRecord,
+  ProtectedHandlerResult,
   ServerChannelRecord,
   ServerStateStore,
   SettlementCommit,
+} from "@kaspa-x402/server";
+import {
+  acceptExactHead,
+  applyExactHeadLineage as applyExactHeadLineageRecord,
+  claimExactHead,
+  exactHeadMatchesSelection,
+  exactSettlementAttemptsMatch,
+  normalizeExactHeadRecord,
+  normalizeExactSettlementAttempt,
+  releaseExactHeadClaim,
 } from "@kaspa-x402/server";
 
 type GatewayTransaction = {
   get<T = unknown>(key: string): Promise<T | undefined>;
   put<T = unknown>(key: string, value: T): Promise<void>;
   delete(key: string): Promise<boolean | void>;
-  list<T = unknown>(options: { prefix: string }): Promise<Map<string, T>>;
+  list<T = unknown>(options: {
+    prefix?: string;
+    start?: string;
+    end?: string;
+    limit?: number;
+  }): Promise<Map<string, T>>;
 };
 
 export type GatewayStorage = GatewayTransaction & {
@@ -37,9 +55,12 @@ type RateRecord = {
   resetAt: number;
 };
 
-const MIN_EXACT_INVENTORY_SOMPI = 10_000_000n;
-
 export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
+
+export type ExactHeadStats = Record<
+  "total" | "available" | "claimed" | "unavailable" | "retired",
+  number
+>;
 
 export interface GatewayCanaryCheck {
   name: string;
@@ -55,36 +76,6 @@ export interface GatewayCanaryReport {
   checks: GatewayCanaryCheck[];
 }
 
-export type GatewayExactInventoryStatus = "available" | "reserved" | "consumed" | "retired";
-
-export type GatewayExactInventoryRegistration = Omit<ExactBorrowReservation, "reservationId" | "expiresAt"> & {
-  network: NetworkId;
-  inventoryId?: string;
-  note?: string;
-};
-
-export type GatewayExactInventoryRecord = GatewayExactInventoryRegistration & {
-  inventoryId: string;
-  status: GatewayExactInventoryStatus;
-  registeredAt: string;
-  updatedAt: string;
-  reservationId?: string;
-  reservedAt?: string;
-  expiresAt?: string;
-  transactionId?: string;
-  consumedAt?: string;
-  retiredAt?: string;
-};
-
-export interface GatewayExactInventoryStats {
-  total: number;
-  available: number;
-  reserved: number;
-  consumed: number;
-  retired: number;
-  expiredRetired: number;
-}
-
 export type GatewayStateMethod =
   | "loadChannel"
   | "saveChannel"
@@ -93,14 +84,21 @@ export type GatewayStateMethod =
   | "loadCommitment"
   | "loadPaymentIdentifier"
   | "loadExactPayment"
-  | "saveExactReservation"
-  | "loadExactReservation"
-  | "consumeExactReservation"
-  | "registerExactInventory"
-  | "registerExactInventoryBatch"
-  | "reserveExactInventory"
-  | "listExactInventory"
-  | "exactInventoryStats"
+  | "registerExactHead"
+  | "loadExactHead"
+  | "listExactHeads"
+  | "exactHeadStats"
+  | "selectExactHead"
+  | "claimExactSettlement"
+  | "loadExactSettlementAttempt"
+  | "recordExactSettlementBroadcast"
+  | "acceptExactSettlement"
+  | "beginExactHandler"
+  | "recordExactHandlerResult"
+  | "markExactHandlerRecoveryRequired"
+  | "abandonExactSettlement"
+  | "markExactHeadUnavailable"
+  | "applyExactHeadLineage"
   | "resolveBatchRefundTimeoutDaa"
   | "commitSettlement"
   | "commitExactPayment"
@@ -128,8 +126,12 @@ export class GatewayLedger implements ServerStateStore {
     this.#storage = storage;
   }
 
-  async loadChannel(channelId: string): Promise<ServerChannelRecord | undefined> {
-    return cloneOrUndefined(await this.#storage.get<ServerChannelRecord>(channelKey(channelId)));
+  async loadChannel(
+    channelId: string,
+  ): Promise<ServerChannelRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<ServerChannelRecord>(channelKey(channelId)),
+    );
   }
 
   async saveChannel(channel: ServerChannelRecord): Promise<void> {
@@ -140,232 +142,494 @@ export class GatewayLedger implements ServerStateStore {
     await this.#storage.transaction(async (txn) => {
       const channel = await txn.get<ServerChannelRecord>(channelKey(channelId));
       if (!channel) return;
-      await txn.put(channelKey(channelId), { ...clone(channel), status: "retired" });
+      await txn.put(channelKey(channelId), {
+        ...clone(channel),
+        status: "retired",
+      });
     });
   }
 
   async listChannels(): Promise<ServerChannelRecord[]> {
-    return Array.from((await this.#storage.list<ServerChannelRecord>({ prefix: "channel:" })).values()).map(clone);
+    return Array.from(
+      (
+        await this.#storage.list<ServerChannelRecord>({ prefix: "channel:" })
+      ).values(),
+    ).map(clone);
   }
 
-  async loadCommitment(commitmentId: string): Promise<BatchCommitmentRecord | undefined> {
-    return cloneOrUndefined(await this.#storage.get<BatchCommitmentRecord>(commitmentKey(commitmentId)));
+  async loadCommitment(
+    commitmentId: string,
+  ): Promise<BatchCommitmentRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<BatchCommitmentRecord>(
+        commitmentKey(commitmentId),
+      ),
+    );
   }
 
-  async loadPaymentIdentifier(id: string): Promise<PaymentIdentifierRecord | undefined> {
-    return cloneOrUndefined(await this.#storage.get<PaymentIdentifierRecord>(paymentIdentifierKey(id)));
+  async loadPaymentIdentifier(
+    id: string,
+  ): Promise<PaymentIdentifierRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<PaymentIdentifierRecord>(
+        paymentIdentifierKey(id),
+      ),
+    );
   }
 
-  async loadExactPayment(transactionId: string): Promise<ExactPaymentRecord | undefined> {
-    return cloneOrUndefined(await this.#storage.get<ExactPaymentRecord>(exactPaymentKey(transactionId)));
+  async loadExactPayment(
+    transactionId: string,
+  ): Promise<ExactPaymentRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<ExactPaymentRecord>(
+        exactPaymentKey(transactionId),
+      ),
+    );
+  }
+
+  async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
+    const record = normalizeExactHeadRecord(input);
+    return this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<ExactHeadRecord>(
+        exactHeadKey(record.headId),
+      );
+      if (existing) {
+        if (stableJson(existing) !== stableJson(record))
+          throw new Error(
+            "exact head id is already registered for different state",
+          );
+        // Re-registering an unchanged pre-alpha.8 head also repairs its
+        // bounded selection index without changing the head itself.
+        await putExactHead(txn, existing, existing);
+        return clone(existing);
+      }
+      const heads = await txn.list<ExactHeadRecord>({ prefix: "exact-head:" });
+      for (const current of heads.values()) {
+        if (sameOutpoint(current.currentOutpoint, record.currentOutpoint))
+          throw new Error("exact head outpoint is already registered");
+      }
+      await putExactHead(txn, undefined, record);
+      return clone(record);
+    });
+  }
+
+  async loadExactHead(headId: string): Promise<ExactHeadRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<ExactHeadRecord>(exactHeadKey(headId)),
+    );
+  }
+
+  async listExactHeads(): Promise<ExactHeadRecord[]> {
+    return Array.from(
+      (
+        await this.#storage.list<ExactHeadRecord>({ prefix: "exact-head:" })
+      ).values(),
+    )
+      .map(clone)
+      .sort((left, right) => left.headId.localeCompare(right.headId));
+  }
+
+  async exactHeadStats(): Promise<ExactHeadStats> {
+    return this.#storage.transaction(async (txn) => {
+      const stats = await loadOrRebuildExactHeadStats(txn);
+      await txn.put(exactHeadStatsKey(), stats);
+      return clone(stats);
+    });
+  }
+
+  async selectExactHead(
+    request: ExactHeadSelectionRequest,
+  ): Promise<ExactHeadRecord | undefined> {
+    return this.#storage.transaction(async (txn) => {
+      const range = exactHeadSelectionIndexRange(request);
+      const indexed = await txn.list<ExactHeadSelectionIndexRecord>({
+        prefix: range.prefix,
+        start: range.start,
+        end: range.end,
+        limit: EXACT_HEAD_SELECTION_WINDOW,
+      });
+      const candidates: ExactHeadRecord[] = [];
+      for (const entry of indexed.values()) {
+        const head = await txn.get<ExactHeadRecord>(
+          exactHeadKey(entry.headId),
+        );
+        if (head && exactHeadMatchesSelection(head, request)) {
+          candidates.push(head);
+        }
+      }
+      if (candidates.length === 0) return undefined;
+      const index = Number(
+        BigInt(`0x${request.selectionKey}`) % BigInt(candidates.length),
+      );
+      return clone(candidates[index]!);
+    });
+  }
+
+  async claimExactSettlement(
+    input: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementClaimResult> {
+    const attempt = normalizeExactSettlementAttempt(input);
+    return this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<ExactSettlementAttemptRecord>(
+        exactAttemptKey(attempt.transactionId),
+      );
+      if (existing) {
+        if (!exactSettlementAttemptsMatch(existing, attempt))
+          throw new Error(
+            "exact transaction is already claimed for a different request",
+          );
+        return { attempt: clone(existing), created: false };
+      }
+      if (attempt.profile === "additive") {
+        if (!attempt.head)
+          throw new Error("additive exact settlement requires a head claim");
+        const head = await txn.get<ExactHeadRecord>(
+          exactHeadKey(attempt.head.headId),
+        );
+        if (!head)
+          throw new Error("exact head changed before settlement claim");
+        await putExactHead(txn, head, claimExactHead(head, attempt));
+      } else if (attempt.head) {
+        throw new Error("standard-native exact settlement cannot claim a head");
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), clone(attempt));
+      return { attempt: clone(attempt), created: true };
+    });
+  }
+
+  async loadExactSettlementAttempt(
+    transactionId: string,
+  ): Promise<ExactSettlementAttemptRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<ExactSettlementAttemptRecord>(
+        exactAttemptKey(transactionId),
+      ),
+    );
+  }
+
+  async recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: "broadcast" | "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "accepted" || attempt.status === "applied") return;
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        status: "broadcast",
+        finality,
+        updatedAt: observedAt,
+      });
+    });
+  }
+
+  async acceptExactSettlement(
+    transactionId: string,
+    finality: "accepted" | "confirmed",
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "applied") return;
+      if (attempt.head) {
+        const head = await txn.get<ExactHeadRecord>(
+          exactHeadKey(attempt.head.headId),
+        );
+        if (!head)
+          throw new Error(
+            "exact head was not found during settlement acceptance",
+          );
+        await putExactHead(
+          txn,
+          head,
+          acceptExactHead(head, attempt, observedAt),
+        );
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        status: "accepted",
+        finality,
+        updatedAt: observedAt,
+      });
+    });
+  }
+
+  async beginExactHandler(
+    transactionId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status !== "accepted" || attempt.handlerStartedAt)
+        return false;
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        handlerStartedAt: startedAt,
+        updatedAt: startedAt,
+      });
+      return true;
+    });
+  }
+
+  async recordExactHandlerResult(
+    transactionId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      assertExactHandlerResultTransition(attempt, result, completedAt);
+      if (attempt.handlerResult) {
+        if (stableJson(attempt.handlerResult) !== stableJson(result))
+          throw new Error("exact handler result conflicts with durable state");
+        return;
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        handlerResult: clone(result),
+        handlerCompletedAt: completedAt,
+        recoveryReason: undefined,
+        updatedAt: completedAt,
+      });
+    });
+  }
+
+  async markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (
+        attempt.status !== "accepted" ||
+        !attempt.handlerStartedAt ||
+        attempt.handlerResult
+      ) {
+        throw new Error("exact handler is not awaiting recovery");
+      }
+      await txn.put(exactAttemptKey(attempt.transactionId), {
+        ...attempt,
+        recoveryReason: reason,
+        updatedAt: observedAt,
+      });
+    });
+  }
+
+  async abandonExactSettlement(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireExactAttempt(txn, transactionId);
+      if (attempt.status === "accepted" || attempt.status === "applied")
+        throw new Error("accepted exact settlement cannot be abandoned");
+      if (attempt.head) {
+        const head = await txn.get<ExactHeadRecord>(
+          exactHeadKey(attempt.head.headId),
+        );
+        if (head)
+          await putExactHead(
+            txn,
+            head,
+            releaseExactHeadClaim(head, attempt, observedAt),
+          );
+      }
+      await txn.delete(exactAttemptKey(attempt.transactionId));
+      void reason;
+    });
+  }
+
+  async markExactHeadUnavailable(
+    input: ExactHeadUnavailableApply,
+  ): Promise<ExactHeadUnavailableResult> {
+    return this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
+      if (!head) throw new Error("exact head was not found");
+      if (head.status === "retired")
+        throw new Error("retired exact head cannot be marked unavailable");
+      if (
+        head.version !== input.expectedVersion ||
+        !sameOutpoint(head.currentOutpoint, input.expectedOutpoint) ||
+        head.currentAmount !== input.expectedAmount ||
+        head.status !== input.expectedStatus
+      ) {
+        return { applied: false, head: clone(head) };
+      }
+      const unavailable = {
+        ...head,
+        status: "unavailable",
+        unavailableReason: input.reason,
+        updatedAt: input.observedAt,
+      } as const;
+      await putExactHead(txn, head, unavailable);
+      return { applied: true, head: clone(unavailable) };
+    });
+  }
+
+  async applyExactHeadLineage(
+    input: ExactHeadLineageApply,
+  ): Promise<ExactHeadRecord> {
+    return this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
+      if (!head) throw new Error("exact head was not found");
+      const advanced = applyExactHeadLineageRecord(head, input);
+      await putExactHead(txn, head, advanced);
+      return clone(advanced);
+    });
   }
 
   async commitSettlement(record: SettlementCommit): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const current = await txn.get<ServerChannelRecord>(channelKey(record.expected.channelId));
+      const current = await txn.get<ServerChannelRecord>(
+        channelKey(record.expected.channelId),
+      );
       if (!matchesExpectedChannel(current, record.expected)) {
         throw new Error("channel state changed before settlement commit");
       }
-      if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
-      await txn.put(commitmentKey(record.commitment.commitmentId), clone(record.commitment));
-      if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
-      await txn.put(channelKey(record.channel.channelId), clone(record.channel));
+      if (record.paymentIdentifier)
+        await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      await txn.put(
+        commitmentKey(record.commitment.commitmentId),
+        clone(record.commitment),
+      );
+      if (record.paymentIdentifier)
+        await txn.put(
+          paymentIdentifierKey(record.paymentIdentifier.id),
+          clone(record.paymentIdentifier),
+        );
+      await txn.put(
+        channelKey(record.channel.channelId),
+        clone(record.channel),
+      );
     });
   }
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const payment = clone(record.payment);
-      const existing = await txn.get<ExactPaymentRecord>(exactPaymentKey(payment.transactionId));
+      const existing = await txn.get<ExactPaymentRecord>(
+        exactPaymentKey(payment.transactionId),
+      );
       if (existing) {
         if (
           existing.requestFingerprint !== payment.requestFingerprint ||
           existing.paymentPayloadHash !== payment.paymentPayloadHash ||
           existing.paymentOutputIndex !== payment.paymentOutputIndex
         ) {
-          throw new Error("exact payment transaction was already committed for a different request");
+          throw new Error(
+            "exact payment transaction was already committed for a different request",
+          );
         }
         return;
       }
-      if (record.paymentIdentifier) await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
-      if (record.paymentIdentifier) await txn.put(paymentIdentifierKey(record.paymentIdentifier.id), clone(record.paymentIdentifier));
+      if (record.paymentIdentifier)
+        await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      const attempt = await txn.get<ExactSettlementAttemptRecord>(
+        exactAttemptKey(payment.transactionId),
+      );
+      if (attempt) {
+        if (
+          attempt.status !== "accepted" ||
+          !attempt.handlerStartedAt ||
+          !attempt.handlerResult
+        )
+          throw new Error("exact settlement attempt is not ready to apply");
+        await txn.put(exactAttemptKey(payment.transactionId), {
+          ...attempt,
+          status: "applied",
+          updatedAt: new Date().toISOString(),
+        });
+      }
+      if (record.paymentIdentifier)
+        await txn.put(
+          paymentIdentifierKey(record.paymentIdentifier.id),
+          clone(record.paymentIdentifier),
+        );
       await txn.put(exactPaymentKey(payment.transactionId), payment);
     });
   }
 
-  async saveExactReservation(record: ExactReservationRecord): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const existing = await txn.get<ExactReservationRecord>(exactReservationKey(record.reservationId));
-      if (existing && existing.status !== "reserved") {
-        throw new Error("exact reservation was already consumed");
-      }
-      if (existing && stableJson(exactReservationTerms(existing)) !== stableJson(exactReservationTerms(record))) {
-        throw new Error("exact reservation id is already reserved for different terms");
-      }
-      await txn.put(exactReservationKey(record.reservationId), clone(record));
-    });
-  }
-
-  async loadExactReservation(reservationId: string): Promise<ExactReservationRecord | undefined> {
-    return cloneOrUndefined(await this.#storage.get<ExactReservationRecord>(exactReservationKey(reservationId)));
-  }
-
-  async consumeExactReservation(
-    reservationId: string,
-    transactionId: string,
-    continuation?: ExactBorrowContinuation,
-  ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const current = await txn.get<ExactReservationRecord>(exactReservationKey(reservationId));
-      if (!current) throw new Error("exact reservation was not found");
-      if (current.status === "consumed") {
-        if (current.transactionId?.toLowerCase() === transactionId.toLowerCase()) {
-          await markInventoryConsumed(txn, reservationId, transactionId, continuation);
-          return;
-        }
-        throw new Error("exact reservation was already consumed by a different transaction");
-      }
-      await txn.put(exactReservationKey(reservationId), { ...clone(current), status: "consumed", transactionId: transactionId.toLowerCase() });
-      await markInventoryConsumed(txn, reservationId, transactionId, continuation);
-    });
-  }
-
-  async registerExactInventory(input: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord> {
-    return (await this.registerExactInventoryBatch([input]))[0]!;
-  }
-
-  async registerExactInventoryBatch(inputs: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]> {
-    const now = new Date().toISOString();
-    const records = inputs.map((input) => normalizeExactInventoryRegistration(input, now));
-    return this.#storage.transaction(async (txn) => {
-      const seen = new Set<string>();
-      const registered: GatewayExactInventoryRecord[] = [];
-      const pendingWrites: GatewayExactInventoryRecord[] = [];
-      for (const record of records) {
-        if (seen.has(record.inventoryId)) throw new Error("duplicate exact inventory id in registration batch");
-        seen.add(record.inventoryId);
-        const key = exactInventoryKey(record.inventoryId);
-        const existing = await txn.get<GatewayExactInventoryRecord>(key);
-        if (!existing) {
-          registered.push(clone(record));
-          pendingWrites.push(record);
-          continue;
-        }
-        if (stableJson(exactInventoryTerms(existing)) !== stableJson(exactInventoryTerms(record))) {
-          throw new Error("exact inventory id is already registered for different terms");
-        }
-        if (existing.status === "consumed") throw new Error("exact inventory was already consumed");
-        if (existing.status === "retired") throw new Error("exact inventory was retired; register a fresh borrow outpoint");
-        registered.push(clone(existing));
-      }
-      for (const record of pendingWrites) await txn.put(exactInventoryKey(record.inventoryId), clone(record));
-      return registered;
-    });
-  }
-
-  async reserveExactInventory(request: ExactBorrowReservationRequest, nowIso = new Date().toISOString()): Promise<ExactBorrowReservation | undefined> {
-    return this.#storage.transaction(async (txn) => {
-      await retireExpiredExactInventory(txn, Date.parse(nowIso), nowIso);
-      const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
-      const available = Array.from(entries.values())
-        .filter((record) => exactInventoryMatchesRequest(record, request))
-        .sort(compareExactInventory)[0];
-      if (!available) return undefined;
-
-      const expiresAt = new Date(Date.parse(nowIso) + request.maxTimeoutSeconds * 1000).toISOString();
-      const reservation: ExactBorrowReservation = {
-        reservationId: exactInventoryReservationId(request, available, expiresAt),
-        templateId: available.templateId,
-        transactionEncoding: available.transactionEncoding,
-        borrowOutpoint: clone(available.borrowOutpoint),
-        borrowAmount: available.borrowAmount,
-        borrowScriptPublicKey: available.borrowScriptPublicKey,
-        borrowRedeemScript: available.borrowRedeemScript,
-        additiveThresholdSompi: available.additiveThresholdSompi,
-        paymentOutputIndex: available.paymentOutputIndex,
-        expiresAt,
-      };
-      await txn.put(exactInventoryKey(available.inventoryId), {
-        ...clone(available),
-        status: "reserved",
-        reservationId: reservation.reservationId,
-        reservedAt: nowIso,
-        expiresAt,
-        transactionId: undefined,
-        consumedAt: undefined,
-        updatedAt: nowIso,
-      });
-      await txn.put(exactInventoryReservationKey(reservation.reservationId), available.inventoryId);
-      return reservation;
-    });
-  }
-
-  async listExactInventory(): Promise<GatewayExactInventoryRecord[]> {
-    await this.exactInventoryStats();
-    return Array.from((await this.#storage.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" })).values())
-      .map(clone)
-      .sort(compareExactInventory);
-  }
-
-  async exactInventoryStats(nowIso = new Date().toISOString()): Promise<GatewayExactInventoryStats> {
-    return this.#storage.transaction(async (txn) => {
-      const expiredRetired = await retireExpiredExactInventory(txn, Date.parse(nowIso), nowIso);
-      const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
-      const stats: GatewayExactInventoryStats = { total: 0, available: 0, reserved: 0, consumed: 0, retired: 0, expiredRetired };
-      for (const record of entries.values()) {
-        stats.total += 1;
-        stats[record.status] += 1;
-      }
-      return stats;
-    });
-  }
-
-  async loadOpenClaimAttempt(channelId: string): Promise<ClaimAttemptRecord | undefined> {
+  async loadOpenClaimAttempt(
+    channelId: string,
+  ): Promise<ClaimAttemptRecord | undefined> {
     const attemptId = await this.#storage.get<string>(openClaimKey(channelId));
-    return attemptId ? cloneOrUndefined(await this.#storage.get<ClaimAttemptRecord>(claimAttemptKey(attemptId))) : undefined;
+    return attemptId
+      ? cloneOrUndefined(
+          await this.#storage.get<ClaimAttemptRecord>(
+            claimAttemptKey(attemptId),
+          ),
+        )
+      : undefined;
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const openAttemptId = await txn.get<string>(openClaimKey(record.channelId));
+      const openAttemptId = await txn.get<string>(
+        openClaimKey(record.channelId),
+      );
       if (openAttemptId && openAttemptId !== record.attemptId) {
-        const open = await txn.get<ClaimAttemptRecord>(claimAttemptKey(openAttemptId));
-        if (open && open.status !== "applied") throw new Error("claim attempt is already pending");
+        const open = await txn.get<ClaimAttemptRecord>(
+          claimAttemptKey(openAttemptId),
+        );
+        if (open && open.status !== "applied")
+          throw new Error("claim attempt is already pending");
       }
       await txn.put(claimAttemptKey(record.attemptId), clone(record));
-      if (record.status !== "applied") await txn.put(openClaimKey(record.channelId), record.attemptId);
+      if (record.status !== "applied")
+        await txn.put(openClaimKey(record.channelId), record.attemptId);
     });
   }
 
-  async applyClaimAttempt(channel: ServerChannelRecord, attempt: ClaimAttemptRecord): Promise<void> {
+  async applyClaimAttempt(
+    channel: ServerChannelRecord,
+    attempt: ClaimAttemptRecord,
+  ): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const currentAttempt = await txn.get<ClaimAttemptRecord>(claimAttemptKey(attempt.attemptId));
+      const currentAttempt = await txn.get<ClaimAttemptRecord>(
+        claimAttemptKey(attempt.attemptId),
+      );
       if (!currentAttempt || currentAttempt.status === "applied") {
         throw new Error("claim attempt is not open");
       }
-      const currentChannel = await txn.get<ServerChannelRecord>(channelKey(channel.channelId));
+      const currentChannel = await txn.get<ServerChannelRecord>(
+        channelKey(channel.channelId),
+      );
       if (!matchesClaimSnapshot(currentChannel, attempt)) {
         throw new Error("channel state changed before claim apply");
       }
       await txn.put(channelKey(channel.channelId), clone(channel));
-      await txn.put(claimAttemptKey(attempt.attemptId), { ...clone(attempt), status: "applied" });
+      await txn.put(claimAttemptKey(attempt.attemptId), {
+        ...clone(attempt),
+        status: "applied",
+      });
       await txn.delete(openClaimKey(attempt.channelId));
     });
   }
 
   async abandonClaimAttempt(attemptId: string): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const current = await txn.get<ClaimAttemptRecord>(claimAttemptKey(attemptId));
+      const current = await txn.get<ClaimAttemptRecord>(
+        claimAttemptKey(attemptId),
+      );
       if (!current || current.status === "applied") return;
       await txn.delete(claimAttemptKey(attemptId));
       await txn.delete(openClaimKey(current.channelId));
     });
   }
 
-  async acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean> {
+  async acquireLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
     return this.#storage.transaction(async (txn) => {
       const current = await txn.get<LockRecord>(lockKey(key));
-      if (current && current.token !== token && current.expiresAt > nowMs) return false;
+      if (current && current.token !== token && current.expiresAt > nowMs)
+        return false;
       await txn.put(lockKey(key), { token, expiresAt: nowMs + ttlMs });
       return true;
     });
@@ -378,8 +642,14 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
-  async checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }> {
-    if (limit <= 0) return { allowed: true, count: 0, resetAt: nowMs + windowMs };
+  async checkRateLimit(
+    scope: string,
+    nowMs: number,
+    limit: number,
+    windowMs: number,
+  ): Promise<{ allowed: boolean; count: number; resetAt: number }> {
+    if (limit <= 0)
+      return { allowed: true, count: 0, resetAt: nowMs + windowMs };
     const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
     const key = rateKey(scope, resetAt);
     return this.#storage.transaction(async (txn) => {
@@ -398,14 +668,16 @@ export class GatewayLedger implements ServerStateStore {
     const current = parseSompiString(currentDaa);
     const delta = parseSompiString(refundDeltaDaa);
     const minimumLead = parseSompiString(minimumLeadDaa);
-    if (delta <= minimumLead) throw new Error("refund DAA delta must exceed minimum lead");
+    if (delta <= minimumLead)
+      throw new Error("refund DAA delta must exceed minimum lead");
     const next = current + delta;
     return this.#storage.transaction(async (txn) => {
       const key = batchRefundTimeoutKey();
       const stored = await txn.get<string>(key);
       if (stored !== undefined) {
         const timeout = parseSompiString(stored);
-        if (current + minimumLead < timeout && timeout <= next) return timeout.toString();
+        if (current + minimumLead < timeout && timeout <= next)
+          return timeout.toString();
       }
       await txn.put(key, next.toString());
       return next.toString();
@@ -413,7 +685,9 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {
-    return cloneOrUndefined(await this.#storage.get<GatewayCanaryReport>(canaryReportKey()));
+    return cloneOrUndefined(
+      await this.#storage.get<GatewayCanaryReport>(canaryReportKey()),
+    );
   }
 
   async saveCanaryReport(report: GatewayCanaryReport): Promise<void> {
@@ -431,7 +705,8 @@ export class GatewayLedger implements ServerStateStore {
   async metrics(): Promise<Record<string, number>> {
     const entries = await this.#storage.list<number>({ prefix: "metric:" });
     const metrics: Record<string, number> = {};
-    for (const [key, value] of entries) metrics[key.slice("metric:".length)] = value;
+    for (const [key, value] of entries)
+      metrics[key.slice("metric:".length)] = value;
     return metrics;
   }
 }
@@ -449,8 +724,12 @@ export class DurableGatewayLockManager implements ChannelLockManager {
     const token = crypto.randomUUID();
     const started = Date.now();
     for (;;) {
-      if (await this.#state.acquireLock(channelId, token, Date.now(), this.#ttlMs)) break;
-      if (Date.now() - started > this.#ttlMs) throw new Error("gateway lock acquisition timed out");
+      if (
+        await this.#state.acquireLock(channelId, token, Date.now(), this.#ttlMs)
+      )
+        break;
+      if (Date.now() - started > this.#ttlMs)
+        throw new Error("gateway lock acquisition timed out");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     try {
@@ -462,99 +741,238 @@ export class DurableGatewayLockManager implements ChannelLockManager {
 }
 
 export type GatewayStateClient = ServerStateStore & {
-  acquireLock(key: string, token: string, nowMs: number, ttlMs: number): Promise<boolean>;
+  exactHeadStats(): Promise<ExactHeadStats>;
+  acquireLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;
-  checkRateLimit(scope: string, nowMs: number, limit: number, windowMs: number): Promise<{ allowed: boolean; count: number; resetAt: number }>;
-  registerExactInventory(record: GatewayExactInventoryRegistration): Promise<GatewayExactInventoryRecord>;
-  registerExactInventoryBatch(records: GatewayExactInventoryRegistration[]): Promise<GatewayExactInventoryRecord[]>;
-  reserveExactInventory(request: ExactBorrowReservationRequest, nowIso?: string): Promise<ExactBorrowReservation | undefined>;
-  listExactInventory(): Promise<GatewayExactInventoryRecord[]>;
-  exactInventoryStats(nowIso?: string): Promise<GatewayExactInventoryStats>;
-  resolveBatchRefundTimeoutDaa(currentDaa: string, refundDeltaDaa: string, minimumLeadDaa: string): Promise<string>;
+  checkRateLimit(
+    scope: string,
+    nowMs: number,
+    limit: number,
+    windowMs: number,
+  ): Promise<{ allowed: boolean; count: number; resetAt: number }>;
+  resolveBatchRefundTimeoutDaa(
+    currentDaa: string,
+    refundDeltaDaa: string,
+    minimumLeadDaa: string,
+  ): Promise<string>;
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
   saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
   metrics(): Promise<Record<string, number>>;
 };
 
-export async function dispatchGatewayState(ledger: GatewayLedger, request: GatewayStateRequest): Promise<unknown> {
+export async function dispatchGatewayState(
+  ledger: GatewayLedger,
+  request: GatewayStateRequest,
+): Promise<unknown> {
   switch (request.method) {
     case "loadChannel":
-      return ledger.loadChannel(readPayload<{ channelId: string }>(request).channelId);
+      return ledger.loadChannel(
+        readPayload<{ channelId: string }>(request).channelId,
+      );
     case "saveChannel":
-      return ledger.saveChannel(readPayload<{ channel: ServerChannelRecord }>(request).channel);
+      return ledger.saveChannel(
+        readPayload<{ channel: ServerChannelRecord }>(request).channel,
+      );
     case "retireChannel":
-      return ledger.retireChannel(readPayload<{ channelId: string }>(request).channelId);
+      return ledger.retireChannel(
+        readPayload<{ channelId: string }>(request).channelId,
+      );
     case "listChannels":
       return ledger.listChannels();
     case "loadCommitment":
-      return ledger.loadCommitment(readPayload<{ commitmentId: string }>(request).commitmentId);
+      return ledger.loadCommitment(
+        readPayload<{ commitmentId: string }>(request).commitmentId,
+      );
     case "loadPaymentIdentifier":
-      return ledger.loadPaymentIdentifier(readPayload<{ id: string }>(request).id);
+      return ledger.loadPaymentIdentifier(
+        readPayload<{ id: string }>(request).id,
+      );
     case "loadExactPayment":
-      return ledger.loadExactPayment(readPayload<{ transactionId: string }>(request).transactionId);
-    case "saveExactReservation":
-      return ledger.saveExactReservation(readPayload<{ record: ExactReservationRecord }>(request).record);
-    case "loadExactReservation":
-      return ledger.loadExactReservation(readPayload<{ reservationId: string }>(request).reservationId);
-    case "consumeExactReservation": {
+      return ledger.loadExactPayment(
+        readPayload<{ transactionId: string }>(request).transactionId,
+      );
+    case "registerExactHead":
+      return ledger.registerExactHead(
+        readPayload<{ record: ExactHeadRecord }>(request).record,
+      );
+    case "loadExactHead":
+      return ledger.loadExactHead(
+        readPayload<{ headId: string }>(request).headId,
+      );
+    case "listExactHeads":
+      return ledger.listExactHeads();
+    case "exactHeadStats":
+      return ledger.exactHeadStats();
+    case "selectExactHead":
+      return ledger.selectExactHead(
+        readPayload<{ request: ExactHeadSelectionRequest }>(request).request,
+      );
+    case "claimExactSettlement":
+      return ledger.claimExactSettlement(
+        readPayload<{ record: ExactSettlementAttemptRecord }>(request).record,
+      );
+    case "loadExactSettlementAttempt":
+      return ledger.loadExactSettlementAttempt(
+        readPayload<{ transactionId: string }>(request).transactionId,
+      );
+    case "recordExactSettlementBroadcast": {
       const payload = readPayload<{
-        reservationId: string;
         transactionId: string;
-        continuation?: ExactBorrowContinuation;
+        finality: "broadcast" | "accepted" | "confirmed";
+        observedAt: string;
       }>(request);
-      return ledger.consumeExactReservation(
-        payload.reservationId,
+      return ledger.recordExactSettlementBroadcast(
         payload.transactionId,
-        payload.continuation,
+        payload.finality,
+        payload.observedAt,
       );
     }
-    case "registerExactInventory":
-      return ledger.registerExactInventory(readPayload<{ record: GatewayExactInventoryRegistration }>(request).record);
-    case "registerExactInventoryBatch":
-      return ledger.registerExactInventoryBatch(readPayload<{ records: GatewayExactInventoryRegistration[] }>(request).records);
-    case "reserveExactInventory": {
-      const payload = readPayload<{ request: ExactBorrowReservationRequest; nowIso?: string }>(request);
-      return ledger.reserveExactInventory(payload.request, payload.nowIso);
+    case "acceptExactSettlement": {
+      const payload = readPayload<{
+        transactionId: string;
+        finality: "accepted" | "confirmed";
+        observedAt: string;
+      }>(request);
+      return ledger.acceptExactSettlement(
+        payload.transactionId,
+        payload.finality,
+        payload.observedAt,
+      );
     }
-    case "listExactInventory":
-      return ledger.listExactInventory();
-    case "exactInventoryStats":
-      return ledger.exactInventoryStats(readPayload<{ nowIso?: string }>(request).nowIso);
+    case "beginExactHandler": {
+      const payload = readPayload<{ transactionId: string; startedAt: string }>(
+        request,
+      );
+      return ledger.beginExactHandler(payload.transactionId, payload.startedAt);
+    }
+    case "recordExactHandlerResult": {
+      const payload = readPayload<{
+        transactionId: string;
+        result: ProtectedHandlerResult;
+        completedAt: string;
+      }>(request);
+      return ledger.recordExactHandlerResult(
+        payload.transactionId,
+        payload.result,
+        payload.completedAt,
+      );
+    }
+    case "markExactHandlerRecoveryRequired": {
+      const payload = readPayload<{
+        transactionId: string;
+        reason: string;
+        observedAt: string;
+      }>(request);
+      return ledger.markExactHandlerRecoveryRequired(
+        payload.transactionId,
+        payload.reason,
+        payload.observedAt,
+      );
+    }
+    case "abandonExactSettlement": {
+      const payload = readPayload<{
+        transactionId: string;
+        reason: string;
+        observedAt: string;
+      }>(request);
+      return ledger.abandonExactSettlement(
+        payload.transactionId,
+        payload.reason,
+        payload.observedAt,
+      );
+    }
+    case "markExactHeadUnavailable": {
+      return ledger.markExactHeadUnavailable(
+        readPayload<{ input: ExactHeadUnavailableApply }>(request).input,
+      );
+    }
+    case "applyExactHeadLineage":
+      return ledger.applyExactHeadLineage(
+        readPayload<{ input: ExactHeadLineageApply }>(request).input,
+      );
     case "resolveBatchRefundTimeoutDaa": {
-      const payload = readPayload<{ currentDaa: string; refundDeltaDaa: string; minimumLeadDaa: string }>(request);
-      return ledger.resolveBatchRefundTimeoutDaa(payload.currentDaa, payload.refundDeltaDaa, payload.minimumLeadDaa);
+      const payload = readPayload<{
+        currentDaa: string;
+        refundDeltaDaa: string;
+        minimumLeadDaa: string;
+      }>(request);
+      return ledger.resolveBatchRefundTimeoutDaa(
+        payload.currentDaa,
+        payload.refundDeltaDaa,
+        payload.minimumLeadDaa,
+      );
     }
     case "commitSettlement":
-      return ledger.commitSettlement(readPayload<{ record: SettlementCommit }>(request).record);
+      return ledger.commitSettlement(
+        readPayload<{ record: SettlementCommit }>(request).record,
+      );
     case "commitExactPayment":
-      return ledger.commitExactPayment(readPayload<{ record: ExactSettlementCommit }>(request).record);
+      return ledger.commitExactPayment(
+        readPayload<{ record: ExactSettlementCommit }>(request).record,
+      );
     case "loadOpenClaimAttempt":
-      return ledger.loadOpenClaimAttempt(readPayload<{ channelId: string }>(request).channelId);
+      return ledger.loadOpenClaimAttempt(
+        readPayload<{ channelId: string }>(request).channelId,
+      );
     case "saveClaimAttempt":
-      return ledger.saveClaimAttempt(readPayload<{ record: ClaimAttemptRecord }>(request).record);
+      return ledger.saveClaimAttempt(
+        readPayload<{ record: ClaimAttemptRecord }>(request).record,
+      );
     case "applyClaimAttempt": {
-      const payload = readPayload<{ channel: ServerChannelRecord; attempt: ClaimAttemptRecord }>(request);
+      const payload = readPayload<{
+        channel: ServerChannelRecord;
+        attempt: ClaimAttemptRecord;
+      }>(request);
       return ledger.applyClaimAttempt(payload.channel, payload.attempt);
     }
     case "abandonClaimAttempt":
-      return ledger.abandonClaimAttempt(readPayload<{ attemptId: string }>(request).attemptId);
+      return ledger.abandonClaimAttempt(
+        readPayload<{ attemptId: string }>(request).attemptId,
+      );
     case "acquireLock": {
-      const payload = readPayload<{ key: string; token: string; nowMs: number; ttlMs: number }>(request);
-      return ledger.acquireLock(payload.key, payload.token, payload.nowMs, payload.ttlMs);
+      const payload = readPayload<{
+        key: string;
+        token: string;
+        nowMs: number;
+        ttlMs: number;
+      }>(request);
+      return ledger.acquireLock(
+        payload.key,
+        payload.token,
+        payload.nowMs,
+        payload.ttlMs,
+      );
     }
     case "releaseLock": {
       const payload = readPayload<{ key: string; token: string }>(request);
       return ledger.releaseLock(payload.key, payload.token);
     }
     case "checkRateLimit": {
-      const payload = readPayload<{ scope: string; nowMs: number; limit: number; windowMs: number }>(request);
-      return ledger.checkRateLimit(payload.scope, payload.nowMs, payload.limit, payload.windowMs);
+      const payload = readPayload<{
+        scope: string;
+        nowMs: number;
+        limit: number;
+        windowMs: number;
+      }>(request);
+      return ledger.checkRateLimit(
+        payload.scope,
+        payload.nowMs,
+        payload.limit,
+        payload.windowMs,
+      );
     }
     case "loadCanaryReport":
       return ledger.loadCanaryReport();
     case "saveCanaryReport":
-      return ledger.saveCanaryReport(readPayload<{ report: GatewayCanaryReport }>(request).report);
+      return ledger.saveCanaryReport(
+        readPayload<{ report: GatewayCanaryReport }>(request).report,
+      );
     case "incrementMetric": {
       const payload = readPayload<{ name: string; amount?: number }>(request);
       return ledger.incrementMetric(payload.name, payload.amount);
@@ -568,21 +986,35 @@ function readPayload<T>(request: GatewayStateRequest): T {
   return (request.payload ?? {}) as T;
 }
 
-async function assertPaymentIdentifierAvailable(txn: GatewayTransaction, paymentIdentifier: PaymentIdentifierRecord): Promise<void> {
-  const existing = await txn.get<PaymentIdentifierRecord>(paymentIdentifierKey(paymentIdentifier.id));
+async function assertPaymentIdentifierAvailable(
+  txn: GatewayTransaction,
+  paymentIdentifier: PaymentIdentifierRecord,
+): Promise<void> {
+  const existing = await txn.get<PaymentIdentifierRecord>(
+    paymentIdentifierKey(paymentIdentifier.id),
+  );
   if (
     existing &&
     (existing.fingerprint !== paymentIdentifier.fingerprint ||
       existing.paymentPayloadHash !== paymentIdentifier.paymentPayloadHash ||
       existing.paymentScopeId !== paymentIdentifier.paymentScopeId)
   ) {
-    throw new Error("payment identifier was already committed for a different payment");
+    throw new Error(
+      "payment identifier was already committed for a different payment",
+    );
   }
 }
 
-function matchesExpectedChannel(current: ServerChannelRecord | undefined, expected: SettlementCommit["expected"]): boolean {
+function matchesExpectedChannel(
+  current: ServerChannelRecord | undefined,
+  expected: SettlementCommit["expected"],
+): boolean {
   if (!current) {
-    return expected.chargedCumulativeAmount === "0" && expected.claimedCumulativeAmount === "0" && expected.signedMaxClaimable === "0";
+    return (
+      expected.chargedCumulativeAmount === "0" &&
+      expected.claimedCumulativeAmount === "0" &&
+      expected.signedMaxClaimable === "0"
+    );
   }
   return (
     current.channelId === expected.channelId &&
@@ -590,24 +1022,31 @@ function matchesExpectedChannel(current: ServerChannelRecord | undefined, expect
     current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
     current.signedMaxClaimable === expected.signedMaxClaimable &&
     current.status === expected.status &&
-    current.activeOutpoint.txid.toLowerCase() === expected.activeOutpoint.txid.toLowerCase() &&
+    current.activeOutpoint.txid.toLowerCase() ===
+      expected.activeOutpoint.txid.toLowerCase() &&
     current.activeOutpoint.index === expected.activeOutpoint.index &&
-    current.activeScriptPublicKey.toLowerCase() === expected.activeScriptPublicKey.toLowerCase()
+    current.activeScriptPublicKey.toLowerCase() ===
+      expected.activeScriptPublicKey.toLowerCase()
   );
 }
 
-function matchesClaimSnapshot(current: ServerChannelRecord | undefined, attempt: ClaimAttemptRecord): boolean {
+function matchesClaimSnapshot(
+  current: ServerChannelRecord | undefined,
+  attempt: ClaimAttemptRecord,
+): boolean {
   return Boolean(
     current &&
-      current.activeOutpoint.txid.toLowerCase() === attempt.activeOutpoint.txid.toLowerCase() &&
-      current.activeOutpoint.index === attempt.activeOutpoint.index &&
-      current.activeScriptPublicKey.toLowerCase() === attempt.activeScriptPublicKey.toLowerCase() &&
-      current.fundingAmount === attempt.fundingAmount &&
-      current.chargedCumulativeAmount === attempt.chargedCumulativeAmount &&
-      current.claimedCumulativeAmount === attempt.claimedCumulativeAmount &&
-      current.signedMaxClaimable === attempt.signedMaxClaimable &&
-      current.voucherSignature === attempt.voucherSignature &&
-      current.status === attempt.channelStatus,
+    current.activeOutpoint.txid.toLowerCase() ===
+      attempt.activeOutpoint.txid.toLowerCase() &&
+    current.activeOutpoint.index === attempt.activeOutpoint.index &&
+    current.activeScriptPublicKey.toLowerCase() ===
+      attempt.activeScriptPublicKey.toLowerCase() &&
+    current.fundingAmount === attempt.fundingAmount &&
+    current.chargedCumulativeAmount === attempt.chargedCumulativeAmount &&
+    current.claimedCumulativeAmount === attempt.claimedCumulativeAmount &&
+    current.signedMaxClaimable === attempt.signedMaxClaimable &&
+    current.voucherSignature === attempt.voucherSignature &&
+    current.status === attempt.channelStatus,
   );
 }
 
@@ -623,16 +1062,118 @@ function exactPaymentKey(transactionId: string): string {
   return `exact:${transactionId.toLowerCase()}`;
 }
 
-function exactReservationKey(reservationId: string): string {
-  return `exact-reservation:${reservationId.toLowerCase()}`;
+function exactHeadKey(headId: string): string {
+  return `exact-head:${headId.toLowerCase()}`;
 }
 
-function exactInventoryKey(inventoryId: string): string {
-  return `exact-inventory:${inventoryId.toLowerCase()}`;
+function exactHeadStatsKey(): string {
+  return "exact-head-stats";
 }
 
-function exactInventoryReservationKey(reservationId: string): string {
-  return `exact-inventory-reservation:${reservationId.toLowerCase()}`;
+const EXACT_HEAD_SELECTION_WINDOW = 32;
+
+type ExactHeadSelectionIndexRecord = {
+  headId: string;
+};
+
+function exactHeadSelectionIndexPrefix(head: {
+  network: string;
+  payTo: string;
+  scriptPublicKey: string;
+}): string {
+  const cohort = sha256Hex(
+    JSON.stringify([
+      head.network,
+      head.payTo,
+      head.scriptPublicKey.toLowerCase(),
+    ]),
+  );
+  return `exact-head-select:${cohort}:`;
+}
+
+function exactHeadThresholdKey(value: string): string {
+  const encoded = parseSompiString(value).toString(16);
+  if (encoded.length > 16)
+    throw new Error("exact head selection amount exceeds uint64");
+  return encoded.padStart(16, "0");
+}
+
+function exactHeadSelectionIndexKey(head: ExactHeadRecord): string {
+  return `${exactHeadSelectionIndexPrefix(head)}${exactHeadThresholdKey(
+    head.additiveThresholdSompi,
+  )}:${head.headId.toLowerCase()}`;
+}
+
+function exactHeadSelectionIndexRange(request: ExactHeadSelectionRequest): {
+  prefix: string;
+  start: string;
+  end: string;
+} {
+  const prefix = exactHeadSelectionIndexPrefix({
+    network: request.network,
+    payTo: request.payTo,
+    scriptPublicKey: request.payToScriptPublicKey,
+  });
+  return {
+    prefix,
+    start: `${prefix}${exactHeadThresholdKey(
+      request.minimumAdditiveThresholdSompi,
+    )}:`,
+    // Durable Object list ranges are end-exclusive. `;` sorts directly after
+    // the `:` separator, so all head ids at the maximum threshold are included.
+    end: `${prefix}${exactHeadThresholdKey(request.amount)};`,
+  };
+}
+
+async function putExactHead(
+  txn: GatewayTransaction,
+  previous: ExactHeadRecord | undefined,
+  next: ExactHeadRecord,
+): Promise<void> {
+  const stats = await loadOrRebuildExactHeadStats(txn);
+  if (!previous) {
+    stats.total += 1;
+    stats[next.status] += 1;
+  } else if (previous.status !== next.status) {
+    stats[previous.status] -= 1;
+    stats[next.status] += 1;
+  }
+  if (previous?.status === "available") {
+    await txn.delete(exactHeadSelectionIndexKey(previous));
+  }
+  await txn.put(exactHeadKey(next.headId), clone(next));
+  if (next.status === "available") {
+    await txn.put<ExactHeadSelectionIndexRecord>(
+      exactHeadSelectionIndexKey(next),
+      { headId: next.headId.toLowerCase() },
+    );
+  }
+  await txn.put(exactHeadStatsKey(), stats);
+}
+
+async function loadOrRebuildExactHeadStats(
+  txn: GatewayTransaction,
+): Promise<ExactHeadStats> {
+  const stored = await txn.get<ExactHeadStats>(exactHeadStatsKey());
+  if (stored) return clone(stored);
+  const stats: ExactHeadStats = {
+    total: 0,
+    available: 0,
+    claimed: 0,
+    unavailable: 0,
+    retired: 0,
+  };
+  for (const head of (
+    await txn.list<ExactHeadRecord>({ prefix: "exact-head:" })
+  ).values()) {
+    stats.total += 1;
+    stats[head.status] += 1;
+  }
+  return stats;
+}
+
+function exactAttemptKey(transactionId: string): string {
+  return `exact-attempt:${transactionId.toLowerCase()}`;
 }
 
 function paymentIdentifierKey(id: string): string {
@@ -675,203 +1216,25 @@ function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : clone(value);
 }
 
-function exactReservationTerms(record: ExactReservationRecord): Omit<ExactReservationRecord, "reservedAt" | "status" | "transactionId"> {
-  const { reservedAt: _reservedAt, status: _status, transactionId: _transactionId, ...terms } = record;
-  return terms;
-}
-
-function exactInventoryTerms(
-  record: GatewayExactInventoryRecord,
-): Omit<
-  GatewayExactInventoryRecord,
-  "status" | "registeredAt" | "updatedAt" | "reservedAt" | "expiresAt" | "reservationId" | "transactionId" | "consumedAt" | "retiredAt"
-> {
-  const {
-    status: _status,
-    registeredAt: _registeredAt,
-    updatedAt: _updatedAt,
-    reservedAt: _reservedAt,
-    expiresAt: _expiresAt,
-    reservationId: _reservationId,
-    transactionId: _transactionId,
-    consumedAt: _consumedAt,
-    retiredAt: _retiredAt,
-    ...terms
-  } = record;
-  return terms;
-}
-
-function normalizeExactInventoryRegistration(input: GatewayExactInventoryRegistration, nowIso: string): GatewayExactInventoryRecord {
-  const inventoryId = (input.inventoryId ?? `${input.borrowOutpoint.txid}:${input.borrowOutpoint.index}`).toLowerCase();
-  if (!/^[0-9a-f]{64}:\d+$/.test(inventoryId)) throw new Error("exact inventory id must be <txid>:<index>");
-  if (input.network !== "kaspa:testnet-10") throw new Error("exact inventory only supports kaspa:testnet-10");
-  if (input.templateId !== "kaspa-x402-kip10-additive-v1") throw new Error("exact inventory templateId must be KIP-10 additive");
-  if (input.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0") throw new Error("exact inventory transaction encoding is not supported");
-  if (!/^[0-9a-f]{64}$/i.test(input.borrowOutpoint.txid)) throw new Error("exact inventory borrow txid must be 32-byte hex");
-  if (!Number.isInteger(input.borrowOutpoint.index) || input.borrowOutpoint.index < 0 || input.borrowOutpoint.index > 0xffffffff) {
-    throw new Error("exact inventory borrow index is outside uint32 range");
-  }
-  if (!/^0000(?:[0-9a-f]{2})+$/i.test(input.borrowScriptPublicKey)) {
-    throw new Error("exact inventory borrow script public key must be serialized script public key hex");
-  }
-  if (!/^(?:[0-9a-f]{2})+$/i.test(input.borrowRedeemScript)) throw new Error("exact inventory borrow redeem script must be byte hex");
-  const borrowAmount = parseSompiString(input.borrowAmount);
-  const additiveThreshold = parseSompiString(input.additiveThresholdSompi);
-  if (borrowAmount < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory borrow amount is below the standard output safety floor");
-  if (additiveThreshold < MIN_EXACT_INVENTORY_SOMPI) throw new Error("exact inventory additive threshold is below the server minimum");
-  const template = parseKip10AdditiveRedeemScript(input.borrowRedeemScript);
-  if (template.amount !== input.additiveThresholdSompi) {
-    throw new Error("exact inventory KIP-10 script threshold must match additiveThresholdSompi");
-  }
-  const expectedBorrowScript = serializedScriptPublicKey(payToScriptHashScript(input.borrowRedeemScript)).toLowerCase();
-  if (expectedBorrowScript !== input.borrowScriptPublicKey.toLowerCase()) {
-    throw new Error("exact inventory KIP-10 redeem script must match borrowScriptPublicKey");
-  }
-  if (!Number.isInteger(input.paymentOutputIndex) || input.paymentOutputIndex < 0 || input.paymentOutputIndex > 0xffffffff) {
-    throw new Error("exact inventory payment output index is outside uint32 range");
-  }
-  const record: GatewayExactInventoryRecord = {
-    inventoryId,
-    network: input.network,
-    templateId: input.templateId,
-    transactionEncoding: input.transactionEncoding,
-    borrowOutpoint: { txid: input.borrowOutpoint.txid.toLowerCase(), index: input.borrowOutpoint.index },
-    borrowAmount: input.borrowAmount,
-    borrowScriptPublicKey: input.borrowScriptPublicKey.toLowerCase(),
-    borrowRedeemScript: input.borrowRedeemScript.toLowerCase(),
-    additiveThresholdSompi: input.additiveThresholdSompi,
-    paymentOutputIndex: input.paymentOutputIndex,
-    ...(input.note ? { note: input.note } : {}),
-    status: "available",
-    registeredAt: nowIso,
-    updatedAt: nowIso,
-  };
-  if (record.inventoryId !== `${record.borrowOutpoint.txid}:${record.borrowOutpoint.index}`) {
-    throw new Error("exact inventory id must match borrow outpoint");
-  }
-  return record;
-}
-
-function exactInventoryMatchesRequest(record: GatewayExactInventoryRecord, request: ExactBorrowReservationRequest): boolean {
-  return (
-    record.status === "available" &&
-    record.network === request.network &&
-    record.templateId === "kaspa-x402-kip10-additive-v1" &&
-    record.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0" &&
-    parseSompiString(record.additiveThresholdSompi) >= parseSompiString(request.minimumAdditiveThresholdSompi)
-  );
-}
-
-function exactInventoryReservationId(request: ExactBorrowReservationRequest, inventory: GatewayExactInventoryRecord, expiresAt: string): string {
-  return sha256Hex(
-    stableJson({
-      domain: "kaspa:x402:gateway-exact-reservation:v1",
-      network: request.network,
-      amount: request.amount,
-      payTo: request.payTo,
-      payToScriptPublicKey: request.payToScriptPublicKey.toLowerCase(),
-      resource: request.resource.url,
-      maxTimeoutSeconds: request.maxTimeoutSeconds,
-      minimumAdditiveThresholdSompi: request.minimumAdditiveThresholdSompi,
-      inventoryId: inventory.inventoryId,
-      borrowOutpoint: inventory.borrowOutpoint,
-      borrowAmount: inventory.borrowAmount,
-      borrowScriptPublicKey: inventory.borrowScriptPublicKey,
-      borrowRedeemScript: inventory.borrowRedeemScript,
-      additiveThresholdSompi: inventory.additiveThresholdSompi,
-      paymentOutputIndex: inventory.paymentOutputIndex,
-      expiresAt,
-    }),
-  );
-}
-
-async function retireExpiredExactInventory(txn: GatewayTransaction, nowMs: number, nowIso: string): Promise<number> {
-  const entries = await txn.list<GatewayExactInventoryRecord>({ prefix: "exact-inventory:" });
-  let retired = 0;
-  for (const record of entries.values()) {
-    if (record.status !== "reserved" || !record.expiresAt || Date.parse(record.expiresAt) > nowMs) continue;
-    await txn.put(exactInventoryKey(record.inventoryId), {
-      ...clone(record),
-      status: "retired",
-      retiredAt: nowIso,
-      updatedAt: nowIso,
-    });
-    retired += 1;
-  }
-  return retired;
-}
-
-async function markInventoryConsumed(
+async function requireExactAttempt(
   txn: GatewayTransaction,
-  reservationId: string,
   transactionId: string,
-  continuation?: ExactBorrowContinuation,
-): Promise<void> {
-  const inventoryId = await txn.get<string>(exactInventoryReservationKey(reservationId));
-  if (!inventoryId) return;
-  const current = await txn.get<GatewayExactInventoryRecord>(exactInventoryKey(inventoryId));
-  if (!current) return;
-  if (current.status === "consumed") {
-    if (current.transactionId?.toLowerCase() !== transactionId.toLowerCase()) {
-      throw new Error("exact inventory was already consumed by a different transaction");
-    }
-  } else {
-    if (current.reservationId?.toLowerCase() !== reservationId.toLowerCase()) return;
-    const nowIso = new Date().toISOString();
-    await txn.put(exactInventoryKey(current.inventoryId), {
-      ...clone(current),
-      status: "consumed",
-      transactionId: transactionId.toLowerCase(),
-      consumedAt: nowIso,
-      updatedAt: nowIso,
-    });
-  }
-  if (!continuation) return;
-  const txid = transactionId.toLowerCase();
-  if (continuation.outpoint.txid.toLowerCase() !== txid) {
-    throw new Error("exact continuation outpoint must belong to the consumed transaction");
-  }
-  if (continuation.scriptPublicKey.toLowerCase() !== current.borrowScriptPublicKey) {
-    throw new Error("exact continuation script must match the consumed KIP-10 inventory");
-  }
-  if (
-    parseSompiString(continuation.amount) <
-    parseSompiString(current.borrowAmount) + parseSompiString(current.additiveThresholdSompi)
-  ) {
-    throw new Error("exact continuation amount is below the KIP-10 additive threshold");
-  }
-  const nowIso = new Date().toISOString();
-  const recycled = normalizeExactInventoryRegistration(
-    {
-      network: current.network,
-      templateId: current.templateId,
-      transactionEncoding: current.transactionEncoding,
-      borrowOutpoint: {
-        txid,
-        index: continuation.outpoint.index,
-      },
-      borrowAmount: continuation.amount,
-      borrowScriptPublicKey: continuation.scriptPublicKey,
-      borrowRedeemScript: current.borrowRedeemScript,
-      additiveThresholdSompi: current.additiveThresholdSompi,
-      paymentOutputIndex: current.paymentOutputIndex,
-      note: `recycled from ${current.inventoryId}`,
-    },
-    nowIso,
+): Promise<ExactSettlementAttemptRecord> {
+  const attempt = await txn.get<ExactSettlementAttemptRecord>(
+    exactAttemptKey(transactionId),
   );
-  const key = exactInventoryKey(recycled.inventoryId);
-  const existing = await txn.get<GatewayExactInventoryRecord>(key);
-  if (existing) {
-    if (stableJson(exactInventoryTerms(existing)) !== stableJson(exactInventoryTerms(recycled))) {
-      throw new Error("exact continuation inventory already exists with different terms");
-    }
-    return;
-  }
-  await txn.put(key, recycled);
+  if (!attempt) throw new Error("exact settlement attempt was not found");
+  return attempt;
 }
 
-function compareExactInventory(left: GatewayExactInventoryRecord, right: GatewayExactInventoryRecord): number {
-  return left.registeredAt.localeCompare(right.registeredAt) || left.inventoryId.localeCompare(right.inventoryId);
+function sameOutpoint(
+  left: { txid: string; index: number },
+  right: { txid: string; index: number },
+): boolean {
+  return (
+    left.txid.toLowerCase() === right.txid.toLowerCase() &&
+    left.index === right.index
+  );
 }
 
 function stableJson(value: unknown): string {
@@ -882,4 +1245,45 @@ function stableJson(value: unknown): string {
     .sort()
     .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
     .join(",")}}`;
+}
+
+function assertExactHandlerResultTransition(
+  attempt: ExactSettlementAttemptRecord,
+  result: ProtectedHandlerResult,
+  completedAt: string,
+): void {
+  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
+    throw new Error("exact handler has not started on an accepted settlement");
+  if (Number.isNaN(Date.parse(completedAt)))
+    throw new Error("exact handler completion time must be an ISO date string");
+  if (
+    result.status !== undefined &&
+    (!Number.isInteger(result.status) ||
+      result.status < 100 ||
+      result.status > 599)
+  ) {
+    throw new Error("exact handler status is invalid");
+  }
+  if (
+    result.headers &&
+    Object.values(result.headers).some((value) => typeof value !== "string")
+  ) {
+    throw new Error("exact handler headers are invalid");
+  }
+  if (result.headers && Object.keys(result.headers).length > 64)
+    throw new Error("exact handler has too many response headers");
+  let serialized: string;
+  try {
+    serialized = JSON.stringify(result);
+  } catch {
+    throw new Error("exact handler result must be JSON serializable");
+  }
+  if (new TextEncoder().encode(serialized).byteLength > 256 * 1024)
+    throw new Error("exact handler result exceeds the durable size limit");
+  if (
+    result.chargedAmount !== undefined &&
+    result.chargedAmount !== attempt.amount
+  ) {
+    throw new Error("exact handler charge must equal the accepted amount");
+  }
 }

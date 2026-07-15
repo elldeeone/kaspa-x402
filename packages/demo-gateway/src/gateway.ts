@@ -13,8 +13,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
-  type ExactBorrowReservationProvider,
-  type ExactBorrowReservationRequest,
+  type ExactHeadRecord,
   type ServerStateStore,
 } from "@kaspa-x402/server";
 import {
@@ -23,17 +22,21 @@ import {
   NativeAddressCodec,
   NativeVoucherVerifier,
   PnnBroadcastChainProvider,
+  RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
 } from "./adapters.js";
-import { readGatewayConfig, type GatewayConfig, type GatewayEnv } from "./config.js";
+import {
+  readGatewayConfig,
+  type GatewayConfig,
+  type GatewayEnv,
+} from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
 import {
   DurableGatewayLockManager,
   type GatewayCanaryCheck,
   type GatewayCanaryReport,
-  type GatewayExactInventoryRegistration,
   type GatewayStateClient,
 } from "./state.js";
 
@@ -44,68 +47,129 @@ const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
 
-export async function handleGatewayRequest(request: Request, env: GatewayEnv, context: WaitUntilContext): Promise<Response> {
+export async function handleGatewayRequest(
+  request: Request,
+  env: GatewayEnv,
+  context: WaitUntilContext,
+): Promise<Response> {
   let config: GatewayConfig;
   try {
     config = readGatewayConfig(env);
   } catch (error) {
-    return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(undefined) });
-  }
-
-  const url = new URL(request.url);
-  if (request.method === "OPTIONS") return new Response(null, { status: 204, headers: corsHeaders(config) });
-
-  const state = new RemoteGatewayState(env.GATEWAY_STATE);
-  if (url.pathname.startsWith("/admin/exact-inventory")) {
-    return exactInventoryAdminResponse(request, url, config, state);
-  }
-  if (url.pathname === "/" && request.method === "GET") return json(indexBody(url), { headers: corsHeaders(config) });
-  if (url.pathname === "/health" && request.method === "GET") return healthResponse(config, state);
-  if (url.pathname === "/metrics" && request.method === "GET") return json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) });
-  if (url.pathname === "/canary" && request.method === "GET") return canaryResponse(config, state);
-
-  if (url.pathname === "/supported" && request.method === "GET") {
-    const exactAvailable = await hostedExactAvailable(config, state);
-    return json({ ok: true, enabled: config.enabled, kinds: gatewaySupportedKinds(config, exactAvailable) }, { headers: corsHeaders(config) });
-  }
-
-  const profile = routeProfile(url.pathname);
-  if (!profile) return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
-  if (request.method !== "GET" && request.method !== "HEAD") {
-    return json({ ok: false, error: "method_not_allowed" }, { status: 405, headers: corsHeaders(config) });
-  }
-  if (!config.enabled) {
-    return json({ ok: false, error: "gateway_disabled" }, { status: 503, headers: corsHeaders(config) });
-  }
-  const rate = await state.checkRateLimit(rateScope(request, profile), Date.now(), config.rateLimitPerMinute, 60_000);
-  if (!rate.allowed) {
     return json(
-      { ok: false, error: "rate_limited", resetAt: new Date(rate.resetAt).toISOString() },
-      { status: 429, headers: { ...corsHeaders(config), "retry-after": String(Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000))) } },
+      { ok: false, error: errorMessage(error) },
+      { status: 503, headers: corsHeaders(undefined) },
     );
   }
 
-  const exactAvailable = profile === "exact" ? await hostedExactAvailable(config, state) : false;
-  if (profile === "exact" && !exactAvailable) {
-    return json({ ok: false, error: "exact_unavailable" }, { status: 503, headers: corsHeaders(config) });
+  const url = new URL(request.url);
+  if (request.method === "OPTIONS")
+    return new Response(null, { status: 204, headers: corsHeaders(config) });
+
+  const state = new RemoteGatewayState(env.GATEWAY_STATE);
+  if (url.pathname.startsWith("/admin/exact-heads")) {
+    return exactHeadsAdminResponse(request, url, config, state);
+  }
+  if (url.pathname === "/" && request.method === "GET")
+    return json(indexBody(url), { headers: corsHeaders(config) });
+  if (url.pathname === "/health" && request.method === "GET")
+    return healthResponse(config, state);
+  if (url.pathname === "/metrics" && request.method === "GET")
+    return json(
+      { ok: true, metrics: await state.metrics() },
+      { headers: corsHeaders(config) },
+    );
+  if (url.pathname === "/canary" && request.method === "GET")
+    return canaryResponse(config, state);
+
+  if (url.pathname === "/supported" && request.method === "GET") {
+    const exactAvailable = await hostedExactAvailable(config, state);
+    return json(
+      {
+        ok: true,
+        enabled: config.enabled,
+        kinds: gatewaySupportedKinds(config, exactAvailable),
+      },
+      { headers: corsHeaders(config) },
+    );
+  }
+
+  const profile = routeProfile(url.pathname);
+  if (!profile)
+    return json(
+      { ok: false, error: "not_found" },
+      { status: 404, headers: corsHeaders(config) },
+    );
+  if (request.method !== "GET" && request.method !== "HEAD") {
+    return json(
+      { ok: false, error: "method_not_allowed" },
+      { status: 405, headers: corsHeaders(config) },
+    );
+  }
+  if (!config.enabled) {
+    return json(
+      { ok: false, error: "gateway_disabled" },
+      { status: 503, headers: corsHeaders(config) },
+    );
+  }
+  const rate = await state.checkRateLimit(
+    rateScope(request, profile),
+    Date.now(),
+    config.rateLimitPerMinute,
+    60_000,
+  );
+  if (!rate.allowed) {
+    return json(
+      {
+        ok: false,
+        error: "rate_limited",
+        resetAt: new Date(rate.resetAt).toISOString(),
+      },
+      {
+        status: 429,
+        headers: {
+          ...corsHeaders(config),
+          "retry-after": String(
+            Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)),
+          ),
+        },
+      },
+    );
+  }
+
+  if (profile === "exact" && !hostedExactConfigured(config)) {
+    return json(
+      { ok: false, error: "exact_unavailable" },
+      { status: 503, headers: corsHeaders(config) },
+    );
   }
 
   let gateway: { server: DirectModeServer };
   try {
-    gateway = await createGateway(config, state, { exactAvailable });
+    gateway = await createGateway(config, state);
   } catch (error) {
-    return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(config) });
+    return json(
+      { ok: false, error: errorMessage(error) },
+      { status: 503, headers: corsHeaders(config) },
+    );
   }
-
   const resource = resourceFor(url, profile);
-  const unsupported = gatewayUnsupportedPaymentResponse(request, gateway.server, resource, profile, config);
+  const unsupported = await gatewayUnsupportedPaymentResponse(
+    request,
+    gateway.server,
+    resource,
+    profile,
+    config,
+  );
   if (unsupported) {
     context.waitUntil(state.incrementMetric("unsupported_payment_retries"));
     return withCors(unsupported, config);
   }
 
-  context.waitUntil(state.incrementMetric(`requests_${profileMetric(profile)}`));
-  const result = await gateway.server.handlePaidRequest(
+  context.waitUntil(
+    state.incrementMetric(`requests_${profileMetric(profile)}`),
+  );
+  let result = await gateway.server.handlePaidRequest(
     {
       method: request.method,
       url: url.toString(),
@@ -136,20 +200,43 @@ export async function handleGatewayRequest(request: Request, env: GatewayEnv, co
                 scheme: payment.scheme,
                 channelId: payment.channel.channelId,
                 openedChannel: payment.openedChannel,
-                chargedCumulativeAmount: payment.channel.chargedCumulativeAmount,
+                chargedCumulativeAmount:
+                  payment.channel.chargedCumulativeAmount,
               },
       },
       chargedAmount: payment.accepted.amount,
     }),
   );
 
-  if (result.status === 402) context.waitUntil(state.incrementMetric(`offers_${profileMetric(profile)}`));
-  else if (result.status >= 200 && result.status < 300) context.waitUntil(state.incrementMetric(`paid_${profileMetric(profile)}`));
+  if (
+    profile === "exact" &&
+    config.exactProfile === "additive" &&
+    result.status === 503 &&
+    (result.body as { error?: unknown } | undefined)?.error ===
+      "invalid_payload" &&
+    !(await hostedExactAvailable(config, state))
+  ) {
+    result = {
+      status: 503,
+      headers: {},
+      body: { ok: false, error: "exact_unavailable" },
+    };
+  }
+
+  if (result.status === 402)
+    context.waitUntil(
+      state.incrementMetric(`offers_${profileMetric(profile)}`),
+    );
+  else if (result.status >= 200 && result.status < 300)
+    context.waitUntil(state.incrementMetric(`paid_${profileMetric(profile)}`));
   else context.waitUntil(state.incrementMetric("errors_total"));
   return serverResponse(result, config, request.method === "HEAD");
 }
 
-export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger = "scheduled"): Promise<GatewayCanaryReport> {
+export async function runGatewayCanary(
+  env: GatewayEnv,
+  trigger: CanaryTrigger = "scheduled",
+): Promise<GatewayCanaryReport> {
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
   const checks: GatewayCanaryCheck[] = [];
   let config: GatewayConfig;
@@ -165,34 +252,70 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
   checks.push(
     await checked("kaspa-rest", async () => {
       const chain = await new KaspaRestClient(config.chainApiBase).health();
-      return { detail: "REST chain health returned testnet-10 evidence", evidence: chain };
+      return {
+        detail: "REST chain health returned testnet-10 evidence",
+        evidence: chain,
+      };
     }),
   );
   checks.push(
     await checked("schema-url", async () => {
-      const response = await fetchWithTimeout(`${config.siteBaseUrl}/schemas/payment-required.schema.json`);
+      const response = await fetchWithTimeout(
+        `${config.siteBaseUrl}/schemas/payment-required.schema.json`,
+      );
       if (!response.ok) throw new Error(`schema returned ${response.status}`);
-      const schema = await readJsonWithLimit<{ $id?: unknown }>(response, MAX_CANARY_JSON_BYTES, "payment-required schema");
-      if (schema.$id !== "https://kaspa-x402.org/schemas/payment-required.schema.json") throw new Error("schema id mismatch");
-      return { detail: "payment-required schema resolved", evidence: { status: response.status } };
+      const schema = await readJsonWithLimit<{ $id?: unknown }>(
+        response,
+        MAX_CANARY_JSON_BYTES,
+        "payment-required schema",
+      );
+      if (
+        schema.$id !==
+        "https://kaspa-x402.org/schemas/payment-required.schema.json"
+      )
+        throw new Error("schema id mismatch");
+      return {
+        detail: "payment-required schema resolved",
+        evidence: { status: response.status },
+      };
     }),
   );
   checks.push(
     await checked("release-snapshot", async () => {
-      const response = await fetchWithTimeout(`${config.siteBaseUrl}/v0.1.0-alpha.1/release.json?canary=${Date.now()}`);
-      if (!response.ok) throw new Error(`release snapshot returned ${response.status}`);
-      const release = await readJsonWithLimit<{ version?: unknown }>(response, MAX_CANARY_JSON_BYTES, "release snapshot");
-      if (release.version !== "0.1.0-alpha.1") throw new Error("release snapshot version mismatch");
-      return { detail: "immutable alpha.1 release snapshot resolved", evidence: { status: response.status } };
+      const response = await fetchWithTimeout(
+        `${config.siteBaseUrl}/v0.1.0-alpha.1/release.json?canary=${Date.now()}`,
+      );
+      if (!response.ok)
+        throw new Error(`release snapshot returned ${response.status}`);
+      const release = await readJsonWithLimit<{ version?: unknown }>(
+        response,
+        MAX_CANARY_JSON_BYTES,
+        "release snapshot",
+      );
+      if (release.version !== "0.1.0-alpha.1")
+        throw new Error("release snapshot version mismatch");
+      return {
+        detail: "immutable alpha.1 release snapshot resolved",
+        evidence: { status: response.status },
+      };
     }),
   );
   checks.push(
     await checked("docs-index", async () => {
       const response = await fetchWithTimeout(`${config.siteBaseUrl}/docs/`);
-      if (!response.ok) throw new Error(`doc route returned ${response.status}`);
-      const text = await readTextUntil(response, "<h1>Docs</h1>", MAX_CANARY_DOC_BYTES);
-      if (!text.includes("<h1>Docs</h1>")) throw new Error("docs index content mismatch");
-      return { detail: "public docs index resolved", evidence: { status: response.status } };
+      if (!response.ok)
+        throw new Error(`doc route returned ${response.status}`);
+      const text = await readTextUntil(
+        response,
+        "<h1>Docs</h1>",
+        MAX_CANARY_DOC_BYTES,
+      );
+      if (!text.includes("<h1>Docs</h1>"))
+        throw new Error("docs index content mismatch");
+      return {
+        detail: "public docs index resolved",
+        evidence: { status: response.status },
+      };
     }),
   );
   if (config.enabled) {
@@ -200,24 +323,36 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
     if (exactAvailable) {
       checks.push(await supportedKindCheck(env, config, "exact"));
     } else {
-      checks.push(skippedCheck("exact-offer", exactUnavailableReason(config, await state.exactInventoryStats())));
+      checks.push(
+        skippedCheck(
+          "exact-offer",
+          exactUnavailableReason(config, await exactHeadStats(state)),
+        ),
+      );
     }
     checks.push(await offerCheck(env, config, "/batch", "batch-settlement"));
     checks.push(await unsupportedSchemeCheck(env, config));
   } else {
     checks.push(skippedCheck("exact-offer", "gateway disabled by operator"));
     checks.push(skippedCheck("batch-offer", "gateway disabled by operator"));
-    checks.push(skippedCheck("unsupported-scheme-rejection", "gateway disabled by operator"));
+    checks.push(
+      skippedCheck(
+        "unsupported-scheme-rejection",
+        "gateway disabled by operator",
+      ),
+    );
   }
   checks.push({
     name: "paid-exact-canary",
     status: "skipped",
-    detail: "scheduled checks do not hold spending keys; run the manual paid exact canary from an isolated funded testnet wallet",
+    detail:
+      "scheduled checks do not hold spending keys; run the manual paid exact canary from an isolated funded testnet wallet",
   });
   checks.push({
     name: "replay-rejection-canary",
     status: "skipped",
-    detail: "scheduled checks do not reuse paid evidence; run the manual replay canary after a funded exact or batch payment",
+    detail:
+      "scheduled checks do not reuse paid evidence; run the manual replay canary after a funded exact or batch payment",
   });
 
   const report = canaryReport(trigger, checks);
@@ -226,14 +361,28 @@ export async function runGatewayCanary(env: GatewayEnv, trigger: CanaryTrigger =
   return report;
 }
 
-async function hostedExactAvailable(config: GatewayConfig, state: GatewayStateClient): Promise<boolean> {
-  if (!config.hostedExactSettlementEnabled) return false;
-  if (config.chainBroadcastMode !== "pnn") return false;
-  const stats = await state.exactInventoryStats();
+async function hostedExactAvailable(
+  config: GatewayConfig,
+  state: GatewayStateClient,
+): Promise<boolean> {
+  if (!hostedExactConfigured(config)) return false;
+  if (config.exactProfile === "standard-native") return true;
+  const stats = await exactHeadStats(state);
   return stats.available > 0;
 }
 
-function gatewaySupportedKinds(config: GatewayConfig, exactAvailable: boolean): SupportedKind[] {
+function hostedExactConfigured(config: GatewayConfig): boolean {
+  return (
+    config.hostedExactSettlementEnabled &&
+    (config.exactProfile === "standard-native" ||
+      config.chainBroadcastMode === "pnn")
+  );
+}
+
+function gatewaySupportedKinds(
+  config: GatewayConfig,
+  exactAvailable: boolean,
+): SupportedKind[] {
   const kinds: SupportedKind[] = [];
   if (exactAvailable) {
     kinds.push({
@@ -242,8 +391,11 @@ function gatewaySupportedKinds(config: GatewayConfig, exactAvailable: boolean): 
       network: config.network,
       extra: {
         asset: "KAS",
-        binding: "kaspa-exact-v1",
-        templateId: "kaspa-x402-kip10-additive-v1",
+        binding: "kaspa-exact-v2",
+        profile: config.exactProfile,
+        ...(config.exactProfile === "additive"
+          ? { templateId: "kaspa-x402-kip10-additive-v1" }
+          : {}),
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
         modes: ["verify", "settle"],
       },
@@ -266,14 +418,18 @@ function gatewaySupportedKinds(config: GatewayConfig, exactAvailable: boolean): 
 async function createGateway(
   config: GatewayConfig,
   state: GatewayStateClient,
-  options: { exactAvailable: boolean },
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
   const currentDaa = BigInt(await rest.getVirtualDaaScore());
-  if (currentDaa + BigInt(config.refundTimeoutDaaDelta) >= KASPA_LOCK_TIME_THRESHOLD) {
-    throw new Error("computed refund DAA crosses the consensus timestamp boundary");
+  if (
+    currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
+    KASPA_LOCK_TIME_THRESHOLD
+  ) {
+    throw new Error(
+      "computed refund DAA crosses the consensus timestamp boundary",
+    );
   }
   const refundTimeoutDaa = BigInt(
     await state.resolveBatchRefundTimeoutDaa(
@@ -283,9 +439,15 @@ async function createGateway(
     ),
   );
   if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
-    throw new Error("computed refund DAA crosses the consensus timestamp boundary");
+    throw new Error(
+      "computed refund DAA crosses the consensus timestamp boundary",
+    );
   }
-  const restChainProvider = new RestKaspaChainProvider(rest, book, config.claimFeeSompi);
+  const restChainProvider = new RestKaspaChainProvider(
+    rest,
+    book,
+    config.claimFeeSompi,
+  );
   const store = new AddressRecordingStore(state, book);
   const server = new DirectModeServer({
     network: config.network,
@@ -293,6 +455,7 @@ async function createGateway(
     serverPublicKey: config.serverPublicKey,
     minDepositSompi: config.minDepositSompi,
     amount: config.batchAmount,
+    exactProfile: config.exactProfile,
     refundTimeoutDaa: refundTimeoutDaa.toString(),
     minimumRefundLeadDaa: config.minimumRefundLeadDaa,
     allowRollingRefundTimeoutDaa: true,
@@ -314,26 +477,13 @@ async function createGateway(
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
-    ...(options.exactAvailable ? { exactReservationProvider: new GatewayExactReservationProvider(state) } : {}),
+    exactHeadReconciler: new RestExactHeadReconciler(rest),
+    reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     requirePaymentIdentifier: false,
   });
   return { server };
-}
-
-class GatewayExactReservationProvider implements ExactBorrowReservationProvider {
-  readonly #state: GatewayStateClient;
-
-  constructor(state: GatewayStateClient) {
-    this.#state = state;
-  }
-
-  async reserveExactPayment(request: ExactBorrowReservationRequest) {
-    const reservation = await this.#state.reserveExactInventory(request);
-    if (!reservation) throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact reservation inventory unavailable");
-    return reservation;
-  }
 }
 
 class AddressRecordingStore implements ServerStateStore {
@@ -347,7 +497,8 @@ class AddressRecordingStore implements ServerStateStore {
 
   async loadChannel(channelId: string) {
     const channel = await this.#inner.loadChannel(channelId);
-    if (channel) this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
+    if (channel)
+      this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
     return channel;
   }
 
@@ -358,7 +509,8 @@ class AddressRecordingStore implements ServerStateStore {
 
   async listChannels() {
     const channels = await this.#inner.listChannels();
-    for (const channel of channels) this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
+    for (const channel of channels)
+      this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
     return channels;
   }
 
@@ -378,39 +530,140 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.loadExactPayment(transactionId);
   }
 
-  commitSettlement(record: Parameters<ServerStateStore["commitSettlement"]>[0]) {
+  registerExactHead(
+    record: Parameters<ServerStateStore["registerExactHead"]>[0],
+  ) {
+    return this.#inner.registerExactHead(record);
+  }
+
+  loadExactHead(headId: string) {
+    return this.#inner.loadExactHead(headId);
+  }
+
+  listExactHeads() {
+    return this.#inner.listExactHeads();
+  }
+
+  exactHeadStats() {
+    return this.#inner.exactHeadStats();
+  }
+
+  selectExactHead(request: Parameters<ServerStateStore["selectExactHead"]>[0]) {
+    return this.#inner.selectExactHead(request);
+  }
+
+  claimExactSettlement(
+    record: Parameters<ServerStateStore["claimExactSettlement"]>[0],
+  ) {
+    return this.#inner.claimExactSettlement(record);
+  }
+
+  loadExactSettlementAttempt(transactionId: string) {
+    return this.#inner.loadExactSettlementAttempt(transactionId);
+  }
+
+  recordExactSettlementBroadcast(
+    transactionId: string,
+    finality: Parameters<ServerStateStore["recordExactSettlementBroadcast"]>[1],
+    observedAt: string,
+  ) {
+    return this.#inner.recordExactSettlementBroadcast(
+      transactionId,
+      finality,
+      observedAt,
+    );
+  }
+
+  acceptExactSettlement(
+    transactionId: string,
+    finality: Parameters<ServerStateStore["acceptExactSettlement"]>[1],
+    observedAt: string,
+  ) {
+    return this.#inner.acceptExactSettlement(
+      transactionId,
+      finality,
+      observedAt,
+    );
+  }
+
+  beginExactHandler(transactionId: string, startedAt: string) {
+    return this.#inner.beginExactHandler(transactionId, startedAt);
+  }
+
+  recordExactHandlerResult(
+    transactionId: string,
+    result: Parameters<ServerStateStore["recordExactHandlerResult"]>[1],
+    completedAt: string,
+  ) {
+    return this.#inner.recordExactHandlerResult(
+      transactionId,
+      result,
+      completedAt,
+    );
+  }
+
+  markExactHandlerRecoveryRequired(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.markExactHandlerRecoveryRequired(
+      transactionId,
+      reason,
+      observedAt,
+    );
+  }
+
+  abandonExactSettlement(
+    transactionId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.abandonExactSettlement(
+      transactionId,
+      reason,
+      observedAt,
+    );
+  }
+
+  markExactHeadUnavailable(
+    input: Parameters<ServerStateStore["markExactHeadUnavailable"]>[0],
+  ) {
+    return this.#inner.markExactHeadUnavailable(input);
+  }
+
+  applyExactHeadLineage(
+    input: Parameters<ServerStateStore["applyExactHeadLineage"]>[0],
+  ) {
+    return this.#inner.applyExactHeadLineage(input);
+  }
+
+  commitSettlement(
+    record: Parameters<ServerStateStore["commitSettlement"]>[0],
+  ) {
     return this.#inner.commitSettlement(record);
   }
 
-  commitExactPayment(record: Parameters<ServerStateStore["commitExactPayment"]>[0]) {
-    return this.#inner.commitExactPayment(record);
-  }
-
-  saveExactReservation(record: Parameters<ServerStateStore["saveExactReservation"]>[0]) {
-    return this.#inner.saveExactReservation(record);
-  }
-
-  loadExactReservation(reservationId: string) {
-    return this.#inner.loadExactReservation(reservationId);
-  }
-
-  consumeExactReservation(
-    reservationId: string,
-    transactionId: string,
-    continuation?: Parameters<ServerStateStore["consumeExactReservation"]>[2],
+  commitExactPayment(
+    record: Parameters<ServerStateStore["commitExactPayment"]>[0],
   ) {
-    return this.#inner.consumeExactReservation(reservationId, transactionId, continuation);
+    return this.#inner.commitExactPayment(record);
   }
 
   loadOpenClaimAttempt(channelId: string) {
     return this.#inner.loadOpenClaimAttempt(channelId);
   }
 
-  saveClaimAttempt(record: Parameters<ServerStateStore["saveClaimAttempt"]>[0]) {
+  saveClaimAttempt(
+    record: Parameters<ServerStateStore["saveClaimAttempt"]>[0],
+  ) {
     return this.#inner.saveClaimAttempt(record);
   }
 
-  applyClaimAttempt(channel: Parameters<ServerStateStore["applyClaimAttempt"]>[0], attempt: Parameters<ServerStateStore["applyClaimAttempt"]>[1]) {
+  applyClaimAttempt(
+    channel: Parameters<ServerStateStore["applyClaimAttempt"]>[0],
+    attempt: Parameters<ServerStateStore["applyClaimAttempt"]>[1],
+  ) {
     return this.#inner.applyClaimAttempt(channel, attempt);
   }
 
@@ -419,7 +672,10 @@ class AddressRecordingStore implements ServerStateStore {
   }
 }
 
-async function healthResponse(config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
+async function healthResponse(
+  config: GatewayConfig,
+  state: GatewayStateClient,
+): Promise<Response> {
   try {
     const rest = new KaspaRestClient(config.chainApiBase);
     const chain = await rest.health();
@@ -429,95 +685,226 @@ async function healthResponse(config: GatewayConfig, state: GatewayStateClient):
         enabled: config.enabled,
         gateway: "kaspa-x402-testnet",
         hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
+        exactProfile: config.exactProfile,
         chainBroadcastMode: config.chainBroadcastMode,
-        pnnEndpoints: config.chainBroadcastMode === "pnn" ? config.pnnEndpoints : [],
+        pnnEndpoints:
+          config.chainBroadcastMode === "pnn" ? config.pnnEndpoints : [],
         chain,
         metrics: await state.metrics(),
-        exactInventory: await state.exactInventoryStats(),
+        exactHeads: await exactHeadStats(state),
         canary: await state.loadCanaryReport(),
       },
       { headers: corsHeaders(config) },
     );
   } catch (error) {
-    return json({ ok: false, error: errorMessage(error) }, { status: 503, headers: corsHeaders(config) });
+    return json(
+      { ok: false, error: errorMessage(error) },
+      { status: 503, headers: corsHeaders(config) },
+    );
   }
 }
 
-async function exactInventoryAdminResponse(request: Request, url: URL, config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
-  if (!config.adminToken) return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
-  if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`) {
-    return json({ ok: false, error: "unauthorized" }, { status: 401, headers: corsHeaders(config) });
-  }
-  if (url.pathname === "/admin/exact-inventory" && request.method === "GET") {
+async function exactHeadsAdminResponse(
+  request: Request,
+  url: URL,
+  config: GatewayConfig,
+  state: GatewayStateClient,
+): Promise<Response> {
+  if (!config.adminToken)
     return json(
-      { ok: true, stats: await state.exactInventoryStats(), inventory: await state.listExactInventory() },
+      { ok: false, error: "not_found" },
+      { status: 404, headers: corsHeaders(config) },
+    );
+  if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`) {
+    return json(
+      { ok: false, error: "unauthorized" },
+      { status: 401, headers: corsHeaders(config) },
+    );
+  }
+  if (url.pathname === "/admin/exact-heads" && request.method === "GET") {
+    return json(
+      {
+        ok: true,
+        stats: await exactHeadStats(state),
+        heads: await state.listExactHeads(),
+      },
       { headers: corsHeaders(config) },
     );
   }
-  if (url.pathname === "/admin/exact-inventory/register" && request.method === "POST") {
+  if (
+    url.pathname === "/admin/exact-heads/register" &&
+    request.method === "POST"
+  ) {
     try {
-      const body = await readRequestJsonWithLimit<Record<string, unknown>>(request, MAX_ADMIN_JSON_BYTES, "exact inventory registration");
-      const registered = await state.registerExactInventoryBatch(exactInventoryRegistrations(body));
-      return json({ ok: true, registered, stats: await state.exactInventoryStats() }, { headers: corsHeaders(config) });
+      const body = await readRequestJsonWithLimit<Record<string, unknown>>(
+        request,
+        MAX_ADMIN_JSON_BYTES,
+        "exact head registration",
+      );
+      const records = exactHeadRegistrations(body);
+      const registered = [];
+      for (const record of records)
+        registered.push(await state.registerExactHead(record));
+      return json(
+        { ok: true, registered, stats: await exactHeadStats(state) },
+        { headers: corsHeaders(config) },
+      );
     } catch (error) {
-      return json({ ok: false, error: errorMessage(error) }, { status: 400, headers: corsHeaders(config) });
+      return json(
+        { ok: false, error: errorMessage(error) },
+        { status: 400, headers: corsHeaders(config) },
+      );
     }
   }
-  return json({ ok: false, error: "not_found" }, { status: 404, headers: corsHeaders(config) });
+  if (
+    url.pathname === "/admin/exact-heads/reconcile" &&
+    request.method === "POST"
+  ) {
+    try {
+      const body = await readRequestJsonWithLimit<{
+        headId?: unknown;
+        candidateTransactionIds?: unknown;
+      }>(request, MAX_ADMIN_JSON_BYTES, "exact head reconciliation");
+      if (typeof body.headId !== "string")
+        throw new Error("exact head reconciliation requires headId");
+      if (
+        body.candidateTransactionIds !== undefined &&
+        (!Array.isArray(body.candidateTransactionIds) ||
+          body.candidateTransactionIds.some(
+            (transactionId) => typeof transactionId !== "string",
+          ))
+      ) {
+        throw new Error(
+          "candidateTransactionIds must be an array of transaction ids",
+        );
+      }
+      const gateway = await createGateway(config, state);
+      const head = await gateway.server.reconcileExactHead(
+        body.headId,
+        (body.candidateTransactionIds ?? []) as string[],
+      );
+      return json(
+        { ok: true, head, stats: await exactHeadStats(state) },
+        { headers: corsHeaders(config) },
+      );
+    } catch (error) {
+      return json(
+        { ok: false, error: errorMessage(error) },
+        { status: 400, headers: corsHeaders(config) },
+      );
+    }
+  }
+  return json(
+    { ok: false, error: "not_found" },
+    { status: 404, headers: corsHeaders(config) },
+  );
 }
 
-async function canaryResponse(config: GatewayConfig, state: GatewayStateClient): Promise<Response> {
+async function canaryResponse(
+  config: GatewayConfig,
+  state: GatewayStateClient,
+): Promise<Response> {
   return json(
     {
       ok: true,
       enabled: config.enabled,
-      exactInventory: await state.exactInventoryStats(),
+      exactHeads: await exactHeadStats(state),
       canary: await state.loadCanaryReport(),
     },
     { headers: corsHeaders(config) },
   );
 }
 
-async function offerCheck(env: GatewayEnv, config: GatewayConfig, path: string, profile: Profile): Promise<GatewayCanaryCheck> {
+async function offerCheck(
+  env: GatewayEnv,
+  config: GatewayConfig,
+  path: string,
+  profile: Profile,
+): Promise<GatewayCanaryCheck> {
   return checked(`${profileMetric(profile)}-offer`, async () => {
-    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}${path}`);
-    if (response.status !== 402) throw new Error(`expected 402, got ${response.status}`);
+    const response = await dispatchCanaryRequest(
+      env,
+      `${config.gatewayBaseUrl}${path}`,
+    );
+    if (response.status !== 402)
+      throw new Error(`expected 402, got ${response.status}`);
     const header = response.headers.get(PAYMENT_REQUIRED_HEADER);
     if (!header) throw new Error("missing payment-required header");
     const paymentRequired = decodePaymentRequiredHeader(header);
-    const accepted = paymentRequired.accepts.find((entry) => entry.scheme === profile);
+    const accepted = paymentRequired.accepts.find(
+      (entry) => entry.scheme === profile,
+    );
     if (!accepted) throw new Error(`${profile} offer not advertised`);
-    if (accepted.network !== config.network) throw new Error(`unexpected network ${accepted.network}`);
-    if (profile === "exact" && accepted.amount !== config.exactAmount) throw new Error("exact amount mismatch");
-    if (profile === "batch-settlement" && accepted.extra.minDepositSompi !== config.minDepositSompi) throw new Error("batch deposit mismatch");
+    if (accepted.network !== config.network)
+      throw new Error(`unexpected network ${accepted.network}`);
+    if (profile === "exact" && accepted.amount !== config.exactAmount)
+      throw new Error("exact amount mismatch");
+    if (
+      profile === "batch-settlement" &&
+      accepted.extra.minDepositSompi !== config.minDepositSompi
+    )
+      throw new Error("batch deposit mismatch");
     return {
       detail: `${profile} unpaid request returned a valid offer`,
-      evidence: { status: response.status, amount: accepted.amount, network: accepted.network },
+      evidence: {
+        status: response.status,
+        amount: accepted.amount,
+        network: accepted.network,
+      },
     };
   });
 }
 
-async function supportedKindCheck(env: GatewayEnv, config: GatewayConfig, profile: Profile): Promise<GatewayCanaryCheck> {
+async function supportedKindCheck(
+  env: GatewayEnv,
+  config: GatewayConfig,
+  profile: Profile,
+): Promise<GatewayCanaryCheck> {
   return checked(`${profileMetric(profile)}-offer`, async () => {
-    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/supported`);
-    if (response.status !== 200) throw new Error(`expected 200, got ${response.status}`);
-    const body = (await response.json()) as { kinds?: Array<{ scheme?: unknown }> };
-    if (!body.kinds?.some((kind) => kind.scheme === profile)) throw new Error(`${profile} support not advertised`);
+    const response = await dispatchCanaryRequest(
+      env,
+      `${config.gatewayBaseUrl}/supported`,
+    );
+    if (response.status !== 200)
+      throw new Error(`expected 200, got ${response.status}`);
+    const body = (await response.json()) as {
+      kinds?: Array<{ scheme?: unknown }>;
+    };
+    if (!body.kinds?.some((kind) => kind.scheme === profile))
+      throw new Error(`${profile} support not advertised`);
     return {
-      detail: `${profile} support is advertised without consuming reservation inventory`,
+      detail: `${profile} support is advertised without mutating exact head state`,
       evidence: { status: response.status, network: config.network },
     };
   });
 }
 
-async function unsupportedSchemeCheck(env: GatewayEnv, config: GatewayConfig): Promise<GatewayCanaryCheck> {
+async function unsupportedSchemeCheck(
+  env: GatewayEnv,
+  config: GatewayConfig,
+): Promise<GatewayCanaryCheck> {
   return checked("unsupported-scheme-rejection", async () => {
-    const header = btoa(JSON.stringify({ x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {} }));
-    const response = await dispatchCanaryRequest(env, `${config.gatewayBaseUrl}/batch`, { headers: { [PAYMENT_SIGNATURE_HEADER]: header } });
-    if (response.status !== 402) throw new Error(`expected 402, got ${response.status}`);
+    const header = btoa(
+      JSON.stringify({
+        x402Version: 2,
+        accepted: { scheme: "evm", network: "eip155:1" },
+        payload: {},
+      }),
+    );
+    const response = await dispatchCanaryRequest(
+      env,
+      `${config.gatewayBaseUrl}/batch`,
+      { headers: { [PAYMENT_SIGNATURE_HEADER]: header } },
+    );
+    if (response.status !== 402)
+      throw new Error(`expected 402, got ${response.status}`);
     const body = (await response.json()) as { error?: unknown };
-    if (body.error !== "unsupported_scheme") throw new Error(`unexpected error ${String(body.error)}`);
-    return { detail: "foreign payment scheme returned unsupported_scheme", evidence: { status: response.status } };
+    if (body.error !== "unsupported_scheme")
+      throw new Error(`unexpected error ${String(body.error)}`);
+    return {
+      detail: "foreign payment scheme returned unsupported_scheme",
+      evidence: { status: response.status },
+    };
   });
 }
 
@@ -541,14 +928,25 @@ function skippedCheck(name: string, detail: string): GatewayCanaryCheck {
   return { name, status: "skipped", detail };
 }
 
-function exactUnavailableReason(config: GatewayConfig, stats: { available: number }): string {
-  if (!config.hostedExactSettlementEnabled) return "hosted gateway exact verifier/broadcast path is not enabled";
-  if (config.chainBroadcastMode !== "pnn") return "hosted gateway exact requires PNN broadcast mode";
-  if (stats.available <= 0) return "hosted gateway exact inventory is empty";
+function exactUnavailableReason(
+  config: GatewayConfig,
+  stats: { available: number },
+): string {
+  if (!config.hostedExactSettlementEnabled)
+    return "hosted gateway exact verifier/broadcast path is not enabled";
+  if (config.exactProfile === "standard-native")
+    return "hosted gateway standard exact is unavailable";
+  if (config.chainBroadcastMode !== "pnn")
+    return "hosted gateway exact requires PNN broadcast mode";
+  if (stats.available <= 0)
+    return "hosted gateway has no available additive head";
   return "hosted gateway exact is unavailable";
 }
 
-function canaryReport(trigger: CanaryTrigger, checks: GatewayCanaryCheck[]): GatewayCanaryReport {
+function canaryReport(
+  trigger: CanaryTrigger,
+  checks: GatewayCanaryCheck[],
+): GatewayCanaryReport {
   return {
     checkedAt: new Date().toISOString(),
     trigger,
@@ -557,7 +955,10 @@ function canaryReport(trigger: CanaryTrigger, checks: GatewayCanaryCheck[]): Gat
   };
 }
 
-async function persistCanaryReport(state: GatewayStateClient, report: GatewayCanaryReport): Promise<void> {
+async function persistCanaryReport(
+  state: GatewayStateClient,
+  report: GatewayCanaryReport,
+): Promise<void> {
   try {
     await state.saveCanaryReport(report);
   } catch {
@@ -569,15 +970,23 @@ async function fetchWithTimeout(url: string): Promise<Response> {
   const controller = new AbortController();
   const timeout = setTimeout(() => controller.abort(), 8_000);
   try {
-    return await fetch(url, { signal: controller.signal, headers: { accept: "application/json, text/html;q=0.9, */*;q=0.8" } });
+    return await fetch(url, {
+      signal: controller.signal,
+      headers: { accept: "application/json, text/html;q=0.9, */*;q=0.8" },
+    });
   } finally {
     clearTimeout(timeout);
   }
 }
 
-async function readTextUntil(response: Response, marker: string, maxBytes: number): Promise<string> {
+async function readTextUntil(
+  response: Response,
+  marker: string,
+  maxBytes: number,
+): Promise<string> {
   const length = response.headers.get("content-length");
-  if (length && Number(length) > maxBytes) throw new Error("docs index response too large");
+  if (length && Number(length) > maxBytes)
+    throw new Error("docs index response too large");
   const reader = response.body?.getReader();
   if (!reader) return "";
   const decoder = new TextDecoder();
@@ -596,9 +1005,14 @@ async function readTextUntil(response: Response, marker: string, maxBytes: numbe
   }
 }
 
-async function readJsonWithLimit<T>(response: Response, maxBytes: number, label: string): Promise<T> {
+async function readJsonWithLimit<T>(
+  response: Response,
+  maxBytes: number,
+  label: string,
+): Promise<T> {
   const length = response.headers.get("content-length");
-  if (length && Number(length) > maxBytes) throw new Error(`${label} response too large`);
+  if (length && Number(length) > maxBytes)
+    throw new Error(`${label} response too large`);
   const reader = response.body?.getReader();
   if (!reader) throw new Error(`${label} response body is missing`);
   const decoder = new TextDecoder();
@@ -617,54 +1031,94 @@ async function readJsonWithLimit<T>(response: Response, maxBytes: number, label:
   return JSON.parse(text) as T;
 }
 
-async function readRequestJsonWithLimit<T>(request: Request, maxBytes: number, label: string): Promise<T> {
+async function readRequestJsonWithLimit<T>(
+  request: Request,
+  maxBytes: number,
+  label: string,
+): Promise<T> {
   const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes) throw new Error(`${label} request body too large`);
+  if (new TextEncoder().encode(text).byteLength > maxBytes)
+    throw new Error(`${label} request body too large`);
   return JSON.parse(text) as T;
 }
 
-function exactInventoryRegistrations(body: Record<string, unknown>): GatewayExactInventoryRegistration[] {
-  const records = Array.isArray(body.records) ? body.records : body.record ? [body.record] : [body];
-  if (records.length === 0) throw new Error("exact inventory registration is empty");
-  return records.map((entry) => entry as GatewayExactInventoryRegistration);
+function exactHeadRegistrations(
+  body: Record<string, unknown>,
+): ExactHeadRecord[] {
+  const records = Array.isArray(body.records)
+    ? body.records
+    : body.record
+      ? [body.record]
+      : [body];
+  if (records.length === 0) throw new Error("exact head registration is empty");
+  return records.map((entry) => entry as ExactHeadRecord);
 }
 
-async function dispatchCanaryRequest(env: GatewayEnv, url: string, init?: RequestInit): Promise<Response> {
+async function exactHeadStats(
+  state: GatewayStateClient,
+): Promise<
+  Record<"total" | "available" | "claimed" | "unavailable" | "retired", number>
+> {
+  return state.exactHeadStats();
+}
+
+async function dispatchCanaryRequest(
+  env: GatewayEnv,
+  url: string,
+  init?: RequestInit,
+): Promise<Response> {
   const pending: Promise<unknown>[] = [];
   const context: WaitUntilContext = {
     waitUntil(promise: Promise<unknown>) {
       pending.push(Promise.resolve(promise));
     },
   };
-  const response = await handleGatewayRequest(new Request(url, init), env, context);
+  const response = await handleGatewayRequest(
+    new Request(url, init),
+    env,
+    context,
+  );
   await Promise.allSettled(pending);
   return response;
 }
 
-function gatewayUnsupportedPaymentResponse(
+async function gatewayUnsupportedPaymentResponse(
   request: Request,
   server: DirectModeServer,
   resource: ResourceInfo,
   profile: Profile,
   config: GatewayConfig,
-): Response | undefined {
+): Promise<Response | undefined> {
   const header = request.headers.get(PAYMENT_SIGNATURE_HEADER);
   if (!header) return undefined;
   const decoded = unsafeDecodePaymentHeader(header);
   const scheme = decoded?.accepted?.scheme;
-  if (scheme === undefined || scheme === "exact" || scheme === "batch-settlement") return undefined;
-  const response = server.paymentRequiredResponse({
+  if (
+    scheme === undefined ||
+    scheme === "exact" ||
+    scheme === "batch-settlement"
+  )
+    return undefined;
+  const response = await server.paymentRequiredResponseAsync({
     resource,
     amount: amountFor(config, profile),
     scheme: profile,
     error: toX402ErrorReason("unsupported_scheme"),
   });
-  return serverResponse({ ...response, body: { error: toX402ErrorReason("unsupported_scheme") } }, config, false);
+  return serverResponse(
+    { ...response, body: { error: toX402ErrorReason("unsupported_scheme") } },
+    config,
+    false,
+  );
 }
 
-function unsafeDecodePaymentHeader(header: string): { accepted?: { scheme?: unknown } } | undefined {
+function unsafeDecodePaymentHeader(
+  header: string,
+): { accepted?: { scheme?: unknown } } | undefined {
   try {
-    return decodePaymentSignatureHeader(header) as { accepted?: { scheme?: unknown } };
+    return decodePaymentSignatureHeader(header) as {
+      accepted?: { scheme?: unknown };
+    };
   } catch {
     try {
       return JSON.parse(atob(header)) as { accepted?: { scheme?: unknown } };
@@ -674,26 +1128,40 @@ function unsafeDecodePaymentHeader(header: string): { accepted?: { scheme?: unkn
   }
 }
 
-function serverResponse(response: { status: number; headers: Record<string, string>; body?: unknown }, config: GatewayConfig, head: boolean): Response {
+function serverResponse(
+  response: { status: number; headers: Record<string, string>; body?: unknown },
+  config: GatewayConfig,
+  head: boolean,
+): Response {
   const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(corsHeaders(config))) headers.set(key, value);
-  if (!headers.has("content-type") && response.body !== undefined) headers.set("content-type", "application/json; charset=utf-8");
+  for (const [key, value] of Object.entries(corsHeaders(config)))
+    headers.set(key, value);
+  if (!headers.has("content-type") && response.body !== undefined)
+    headers.set("content-type", "application/json; charset=utf-8");
   const body = head ? null : responseBody(response);
   return new Response(body, { status: response.status, headers });
 }
 
-function responseBody(response: { status: number; body?: unknown }): BodyInit | null {
+function responseBody(response: {
+  status: number;
+  body?: unknown;
+}): BodyInit | null {
   if (response.body === undefined) {
-    if (response.status === 402) return JSON.stringify({ ok: false, error: "payment_required" });
-    if (response.status >= 400) return JSON.stringify({ ok: false, error: "gateway_error" });
+    if (response.status === 402)
+      return JSON.stringify({ ok: false, error: "payment_required" });
+    if (response.status >= 400)
+      return JSON.stringify({ ok: false, error: "gateway_error" });
     return null;
   }
-  return typeof response.body === "string" ? response.body : JSON.stringify(response.body);
+  return typeof response.body === "string"
+    ? response.body
+    : JSON.stringify(response.body);
 }
 
 function withCors(response: Response, config: GatewayConfig): Response {
   const headers = new Headers(response.headers);
-  for (const [key, value] of Object.entries(corsHeaders(config))) headers.set(key, value);
+  for (const [key, value] of Object.entries(corsHeaders(config)))
+    headers.set(key, value);
   return new Response(response.body, { status: response.status, headers });
 }
 
@@ -703,9 +1171,12 @@ function json(body: unknown, init: ResponseInit = {}): Response {
   return new Response(JSON.stringify(body), { ...init, headers });
 }
 
-function corsHeaders(config: GatewayConfig | undefined): Record<string, string> {
+function corsHeaders(
+  config: GatewayConfig | undefined,
+): Record<string, string> {
   return {
-    "access-control-allow-origin": config?.corsOrigin ?? "https://kaspa-x402.org",
+    "access-control-allow-origin":
+      config?.corsOrigin ?? "https://kaspa-x402.org",
     "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
     "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, authorization, content-type`,
     "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}`,
@@ -716,14 +1187,18 @@ function corsHeaders(config: GatewayConfig | undefined): Record<string, string> 
 
 function routeProfile(pathname: string): Profile | undefined {
   if (pathname === "/exact" || pathname === "/exact/report") return "exact";
-  if (pathname === "/batch" || pathname === "/batch/report") return "batch-settlement";
+  if (pathname === "/batch" || pathname === "/batch/report")
+    return "batch-settlement";
   return undefined;
 }
 
 function resourceFor(url: URL, profile: Profile): ResourceInfo {
   return {
     url: url.toString(),
-    description: profile === "exact" ? "Kaspa x402 exact testnet resource" : "Kaspa x402 batch-settlement testnet resource",
+    description:
+      profile === "exact"
+        ? "Kaspa x402 exact testnet resource"
+        : "Kaspa x402 batch-settlement testnet resource",
     mimeType: "application/json",
   };
 }
@@ -737,7 +1212,10 @@ function profileMetric(profile: Profile): string {
 }
 
 function rateScope(request: Request, profile: Profile): string {
-  const ip = request.headers.get("cf-connecting-ip") ?? request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ?? "unknown";
+  const ip =
+    request.headers.get("cf-connecting-ip") ??
+    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
+    "unknown";
   return `${ip}:${profile}`;
 }
 

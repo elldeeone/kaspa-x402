@@ -5,6 +5,7 @@ import {
   X402_VERSION,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  exactRequestAuthorizationDigest,
   mcpToolCallFingerprint,
   readMcpPaymentRequired,
   readMcpPaymentResponse,
@@ -20,10 +21,15 @@ import {
   type ChannelSigner,
   type FundingProvider,
 } from "@kaspa-x402/client";
-import { PAYMENT_REQUIRED_HEADER, PAYMENT_RESPONSE_HEADER, handlePaidMcpToolCall } from "@kaspa-x402/server";
+import {
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_RESPONSE_HEADER,
+  handlePaidMcpToolCall,
+} from "@kaspa-x402/server";
 
 describe("MCP hybrid settlement failure E2E", () => {
   it("round-trips through client retry handling and server MCP conversion", async () => {
+    const audience = "https://mcp.example.test";
     const required = makeExactRequired();
     const settlementFailure: SettlementResponse = {
       success: false,
@@ -35,12 +41,17 @@ describe("MCP hybrid settlement failure E2E", () => {
     let protectedExecutions = 0;
     const server = {
       buildPaymentRequired: () => required,
-      async handlePaidRequest(request: { headers?: Record<string, string> }, handler: () => Promise<unknown>) {
+      async handlePaidRequest(
+        request: { headers?: Record<string, string> },
+        handler: () => Promise<unknown>,
+      ) {
         serverCalls += 1;
         if (!request.headers?.["PAYMENT-SIGNATURE"]) {
           return {
             status: 402,
-            headers: { [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(required) },
+            headers: {
+              [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(required),
+            },
             body: { error: "payment required" },
           };
         }
@@ -49,7 +60,10 @@ describe("MCP hybrid settlement failure E2E", () => {
         await handler();
         return {
           status: 500,
-          headers: { [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlementFailure) },
+          headers: {
+            [PAYMENT_RESPONSE_HEADER]:
+              encodePaymentResponseHeader(settlementFailure),
+          },
           body: { protected: "must not leak" },
         };
       },
@@ -66,15 +80,27 @@ describe("MCP hybrid settlement failure E2E", () => {
       (params) =>
         handlePaidMcpToolCall(
           server as never,
-          { name: "download", resource: { url: "mcp://tool/download" }, amount: "100", scheme: "exact" },
+          {
+            audience,
+            name: "download",
+            resource: { url: "mcp://tool/download" },
+            amount: "100",
+            scheme: "exact",
+          },
           params,
-          async () => ({ result: { content: [{ type: "text" as const, text: "protected output" }] } }),
+          async () => ({
+            result: {
+              content: [{ type: "text" as const, text: "protected output" }],
+            },
+          }),
         ),
       { name: "download", arguments: { id: "hybrid-fail" } },
+      { audience },
     );
     const challenge = readMcpPaymentRequired(result.result);
     const settlement = readMcpPaymentResponse(result.result);
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience,
       toolName: "download",
       arguments: { id: "hybrid-fail" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
@@ -85,12 +111,16 @@ describe("MCP hybrid settlement failure E2E", () => {
     expect(protectedExecutions).toBe(1);
     expect(result.result.isError).toBe(true);
     expect(challenge?.error).toBe("invalid_transaction_state");
-    expect(result.result.content?.[0]?.text).toBe(JSON.stringify(result.result.structuredContent));
+    expect(result.result.content?.[0]?.text).toBe(
+      JSON.stringify(result.result.structuredContent),
+    );
     expect(result.result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeTruthy();
     expect(settlement?.success).toBe(false);
     expect(result.settlement?.chargedAmount).toBe("0");
     expect(result.payment?.accepted.scheme).toBe("exact");
-    expect(result.payment?.paymentPayload.payload.requestHash).toBe(expectedRequestHash);
+    expect(result.payment?.paymentPayload.payload.requestHash).toBe(
+      expectedRequestHash,
+    );
     expect(serializedResult).not.toContain("protected output");
     expect(serializedResult).not.toContain("must not leak");
   });
@@ -109,18 +139,12 @@ function makeExactRequired(): PaymentRequired {
         payTo: "kaspatest:payout",
         maxTimeoutSeconds: 60,
         extra: {
-          binding: "kaspa-exact-v1",
+          binding: "kaspa-exact-v2",
+          profile: "standard-native",
           finality: "accepted",
-          templateId: "kaspa-x402-kip10-additive-v1",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-          borrowOutpoint: { txid: "44".repeat(32), index: 2 },
-          borrowAmount: "1000",
-          borrowScriptPublicKey: "0000" + "ab".repeat(34),
-          borrowRedeemScript: "51",
-          additiveThresholdSompi: "10000000",
+          payToScriptPublicKey: "000051",
           paymentOutputIndex: 0,
-          reservationId: "88".repeat(32),
-          reservationExpiresAt: "2099-01-01T00:00:00.000Z",
         },
       },
     ],
@@ -134,15 +158,38 @@ function exactFundingProvider(): FundingProvider {
     async getPublicIdentity() {
       return { address: "kaspatest:refund" };
     },
+    async authorizeExactPayment() {},
     async fundEscrowDeposit() {
       throw new Error("not used");
     },
     async payExactTransaction(request) {
+      const transactionId = "77".repeat(32);
+      const paymentOutputIndex = request.paymentOutputIndex ?? 0;
+      const digest = exactRequestAuthorizationDigest({
+        network: request.network,
+        profile: request.profile,
+        transactionId,
+        paymentOutputIndex,
+        amount: request.amount,
+        payTo: request.payTo,
+        payToScriptPublicKey: request.payToScriptPublicKey,
+        paymentRequirementsHash: request.paymentRequirementsHash,
+        requestHash: request.requestHash,
+        inputIndex: 0,
+        expiresAt: request.authorizationExpiresAt,
+      });
       return {
-        transaction: "{\"transaction\":\"signed-kip10-exact\"}",
-        transactionEncoding: request.reservation.transactionEncoding,
-        transactionId: "77".repeat(32),
-        paymentOutputIndex: request.reservation.paymentOutputIndex,
+        transaction: '{"transaction":"signed-kip10-exact"}',
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        transactionId,
+        paymentOutputIndex,
+        authorization: {
+          version: "kaspa-x402-exact-request-authorization-v1",
+          inputIndex: 0,
+          expiresAt: request.authorizationExpiresAt,
+          digest,
+          signature: "ab".repeat(64),
+        },
         payerAddress: "kaspatest:refund",
       };
     },
@@ -178,7 +225,7 @@ function unusedChannelSigner(): ChannelSigner {
 function unusedAddressCodec(): AddressCodec {
   return {
     scriptPublicKeyForAddress() {
-      return "0000";
+      return "000051";
     },
     encodeScriptAddress() {
       return "kaspatest:escrow";

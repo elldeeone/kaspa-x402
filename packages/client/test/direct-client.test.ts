@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MCP_PAYMENT_RESPONSE_META_KEY,
@@ -6,6 +6,7 @@ import {
   encodePaymentRequiredEnvelopeHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
+  exactRequestAuthorizationDigest,
   kaspaSettlementExtensions,
   mcpPaymentRequiredResult,
   mcpToolCallFingerprint,
@@ -25,6 +26,11 @@ import type {
   SettlementResponse,
 } from "@kaspa-x402/core";
 import {
+  buildKip10AdditiveRedeemScript,
+  payToScriptHashScript,
+  serializedScriptPublicKey,
+} from "@kaspa-x402/covenant";
+import {
   DirectModeClient,
   MemoryChannelStore,
   PAYMENT_RESPONSE_HEADER,
@@ -40,6 +46,7 @@ import {
   type FeeEstimateRequest,
   type FetchLike,
   type FundingProvider,
+  type FundingPolicy,
   type FundingProviderUtxo,
   type FundingSourceKind,
   type HeaderBag,
@@ -56,8 +63,18 @@ const COMMITMENT = "44".repeat(32);
 const FUNDING_TX = "55".repeat(32);
 const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
-const EXACT_RESERVATION_ID = "88".repeat(32);
-const EXACT_TRANSACTION_ARTIFACT = "{\"transaction\":\"signed-kip10-exact\"}";
+const EXACT_HEAD_ID = "89".repeat(32);
+const EXACT_CHALLENGE_ID = "8a".repeat(32);
+const MCP_AUDIENCE = "https://mcp.example.test";
+const STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY = `0000${sha256Hex("kaspatest:payout")}`;
+const ADDITIVE_HEAD_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({
+  ownerPublicKey: SERVER_KEY,
+  amount: "10000000",
+});
+const ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
+  payToScriptHashScript(ADDITIVE_HEAD_REDEEM_SCRIPT),
+);
+const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 
 describe("direct-mode client", () => {
   it("opens a deposit-voucher channel for the first paid request", async () => {
@@ -66,16 +83,22 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store });
     const required = makeRequired({ amount: "100" });
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(required),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     expect(payment.openedChannel).toBe(true);
     expect(payment.paymentPayload.payload.type).toBe("deposit-voucher");
     expect(provider.deposits).toHaveLength(1);
     expect(provider.deposits[0]?.amount).toBe("1000");
 
-    const settlement = await client.applySettlement(payment, makeSettlement(payment.channel!, "100"));
+    const settlement = await client.applySettlement(
+      payment,
+      makeSettlement(payment.channel!, "100"),
+    );
     expect(settlement.channel!.chargedCumulativeAmount).toBe("100");
 
     const channels = await store.loadChannels({});
@@ -89,20 +112,31 @@ describe("direct-mode client", () => {
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
     const firstRequired = makeRequired({ amount: "100" });
-    const firstPayment = await client.createPayment(encodePaymentRequiredHeader(firstRequired), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(firstPayment, makeSettlement(firstPayment.channel!, "100"));
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(firstRequired),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
 
     const secondRequired = makeRequired({ amount: "75" });
-    const secondPayment = await client.createPayment(encodePaymentRequiredHeader(secondRequired), {
-      url: "https://api.example.test/data",
-    });
+    const secondPayment = await client.createPayment(
+      encodePaymentRequiredHeader(secondRequired),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     expect(secondPayment.openedChannel).toBe(false);
     expect(secondPayment.paymentPayload.payload.type).toBe("voucher");
     expect(provider.deposits).toHaveLength(1);
-    expect(voucherBearingPayload(secondPayment.paymentPayload).voucher.amount).toBe("175");
+    expect(
+      voucherBearingPayload(secondPayment.paymentPayload).voucher.amount,
+    ).toBe("175");
   });
 
   it("rejects the wrong funding source before funding an escrow deposit", async () => {
@@ -115,9 +149,12 @@ describe("direct-mode client", () => {
     });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-        url: "https://api.example.test/data",
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        {
+          url: "https://api.example.test/data",
+        },
+      ),
     ).rejects.toThrow("does not satisfy policy");
     expect(provider.deposits).toHaveLength(0);
   });
@@ -134,7 +171,13 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
 
-    expect(() => makeClient({ provider, store, supportedNetworks: ["kaspa:testnet-10", "kaspa:mainnet"] })).toThrow("allowMainnet");
+    expect(() =>
+      makeClient({
+        provider,
+        store,
+        supportedNetworks: ["kaspa:testnet-10", "kaspa:mainnet"],
+      }),
+    ).toThrow("allowMainnet");
   });
 
   it("rejects the wrong funding network before store or funding work", async () => {
@@ -143,9 +186,12 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store, allowMainnet: true });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-        url: "https://api.example.test/data",
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        {
+          url: "https://api.example.test/data",
+        },
+      ),
     ).rejects.toThrow("funding provider network");
     expect(provider.deposits).toHaveLength(0);
     await expect(store.loadChannels({})).resolves.toHaveLength(0);
@@ -156,10 +202,13 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const required = makeExactRequired({ amount: "250" });
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
-      url: "https://api.example.test/file",
-      requestHash: "99".repeat(32),
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(required),
+      {
+        url: "https://api.example.test/file",
+        requestHash: "99".repeat(32),
+      },
+    );
 
     expect(payment.scheme).toBe("exact");
     expect(payment.openedChannel).toBe(false);
@@ -167,12 +216,11 @@ describe("direct-mode client", () => {
     expect(provider.deposits).toHaveLength(0);
     expect(provider.exactPayments).toEqual([
       {
+        profile: "standard-native",
         amount: "250",
         payTo: "kaspatest:payout",
+        payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
         requestHash: "99".repeat(32),
-        reservation: expect.objectContaining({
-          reservationId: EXACT_RESERVATION_ID,
-        }),
       },
     ]);
     expect(payment.paymentPayload.payload).toMatchObject({
@@ -184,63 +232,168 @@ describe("direct-mode client", () => {
     });
   });
 
-  it("rejects unreserved exact offers instead of using the removed transfer path", async () => {
+  it("enforces static origin, profile, recipient, and amount pins before exact signing", async () => {
+    const required = encodePaymentRequiredHeader(
+      makeExactRequired({ amount: "250" }),
+    );
+    const cases: Array<{ policy: FundingPolicy; message: string }> = [
+      {
+        policy: { allowedOrigins: ["https://other.example"] },
+        message: "origin",
+      },
+      { policy: { allowedExactProfiles: ["additive"] }, message: "profile" },
+      { policy: { allowedPayTo: ["kaspatest:other"] }, message: "recipient" },
+      { policy: { maximumExactAmountSompi: "249" }, message: "amount" },
+    ];
+
+    for (const testCase of cases) {
+      const provider = new FakeFundingProvider();
+      const client = makeClient({
+        provider,
+        store: new MemoryChannelStore(),
+        fundingPolicy: testCase.policy,
+      });
+      await expect(
+        client.createPayment(required, {
+          url: "https://api.example.test/file",
+          requestHash: "99".repeat(32),
+        }),
+      ).rejects.toThrow(testCase.message);
+      expect(provider.exactPayments).toHaveLength(0);
+    }
+  });
+
+  it("creates the default standard-native exact transaction without head state", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeStandardExactRequired({ amount: "20000000" });
+
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(required),
+      {
+        url: "https://api.example.test/file",
+        requestHash: "98".repeat(32),
+      },
+    );
+
+    expect(provider.exactPayments).toEqual([
+      expect.objectContaining({
+        profile: "standard-native",
+        amount: "20000000",
+        payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
+      }),
+    ]);
+    expect(payment.paymentPayload.payload).toMatchObject({
+      type: "exact-transaction",
+      profile: "standard-native",
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+    });
+  });
+
+  it("creates a corrected additive exact transaction from non-exclusive head challenge terms", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeAdditiveExactRequired({ amount: "20000000" });
+
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(required),
+      {
+        url: "https://api.example.test/file",
+        requestHash: "97".repeat(32),
+      },
+    );
+
+    expect(provider.exactPayments).toEqual([
+      expect.objectContaining({
+        profile: "additive",
+        amount: "20000000",
+        payToScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+        head: {
+          headId: EXACT_HEAD_ID,
+          headVersion: "7",
+          expectedHeadOutpoint: { txid: FUNDING_TX, index: 0 },
+          headAmount: "100000000",
+          headScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          headRedeemScript: ADDITIVE_HEAD_REDEEM_SCRIPT,
+          additiveThresholdSompi: "10000000",
+          challengeId: EXACT_CHALLENGE_ID,
+          challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      }),
+    ]);
+    expect(payment.paymentPayload.payload).toMatchObject({
+      type: "exact-transaction",
+      profile: "additive",
+      challengeId: EXACT_CHALLENGE_ID,
+      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+      paymentOutputIndex: 0,
+    });
+  });
+
+  it("rejects additive offers below their head threshold before invoking the funding adapter", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: false })), {
-        url: "https://api.example.test/file",
-        requestHash: "99".repeat(32),
-      }),
-    ).rejects.toThrow("no supported Kaspa x402 requirement");
+      client.createPayment(
+        encodePaymentRequiredHeader(
+          makeAdditiveExactRequired({ amount: "9999999" }),
+        ),
+        {
+          url: "https://api.example.test/file",
+        },
+      ),
+    ).rejects.toThrow("must meet the positive head threshold");
     expect(provider.exactPayments).toHaveLength(0);
   });
 
-  it("creates an exact-transaction payload when the offer carries a KIP-10 reservation", async () => {
+  it("rejects additive offers whose advertised head is not the canonical KIP-10 script", async () => {
     const provider = new FakeFundingProvider();
-    provider.exactMode = "transaction";
     const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const required = makeExactRequired({ amount: "250", reservation: true });
+    const required = makeAdditiveExactRequired({ amount: "20000000" });
+    (required.accepts[0] as ExactPaymentRequirements).extra.headRedeemScript =
+      "51";
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
-      url: "https://api.example.test/file",
-      requestHash: "99".repeat(32),
-    });
-
-    expect(provider.exactPayments[0]?.reservation).toMatchObject({
-      reservationId: EXACT_RESERVATION_ID,
-      templateId: "kaspa-x402-kip10-additive-v1",
-      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      paymentOutputIndex: 0,
-    });
-    expect(payment.transactionId).toBe(EXACT_TX_ID);
-    expect(payment.paymentOutputIndex).toBe(0);
-    expect(payment.paymentPayload.payload).toMatchObject({
-      type: "exact-transaction",
-      transaction: EXACT_TRANSACTION_ARTIFACT,
-      transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      paymentOutputIndex: 0,
-      requestHash: "99".repeat(32),
-    });
-
-    const settlement = await client.applySettlement(payment, {
-      success: true,
-      transaction: EXACT_TX_ID,
-      network: "kaspa:testnet-10",
-      amount: "250",
-      extensions: kaspaSettlementExtensions({
-        paymentOutputIndex: 0,
-        finality: "accepted",
-        requestHash: "99".repeat(32),
-        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-        templateId: "kaspa-x402-kip10-additive-v1",
-        reservationId: EXACT_RESERVATION_ID,
-        borrowOutpoint: { txid: FUNDING_TX, index: 2 },
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(required), {
+        url: "https://api.example.test/file",
       }),
-    });
-    expect(settlement.transactionId).toBe(EXACT_TX_ID);
-    expect(settlement.chargedAmount).toBe("250");
+    ).rejects.toThrow("must bind the canonical KIP-10 script");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects zero-value standard-native exact offers", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeStandardExactRequired({ amount: "0" })),
+        {
+          url: "https://api.example.test/file",
+        },
+      ),
+    ).rejects.toThrow("exact payment amount must be positive");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects v2 exact offers whose payTo address and payment script disagree", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeStandardExactRequired({ amount: "20000000" });
+    (
+      required.accepts[0] as ExactPaymentRequirements
+    ).extra.payToScriptPublicKey = `0000${"ff".repeat(32)}`;
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(required), {
+        url: "https://api.example.test/file",
+      }),
+    ).rejects.toThrow(
+      "payTo address does not match the advertised payment script",
+    );
+    expect(provider.exactPayments).toHaveLength(0);
   });
 
   it("rejects exact-transaction adapter results without transaction id evidence", async () => {
@@ -250,23 +403,29 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: true })), {
-        url: "https://api.example.test/file",
-        requestHash: "99".repeat(32),
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+        {
+          url: "https://api.example.test/file",
+          requestHash: "99".repeat(32),
+        },
+      ),
     ).rejects.toThrow("transaction id evidence");
 
     expect(provider.exactPayments).toHaveLength(1);
   });
 
-  it("rejects exact-transaction adapter results with the wrong reserved output index", async () => {
+  it("rejects exact-transaction adapter results with the wrong output index", async () => {
     const provider = new FakeFundingProvider();
     provider.exactMode = "transaction";
     provider.exactTransactionOutputIndex = 1;
     const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "250" });
+    (required.accepts[0] as ExactPaymentRequirements).extra.paymentOutputIndex =
+      0;
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: true })), {
+      client.createPayment(encodePaymentRequiredHeader(required), {
         url: "https://api.example.test/file",
         requestHash: "99".repeat(32),
       }),
@@ -275,30 +434,36 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments).toHaveLength(1);
   });
 
-  it("does not call legacy exact adapters for reserved KIP-10 exact offers", async () => {
+  it("does not select exact when its transaction adapter is unavailable", async () => {
     const provider = new FakeFundingProvider();
-    Object.defineProperty(provider, "payExactTransaction", { value: undefined });
+    Object.defineProperty(provider, "payExactTransaction", {
+      value: undefined,
+    });
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: true })), {
-        url: "https://api.example.test/file",
-        requestHash: "99".repeat(32),
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+        {
+          url: "https://api.example.test/file",
+          requestHash: "99".repeat(32),
+        },
+      ),
     ).rejects.toThrow("no supported Kaspa x402 requirement");
 
     expect(provider.exactPayments).toHaveLength(0);
   });
 
-  it("rejects reserved KIP-10 exact adapter results without transaction artifacts", async () => {
+  it("rejects exact adapter results without signed transaction artifacts", async () => {
     const provider = new FakeFundingProvider();
     Object.defineProperty(provider, "payExactTransaction", {
       value: async (request: ExactTransactionPaymentRequest) => {
         provider.exactPayments.push({
+          profile: request.profile,
           amount: request.amount,
           payTo: request.payTo,
+          payToScriptPublicKey: request.payToScriptPublicKey,
           ...(request.requestHash ? { requestHash: request.requestHash } : {}),
-          reservation: request.reservation,
         });
         return {
           transactionId: EXACT_TX_ID,
@@ -312,10 +477,13 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: true })), {
-        url: "https://api.example.test/file",
-        requestHash: "99".repeat(32),
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+        {
+          url: "https://api.example.test/file",
+          requestHash: "99".repeat(32),
+        },
+      ),
     ).rejects.toThrow("signed transaction artifacts");
 
     expect(provider.exactPayments).toHaveLength(1);
@@ -325,10 +493,13 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     provider.exactMode = "transaction";
     const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", reservation: true })), {
-      url: "https://api.example.test/file",
-      requestHash: "99".repeat(32),
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      {
+        url: "https://api.example.test/file",
+        requestHash: "99".repeat(32),
+      },
+    );
 
     await expect(
       client.applySettlement(payment, {
@@ -347,27 +518,17 @@ describe("direct-mode client", () => {
 
   it("falls back to batch settlement on mixed offers when exact funding is unavailable", async () => {
     const provider = new FakeFundingProvider();
-    Object.defineProperty(provider, "payExactTransaction", { value: undefined });
+    Object.defineProperty(provider, "payExactTransaction", {
+      value: undefined,
+    });
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeMixedRequired({ amount: "100" })), {
-      url: "https://api.example.test/file",
-    });
-
-    expect(payment.scheme).toBe("batch-settlement");
-    expect(payment.paymentPayload.payload.type).toBe("deposit-voucher");
-    expect(provider.deposits).toHaveLength(1);
-    expect(provider.exactPayments).toHaveLength(0);
-  });
-
-  it("falls back to batch settlement on mixed reserved exact offers without a transaction adapter", async () => {
-    const provider = new FakeFundingProvider();
-    Object.defineProperty(provider, "payExactTransaction", { value: undefined });
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeMixedRequired({ amount: "100", reservation: true })), {
-      url: "https://api.example.test/file",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeMixedRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/file",
+      },
+    );
 
     expect(payment.scheme).toBe("batch-settlement");
     expect(payment.paymentPayload.payload.type).toBe("deposit-voucher");
@@ -419,33 +580,82 @@ describe("direct-mode client", () => {
   it("applies successful exact settlement without channel state", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })), {
-      url: "https://api.example.test/file",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      {
+        url: "https://api.example.test/file",
+      },
+    );
 
     const settlement = await client.applySettlement(payment, {
       success: true,
       transaction: EXACT_TX_ID,
-        network: "kaspa:testnet-10",
-        amount: "250",
-        extensions: kaspaSettlementExtensions({
-          paymentOutputIndex: 0,
-          finality: "accepted",
-          requestHash: payment.paymentPayload.payload.requestHash,
-        }),
-      });
+      network: "kaspa:testnet-10",
+      amount: "250",
+      extensions: kaspaSettlementExtensions({
+        exactProfile: "standard-native",
+        paymentOutputIndex: 0,
+        finality: "accepted",
+        requestHash: payment.paymentPayload.payload.requestHash,
+      }),
+    });
 
     expect(settlement.channel).toBeUndefined();
     expect(settlement.chargedAmount).toBe("250");
     expect(settlement.transactionId).toBe(EXACT_TX_ID);
   });
 
+  it("requires standard-native settlement evidence to echo the exact profile", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(
+        makeStandardExactRequired({ amount: "20000000" }),
+      ),
+      {
+        url: "https://api.example.test/file",
+      },
+    );
+    const response: SettlementResponse = {
+      success: true,
+      transaction: EXACT_TX_ID,
+      network: "kaspa:testnet-10",
+      amount: "20000000",
+      extensions: kaspaSettlementExtensions({
+        paymentOutputIndex: 0,
+        finality: "accepted",
+        exactProfile: "standard-native",
+        requestHash: payment.paymentPayload.payload.requestHash,
+      }),
+    };
+
+    await expect(
+      client.applySettlement(payment, response),
+    ).resolves.toMatchObject({ chargedAmount: "20000000" });
+    await expect(
+      client.applySettlement(payment, {
+        ...response,
+        extensions: kaspaSettlementExtensions({
+          paymentOutputIndex: 0,
+          finality: "accepted",
+          exactProfile: "additive",
+          requestHash: payment.paymentPayload.payload.requestHash,
+        }),
+      }),
+    ).rejects.toThrow("settlement profile");
+  });
+
   it("rejects exact settlement below the advertised finality", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250", finality: "confirmed" })), {
-      url: "https://api.example.test/file",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(
+        makeExactRequired({ amount: "250", finality: "confirmed" }),
+      ),
+      {
+        url: "https://api.example.test/file",
+      },
+    );
 
     await expect(
       client.applySettlement(payment, {
@@ -454,6 +664,7 @@ describe("direct-mode client", () => {
         network: "kaspa:testnet-10",
         amount: "250",
         extensions: kaspaSettlementExtensions({
+          exactProfile: "standard-native",
           paymentOutputIndex: 0,
           finality: "accepted",
         }),
@@ -464,10 +675,13 @@ describe("direct-mode client", () => {
   it("rejects exact settlement with a mismatched request hash echo", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })), {
-      url: "https://api.example.test/file",
-      requestHash: "99".repeat(32),
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      {
+        url: "https://api.example.test/file",
+        requestHash: "99".repeat(32),
+      },
+    );
 
     await expect(
       client.applySettlement(payment, {
@@ -476,6 +690,7 @@ describe("direct-mode client", () => {
         network: "kaspa:testnet-10",
         amount: "250",
         extensions: kaspaSettlementExtensions({
+          exactProfile: "standard-native",
           paymentOutputIndex: 0,
           finality: "accepted",
           requestHash: "98".repeat(32),
@@ -490,9 +705,12 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-        url: "https://api.example.test/data",
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        {
+          url: "https://api.example.test/data",
+        },
+      ),
     ).rejects.toThrow("resolvable escrow outpoint");
   });
 
@@ -502,9 +720,12 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-        url: "https://api.example.test/data",
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        {
+          url: "https://api.example.test/data",
+        },
+      ),
     ).rejects.toThrow("below the required minimum deposit");
   });
 
@@ -513,9 +734,12 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
-      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "1001" })), {
-        url: "https://api.example.test/data",
-      }),
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "1001" })),
+        {
+          url: "https://api.example.test/data",
+        },
+      ),
     ).rejects.toThrow("minimum deposit cannot cover");
     expect(provider.deposits).toHaveLength(0);
   });
@@ -524,14 +748,19 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
     const bad = makeSettlement(payment.channel!, "100", {
       channelId: "ff".repeat(32),
     });
 
-    await expect(client.applySettlement(payment, bad)).rejects.toThrow("channel id");
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "channel id",
+    );
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("suspicious");
   });
@@ -540,14 +769,19 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
     const bad = makeSettlement(payment.channel!, "100", {
       chargedCumulativeAmount: "99",
     });
 
-    await expect(client.applySettlement(payment, bad)).rejects.toThrow("charged cumulative");
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "charged cumulative",
+    );
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("suspicious");
   });
@@ -556,9 +790,12 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
     const bad: SettlementResponse = {
       success: true,
       transaction: "",
@@ -571,7 +808,9 @@ describe("direct-mode client", () => {
       }),
     };
 
-    await expect(client.applySettlement(payment, bad)).rejects.toThrow("commitment id");
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "commitment id",
+    );
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("suspicious");
   });
@@ -580,9 +819,12 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
     const bad: SettlementResponse = {
       success: true,
       transaction: "",
@@ -591,25 +833,36 @@ describe("direct-mode client", () => {
       extensions: kaspaSettlementExtensions({
         commitmentId: COMMITMENT,
         chargedAmount: "99",
-        channelState: channelState(payment.channel!, "100", payment.channel!.signedCumulativeAmount),
+        channelState: channelState(
+          payment.channel!,
+          "100",
+          payment.channel!.signedCumulativeAmount,
+        ),
       }),
     };
 
-    await expect(client.applySettlement(payment, bad)).rejects.toThrow("charged amount");
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "charged amount",
+    );
   });
 
   it("verifies deposit settlement funding amount", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
     const bad = makeSettlement(payment.channel!, "100");
     if (!bad.extensions?.kaspa) throw new Error("missing extension");
     bad.extensions.kaspa.fundingAmount = "999";
 
-    await expect(client.applySettlement(payment, bad)).rejects.toThrow("funding amount");
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "funding amount",
+    );
   });
 
   it("adopts verified corrective channel state before reusing a channel", async () => {
@@ -624,10 +877,16 @@ describe("direct-mode client", () => {
         return true;
       },
     });
-    const firstPayment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(firstPayment, makeSettlement(firstPayment.channel!, "100"));
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
 
     const correctiveState = channelState(firstPayment.channel!, "100", "200");
     const correctiveRequired = makeRequired({
@@ -638,14 +897,19 @@ describe("direct-mode client", () => {
         signature: "aa".repeat(64),
       },
     });
-    const correctivePayment = await client.createPayment(encodePaymentRequiredHeader(correctiveRequired), {
-      url: "https://api.example.test/data",
-    });
+    const correctivePayment = await client.createPayment(
+      encodePaymentRequiredHeader(correctiveRequired),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     expect(verified).toBe(1);
     expect(correctivePayment.openedChannel).toBe(false);
     expect(correctivePayment.paymentPayload.payload.type).toBe("voucher");
-    expect(voucherBearingPayload(correctivePayment.paymentPayload).voucher.amount).toBe("200");
+    expect(
+      voucherBearingPayload(correctivePayment.paymentPayload).voucher.amount,
+    ).toBe("200");
   });
 
   it("recovers a changed active outpoint from verified corrective state", async () => {
@@ -657,14 +921,21 @@ describe("direct-mode client", () => {
       provider,
       store,
       verifyVoucherSignature: (_voucher, channel) => {
-        verifierSawReplacement = channel.activeOutpoint.txid === replacementOutpoint.txid;
+        verifierSawReplacement =
+          channel.activeOutpoint.txid === replacementOutpoint.txid;
         return true;
       },
     });
-    const firstPayment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(firstPayment, makeSettlement(firstPayment.channel!, "100"));
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
     provider.utxos.push({
       outpoint: replacementOutpoint,
       amount: "900",
@@ -685,24 +956,37 @@ describe("direct-mode client", () => {
       },
     });
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(correctiveRequired), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(correctiveRequired),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     expect(verifierSawReplacement).toBe(true);
     expect(payment.openedChannel).toBe(false);
-    expect(voucherBearingPayload(payment.paymentPayload).fundingOutpoint).toEqual(replacementOutpoint);
-    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe("50");
+    expect(
+      voucherBearingPayload(payment.paymentPayload).fundingOutpoint,
+    ).toEqual(replacementOutpoint);
+    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
+      "50",
+    );
   });
 
   it("rejects corrective channel state without voucher proof", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const firstPayment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(firstPayment, makeSettlement(firstPayment.channel!, "100"));
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
 
     await expect(
       client.createPayment(
@@ -723,10 +1007,16 @@ describe("direct-mode client", () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
-    const firstPayment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(firstPayment, makeSettlement(firstPayment.channel!, "100"));
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
     const [stored] = await store.loadChannels({});
     if (!stored) throw new Error("missing stored channel");
     await store.saveChannel({
@@ -740,35 +1030,48 @@ describe("direct-mode client", () => {
       },
     });
 
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "75" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "75" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     expect(payment.openedChannel).toBe(false);
-    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe("125");
+    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
+      "125",
+    );
   });
 
   it("drives paid HTTP fetch with PAYMENT headers", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
-    const requiredHeader = encodePaymentRequiredHeader(makeRequired({ amount: "100" }));
+    const requiredHeader = encodePaymentRequiredHeader(
+      makeRequired({ amount: "100" }),
+    );
     let capturedPayment: PaymentPayload | undefined;
     const client = makeClient({
       provider,
       store,
       fetch: async (_input, init) => {
         const paymentHeader =
-          init?.headers && !Array.isArray(init.headers) ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER] : undefined;
+          init?.headers && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER]
+            : undefined;
         if (!paymentHeader) {
           return response(402, {
             "PAYMENT-REQUIRED": requiredHeader,
           });
         }
-        capturedPayment = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf8")) as PaymentPayload;
+        capturedPayment = JSON.parse(
+          Buffer.from(paymentHeader, "base64").toString("utf8"),
+        ) as PaymentPayload;
         const [channel] = await store.loadChannels({});
         if (!channel) throw new Error("missing channel");
         return response(200, {
-          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(makeSettlement(channel, "100")),
+          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(
+            makeSettlement(channel, "100"),
+          ),
         });
       },
     });
@@ -780,15 +1083,117 @@ describe("direct-mode client", () => {
     expect(result.settlement?.channel!.chargedCumulativeAmount).toBe("100");
   });
 
+  it("rejects redirected payment challenges before signing", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fetch: async (_input, init) => {
+        expect(init?.redirect).toBe("error");
+        return response(
+          402,
+          {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          },
+          "https://attacker.example/payment",
+          true,
+        );
+      },
+    });
+
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow("redirected away from the authorized request URL");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("accepts same-origin relative paidFetch URLs in browsers", async () => {
+    vi.stubGlobal("location", {
+      href: "https://api.example.test/application",
+    });
+    try {
+      const client = makeClient({
+        provider: new FakeFundingProvider(),
+        store: new MemoryChannelStore(),
+        fetch: async (input, init) => {
+          expect(input).toBe("/data");
+          expect(init?.redirect).toBe("error");
+          return response(200, {}, "https://api.example.test/data");
+        },
+      });
+
+      const result = await client.paidFetch("/data");
+
+      expect(result.response.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects redirected relative paidFetch URLs in browsers", async () => {
+    vi.stubGlobal("location", {
+      href: "https://api.example.test/application",
+    });
+    try {
+      const client = makeClient({
+        provider: new FakeFundingProvider(),
+        store: new MemoryChannelStore(),
+        fetch: async () =>
+          response(200, {}, "https://attacker.example/data", true),
+      });
+
+      await expect(client.paidFetch("/data")).rejects.toThrow(
+        "redirected away from the authorized request URL",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects a changed effective URL on the paid retry", async () => {
+    const provider = new FakeFundingProvider();
+    let attempts = 0;
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fetch: async (_input, init) => {
+        attempts += 1;
+        expect(init?.redirect).toBe("error");
+        if (attempts === 1) {
+          return response(402, {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          });
+        }
+        return response(200, {}, "https://attacker.example/payment", true);
+      },
+    });
+
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow("redirected away from the authorized request URL");
+    expect(attempts).toBe(2);
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
   it("requires explicit requestHash for paidFetch bodies outside the JSON canonicalization profile", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({
       provider,
       store: new MemoryChannelStore(),
       fetch: async () =>
-        response(402, {
-          "PAYMENT-REQUIRED": encodePaymentRequiredHeader(makeExactRequired({ amount: "100" })),
-        }),
+        response(
+          402,
+          {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          },
+          "https://api.example.test/variable",
+        ),
     });
 
     await expect(
@@ -803,6 +1208,7 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const required = makeExactRequired({ amount: "100" });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "alpha" },
       accepted: required.accepts[0]!,
@@ -813,15 +1219,20 @@ describe("direct-mode client", () => {
       client,
       async (params) => {
         attempts += 1;
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        if (!params._meta?.["x402/payment"])
+          return mcpPaymentRequiredResult(required);
         return {
           content: [{ type: "text", text: "paid data" }],
           _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement(
+              "100",
+              expectedRequestHash,
+            ),
           },
         };
       },
       { name: "download", arguments: { id: "alpha" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(attempts).toBe(2);
@@ -832,9 +1243,17 @@ describe("direct-mode client", () => {
 
   it("uses client mainnet opt-in for paid MCP tool calls", async () => {
     const provider = new FakeFundingProvider("hot-wallet", "kaspa:mainnet");
-    const client = makeClient({ provider, store: new MemoryChannelStore(), allowMainnet: true });
-    const required = makeExactRequired({ amount: "100", network: "kaspa:mainnet" });
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      allowMainnet: true,
+    });
+    const required = makeExactRequired({
+      amount: "100",
+      network: "kaspa:mainnet",
+    });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "mainnet" },
       accepted: required.accepts[0]!,
@@ -843,15 +1262,21 @@ describe("direct-mode client", () => {
     const result = await paidMcpToolCall(
       client,
       async (params) => {
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        if (!params._meta?.["x402/payment"])
+          return mcpPaymentRequiredResult(required);
         return {
           content: [{ type: "text", text: "paid data" }],
           _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash, "kaspa:mainnet"),
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement(
+              "100",
+              expectedRequestHash,
+              "kaspa:mainnet",
+            ),
           },
         };
       },
       { name: "download", arguments: { id: "mainnet" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.payment?.accepted.network).toBe("kaspa:mainnet");
@@ -861,13 +1286,21 @@ describe("direct-mode client", () => {
 
   it("uses client scheme policy when fingerprinting MCP payment requirements", async () => {
     const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore(), supportedSchemes: ["exact"] });
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      supportedSchemes: ["exact"],
+    });
     const exactRequired = makeExactRequired({ amount: "100" });
     const required: PaymentRequired = {
       ...exactRequired,
-      accepts: [makeRequired({ amount: "100" }).accepts[0], exactRequired.accepts[0]],
+      accepts: [
+        makeRequired({ amount: "100" }).accepts[0],
+        exactRequired.accepts[0],
+      ],
     };
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "scheme-policy" },
       accepted: exactRequired.accepts[0]!,
@@ -876,76 +1309,24 @@ describe("direct-mode client", () => {
     const result = await paidMcpToolCall(
       client,
       async (params) => {
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        if (!params._meta?.["x402/payment"])
+          return mcpPaymentRequiredResult(required);
         return {
           content: [{ type: "text", text: "paid data" }],
           _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement(
+              "100",
+              expectedRequestHash,
+            ),
           },
         };
       },
       { name: "download", arguments: { id: "scheme-policy" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.payment?.accepted.scheme).toBe("exact");
     expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
-  });
-
-  it("uses adapter-aware requirement selection when fingerprinting MCP payment requirements", async () => {
-    const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
-    const plainExact = makeExactRequired({ amount: "100", reservation: false }).accepts[0]!;
-    const reservedExact = makeExactRequired({ amount: "100" }).accepts[0]!;
-    const required: PaymentRequired = {
-      x402Version: X402_VERSION,
-      resource: {
-        url: "https://api.example.test/file",
-      },
-      accepts: [plainExact, reservedExact],
-    };
-    const expectedRequestHash = mcpToolCallFingerprint({
-      toolName: "download",
-      arguments: { id: "reserved-fallback" },
-      accepted: reservedExact,
-    });
-
-    const result = await paidMcpToolCall(
-      client,
-      async (params) => {
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
-        const payload = params._meta["x402/payment"].payload;
-        expect(payload.type).toBe("exact-transaction");
-        expect(payload.requestHash).toBe(expectedRequestHash);
-        return {
-          content: [{ type: "text", text: "paid data" }],
-          _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: {
-              success: true,
-              transaction: EXACT_TX_ID,
-              network: "kaspa:testnet-10",
-              amount: "100",
-              extensions: kaspaSettlementExtensions({
-                paymentOutputIndex: 0,
-                finality: "accepted",
-                requestHash: expectedRequestHash,
-                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-                templateId: "kaspa-x402-kip10-additive-v1",
-                reservationId: EXACT_RESERVATION_ID,
-                borrowOutpoint: { txid: FUNDING_TX, index: 2 },
-              }),
-            } satisfies SettlementResponse,
-          },
-        };
-      },
-      { name: "download", arguments: { id: "reserved-fallback" } },
-    );
-
-    expect(result.payment?.accepted).toEqual(reservedExact);
-    expect(result.settlement?.chargedAmount).toBe("100");
-    expect(provider.exactPayments[0]?.reservation).toMatchObject({
-      reservationId: EXACT_RESERVATION_ID,
-    });
-    expect(provider.deposits).toHaveLength(0);
   });
 
   it("parses MCP payment requirements from text fallback content", async () => {
@@ -953,6 +1334,7 @@ describe("direct-mode client", () => {
     const client = makeClient({ provider, store: new MemoryChannelStore() });
     const required = makeExactRequired({ amount: "100" });
     const expectedRequestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
       toolName: "download",
       arguments: { id: "fallback" },
       accepted: required.accepts[0]!,
@@ -970,15 +1352,21 @@ describe("direct-mode client", () => {
         return {
           content: [{ type: "text", text: "fallback paid" }],
           _meta: {
-            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement("100", expectedRequestHash),
+            [MCP_PAYMENT_RESPONSE_META_KEY]: exactSettlement(
+              "100",
+              expectedRequestHash,
+            ),
           },
         };
       },
       { name: "download", arguments: { id: "fallback" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.result.content?.[0]?.text).toBe("fallback paid");
-    expect(result.payment?.paymentPayload.payload.type).toBe("exact-transaction");
+    expect(result.payment?.paymentPayload.payload.type).toBe(
+      "exact-transaction",
+    );
   });
 
   it("returns MCP settlement failure results without treating them as paid content", async () => {
@@ -989,7 +1377,8 @@ describe("direct-mode client", () => {
     const result = await paidMcpToolCall(
       client,
       async (params) => {
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        if (!params._meta?.["x402/payment"])
+          return mcpPaymentRequiredResult(required);
         return {
           isError: true,
           content: [{ type: "text", text: "settlement failed" }],
@@ -1004,6 +1393,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "fail" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(result.result.isError).toBe(true);
@@ -1027,7 +1417,8 @@ describe("direct-mode client", () => {
       client,
       async (params) => {
         calls += 1;
-        if (!params._meta?.["x402/payment"]) return mcpPaymentRequiredResult(required);
+        if (!params._meta?.["x402/payment"])
+          return mcpPaymentRequiredResult(required);
         const challenge = { ...required, error: "invalid_transaction_state" };
         return {
           isError: true,
@@ -1039,6 +1430,7 @@ describe("direct-mode client", () => {
         };
       },
       { name: "download", arguments: { id: "hybrid-fail" } },
+      { audience: MCP_AUDIENCE },
     );
 
     expect(calls).toBe(2);
@@ -1046,6 +1438,33 @@ describe("direct-mode client", () => {
     expect(result.result.isError).toBe(true);
     expect(result.settlement?.chargedAmount).toBe("0");
     expect(result.settlement?.response).toEqual(settlement);
+  });
+
+  it("does not sign a second MCP payment for corrective requirements", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+    let calls = 0;
+
+    await expect(
+      paidMcpToolCall(
+        client,
+        async (params) => {
+          calls += 1;
+          if (!params._meta?.["x402/payment"])
+            return mcpPaymentRequiredResult(required);
+          return mcpPaymentRequiredResult({
+            ...required,
+            error: "invalid_transaction_state",
+          });
+        },
+        { name: "download", arguments: { id: "corrective" } },
+        { audience: MCP_AUDIENCE },
+      ),
+    ).rejects.toThrow("new explicit payment authorization");
+
+    expect(calls).toBe(2);
+    expect(provider.exactPayments).toHaveLength(1);
   });
 
   it("passes payment identifiers through paidFetch retries", async () => {
@@ -1068,17 +1487,23 @@ describe("direct-mode client", () => {
       store,
       fetch: async (_input, init) => {
         const paymentHeader =
-          init?.headers && !Array.isArray(init.headers) ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER] : undefined;
+          init?.headers && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER]
+            : undefined;
         if (!paymentHeader) {
           return response(402, {
             "PAYMENT-REQUIRED": requiredHeader,
           });
         }
-        capturedPayment = JSON.parse(Buffer.from(paymentHeader, "base64").toString("utf8")) as PaymentPayload;
+        capturedPayment = JSON.parse(
+          Buffer.from(paymentHeader, "base64").toString("utf8"),
+        ) as PaymentPayload;
         const [channel] = await store.loadChannels({});
         if (!channel) throw new Error("missing channel");
         return response(200, {
-          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(makeSettlement(channel, "100")),
+          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(
+            makeSettlement(channel, "100"),
+          ),
         });
       },
     });
@@ -1096,7 +1521,7 @@ describe("direct-mode client", () => {
     );
   });
 
-  it("handles a corrective paid-fetch 402 before the successful retry", async () => {
+  it("requires a new explicit authorization for a corrective paid-fetch 402", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     let retryCount = 0;
@@ -1106,10 +1531,14 @@ describe("direct-mode client", () => {
       verifyVoucherSignature: () => true,
       fetch: async (_input, init) => {
         const paymentHeader =
-          init?.headers && !Array.isArray(init.headers) ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER] : undefined;
+          init?.headers && !Array.isArray(init.headers)
+            ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER]
+            : undefined;
         if (!paymentHeader) {
           return response(402, {
-            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeRequired({ amount: "100" }),
+            ),
           });
         }
         retryCount += 1;
@@ -1130,16 +1559,17 @@ describe("direct-mode client", () => {
           });
         }
         return response(200, {
-          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(makeSettlement(channel, "50")),
+          [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(
+            makeSettlement(channel, "50"),
+          ),
         });
       },
     });
 
-    const result = await client.paidFetch("https://api.example.test/data");
-
-    expect(retryCount).toBe(2);
-    expect(result.response.status).toBe(200);
-    expect(result.settlement?.chargedAmount).toBe("50");
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow("requires a new explicit payment authorization");
+    expect(retryCount).toBe(1);
   });
 
   it("lists and refunds timeout-unlocked channels through adapters", async () => {
@@ -1157,10 +1587,16 @@ describe("direct-mode client", () => {
         },
       },
     });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
-    await client.applySettlement(payment, makeSettlement(payment.channel!, "100"));
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      payment,
+      makeSettlement(payment.channel!, "100"),
+    );
 
     await expect(client.listRefundableChannels()).resolves.toHaveLength(0);
     provider.daa = "1000";
@@ -1188,9 +1624,12 @@ describe("direct-mode client", () => {
         },
       },
     });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
     const refund = await client.refundChannel(payment.channel!.id);
 
@@ -1214,11 +1653,16 @@ describe("direct-mode client", () => {
         },
       },
     });
-    const payment = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
-      url: "https://api.example.test/data",
-    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
 
-    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow("refund transaction amount");
+    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "refund transaction amount",
+    );
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("active");
   });
@@ -1229,11 +1673,15 @@ function makeClient(options: {
   store?: MemoryChannelStore;
   fundingSource?: FundingSourceKind;
   fetch?: FetchLike;
-  verifyVoucherSignature?: (voucher: { amount: string; signature: string }, channel: DirectModeChannel) => boolean;
+  verifyVoucherSignature?: (
+    voucher: { amount: string; signature: string },
+    channel: DirectModeChannel,
+  ) => boolean;
   refundBuilder?: RefundTransactionBuilder;
   allowMainnet?: boolean;
   supportedNetworks?: readonly NetworkId[];
   supportedSchemes?: readonly PaymentScheme[];
+  fundingPolicy?: FundingPolicy;
 }): DirectModeClient {
   const provider = options.provider ?? new FakeFundingProvider();
   return new DirectModeClient({
@@ -1241,7 +1689,11 @@ function makeClient(options: {
     signer: new FakeSigner(),
     store: options.store ?? new MemoryChannelStore(),
     addressCodec: new FakeAddressCodec(),
-    fundingPolicy: options.fundingSource ? { requiredSource: options.fundingSource } : undefined,
+    fundingPolicy:
+      options.fundingPolicy ??
+      (options.fundingSource
+        ? { requiredSource: options.fundingSource }
+        : undefined),
     fetch: options.fetch as never,
     verifyVoucherSignature: options.verifyVoucherSignature,
     refundBuilder: options.refundBuilder,
@@ -1285,8 +1737,11 @@ function makeRequired(input: {
   };
 }
 
-function makeExactRequired(input: { amount: string; finality?: "mempool" | "accepted" | "confirmed"; network?: NetworkId; reservation?: boolean }): PaymentRequired {
-  const includeReservation = input.reservation !== false;
+function makeExactRequired(input: {
+  amount: string;
+  finality?: "mempool" | "accepted" | "confirmed";
+  network?: NetworkId;
+}): PaymentRequired {
   return {
     x402Version: X402_VERSION,
     resource: {
@@ -1301,35 +1756,92 @@ function makeExactRequired(input: { amount: string; finality?: "mempool" | "acce
         payTo: "kaspatest:payout",
         maxTimeoutSeconds: 60,
         extra: {
-          binding: "kaspa-exact-v1",
-          ...(input.finality ? { finality: input.finality } : {}),
-          ...(includeReservation
-            ? {
-                templateId: "kaspa-x402-kip10-additive-v1",
-                transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-                borrowOutpoint: { txid: FUNDING_TX, index: 2 },
-                borrowAmount: "1000",
-                borrowScriptPublicKey: "0000" + "ab".repeat(34),
-                borrowRedeemScript: "51",
-                additiveThresholdSompi: "10000000",
-                paymentOutputIndex: 0,
-                reservationId: EXACT_RESERVATION_ID,
-                reservationExpiresAt: "2099-01-01T00:00:00.000Z",
-              }
-            : {}),
+          binding: "kaspa-exact-v2",
+          profile: "standard-native",
+          finality: input.finality ?? "accepted",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
         },
       } satisfies ExactPaymentRequirements,
     ],
   };
 }
 
-function makeMixedRequired(input: { amount: string; reservation?: boolean }): PaymentRequired {
+function makeStandardExactRequired(input: {
+  amount: string;
+  network?: NetworkId;
+}): PaymentRequired {
+  return {
+    x402Version: X402_VERSION,
+    resource: { url: "https://api.example.test/file" },
+    accepts: [
+      {
+        scheme: "exact",
+        network: input.network ?? "kaspa:testnet-10",
+        amount: input.amount,
+        asset: "KAS",
+        payTo: "kaspatest:payout",
+        maxTimeoutSeconds: 60,
+        extra: {
+          binding: "kaspa-exact-v2",
+          profile: "standard-native",
+          finality: "accepted",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
+        },
+      } satisfies ExactPaymentRequirements,
+    ],
+  };
+}
+
+function makeAdditiveExactRequired(input: {
+  amount: string;
+  network?: NetworkId;
+}): PaymentRequired {
+  return {
+    x402Version: X402_VERSION,
+    resource: { url: "https://api.example.test/file" },
+    accepts: [
+      {
+        scheme: "exact",
+        network: input.network ?? "kaspa:testnet-10",
+        amount: input.amount,
+        asset: "KAS",
+        payTo: "kaspatest:head",
+        maxTimeoutSeconds: 60,
+        extra: {
+          binding: "kaspa-exact-v2",
+          profile: "additive",
+          finality: "accepted",
+          transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+          payToScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          templateId: "kaspa-x402-kip10-additive-v1",
+          headId: EXACT_HEAD_ID,
+          headVersion: "7",
+          expectedHeadOutpoint: { txid: FUNDING_TX, index: 0 },
+          headAmount: "100000000",
+          headScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,
+          headRedeemScript: ADDITIVE_HEAD_REDEEM_SCRIPT,
+          additiveThresholdSompi: "10000000",
+          paymentOutputIndex: 0,
+          challengeId: EXACT_CHALLENGE_ID,
+          challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+        },
+      } satisfies ExactPaymentRequirements,
+    ],
+  };
+}
+
+function makeMixedRequired(input: { amount: string }): PaymentRequired {
   return {
     x402Version: X402_VERSION,
     resource: {
       url: "https://api.example.test/file",
     },
-    accepts: [makeExactRequired(input).accepts[0], makeRequired(input).accepts[0]],
+    accepts: [
+      makeExactRequired(input).accepts[0],
+      makeRequired(input).accepts[0],
+    ],
   };
 }
 
@@ -1359,7 +1871,11 @@ function foreignUptoEntry(): Record<string, unknown> {
   };
 }
 
-function makeSettlement(channel: DirectModeChannel, chargedAmount: string, stateOverrides: Partial<ChannelState> = {}): SettlementResponse {
+function makeSettlement(
+  channel: DirectModeChannel,
+  chargedAmount: string,
+  stateOverrides: Partial<ChannelState> = {},
+): SettlementResponse {
   return {
     success: true,
     transaction: COMMITMENT,
@@ -1370,14 +1886,22 @@ function makeSettlement(channel: DirectModeChannel, chargedAmount: string, state
       chargedAmount,
       fundingAmount: channel.fundingAmount,
       channelState: {
-        ...channelState(channel, addAmounts(channel.chargedCumulativeAmount, chargedAmount), channel.signedCumulativeAmount),
+        ...channelState(
+          channel,
+          addAmounts(channel.chargedCumulativeAmount, chargedAmount),
+          channel.signedCumulativeAmount,
+        ),
         ...stateOverrides,
       },
     }),
   };
 }
 
-function exactSettlement(amount: string, requestHash: Hash32Hex, network: NetworkId = "kaspa:testnet-10"): SettlementResponse {
+function exactSettlement(
+  amount: string,
+  requestHash: Hash32Hex,
+  network: NetworkId = "kaspa:testnet-10",
+): SettlementResponse {
   return {
     success: true,
     transaction: EXACT_TX_ID,
@@ -1385,13 +1909,11 @@ function exactSettlement(amount: string, requestHash: Hash32Hex, network: Networ
     payer: "kaspatest:refund",
     amount,
     extensions: kaspaSettlementExtensions({
+      exactProfile: "standard-native",
       paymentOutputIndex: 0,
       finality: "accepted",
       requestHash,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
-      templateId: "kaspa-x402-kip10-additive-v1",
-      reservationId: EXACT_RESERVATION_ID,
-      borrowOutpoint: { txid: FUNDING_TX, index: 2 },
     }),
   };
 }
@@ -1400,7 +1922,9 @@ function addAmounts(a: string, b: string): string {
   return (BigInt(a) + BigInt(b)).toString();
 }
 
-function voucherBearingPayload(paymentPayload: PaymentPayload): Extract<KaspaPaymentPayload, { type: "deposit-voucher" | "voucher" }> {
+function voucherBearingPayload(
+  paymentPayload: PaymentPayload,
+): Extract<KaspaPaymentPayload, { type: "deposit-voucher" | "voucher" }> {
   const payload = paymentPayload.payload;
   if (payload.type !== "deposit-voucher" && payload.type !== "voucher") {
     throw new Error("expected voucher-bearing payload");
@@ -1408,7 +1932,11 @@ function voucherBearingPayload(paymentPayload: PaymentPayload): Extract<KaspaPay
   return payload;
 }
 
-function channelState(channel: DirectModeChannel, chargedCumulativeAmount: string, signedMaxClaimable: string): ChannelState {
+function channelState(
+  channel: DirectModeChannel,
+  chargedCumulativeAmount: string,
+  signedMaxClaimable: string,
+): ChannelState {
   return {
     channelId: channel.id,
     activeOutpoint: channel.activeOutpoint,
@@ -1420,10 +1948,17 @@ function channelState(channel: DirectModeChannel, chargedCumulativeAmount: strin
   };
 }
 
-function response(status: number, headers: Record<string, string>): HttpResponseLike {
+function response(
+  status: number,
+  headers: Record<string, string>,
+  url = "https://api.example.test/data",
+  redirected = false,
+): HttpResponseLike {
   return {
     status,
     headers: new TestHeaders(headers),
+    url,
+    redirected,
   };
 }
 
@@ -1431,7 +1966,9 @@ class TestHeaders implements HeaderBag {
   readonly #headers: Record<string, string>;
 
   constructor(headers: Record<string, string>) {
-    this.#headers = Object.fromEntries(Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]));
+    this.#headers = Object.fromEntries(
+      Object.entries(headers).map(([key, value]) => [key.toLowerCase(), value]),
+    );
   }
 
   get(name: string): string | null {
@@ -1443,16 +1980,27 @@ class FakeFundingProvider implements FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
-  readonly exactPayments: Array<{ amount: string; payTo: string; requestHash?: string; reservation?: ExactPaymentRequest["reservation"] }> = [];
+  readonly exactPayments: Array<{
+    profile: ExactPaymentRequest["profile"];
+    amount: string;
+    payTo: string;
+    payToScriptPublicKey?: string;
+    requestHash?: string;
+    head?: ExactPaymentRequest["head"];
+  }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
-  depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" = "outpoint";
+  depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" =
+    "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
   exactMode: "transaction" | "artifactless" = "transaction";
   omitExactTransactionId = false;
   exactTransactionOutputIndex?: number;
   daa = "1000";
 
-  constructor(sourceKind: FundingSourceKind = "hot-wallet", networkId: NetworkId = "kaspa:testnet-10") {
+  constructor(
+    sourceKind: FundingSourceKind = "hot-wallet",
+    networkId: NetworkId = "kaspa:testnet-10",
+  ) {
     this.sourceKind = sourceKind;
     this.networkId = networkId;
   }
@@ -1461,10 +2009,16 @@ class FakeFundingProvider implements FundingProvider {
     return { address: "kaspatest:refund", publicKey: CLIENT_KEY };
   }
 
+  async authorizeExactPayment(_request: ExactTransactionPaymentRequest) {}
+
   async fundEscrowDeposit(request: EscrowDepositRequest) {
-    this.deposits.push({ amount: request.amount, channelId: request.channelId });
+    this.deposits.push({
+      amount: request.amount,
+      channelId: request.channelId,
+    });
     const outpoint = { txid: FUNDING_TX, index: this.deposits.length - 1 };
-    const amount = this.depositMode === "outpoint-underfunded" ? "50" : request.amount;
+    const amount =
+      this.depositMode === "outpoint-underfunded" ? "50" : request.amount;
     this.utxos.push({
       outpoint,
       amount,
@@ -1492,10 +2046,12 @@ class FakeFundingProvider implements FundingProvider {
 
   async payExactTransaction(request: ExactTransactionPaymentRequest) {
     this.exactPayments.push({
+      profile: request.profile,
       amount: request.amount,
       payTo: request.payTo,
+      payToScriptPublicKey: request.payToScriptPublicKey,
       ...(request.requestHash ? { requestHash: request.requestHash } : {}),
-      reservation: request.reservation,
+      ...(request.head ? { head: request.head } : {}),
     });
     if (this.exactMode === "artifactless") {
       return {
@@ -1506,18 +2062,44 @@ class FakeFundingProvider implements FundingProvider {
         fundingSource: this.sourceKind,
       } as unknown as ExactTransactionPaymentResult;
     }
+    const paymentOutputIndex =
+      this.exactTransactionOutputIndex ?? request.paymentOutputIndex ?? 0;
+    const expiresAt = request.authorizationExpiresAt;
+    const digest = exactRequestAuthorizationDigest({
+      network: request.network,
+      profile: request.profile,
+      transactionId: EXACT_TX_ID,
+      paymentOutputIndex,
+      amount: request.amount,
+      payTo: request.payTo,
+      payToScriptPublicKey: request.payToScriptPublicKey,
+      paymentRequirementsHash: request.paymentRequirementsHash,
+      requestHash: request.requestHash,
+      challengeId: request.head?.challengeId,
+      inputIndex: request.profile === "additive" ? 1 : 0,
+      expiresAt,
+    });
     return {
       transaction: EXACT_TRANSACTION_ARTIFACT,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0" as const,
       ...(this.omitExactTransactionId ? {} : { transactionId: EXACT_TX_ID }),
-      paymentOutputIndex: this.exactTransactionOutputIndex ?? request.reservation.paymentOutputIndex,
+      paymentOutputIndex,
+      authorization: {
+        version: "kaspa-x402-exact-request-authorization-v1" as const,
+        inputIndex: request.profile === "additive" ? 1 : 0,
+        expiresAt,
+        digest,
+        signature: "ab".repeat(64),
+      },
       payerAddress: "kaspatest:refund",
       fundingSource: this.sourceKind,
     } as ExactTransactionPaymentResult;
   }
 
   async getUtxos(addresses: readonly string[]) {
-    return this.utxos.filter((utxo) => utxo.address && addresses.includes(utxo.address));
+    return this.utxos.filter(
+      (utxo) => utxo.address && addresses.includes(utxo.address),
+    );
   }
 
   async getVirtualDaaScore() {
@@ -1557,6 +2139,7 @@ class FakeSigner {
 
 class FakeAddressCodec implements AddressCodec {
   scriptPublicKeyForAddress(address: string): string {
+    if (address === "kaspatest:head") return ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY;
     return `0000${sha256Hex(address)}`;
   }
 
