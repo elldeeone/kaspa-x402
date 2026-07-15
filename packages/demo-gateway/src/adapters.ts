@@ -871,7 +871,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
       request,
       transactionId,
       authorizationEvidence.publicKey,
-      Boolean(finality),
     );
     const change = transaction.outputs[1];
     if (change && !payerScripts.has(change.scriptPublicKey)) {
@@ -981,7 +980,6 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
       request,
       transactionId,
       authorizationEvidence.publicKey,
-      Boolean(finality),
     );
 
     const changeOutputs = transaction.outputs.filter(
@@ -1084,7 +1082,6 @@ function verifyExactRequestAuthorization(
   request: ExactTransactionVerificationRequest,
   transactionId: Hash32Hex,
   publicKey: string,
-  alreadyAccepted: boolean,
 ): ExactTransactionVerification["requestAuthorization"] {
   const authorization = request.authorization;
   if (
@@ -1098,7 +1095,7 @@ function verifyExactRequestAuthorization(
   const expiresAt = Date.parse(authorization.expiresAt);
   if (!Number.isFinite(expiresAt))
     throw invalidTransaction("exact request authorization expiry is invalid");
-  if (!alreadyAccepted && expiresAt <= Date.now())
+  if (expiresAt <= Date.now())
     throw invalidTransaction("exact request authorization has expired");
   const digest = exactRequestAuthorizationDigest({
     network: request.network,

@@ -799,6 +799,16 @@ describe("RestExactTransactionVerifier", () => {
       transactionId: standard.transactionId,
       finality: "accepted",
     });
+
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2100-01-01T00:00:00.000Z"));
+    try {
+      await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
+        "exact request authorization has expired",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("verifies the corrected additive vector as an exact head delta without a second merchant output", async () => {
@@ -860,6 +870,7 @@ describe("RestExactTransactionVerifier", () => {
       })),
     };
     const artifact = JSON.stringify(artifactObject);
+    let candidateAccepted = false;
     const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
       const url = new URL(request.toString());
       const input = additive.transaction.inputs.find(
@@ -877,6 +888,33 @@ describe("RestExactTransactionVerifier", () => {
               script_public_key: input.utxo.scriptPublicKey.slice(4),
             },
           ],
+        });
+      }
+      if (
+        candidateAccepted &&
+        url.pathname === `/transactions/${additive.transactionId}`
+      ) {
+        return Response.json({
+          transaction_id: artifactObject.id,
+          version: artifactObject.version,
+          lock_time: artifactObject.lockTime,
+          subnetwork_id: artifactObject.subnetworkId,
+          gas: artifactObject.gas,
+          payload: artifactObject.payload,
+          is_accepted: true,
+          inputs: artifactObject.inputs.map((entry) => ({
+            previous_outpoint_hash: entry.previousOutpoint.transactionId,
+            previous_outpoint_index: entry.previousOutpoint.index,
+            signature_script: entry.signatureScript,
+            sequence: entry.sequence,
+            sig_op_count: entry.sigOpCount,
+            compute_budget: entry.computeBudget,
+          })),
+          outputs: artifactObject.outputs.map((entry, index) => ({
+            index,
+            amount: entry.value,
+            script_public_key: entry.scriptPublicKey.slice(4),
+          })),
         });
       }
       if (url.pathname.startsWith("/transactions/")) {
@@ -1089,6 +1127,17 @@ describe("RestExactTransactionVerifier", () => {
         transaction: JSON.stringify(invalidSignature),
       }),
     ).rejects.toThrow("payer signature is invalid");
+
+    candidateAccepted = true;
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2100-01-01T00:00:00.000Z"));
+    try {
+      await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
+        "exact request authorization has expired",
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 });
 
