@@ -6,6 +6,7 @@ import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
+  ACTIVE_REDIRECTS,
   PRIVATE_SITE_PATTERNS,
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
@@ -130,6 +131,9 @@ function checkMetadataFreshness() {
     path.join(outDir, manifest.releasePath, "release.json"),
   );
   const packages = readPackages();
+  const publicPackages = packages.filter((pkg) =>
+    PUBLISHABLE_PACKAGES.includes(pkg.name),
+  );
   const releasePackages = { releaseVersion: manifest.releaseVersion, packages };
   const dirtyInputs = dirtyPublishableInputs();
   const currentLock = readJson(
@@ -172,11 +176,11 @@ function checkMetadataFreshness() {
     JSON.stringify(release.npmInstall) !== JSON.stringify(releaseNpmInstall())
   )
     fail("release npm install metadata is stale");
-  if (JSON.stringify(manifest.packages) !== JSON.stringify(packages))
+  if (JSON.stringify(manifest.packages) !== JSON.stringify(publicPackages))
     fail("site-manifest package metadata is stale");
   if (
     JSON.stringify(readJson(path.join(outDir, "packages.json")).packages) !==
-    JSON.stringify(packages)
+    JSON.stringify(publicPackages)
   )
     fail("packages.json is stale");
   const versionedPackages = readJson(
@@ -453,12 +457,45 @@ function checkContent() {
     "index.html",
     "demo/index.html",
     "docs/testnet-gateway.md",
-    "docs/demo-interop-checklist.md",
   ]) {
     assertContains(
       path.join(outDir, relative),
       "paid-canary",
       `${relative} current-alpha paid-canary evidence`,
+    );
+  }
+
+  const home = path.join(outDir, "index.html");
+  const specIndex = path.join(outDir, "spec/index.html");
+  const docsIndex = path.join(outDir, "docs/index.html");
+  assertContains(home, "Payment schemes", "homepage scheme heading");
+  for (const stale of [
+    "kaspa-exact-v1",
+    "live-covenant-proof-harness",
+    "transaction-v1-plan",
+  ]) {
+    assertNotContains(specIndex, stale, `active spec index excludes ${stale}`);
+  }
+  for (const stale of ["public-proposal", "demo-interop-checklist"]) {
+    assertNotContains(docsIndex, stale, `active docs index excludes ${stale}`);
+  }
+  for (const privatePackage of [
+    "@kaspa-x402/cli",
+    "@kaspa-x402/facilitator",
+  ]) {
+    assertNotContains(
+      home,
+      `<code>${privatePackage}</code>`,
+      `homepage excludes ${privatePackage}`,
+    );
+  }
+
+  const redirectsPath = path.join(outDir, "_redirects");
+  for (const { from, to, status } of ACTIVE_REDIRECTS) {
+    assertContains(
+      redirectsPath,
+      `${from} ${to} ${status}`,
+      `active compatibility redirect ${from}`,
     );
   }
 }
@@ -581,6 +618,16 @@ function assertContains(file, needle, label) {
     return;
   }
   if (!fs.readFileSync(file, "utf8").includes(needle)) fail(`missing ${label}`);
+}
+
+function assertNotContains(file, needle, label) {
+  if (!fs.existsSync(file)) {
+    fail(`missing ${label}`);
+    return;
+  }
+  if (fs.readFileSync(file, "utf8").includes(needle)) {
+    fail(`unexpected ${label}`);
+  }
 }
 
 function readJson(file) {

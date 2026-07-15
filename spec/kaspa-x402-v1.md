@@ -6,7 +6,6 @@ This document defines common rules for x402 v2 payments on Kaspa. Active
 scheme-specific behavior is defined in sibling documents:
 
 - [Kaspa x402 Exact Binding v2](kaspa-exact-v2.md)
-- [Kaspa x402 Exact Binding v1](kaspa-exact-v1.md) (superseded alpha.7 profile)
 - [Kaspa x402 Batch Settlement Binding v1](kaspa-batch-settlement-v1.md)
 
 ## x402 Relationship
@@ -142,7 +141,7 @@ because each voucher does not create a new on-chain output.
 
 | Scheme | `extra.binding` |
 | ------ | --------------- |
-| `exact` | `kaspa-exact-v2` for new implementations; `kaspa-exact-v1` is the superseded alpha.7 profile. |
+| `exact` | `kaspa-exact-v2` |
 | `batch-settlement` | `kaspa-escrow-v1` |
 
 Unknown `extra` fields may be preserved by transports, but verifiers must ignore unknown fields unless the selected binding explicitly marks them as critical.

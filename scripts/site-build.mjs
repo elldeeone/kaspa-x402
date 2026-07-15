@@ -6,6 +6,7 @@ import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
+  ACTIVE_REDIRECTS,
   ARTIFACT_NOTES,
   DOC_GROUPS,
   PUBLIC_DOC_FILES,
@@ -43,6 +44,9 @@ const siteScriptFiles = [
   "scripts/site-serve.mjs",
 ];
 const packages = readPackages();
+const publicPackages = packages.filter((pkg) =>
+  PUBLISHABLE_PACKAGES.includes(pkg.name),
+);
 const repositoryUrl = normalizeRepositoryUrl(
   readJson("package.json").repository?.url,
 );
@@ -90,7 +94,11 @@ const copiedArtifacts = [
 
 const vectorIndex = buildVectorIndex(vectorFiles);
 writeJson("vectors/index.json", vectorIndex);
-writeJson("packages.json", { generatedFrom: commit, releaseVersion, packages });
+writeJson("packages.json", {
+  generatedFrom: commit,
+  releaseVersion,
+  packages: publicPackages,
+});
 
 writeIndexPages();
 writeReleaseSnapshot(releaseArtifacts(copiedArtifacts), vectorIndex);
@@ -145,7 +153,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs the paid-canary-proven alpha.8 <code>standard-native</code> exact profile and the retained batch profile on <code>kaspa:testnet-10</code>. The <a href="/docs/testnet-gateway/">gateway reference</a> records the deployed evidence.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs the paid-canary-proven alpha.8 <code>standard-native</code> exact profile and <code>batch-settlement</code> on <code>kaspa:testnet-10</code>. The <a href="/docs/testnet-gateway/">gateway reference</a> records the deployed evidence.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -167,7 +175,7 @@ function writeHomePage() {
       <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> funds a covenant-backed escrow once, signs a cumulative voucher per paid request, and touches the chain again only at claim or refund time.</li>
     </ul>
 
-    <h2>The two profiles</h2>
+    <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
@@ -176,10 +184,9 @@ function writeHomePage() {
 
     <h2>Start here</h2>
     <ul>
-      <li><strong>Implementing a paid HTTP API or MCP tool:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, then the <a href="/spec/kaspa-x402-v1/">core binding</a>, the <a href="/spec/http-profile/">HTTP</a> or <a href="/spec/mcp-profile/">MCP</a> transport profile, and the <a href="/vectors/">conformance vectors</a>.</li>
-      <li><strong>Testing the hosted gateway:</strong> see the <a href="/docs/testnet-gateway/">gateway reference</a> and <a href="/docs/demo-interop-checklist/">interoperability checklist</a>. The <a href="/docs/demo-operations/">operations runbook</a> defines its testnet-only safety and paid-canary gates.</li>
-      <li><strong>Reviewing correctness or security:</strong> start from the <a href="/docs/security-threat-model/">threat model</a> and the <a href="/docs/review-closure-ledger/">review closure ledger</a>, then the <a href="/schemas/">schemas</a> and <a href="/vectors/">vectors</a>.</li>
-      <li><strong>Evaluating the proposal:</strong> the <a href="/docs/public-proposal/">public proposal</a>, the <a href="/docs/live-testnet-report/">live testnet report</a>, and the <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
+      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v1/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Testing:</strong> use the <a href="/docs/testnet-gateway/">hosted gateway reference</a> and the <a href="/demo/">browser demo</a>.</li>
+      <li><strong>Reviewing:</strong> start with the <a href="/docs/security-threat-model/">threat model</a>, <a href="/docs/live-testnet-report/">live testnet report</a>, and <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
 
     <h2 id="packages">Packages</h2>
@@ -234,9 +241,9 @@ function writeSpecsPage() {
       `
   <main>
     <h1>Spec</h1>
-    <p>Binding and transport documents, in suggested reading order. Each rendered page links its markdown source; hashes are of the source files.</p>
+    <p>Current binding and transport documents, in suggested reading order. Historical versions remain available in the immutable <a href="/releases/">release snapshots</a>.</p>
     ${statusLine()}
-    ${annotatedTable("Document", rows)}
+    ${annotatedTable("Document", rows, { hashes: false })}
   </main>
       `,
     ),
@@ -253,7 +260,7 @@ function writeDocsPage() {
         sha256File(path.join(root, file)),
       ),
     );
-    return `<h2>${escapeHtml(group.title)}</h2>\n    ${annotatedTable("Document", rows)}`;
+    return `<h2>${escapeHtml(group.title)}</h2>\n    ${annotatedTable("Document", rows, { hashes: false })}`;
   }).join("\n    ");
   writeHtml(
     "docs/index.html",
@@ -609,13 +616,19 @@ function annotatedRow(href, label, note, sha256) {
   };
 }
 
-function annotatedTable(artifactHeading, rows, { notes = true } = {}) {
-  const headers = notes
-    ? [artifactHeading, "Purpose", "SHA-256 prefix"]
-    : [artifactHeading, "SHA-256 prefix"];
+function annotatedTable(
+  artifactHeading,
+  rows,
+  { notes = true, hashes = true } = {},
+) {
+  const headers = [artifactHeading];
+  if (notes) headers.push("Purpose");
+  if (hashes) headers.push("SHA-256 prefix");
   const body = rows
     .map((row) => {
-      const cells = notes ? row.cells : [row.cells[0], row.cells[2]];
+      const cells = [row.cells[0]];
+      if (notes) cells.push(row.cells[1]);
+      if (hashes) cells.push(row.cells[2]);
       return `<tr>${cells.map((cell) => `<td>${cell}</td>`).join("")}</tr>`;
     })
     .join("");
@@ -623,7 +636,7 @@ function annotatedTable(artifactHeading, rows, { notes = true } = {}) {
 }
 
 function packagesTable() {
-  const rows = packages
+  const rows = publicPackages
     .map(
       (pkg) =>
         `<tr><td><code>${escapeHtml(pkg.name)}</code></td><td><code>${escapeHtml(pkg.version)}</code></td><td>${pkg.private ? "Repository only" : `<a href="${npmPackageUrl(pkg.name)}">npm</a>`}</td><td><a href="${repositoryUrl}/tree/${commit}/${pkg.path}">source</a></td></tr>`,
@@ -799,7 +812,7 @@ function writeManifest(copiedArtifacts, vectorIndex) {
       source: `/${file}`,
     })),
     vectors: vectorIndex,
-    packages,
+    packages: publicPackages,
     siteAssets: [
       artifactRecord("site/src/styles.css", "assets/styles.css"),
       ...SITE_ASSET_FILES.map((file) =>
@@ -1051,7 +1064,7 @@ function inlineMarkdown(value, sourceDir) {
 }
 
 function rewriteMarkdownHref(href, sourceDir) {
-  if (/^(?:https?:|mailto:|#)/.test(href)) return href;
+  if (/^(?:https?:|mailto:|#|\/)/.test(href)) return href;
   const [target, suffix = ""] = href.split(/(?=#)/, 2);
   if (target.endsWith(".md")) {
     const normalized = path.posix.normalize(`${sourceDir}/${target}`);
@@ -1170,11 +1183,15 @@ function releaseHeaderBlocks() {
 }
 
 function writeRedirects() {
+  const activeRedirects = ACTIVE_REDIRECTS.map(
+    ({ from, to, status }) => `${from} ${to} ${status}`,
+  ).join("\n");
   writeText(
     "_redirects",
     `/schema/* /schemas/:splat 301
 /specs/* /spec/:splat 301
 /latest/* /:splat 302
+${activeRedirects}
 `,
   );
 }

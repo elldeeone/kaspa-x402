@@ -71,14 +71,11 @@ export const SCHEMA_FILES = [
 export const SPEC_FILES = [
   "spec/kaspa-x402-v1.md",
   "spec/kaspa-exact-v2.md",
-  "spec/kaspa-exact-v1.md",
   "spec/kaspa-batch-settlement-v1.md",
   "spec/http-profile.md",
   "spec/mcp-profile.md",
   "spec/facilitator-profile.md",
   "spec/errors.md",
-  "spec/live-covenant-proof-harness.md",
-  "spec/transaction-v1-plan.md",
 ];
 
 export const RELEASE_DOC_FILES = [
@@ -96,13 +93,37 @@ export const RELEASE_DOC_FILES = [
 ];
 
 export const PUBLIC_DOC_FILES = [
-  "docs/public-proposal.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
   "docs/demo-operations.md",
   "docs/demo-implementer-guide.md",
-  "docs/demo-interop-checklist.md",
   ...RELEASE_DOC_FILES.slice(2),
+];
+
+// Compatibility aliases keep previously published unversioned URLs useful
+// without presenting historical or internal evidence as current guidance.
+export const ACTIVE_REDIRECTS = [
+  {
+    from: "/spec/kaspa-exact-v1/",
+    to: "/v0.1.0-alpha.7/spec/kaspa-exact-v1.md",
+    status: 302,
+  },
+  {
+    from: "/spec/live-covenant-proof-harness/",
+    to: "/docs/live-testnet-proof/",
+    status: 302,
+  },
+  {
+    from: "/spec/transaction-v1-plan/",
+    to: "/spec/kaspa-batch-settlement-v1/",
+    status: 302,
+  },
+  { from: "/docs/public-proposal/", to: "/", status: 302 },
+  {
+    from: "/docs/demo-interop-checklist/",
+    to: "/docs/demo-implementer-guide/",
+    status: 302,
+  },
 ];
 
 // One-line purpose for each published artifact, shown next to it in index pages.
@@ -177,10 +198,14 @@ export const ARTIFACT_NOTES = {
 
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
-  { title: "Proposal", files: ["docs/public-proposal.md", "docs/adoption-examples.md"] },
+  { title: "Adoption", files: ["docs/adoption-examples.md"] },
   {
-    title: "Deployment",
-    files: ["docs/testnet-gateway.md", "docs/demo-operations.md", "docs/demo-implementer-guide.md", "docs/demo-interop-checklist.md"],
+    title: "Implementation",
+    files: ["docs/demo-implementer-guide.md", "docs/server-store-contract.md", "docs/server-runtime-lock-contract.md"],
+  },
+  {
+    title: "Testnet Deployment",
+    files: ["docs/testnet-gateway.md", "docs/demo-operations.md"],
   },
   {
     title: "Evidence",
@@ -188,10 +213,6 @@ export const DOC_GROUPS = [
   },
   { title: "Safety", files: ["docs/security-threat-model.md", "docs/mainnet-readiness.md"] },
   { title: "Policy", files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md"] },
-  {
-    title: "Contracts",
-    files: ["docs/server-store-contract.md", "docs/server-runtime-lock-contract.md"],
-  },
 ];
 
 // Grouping for the /vectors/ index page, in display order.

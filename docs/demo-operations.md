@@ -288,78 +288,12 @@ Policy for the public alpha:
 - production operators should design their own backup and state-partitioning
   policy before using this code outside the hosted demo.
 
-Alpha.4 voucher-signature reset:
-
-- `0.1.0-alpha.4` changes hosted voucher verification to the covenant-enforced
-  raw-digest Schnorr signature scheme. Channels opened before that deployment
-  used the rejected personal-message scheme and must be treated as invalid.
-- Before deploying the alpha.4 gateway, disable the gateway with
-  `KASPA_X402_GATEWAY_ENABLED=false`.
-- Reset the hosted Durable Object state under the alpha state policy.
-- Record an incident note that existing batch channel evidence was invalidated
-  by the voucher-signature scheme fix.
-- Deploy the alpha.4 gateway, re-enable it, and rerun manual paid exact and
-  batch checks before advertising the endpoint.
-
-Alpha.5 exact-evidence cutover:
-
-- `0.1.0-alpha.5` changes exact retry evidence to required
-  `transactionId` plus `paymentOutputIndex`.
-- Deploy the static site and Worker from the same reviewed source state.
-- Do not reset Durable Object state solely for this wire cutover; exact replay
-  records are already keyed by transaction id.
-- Before advertising alpha.5 hosted evidence, confirm the legacy
-  `payload.transaction` shape is rejected, confirm the new evidence shape
-  reaches the exact verifier, and run the funded TN10 live proof with
-  `npm run proof:live:check -- --live --write-report`.
-
-Alpha.6 KIP-10 exact-transaction cutover:
-
-- `0.1.0-alpha.6` replaces the alpha.5 observe-only exact payload with a signed
-  KIP-10 transaction artifact carrying `transactionEncoding:
-"kaspa-sdk-safe-json-v2.0.0"`.
-- Advertise the alpha.6 exact path from the hosted gateway only while the
-  verifier/broadcast/observe path is enabled and exact inventory is available.
-- The provider uses merchant-owned borrow UTXO inventory and must advertise an
-  `additiveThresholdSompi` of at least `10000000` sompi for the reference alpha.
-  Do not advertise hosted exact with zero-threshold borrow terms.
-- Do not serve observe-only `exact-transfer` as a current alpha exact fallback.
-- Before advertising alpha.6 hosted evidence, run unpaid shape checks, a funded
-  TN10 KIP-10 exact canary, replay rejection, and the full live proof runner.
-
-Alpha.7 DAA and continuation cutover:
-
-- Deploy only from the reviewed alpha.7 source after all local release checks
-  pass.
-- Confirm repeated unpaid batch offers retain one absolute `refundTimeoutDaa`
-  so an active covenant channel remains reusable. Confirm the stored timeout is
-  no more than the configured delta ahead of current virtual DAA, remains below
-  `500000000000`, and has more than the configured minimum lead. It should roll
-  forward only when that minimum-lead boundary is reached.
-- Confirm the exact inventory store recycles only verifier-derived
-  continuations and does so atomically with consumption of the original
-  reservation.
-- Run funded exact settlement and replay checks, then batch deposit-voucher,
-  voucher-only, claim, stale-voucher rejection, and strict post-timeout refund
-  checks.
-- Record the Worker version, transaction ids, absolute refund DAA, and canary
-  results in `docs/testnet-gateway.md`.
-
-Alpha.8 exact-profile cutover:
-
-- Deploy only after standard-native and additive exact proofs pass from the
-  reviewed alpha.8 source.
-- Default to `KASPA_X402_EXACT_PROFILE=standard-native`; it requires no head
-  inventory and pays the merchant once through the exact native output.
-- If selecting `additive`, replace all alpha.7 reservation inventory with
-  durable head records registered through `/admin/exact-heads`. Do not migrate
-  leased or retired alpha.7 records as current heads without reconciling their
-  outpoints against TN10.
-- Confirm unanswered 402s do not change head state, one conflicting settlement
-  advances the head, stale competitors receive a refreshed challenge, and the
-  successor delta equals the advertised price exactly.
-- Run both exact profiles plus the unchanged batch deposit/voucher/claim/refund
-  lifecycle before calling the public deployment alpha.8.
+When a release changes wire format or durable state, document a release-specific
+migration before deployment. Disable the gateway before any destructive state
+change, preserve replay evidence where formats remain compatible, and require
+fresh paid exact and batch canaries before re-enabling public guidance. The
+immutable [release snapshots](/releases/) retain the earlier alpha cutover
+records.
 
 ## Rotate Addresses And Keys
 

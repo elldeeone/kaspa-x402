@@ -554,5 +554,5 @@ unavailable_kaspa_exact_head
 - [KIP-9: Extended mass formula](https://github.com/kaspanet/kips/blob/master/kip-0009.md)
 - [KIP-10: Transaction introspection opcodes](https://github.com/kaspanet/kips/blob/master/kip-0010.md)
 - [Rusty Kaspa](https://github.com/kaspanet/rusty-kaspa)
-- [Kaspa x402 Exact Binding v1](kaspa-exact-v1.md)
+- [Historical alpha.7 exact binding](/v0.1.0-alpha.7/spec/kaspa-exact-v1.md)
 - [Kaspa x402 Batch Settlement Binding v1](kaspa-batch-settlement-v1.md)

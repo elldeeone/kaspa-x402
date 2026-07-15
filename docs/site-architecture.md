@@ -21,8 +21,9 @@ The site is purely utilitarian: single-column text, system fonts, no imagery,
 no marketing sections. Every page exists for a reason:
 
 - `/` carries all prose: what the binding is, current status, what x402 and
-  Kaspa are, the engineering rationale for a native binding, the two profiles,
-  reader-specific entry points, and the package inventory with npm links.
+  Kaspa are, the engineering rationale for a native binding, the payment
+  schemes, reader-specific entry points, and the public package inventory with
+  npm links.
 - `/spec/` is an annotated index of binding and transport documents in
   suggested reading order, each rendered as HTML with its raw markdown served
   alongside.
@@ -30,8 +31,8 @@ no marketing sections. Every page exists for a reason:
   schema's `$id` resolves to its route on this site.
 - `/vectors/` is the conformance fixture index, grouped by fixture directory,
   with `index.json` carrying byte counts and SHA-256 digests.
-- `/docs/` is a curated, grouped index (Proposal, Deployment, Evidence, Safety,
-  Policy, Contracts) of the selected public documents.
+- `/docs/` is a curated, grouped index (Adoption, Implementation, Testnet
+  Deployment, Evidence, Safety, and Policy) of the selected public documents.
 - `/demo/` is a static, testnet-only browser client for PNN connectivity checks
   and local x402 transcript rehearsal. It is not a hosted gateway.
 - `/releases/` lists the immutable versioned snapshots.
@@ -39,10 +40,11 @@ no marketing sections. Every page exists for a reason:
   not hosted under the apex static site.
 
 There is no separate packages page; the package table lives on the homepage
-and `packages.json` remains the machine-readable route. Artifact indexes show
-one-line purpose annotations and SHA-256 prefixes. Prose on the homepage makes
-only claims that are specified in this repository or backed by the published
-testnet evidence, and always states the alpha/testnet-only status.
+and `packages.json` remains the machine-readable route. Active indexes show
+one-line purpose annotations; immutable release metadata and conformance
+indexes retain content hashes. Prose on the homepage makes only claims that
+are specified in this repository or backed by the published testnet evidence,
+and always states the alpha/testnet-only status.
 
 ## Repository Layout
 
@@ -109,6 +111,6 @@ its own `packages/demo-gateway/wrangler.jsonc`. It uses:
 
 The gateway package is private and is not part of the public npm release
 surface. Its Worker build must pass before the custom subdomain is advertised.
-The public docs may include the gateway reference, operations runbook,
-implementer guide, and interoperability checklist; draft announcements stay
-unpublished until explicitly approved.
+The public docs include the gateway reference, operations runbook, and
+implementer guide. Release checklists and draft announcements stay out of the
+active documentation index.
