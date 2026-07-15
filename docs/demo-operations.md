@@ -7,15 +7,11 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: historical alpha.7 Worker version
-`38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built from commit `4d53d02`. Funded
-exact, idempotent and cross-resource replay, batch deposit/voucher,
-stale-voucher, and absolute-DAA checks passed on its immediate predecessor;
-the final source-parity deploy adds only a fail-closed pre-persistence check for
-the consensus timestamp boundary and passed post-deploy health, capability,
-inventory, and stable absolute-DAA checks. This is not yet an alpha.8
-deployment; alpha.8 replaces consumable reservation inventory with a default
-standard-native profile and optional durable KIP-10 head chains.
+Current deployment: alpha.8 Worker version
+`d9bac848-bc14-4326-9945-7a5a5722d63a`, built from commit `37a4704`. The funded
+`standard-native` exact canary passed with accepted finality, identical replay,
+and cross-resource replay rejection. The default exact profile needs no
+merchant inventory; optional `additive` uses durable KIP-10 head chains.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.

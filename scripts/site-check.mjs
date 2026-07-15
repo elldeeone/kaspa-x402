@@ -107,15 +107,20 @@ function checkCopiedArtifacts() {
   const releasePath = readJson(
     path.join(outDir, "site-manifest.json"),
   ).releasePath;
+  const releaseLock = readJson(
+    path.join(root, RELEASE_LOCK_DIR, `${releasePath}.json`),
+  );
   for (const source of activeFiles) {
     assertSameBytes(path.join(root, source), path.join(outDir, source), source);
   }
-  for (const source of releaseFiles) {
-    assertSameBytes(
-      path.join(root, source),
-      path.join(outDir, releasePath, source),
-      `${releasePath}/${source}`,
-    );
+  if (releaseLock.frozen !== true) {
+    for (const source of releaseFiles) {
+      assertSameBytes(
+        path.join(root, source),
+        path.join(outDir, releasePath, source),
+        `${releasePath}/${source}`,
+      );
+    }
   }
 }
 
@@ -127,6 +132,10 @@ function checkMetadataFreshness() {
   const packages = readPackages();
   const releasePackages = { releaseVersion: manifest.releaseVersion, packages };
   const dirtyInputs = dirtyPublishableInputs();
+  const currentLock = readJson(
+    path.join(root, RELEASE_LOCK_DIR, `v${manifest.releaseVersion}.json`),
+  );
+  const releaseDirtyInputs = currentLock.frozen === true ? [] : dirtyInputs;
   const expectedReleaseHash = releaseContentHash(
     manifest.releasePath,
     lockedReleaseMetadata(release),
@@ -137,11 +146,11 @@ function checkMetadataFreshness() {
   if (manifest.generatedFrom !== git(["rev-parse", "HEAD"]))
     fail("site-manifest generatedFrom does not match HEAD");
   if (
-    dirtyInputs.length > 0 &&
+    releaseDirtyInputs.length > 0 &&
     release.generatedFrom !== manifest.generatedFrom
   )
     fail("dirty release generatedFrom does not match site-manifest");
-  if (dirtyInputs.length === 0 && "generatedFrom" in release)
+  if (releaseDirtyInputs.length === 0 && "generatedFrom" in release)
     fail("locked release should not vary by build commit");
   if (release.version !== manifest.releaseVersion)
     fail("release version does not match site-manifest");
@@ -180,13 +189,15 @@ function checkMetadataFreshness() {
   }
   if (JSON.stringify(manifest.dirtyInputs) !== JSON.stringify(dirtyInputs))
     fail("site-manifest dirtyInputs is stale");
-  if (JSON.stringify(release.dirtyInputs) !== JSON.stringify(dirtyInputs))
+  if (
+    JSON.stringify(release.dirtyInputs) !== JSON.stringify(releaseDirtyInputs)
+  )
     fail("release dirtyInputs is stale");
   if (release.contentSha256 !== expectedReleaseHash)
     fail("release content hash is stale");
   if (requireClean && dirtyInputs.length > 0)
     fail(`publishable inputs are dirty: ${dirtyInputs.join(", ")}`);
-  checkReleaseSnapshots(manifest, dirtyInputs, headersPath);
+  checkReleaseSnapshots(manifest, releaseDirtyInputs, headersPath);
 }
 
 function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {

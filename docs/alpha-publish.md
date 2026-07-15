@@ -1,9 +1,9 @@
 # Alpha Publish Checklist
 
-Status: the merged `0.1.0-alpha.8` source is cut and validated. Its four public
-packages are published in npm and the `alpha` tag resolves to alpha.8.
-`0.1.0-alpha.7` remains the deployed alpha. Alpha.8 has not yet been tagged,
-deployed, or announced.
+Status: `0.1.0-alpha.8` is tagged and published as a GitHub prerelease. Its four
+public packages are published in npm and the `alpha` tag resolves to alpha.8.
+The alpha.8 Worker is deployed and its `standard-native` exact path has passed
+a funded hosted TN10 canary. No community announcement has been posted.
 Publishes require npm authorization and must not happen accidentally from CI
 or an unauthenticated shell.
 
@@ -131,6 +131,13 @@ Checked locally for alpha.8 on 2026-07-15:
   construction only;
 - no Git tag, GitHub release, Worker/site deployment, or public announcement
   was performed before the npm approval gate completed.
+- annotated tag `v0.1.0-alpha.8` and its GitHub prerelease were created after
+  npm approval and registry readback;
+- Worker version `d9bac848-bc14-4326-9945-7a5a5722d63a`, built from commit
+  `37a4704`, passed a funded hosted `standard-native` exact canary. Transaction
+  `198191204a1b1cc5ab79e56d83621f8cf880358ef970adf545379e0b9e3584f9`
+  settled `20000000` sompi at accepted finality, replayed idempotently, and was
+  rejected when reused for another resource.
 
 ## Alpha.7 Registry And Tarball Recheck
 
@@ -200,10 +207,11 @@ Checked for alpha.5 on 2026-07-06:
 ## Hosted Evidence Gate
 
 For alpha.8, the source release gate is not the same as the public hosted
-gateway gate. The hosted `demo.kaspa-x402.org` gateway remains alpha.7 until a
-post-merge cutover. Alpha.8 `standard-native` needs working verification, PNN
-broadcast, and finality observation but no merchant inventory. Optional
-`additive` also needs an available durable KIP-10 head.
+gateway gate. Both are now complete for the configured `standard-native`
+deployment. Working verification, PNN broadcast, accepted finality,
+idempotent replay, and cross-resource replay rejection were observed without
+merchant inventory. Optional `additive` remains separately availability-gated
+by a durable KIP-10 head.
 
 Before advertising alpha.8 source live evidence, run:
 

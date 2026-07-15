@@ -49,7 +49,7 @@ Kaspa is unusually well-shaped for this. Paying per request only works when paym
 
 - **Standards site**: https://kaspa-x402.org has the specs, JSON schemas, test vectors, and immutable release snapshots.
 - **Reference implementation**: https://github.com/elldeeone/kaspa-x402 with `@kaspa-x402/core`, `client`, `server`, and `covenant` packages on npm, plus a CLI and runnable examples.
-- **Live gateway**: https://demo.kaspa-x402.org is the paid-canary-proven alpha.7 testnet deployment. The alpha.8 source defaults exact to an ordinary native transfer and keeps KIP-10 as an optional additive-head profile. The Worker runs an automated public health check and holds no spending keys.
+- **Live gateway**: https://demo.kaspa-x402.org is the paid-canary-proven alpha.8 testnet deployment. Exact defaults to an ordinary native transfer and keeps KIP-10 as an optional additive-head profile. The Worker runs an automated public health check and holds no spending keys.
 - **Recorded live evidence**: funded end-to-end payment runs on testnet-10 cover both alpha.8 exact profiles, safe replay handling, reusable head advancement, and escrow deposit/voucher/claim/refund settlement. Hosted gateway evidence remains separately labelled by deployed version.
 - **Browser test client**: https://kaspa-x402.org/demo/ for connectivity checks and payment-header rehearsal (keys stay in browser memory).
 - Threat model, mainnet-readiness gates, versioning policy, and implementer guide, all published on the site.

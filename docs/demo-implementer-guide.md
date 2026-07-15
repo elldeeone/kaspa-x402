@@ -1,9 +1,7 @@
 # Demo Implementer Guide
 
-Status: alpha, testnet-only guide for the alpha.8 source contract. The hosted
-gateway remains the paid-canary-proven alpha.7 deployment until an explicit
-post-merge alpha.8 cutover. It is an integration target, not a production or
-mainnet service.
+Status: alpha, testnet-only guide for the deployed alpha.8 contract. The hosted
+gateway is an integration target, not a production or mainnet service.
 
 ## Start With The Artifacts
 
@@ -27,9 +25,8 @@ Install the alpha packages explicitly:
 npm install @kaspa-x402/core@alpha @kaspa-x402/client@alpha
 ```
 
-Until alpha.8 is actually published, the registry `alpha` tag continues to
-resolve to alpha.7. Use the reviewed branch or its locally packed alpha.8
-tarballs when testing the alpha.8 source contract before publication.
+The registry `alpha` tag resolves to `0.1.0-alpha.8`. Pin the exact prerelease
+version when repeatable conformance results matter.
 
 The public npm release includes core schema/header helpers and client
 helpers; the hosted gateway package is not published.
@@ -70,10 +67,11 @@ No mainnet profile is advertised. If `exact` is absent from `/supported` or
 `/exact` returns `503 exact_unavailable`, exact settlement is disabled or an
 additive deployment has no available head; use `batch-settlement` instead.
 
-The 2026-07-14 alpha.7 paid canary proved hosted exact, identical replay,
-cross-resource rejection, batch deposit/voucher reuse, stale-voucher rejection,
-and a stable absolute refund DAA. The exact transaction ids and channel evidence
-are recorded in the gateway reference.
+The 2026-07-15 alpha.8 paid canary proved hosted standard-native exact,
+identical replay, and cross-resource rejection. Historical alpha.7 evidence
+also records batch deposit/voucher reuse, stale-voucher rejection, and a stable
+absolute refund DAA. Transaction and channel evidence is recorded in the
+gateway reference.
 
 ## Exact Flow
 
@@ -135,9 +133,8 @@ KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
 
-The batch contract is unchanged from alpha.7 and remains the alpha.8 batch
-profile. The public gateway still serves the deployed alpha.7 instance until
-the explicit alpha.8 cutover.
+The batch contract is unchanged from alpha.7 and remains the deployed alpha.8
+batch profile.
 
 Request:
 

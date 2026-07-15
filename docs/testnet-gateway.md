@@ -1,29 +1,24 @@
 # Testnet Gateway
 
-Status: the public URL remains the paid-canary-proven alpha.7
-`kaspa:testnet-10` deployment. This document also records the alpha.8 source
-contract; alpha.8 is not live until an explicit post-merge deployment and paid
-canary.
+Status: the public URL is a paid-canary-proven alpha.8 `kaspa:testnet-10`
+deployment using the default `standard-native` exact profile.
 
 The hosted gateway is a public integration target for implementers who want to
 exercise the Kaspa x402 wire flow against a real server. It is not a wallet,
 custodian, facilitator, mainnet service, or availability commitment.
 
-Source status: alpha.8 introduces `kaspa-exact-v2`: default
+Alpha.8 introduces `kaspa-exact-v2`: default
 `standard-native` exact settlement and an optional reusable KIP-10 `additive`
 head profile whose successor delta is the sole payment. Batch settlement,
-absolute DAA handling, and claim recovery remain intact. Fresh alpha.8 live
-evidence is required before deployment.
+absolute DAA handling, and claim recovery remain intact.
 
-Hosted status: Worker version `38f3d622-4638-4821-a7d4-23b5ae3e97b2`, built
-from commit `4d53d02`, is live. The funded run on its immediate predecessor
-settled a KIP-10 exact transaction through TN10 PNN,
-confirmed idempotent replay and cross-resource rejection, reused one batch
-channel for deposit-voucher and voucher-only payments, rejected a stale batch
-replay, and verified a stable absolute refund timeout against the operator node.
-That historical alpha.7 Worker remains inventory-gated. The alpha.8 source
-defaults to `standard-native`; only optional `additive` is head-availability
-gated.
+Hosted status: Worker version `d9bac848-bc14-4326-9945-7a5a5722d63a`, built
+from commit `37a4704`, is live. The funded alpha.8 run settled a
+`standard-native` exact transaction through TN10 PNN, confirmed idempotent
+replay and cross-resource rejection, and observed the merchant output at
+accepted finality. The default profile needs no exact inventory; only optional
+`additive` is head-availability gated. Historical alpha.7 evidence remains
+below for comparison.
 
 ## Base URL
 
@@ -76,7 +71,7 @@ head is available.
 Unsupported schemes are rejected before protected content is produced or
 gateway state is written.
 
-Historical deployed alpha.7 terms:
+Current deployed alpha.8 terms:
 
 - exact price if enabled: `20000000` sompi;
 - batch voucher charge: `500` sompi;
@@ -301,6 +296,34 @@ deployment checks completed on 2026-07-06:
   with `invalid_transaction_state` for intentionally fake txid evidence;
 - paid hosted TN10 E2E result: exact, deposit-voucher, voucher-only, and stale
   replay checks passed.
+
+## Alpha.8 Evidence Status
+
+Status: complete for the 2026-07-15 hosted alpha.8 deployment.
+
+- current Worker version: `d9bac848-bc14-4326-9945-7a5a5722d63a`, built from
+  commit `37a4704`;
+- configured exact profile: `standard-native` under `kaspa-exact-v2`;
+- `/supported` advertised exact and batch settlement, and unpaid `/exact`
+  returned a valid `20000000` sompi standard-native offer without inventory;
+- operator-node virtual DAA score at run start: `517655976`;
+- exact transaction id:
+  `198191204a1b1cc5ab79e56d83621f8cf880358ef970adf545379e0b9e3584f9`;
+- transaction artifact SHA-256:
+  `0fa45cc0ca612ddcd7d7c41a723f20ab235e297ce90546b65f178a27687fdfa4`;
+- request result: HTTP `200`, payment output index `0`, charged amount
+  `20000000` sompi, finality `accepted`;
+- identical retry: HTTP `200` with the same settlement transaction;
+- same transaction against `/exact/report`: HTTP `409`,
+  `invalid_transaction_state`;
+- the accepted merchant outpoint was observed at transaction index `0` through
+  the operator-controlled TN10 node.
+
+The first cutover canary exposed two live-adapter compatibility gaps before a
+payment was accepted: the proof did not commit contextual KIP-9 storage mass,
+and the Worker rejected the current Rusty Kaspa SDK's explicit zero v0 compute
+budget. Commit `37a4704` fixes both boundaries and adds regression coverage.
+The successful transaction above is from the corrected deployment.
 
 ## Alpha.7 Evidence Status
 
