@@ -419,6 +419,27 @@ async function runExact({
     amount,
     headAmount: payment.paymentPayload.accepted.extra.headAmount,
   });
+  let preBroadcastVerify;
+  try {
+    await server.verifyPayment({
+      resource,
+      paymentRequirements: payment.paymentPayload.accepted,
+      paymentPayload: payment.paymentPayload,
+      requestHash,
+    });
+    preBroadcastVerify = { result: "unexpected-pass" };
+  } catch (error) {
+    preBroadcastVerify = {
+      result: "rejected-before-observation",
+      code: error?.code,
+      message: error?.message ?? String(error),
+    };
+    if (error?.code !== "invalid_kaspa_transaction") {
+      throw new Error(
+        `${profile} exact pre-broadcast verification failed before the finality gate: ${error?.code ?? "error"} ${error?.message ?? String(error)}`,
+      );
+    }
+  }
   let handlerExecutions = 0;
   const handler = async () => {
     handlerExecutions += 1;
@@ -522,6 +543,7 @@ async function runExact({
       finality: settlementExtra.finality,
     },
     economics,
+    preBroadcastVerify,
     duplicate: { status: duplicate.status, handlerExecutions },
     replay: { status: replay.status, error: replay.body.error },
   };
