@@ -38,8 +38,30 @@ try {
   console.log(JSON.stringify({ ok: true, ...result }, null, 2));
 } finally {
   chromeProcess.kill("SIGTERM");
+  await waitForProcessExit(chromeProcess);
   await new Promise((resolve) => server.close(resolve));
-  fs.rmSync(userDataDir, { recursive: true, force: true });
+  fs.rmSync(userDataDir, {
+    recursive: true,
+    force: true,
+    maxRetries: 10,
+    retryDelay: 100,
+  });
+}
+
+async function waitForProcessExit(process, timeoutMs = 5_000) {
+  if (process.exitCode !== null || process.signalCode !== null) return;
+  await new Promise((resolve) => {
+    const finish = () => {
+      clearTimeout(timeout);
+      process.off("exit", finish);
+      resolve();
+    };
+    const timeout = setTimeout(() => {
+      process.kill("SIGKILL");
+      finish();
+    }, timeoutMs);
+    process.once("exit", finish);
+  });
 }
 
 async function exerciseDemo(port, url) {
@@ -184,8 +206,10 @@ function demoExerciseExpression() {
   const connectedStatus = await waitFor(() => byId('demo-status').value.startsWith('Connected to') && byId('demo-status').value, 'pnn connect', demoConnectTimeoutMs);
   const rpc = JSON.parse(byId('demo-rpc-output').textContent);
   await click('demo-check-tx', 500);
-  await waitFor(() => byId('demo-payment-output').textContent.includes('transactionId'), 'transaction status lookup');
-  const transactionStatus = JSON.parse(byId('demo-payment-output').textContent).status;
+  const transactionStatus = await waitFor(
+    () => JSON.parse(byId('demo-payment-output').textContent || '{}').status,
+    'transaction status lookup'
+  );
   byId('demo-endpoint').value = 'wss://example.com/kaspa/testnet-10/wrpc/borsh';
   await click('demo-connect', 500);
   const blockedEndpointStatus = await waitFor(
