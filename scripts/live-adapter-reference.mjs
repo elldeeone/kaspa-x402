@@ -67,7 +67,11 @@ export async function runLiveProof(context) {
     );
 
   const absoluteSdkPath = path.resolve(sdkPath);
-  const sdkRequire = createRequire(absoluteSdkPath);
+  const sdkRequire = createRequire(
+    fs.statSync(absoluteSdkPath).isDirectory()
+      ? path.join(absoluteSdkPath, "kaspa.js")
+      : absoluteSdkPath,
+  );
   globalThis.WebSocket = sdkRequire("websocket").w3cwebsocket;
   const sdk = sdkRequire(absoluteSdkPath);
   const { schnorr } = sdkRequire("@noble/curves/secp256k1.js");
