@@ -1,4 +1,5 @@
 import { afterEach, describe, expect, it, vi } from "vitest";
+import { decodePaymentRequiredHeader } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
   payToScriptHashScript,
@@ -6,7 +7,11 @@ import {
 } from "@kaspa-x402/covenant";
 import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
 import { addressForScriptPublicKey } from "../src/kaspa-native.js";
-import type { ExactHeadRecord } from "@kaspa-x402/server";
+import {
+  PAYMENT_REQUIRED_HEADER,
+  PAYMENT_SIGNATURE_HEADER,
+  type ExactHeadRecord,
+} from "@kaspa-x402/server";
 import {
   dispatchGatewayState,
   GatewayLedger,
@@ -381,6 +386,55 @@ describe("gateway canary", () => {
     await expect(requestJson(env, "/exact")).resolves.toMatchObject({
       status: 402,
     });
+  });
+
+  it("returns an additive corrective offer for foreign payment schemes", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_EXACT_PROFILE: "additive",
+      KASPA_X402_PAY_TO: KIP10_ADDRESS,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS:
+        "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+    };
+    await new GatewayLedger(storage).registerExactHead(exactHead());
+    stubAdditiveHeadFetches("current");
+    const foreignPayment = btoa(
+      JSON.stringify({
+        x402Version: 2,
+        accepted: { scheme: "evm", network: "eip155:1" },
+        payload: {},
+      }),
+    );
+
+    const response = await handleGatewayRequest(
+      new Request("https://demo.kaspa-x402.org/exact", {
+        headers: { [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
+      }),
+      env,
+      fakeContext(),
+    );
+
+    expect(response.status).toBe(402);
+    await expect(response.clone().json()).resolves.toEqual({
+      error: "unsupported_scheme",
+    });
+    const paymentRequired = decodePaymentRequiredHeader(
+      response.headers.get(PAYMENT_REQUIRED_HEADER)!,
+    );
+    expect(paymentRequired.error).toBe("unsupported_scheme");
+    expect(paymentRequired.accepts).toMatchObject([
+      {
+        scheme: "exact",
+        extra: {
+          profile: "additive",
+          challengeId: expect.any(String),
+        },
+      },
+    ]);
   });
 
   it("fails additive offers closed on a missing head and recovers only from proven lineage", async () => {

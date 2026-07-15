@@ -154,7 +154,7 @@ export async function handleGatewayRequest(
     );
   }
   const resource = resourceFor(url, profile);
-  const unsupported = gatewayUnsupportedPaymentResponse(
+  const unsupported = await gatewayUnsupportedPaymentResponse(
     request,
     gateway.server,
     resource,
@@ -1082,13 +1082,13 @@ async function dispatchCanaryRequest(
   return response;
 }
 
-function gatewayUnsupportedPaymentResponse(
+async function gatewayUnsupportedPaymentResponse(
   request: Request,
   server: DirectModeServer,
   resource: ResourceInfo,
   profile: Profile,
   config: GatewayConfig,
-): Response | undefined {
+): Promise<Response | undefined> {
   const header = request.headers.get(PAYMENT_SIGNATURE_HEADER);
   if (!header) return undefined;
   const decoded = unsafeDecodePaymentHeader(header);
@@ -1099,7 +1099,7 @@ function gatewayUnsupportedPaymentResponse(
     scheme === "batch-settlement"
   )
     return undefined;
-  const response = server.paymentRequiredResponse({
+  const response = await server.paymentRequiredResponseAsync({
     resource,
     amount: amountFor(config, profile),
     scheme: profile,

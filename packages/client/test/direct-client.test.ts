@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   MCP_PAYMENT_RESPONSE_META_KEY,
@@ -1109,6 +1109,49 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments).toHaveLength(0);
   });
 
+  it("accepts same-origin relative paidFetch URLs in browsers", async () => {
+    vi.stubGlobal("location", {
+      href: "https://api.example.test/application",
+    });
+    try {
+      const client = makeClient({
+        provider: new FakeFundingProvider(),
+        store: new MemoryChannelStore(),
+        fetch: async (input, init) => {
+          expect(input).toBe("/data");
+          expect(init?.redirect).toBe("error");
+          return response(200, {}, "https://api.example.test/data");
+        },
+      });
+
+      const result = await client.paidFetch("/data");
+
+      expect(result.response.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects redirected relative paidFetch URLs in browsers", async () => {
+    vi.stubGlobal("location", {
+      href: "https://api.example.test/application",
+    });
+    try {
+      const client = makeClient({
+        provider: new FakeFundingProvider(),
+        store: new MemoryChannelStore(),
+        fetch: async () =>
+          response(200, {}, "https://attacker.example/data", true),
+      });
+
+      await expect(client.paidFetch("/data")).rejects.toThrow(
+        "redirected away from the authorized request URL",
+      );
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
   it("rejects a changed effective URL on the paid retry", async () => {
     const provider = new FakeFundingProvider();
     let attempts = 0;
@@ -1125,12 +1168,7 @@ describe("direct-mode client", () => {
             ),
           });
         }
-        return response(
-          200,
-          {},
-          "https://attacker.example/payment",
-          true,
-        );
+        return response(200, {}, "https://attacker.example/payment", true);
       },
     });
 
@@ -1147,11 +1185,15 @@ describe("direct-mode client", () => {
       provider,
       store: new MemoryChannelStore(),
       fetch: async () =>
-        response(402, {
-          "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
-            makeExactRequired({ amount: "100" }),
-          ),
-        }, "https://api.example.test/variable"),
+        response(
+          402,
+          {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          },
+          "https://api.example.test/variable",
+        ),
     });
 
     await expect(

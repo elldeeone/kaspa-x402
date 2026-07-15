@@ -1692,7 +1692,10 @@ function assertPaidFetchResponseTarget(
   let expected: URL;
   let effective: URL;
   try {
-    expected = new URL(requestedUrl);
+    const browserBase = (globalThis as { location?: { href?: string } }).location?.href;
+    expected = browserBase
+      ? new URL(requestedUrl, browserBase)
+      : new URL(requestedUrl);
     effective = new URL(response.url);
   } catch {
     throw new KaspaX402Error(

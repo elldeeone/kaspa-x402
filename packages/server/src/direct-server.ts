@@ -161,6 +161,13 @@ export class DirectModeServer {
     };
   }
 
+  async paymentRequiredResponseAsync(
+    options: BuildPaymentRequiredOptions,
+    status = 402,
+  ): Promise<ServerResponse> {
+    return this.#paymentRequiredResponse(options, status);
+  }
+
   async #paymentRequiredResponse(
     options: BuildPaymentRequiredOptions,
     status = 402,
