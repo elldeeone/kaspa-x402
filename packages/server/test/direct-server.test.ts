@@ -280,6 +280,39 @@ describe("direct-mode server", () => {
     expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v1");
   });
 
+  it("preserves batch fallback when an additive exact head is unavailable", async () => {
+    const setup = await makeAdditiveServer(
+      {},
+      {
+        status: "unavailable",
+        unavailableReason: "test head unavailable",
+      },
+    );
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      {
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        paymentSchemes: ["exact", "batch-settlement"],
+      },
+      async () => {
+        executed = true;
+        return { body: "secret" };
+      },
+    );
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    const required = decodePaymentRequiredHeader(
+      response.headers[PAYMENT_REQUIRED_HEADER],
+    );
+    expect(required.accepts.map((requirement) => requirement.scheme)).toEqual([
+      "batch-settlement",
+    ]);
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-escrow-v1");
+  });
+
   it("returns MCP payment requirements for unpaid tool calls", async () => {
     const setup = makeServer({ amount: "100" });
     let executed = false;

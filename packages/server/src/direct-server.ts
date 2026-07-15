@@ -191,9 +191,10 @@ export class DirectModeServer {
   async #buildRuntimePaymentRequired(
     options: BuildPaymentRequiredOptions,
   ): Promise<PaymentRequired> {
+    const schemes = paymentRequirementSchemes(options);
     if (
       this.#config.exactProfile === "additive" &&
-      paymentRequirementSchemes(options).includes("exact") &&
+      schemes.includes("exact") &&
       !options.exactHead
     ) {
       const amount = options.amount ?? this.#config.amount;
@@ -240,12 +241,19 @@ export class DirectModeServer {
         );
         return makePaymentRequired(this.#config, { ...options, exactHead });
       }
+      if (schemes.includes("batch-settlement")) {
+        await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+        return makePaymentRequired(this.#config, {
+          ...options,
+          schemes: ["batch-settlement"],
+        });
+      }
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
         "additive exact head is unavailable",
       );
     }
-    if (paymentRequirementSchemes(options).includes("batch-settlement")) {
+    if (schemes.includes("batch-settlement")) {
       await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
     }
     return makePaymentRequired(this.#config, options);
