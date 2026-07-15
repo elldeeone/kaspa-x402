@@ -400,17 +400,16 @@ async function runExact({
     preferredHeadId,
   });
   const { resource, paymentRequired } = challenge;
-  const requestHash = hash({ flow: `exact-${profile}-${label}`, request: 1 });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
-    requestHash,
   });
   if (payment.paymentPayload.payload.type !== "exact-transaction") {
     throw new Error(
       `${profile} exact challenge produced ${payment.paymentPayload.payload.type} instead of exact-transaction`,
     );
   }
-  if (payment.paymentPayload.payload.requestHash !== requestHash)
+  const requestHash = payment.paymentPayload.payload.requestHash;
+  if (!requestHash)
     throw new Error("exact payment did not include a request hash");
   const economics = exactTransactionEconomics({
     sdk,
@@ -581,18 +580,19 @@ async function runAdditiveConflict({
     label: "conflict",
     preferredHeadId,
   });
-  const requestHashes = [
-    hash({ flow: "additive-conflict", contender: 1 }),
-    hash({ flow: "additive-conflict", contender: 2 }),
-  ];
   const payments = [];
-  for (const requestHash of requestHashes) {
+  for (let contender = 0; contender < 2; contender += 1) {
     payments.push(
       await client.createPayment(paymentRequired, {
         url: resource.url,
-        requestHash,
       }),
     );
+  }
+  const requestHashes = payments.map(
+    (payment) => payment.paymentPayload.payload.requestHash,
+  );
+  if (requestHashes.some((requestHash) => !requestHash)) {
+    throw new Error("additive conflict payment did not include a request hash");
   }
   const transactionIds = payments.map((payment) =>
     exactArtifactTransactionId(sdk, payment.paymentPayload.payload.transaction),
@@ -699,11 +699,12 @@ async function runInvalidExactSignature({ client, server, pendingBroadcasts }) {
     amount: EXACT_TINY_AMOUNT,
     label: "invalid-signature",
   });
-  const requestHash = hash({ flow: "invalid-signature" });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
-    requestHash,
   });
+  const requestHash = payment.paymentPayload.payload.requestHash;
+  if (!requestHash)
+    throw new Error("invalid-signature payment has no request hash");
   const forged = JSON.parse(JSON.stringify(payment.paymentPayload));
   const signature = forged.payload.authorization.signature;
   forged.payload.authorization.signature = `${signature[0] === "0" ? "1" : "0"}${signature.slice(1)}`;
@@ -766,11 +767,12 @@ async function runExactRestartRecovery({
     amount: EXACT_AMOUNT,
     label: "restart-recovery",
   });
-  const requestHash = hash({ flow: "restart-recovery" });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
-    requestHash,
   });
+  const requestHash = payment.paymentPayload.payload.requestHash;
+  if (!requestHash)
+    throw new Error("recovery payment did not include a request hash");
   let handlerExecutions = 0;
   const request = requestWithPayment(payment.paymentPayload, {
     url: resource.url,
@@ -846,11 +848,14 @@ async function runExternalHeadAdvance({
     label: "external-advance",
     preferredHeadId,
   });
-  const requestHash = hash({ flow: "external-head-advance" });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
-    requestHash,
   });
+  if (!payment.paymentPayload.payload.requestHash) {
+    throw new Error(
+      "external advancement payment did not include a request hash",
+    );
+  }
   const transaction = payment.paymentPayload.payload.transaction;
   const transactionId = exactArtifactTransactionId(sdk, transaction);
   externalHeadProofs.set(transactionId.toLowerCase(), { transaction });
