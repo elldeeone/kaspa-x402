@@ -1,9 +1,9 @@
 # Alpha Publish Checklist
 
 Status: the merged `0.1.0-alpha.8` source is cut and validated. Its four public
-packages are staged in npm with the `alpha` tag and await human approval.
-`0.1.0-alpha.7` remains the latest published and deployed alpha. Alpha.8 has
-not been approved, published, tagged, deployed, or announced.
+packages are published in npm and the `alpha` tag resolves to alpha.8.
+`0.1.0-alpha.7` remains the deployed alpha. Alpha.8 has not yet been tagged,
+deployed, or announced.
 Publishes require npm authorization and must not happen accidentally from CI
 or an unauthenticated shell.
 
@@ -119,14 +119,18 @@ Checked locally for alpha.8 on 2026-07-15:
   `eade406d27bd97fc73791d86fa1ad89e77850b75` (client), and
   `156f37207ef2dcb6be0d53d9d79134b1258ccbed` (server); npm readback and
   independently downloaded staged tarballs match all four values;
+- all four packages were approved on 2026-07-15, registry readback matched the
+  staged hashes, `alpha` resolved to `0.1.0-alpha.8`, `latest` remained on
+  `0.1.0-alpha.4`, and a clean exact-version install imported all four package
+  entrypoints with zero production dependency vulnerabilities;
 - `npm audit --omit=dev --audit-level=high` reports zero production dependency
   vulnerabilities. The development tree still reports transitive
   Wrangler/Miniflare advisories;
 - funded TN10 evidence proves both exact profiles and the retained batch
   lifecycle, while mainnet checks remain read-only or deterministic synthetic
   construction only;
-- no staged package approval, publish, dist-tag change, Git tag, GitHub
-  release, Worker/site deployment, or public announcement was performed.
+- no Git tag, GitHub release, Worker/site deployment, or public announcement
+  was performed before the npm approval gate completed.
 
 ## Alpha.7 Registry And Tarball Recheck
 
