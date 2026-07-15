@@ -186,15 +186,37 @@ KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
 
 The expected alpha.8 live proof must include:
 
-- standard-native exact transaction settlement and replay rejection;
+- tiny and normal standard-native exact settlement and replay rejection;
 - additive exact settlement proving the KIP-10 successor delta equals the
   advertised amount and no second merchant payment output exists;
-- durable head advancement and stale-head conflict handling;
+- at least two durable head shards, concurrent conflict, loser refresh, and
+  successful retry;
+- duplicate idempotency and invalid-signature rejection before protected work;
+- post-broadcast runtime recovery and trusted external head reconciliation;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
 - replay rejection across exact and batch-settlement;
 - batch refund transaction construction and broadcast after timeout.
+
+Checked for alpha.8 on 2026-07-15:
+
+- the funded TN10 live proof completed with status `complete` across all flows
+  above;
+- standard-native `10000000` and `100000000` sompi payments both settled with
+  exact merchant gain and explicit payer-cost/fee accounting;
+- the corrected additive transaction used the successor delta as the sole
+  `100000000` sompi merchant payment;
+- two head shards, one concurrent winner, loser refresh/retry, invalid
+  authorization rejection, post-broadcast recovery, and trusted external
+  advancement all passed;
+- the batch deposit/voucher, claim, old-voucher rejection, and strict
+  post-timeout refund passed;
+- the sanitized evidence and transaction ids are recorded in
+  `docs/live-testnet-report.md`;
+- the supplied mainnet node passed a read-only gRPC check, and deterministic
+  synthetic mainnet standard/additive shapes passed offline with no real UTXO,
+  funds, or broadcast.
 
 Checked for alpha.7 on 2026-07-14:
 

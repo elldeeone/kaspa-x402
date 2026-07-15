@@ -38,6 +38,7 @@
     "validate:schemas": "node scripts/validate-schemas.mjs",
     "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
     "proof:offline": "node scripts/proof-offline.mjs",
+    "proof:mainnet:offline": "node scripts/proof-mainnet-shapes.mjs",
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
     "proof:hosted-exact": "node scripts/proof-hosted-exact.mjs",
     "pack:public:dry-run": "node scripts/pack-public-workspaces.mjs",

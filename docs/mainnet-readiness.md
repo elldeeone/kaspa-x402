@@ -70,10 +70,12 @@ must pass:
 npm run proof:live:check -- --live --write-report
 ```
 
-The sanitized report in `docs/live-testnet-report.md` must show standard-native
-exact settlement, additive exact-delta head advancement, exact replay
-rejection, batch deposit-voucher settlement, voucher-only settlement, claim,
-replay rejection, and refund evidence.
+The sanitized report in `docs/live-testnet-report.md` must show tiny and normal
+standard-native exact settlement, additive exact-delta head advancement,
+multiple heads, conflict/retry, exact replay and invalid-signature rejection,
+post-broadcast recovery, trusted external reconciliation, batch
+deposit-voucher settlement, voucher-only settlement, claim, replay rejection,
+and refund evidence.
 
 ### Release Controls
 

@@ -23,9 +23,15 @@ state, and reports under `KASPA_X402_DATA_DIR`. Keep that directory ignored.
 
 The current proof requires:
 
-- standard-native exact settlement and replay rejection;
+- tiny and normal standard-native exact settlement;
 - additive exact settlement proving exact KIP-10 head delta and replay
   rejection;
+- two independent additive head shards;
+- concurrent additive conflict, one winner, loser refresh, and retry;
+- duplicate exact idempotency;
+- invalid exact authorization rejection before protected work or broadcast;
+- post-broadcast runtime re-instantiation and trusted settlement recovery;
+- trusted external additive head advancement and reconciliation;
 - batch deposit-voucher settlement;
 - batch voucher-only settlement;
 - batch claim transaction construction and broadcast;
@@ -37,10 +43,10 @@ versions, version evidence source, and accepted-or-confirmed finality. Both
 exact profiles must include transaction encoding, output index,
 transaction-artifact hash, server broadcast result, and settlement id.
 Additive evidence must identify the durable head and consumed outpoint and
-prove that the successor increase equals the advertised payment exactly. Batch
-claim and refund
-evidence must reconcile inputs, outputs, charged amounts, fees, and continuation
-or refund value.
+prove that the successor increase equals the advertised payment exactly. Every
+exact profile must reconcile merchant gain, payer cost, fee, and mass. Batch
+claim and refund evidence must reconcile inputs, outputs, charged amounts,
+fees, and continuation or refund value.
 
 ## Safety Gates
 
