@@ -294,6 +294,8 @@ export async function runLiveProof(context) {
           label: "tiny",
           sdk,
           networkId,
+          schnorr,
+          fundingPrivateKeyHex,
         }),
         standardNative: await runExact({
           client,
@@ -303,6 +305,8 @@ export async function runLiveProof(context) {
           label: "normal",
           sdk,
           networkId,
+          schnorr,
+          fundingPrivateKeyHex,
         }),
         additive: await runExact({
           client,
@@ -313,6 +317,8 @@ export async function runLiveProof(context) {
           preferredHeadId: additiveHeads[0].record.headId,
           sdk,
           networkId,
+          schnorr,
+          fundingPrivateKeyHex,
         }),
         headFunding: additiveHeads[0].funding,
         headFundings: additiveHeads.map((head) => head.funding),
@@ -391,6 +397,8 @@ async function runExact({
   preferredHeadId,
   sdk,
   networkId,
+  schnorr,
+  fundingPrivateKeyHex,
 }) {
   const challenge = await exactChallenge({
     server,
@@ -478,15 +486,24 @@ async function runExact({
       `${profile} exact duplicate was not idempotent: ${duplicate.status}/${handlerExecutions}`,
     );
   }
-  const replayPayload = JSON.parse(JSON.stringify(payment.paymentPayload));
-  delete replayPayload.payload.requestHash;
+  const replayRequestHash = hash({
+    flow: `exact-${profile}-${label}`,
+    request: 2,
+  });
+  const replayPayload = reauthorizeExactPayload({
+    paymentPayload: payment.paymentPayload,
+    transactionId: settlement.transaction,
+    requestHash: replayRequestHash,
+    schnorr,
+    fundingPrivateKeyHex,
+  });
   const replay = await server.handlePaidRequest(
     requestWithPayment(replayPayload, {
       url: `${resource.url}/replay`,
       resource,
       scheme: "exact",
       amount,
-      requestHash: hash({ flow: `exact-${profile}`, request: 2 }),
+      requestHash: replayRequestHash,
     }),
     async () => ({
       status: 200,
@@ -547,6 +564,44 @@ async function runExact({
     duplicate: { status: duplicate.status, handlerExecutions },
     replay: { status: replay.status, error: replay.body.error },
   };
+}
+
+function reauthorizeExactPayload({
+  paymentPayload,
+  transactionId,
+  requestHash,
+  schnorr,
+  fundingPrivateKeyHex,
+}) {
+  const replay = JSON.parse(JSON.stringify(paymentPayload));
+  const accepted = replay.accepted;
+  const authorization = replay.payload.authorization;
+  const digest = exactRequestAuthorizationDigest({
+    network: accepted.network,
+    profile: replay.payload.profile,
+    transactionId,
+    paymentOutputIndex: replay.payload.paymentOutputIndex,
+    amount: accepted.amount,
+    payTo: accepted.payTo,
+    payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
+    paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+    requestHash,
+    challengeId: replay.payload.challengeId,
+    inputIndex: authorization.inputIndex,
+    expiresAt: authorization.expiresAt,
+  });
+  replay.payload.requestHash = requestHash;
+  replay.payload.authorization = {
+    ...authorization,
+    digest,
+    signature: bytesToHex(
+      schnorr.sign(
+        hexToBytes(digest, { expectedLength: 32 }),
+        hexToBytes(fundingPrivateKeyHex, { expectedLength: 32 }),
+      ),
+    ),
+  };
+  return replay;
 }
 
 async function exactChallenge({
