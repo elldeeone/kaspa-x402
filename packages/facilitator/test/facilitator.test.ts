@@ -149,6 +149,116 @@ describe("direct-mode facilitator", () => {
     });
   });
 
+  it("does not verify accepted evidence below an authenticated confirmed requirement", async () => {
+    const requiredFinalities: Array<"accepted" | "confirmed"> = [];
+    const { facilitator, server } = makeFacilitator({
+      acceptedFinality: "accepted",
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          requiredFinalities.push(request.requiredFinality);
+          return {
+            transactionId: EXACT_TX_ID,
+            paymentOutput: {
+              amount: request.amount,
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            finality: "accepted",
+            payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
+          };
+        },
+      },
+    });
+    const paymentPayload = makeExactPayment(server);
+    const confirmed = structuredClone(
+      paymentPayload.accepted,
+    ) as ExactPaymentRequirements;
+    confirmed.extra.finality = "confirmed";
+    paymentPayload.accepted = confirmed;
+    if (paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact transaction payload");
+    paymentPayload.payload.authorization = fakeExactAuthorization(
+      confirmed,
+      REQUEST_HASH,
+    );
+
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/verify",
+      body: {
+        x402Version: X402_VERSION,
+        paymentPayload,
+        paymentRequirements: confirmed,
+        resource: RESOURCE,
+        requestHash: REQUEST_HASH,
+      },
+    });
+
+    expect(requiredFinalities).toEqual(["confirmed"]);
+    expect(response.status).toBe(200);
+    expect(response.body).toEqual({
+      isValid: false,
+      invalidReason: "invalid_transaction_state",
+    });
+  });
+
+  it("honors authenticated confirmed requirements above the configured accepted floor", async () => {
+    const requiredFinalities: Array<"accepted" | "confirmed"> = [];
+    const { facilitator, server } = makeFacilitator({
+      acceptedFinality: "accepted",
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          requiredFinalities.push(request.requiredFinality);
+          return {
+            transactionId: EXACT_TX_ID,
+            paymentOutput: {
+              amount: request.amount,
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            finality: "confirmed",
+            payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
+          };
+        },
+      },
+    });
+    const paymentPayload = makeExactPayment(server);
+    const confirmed = structuredClone(
+      paymentPayload.accepted,
+    ) as ExactPaymentRequirements;
+    confirmed.extra.finality = "confirmed";
+    paymentPayload.accepted = confirmed;
+    if (paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact transaction payload");
+    paymentPayload.payload.authorization = fakeExactAuthorization(
+      confirmed,
+      REQUEST_HASH,
+    );
+
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/verify",
+      body: {
+        x402Version: X402_VERSION,
+        paymentPayload,
+        paymentRequirements: confirmed,
+        resource: RESOURCE,
+        requestHash: REQUEST_HASH,
+      },
+    });
+
+    expect(requiredFinalities).toEqual(["confirmed"]);
+    expect(response.status).toBe(200);
+    expect(response.body).toMatchObject({
+      isValid: true,
+      extra: { finality: "confirmed" },
+    });
+  });
+
   it("verifies and settles standard-native exact without head state", async () => {
     const { facilitator, server, store } = makeFacilitator({
       exactProfile: "standard-native",

@@ -311,6 +311,20 @@ export class DirectModeServer {
       paymentPayload,
       requestFingerprint,
     );
+    if (payment.scheme === "exact") {
+      const requiredFinality = strongerExactFinality(
+        this.#config.acceptedFinality,
+        payment.accepted.extra.finality,
+      );
+      if (
+        !exactFinalityMeets(payment.finality ?? "mempool", requiredFinality)
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "exact verification did not reach the authenticated finality requirement",
+        );
+      }
+    }
     await this.#assertVerifyNotReplayed(
       payment,
       requestFingerprint,
@@ -1301,6 +1315,10 @@ export class DirectModeServer {
         ? await this.#verifiedExactHead(accepted, payload)
         : undefined;
     const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
+    const requiredFinality = strongerExactFinality(
+      this.#config.acceptedFinality,
+      accepted.extra.finality,
+    );
     const verification =
       await this.#config.exactTransactionVerifier.verifyExactPayment({
         network: accepted.network,
@@ -1311,7 +1329,7 @@ export class DirectModeServer {
         amount: accepted.amount,
         payTo: accepted.payTo,
         payToScriptPublicKey,
-        requiredFinality: this.#config.acceptedFinality,
+        requiredFinality,
         requestHash: requestFingerprint,
         paymentRequirementsHash,
         authorization: payload.authorization,
@@ -3664,6 +3682,15 @@ function exactFinalityMeets(
 ): boolean {
   const rank = { mempool: 0, accepted: 1, confirmed: 2 } as const;
   return rank[actual] >= rank[required];
+}
+
+function strongerExactFinality(
+  left: "accepted" | "confirmed",
+  right: "mempool" | "accepted" | "confirmed" | undefined,
+): "accepted" | "confirmed" {
+  return left === "confirmed" || right === "confirmed"
+    ? "confirmed"
+    : "accepted";
 }
 
 function isExactFinality(

@@ -1229,6 +1229,59 @@ describe("direct-mode server", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("does not verify additive accepted evidence below an authenticated confirmed requirement", async () => {
+    const requiredFinalities: Array<"accepted" | "confirmed"> = [];
+    const setup = await makeAdditiveServer({
+      acceptedFinality: "accepted",
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          requiredFinalities.push(request.requiredFinality);
+          const head = request.head!;
+          return {
+            transactionId: EXACT_TX_ID,
+            paymentOutput: {
+              amount: request.amount,
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            continuation: {
+              outpoint: { txid: EXACT_TX_ID, index: 0 },
+              amount: (
+                BigInt(head.headAmount) + BigInt(request.amount)
+              ).toString(),
+              scriptPublicKey: head.headScriptPublicKey,
+            },
+            finality: "accepted",
+            payerAddress: "kaspatest:refund",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
+          };
+        },
+      },
+    });
+    const unpaid = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      async () => ({ body: "unreachable" }),
+    );
+    const confirmed = structuredClone(
+      decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER])
+        .accepts[0],
+    ) as ExactPaymentRequirements;
+    confirmed.extra.finality = "confirmed";
+    const requestHash = "97".repeat(32) as Hash32Hex;
+    const paymentPayload = makeAdditivePayment(confirmed, { requestHash });
+
+    await expect(
+      setup.server.verifyPayment({
+        paymentPayload,
+        paymentRequirements: confirmed,
+        resource: RESOURCE,
+        requestHash,
+      }),
+    ).rejects.toThrow("authenticated finality requirement");
+    expect(requiredFinalities).toEqual(["confirmed"]);
+  });
+
   it("claims, broadcasts, and advances a reusable KIP-10 head before the handler", async () => {
     const verificationRequests: unknown[] = [];
     const setup = await makeAdditiveServer({
