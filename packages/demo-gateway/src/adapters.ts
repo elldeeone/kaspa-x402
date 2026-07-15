@@ -1723,9 +1723,9 @@ function assertStandardNativeTransactionEnvelope(
     );
   }
   for (const [index, input] of transaction.inputs.entries()) {
-    if (input.computeBudget !== undefined)
+    if (input.computeBudget !== undefined && input.computeBudget !== 0)
       throw invalidTransaction(
-        `standard-native input ${index} cannot carry a compute budget`,
+        `standard-native input ${index} cannot carry a non-zero compute budget`,
       );
     if (input.sigOpCount !== 1)
       throw invalidTransaction(

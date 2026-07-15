@@ -704,6 +704,25 @@ describe("RestExactTransactionVerifier", () => {
       },
     });
 
+    const sdkSafeArtifact = JSON.parse(artifact) as {
+      inputs: Array<{ computeBudget?: number }>;
+    };
+    sdkSafeArtifact.inputs[0]!.computeBudget = 0;
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(sdkSafeArtifact),
+      }),
+    ).resolves.toMatchObject({ transactionId: standard.transactionId });
+
+    sdkSafeArtifact.inputs[0]!.computeBudget = 1;
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(sdkSafeArtifact),
+      }),
+    ).rejects.toThrow("cannot carry a non-zero compute budget");
+
     const duplicateInput = JSON.parse(artifact) as {
       inputs: Array<Record<string, unknown>>;
     };

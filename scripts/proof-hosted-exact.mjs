@@ -25,6 +25,7 @@ import {
   KIP10_EXACT_TRANSACTION_ENCODING,
   buildKip10AdditiveBorrowArgs,
   buildKip10AdditiveRedeemScript,
+  calculateKaspaStorageMass,
   kip10AdditiveScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
@@ -514,6 +515,10 @@ async function buildStandardExactTransaction(input) {
     lockTime: 0n,
     subnetworkId: NATIVE_SUBNETWORK_ID,
     gas: 0n,
+    storageMass: exactStorageMass(
+      [{ amount: fundingAmount, scriptPublicKey: fundingScriptPublicKey }],
+      outputs,
+    ),
     payload: "",
   };
   const unsigned = new input.sdk.Transaction({
@@ -595,6 +600,13 @@ async function buildKip10ExactTransaction(input) {
     lockTime: 0n,
     subnetworkId: NATIVE_SUBNETWORK_ID,
     gas: 0n,
+    storageMass: exactStorageMass(
+      [
+        { amount: headAmount, scriptPublicKey: headScriptPublicKey },
+        { amount: fundingAmount, scriptPublicKey: fundingScriptPublicKey },
+      ],
+      outputs,
+    ),
     payload: "",
   };
   const unsigned = new input.sdk.Transaction({
@@ -991,6 +1003,21 @@ function serializeSdkScriptPublicKey(scriptPublicKey) {
   return bytesToHex(
     Uint8Array.from([(version >>> 8) & 0xff, version & 0xff, ...script]),
   );
+}
+
+function exactStorageMass(inputs, outputs) {
+  return calculateKaspaStorageMass({
+    inputs: inputs.map((input) => ({
+      amount: input.amount,
+      scriptPublicKey: serializeSdkScriptPublicKey(input.scriptPublicKey),
+      hasCovenant: false,
+    })),
+    outputs: outputs.map((output) => ({
+      amount: output.value,
+      scriptPublicKey: serializeSdkScriptPublicKey(output.scriptPublicKey),
+      hasCovenant: false,
+    })),
+  });
 }
 
 function loadFundingPrivateKey(specifier) {
