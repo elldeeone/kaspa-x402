@@ -1548,7 +1548,7 @@ function verifyRequestAuthorization({
     throw new Error("exact request authorization signature is invalid");
   }
   return {
-    id: exactRequestAuthorizationId(authorization),
+    authorizationId: exactRequestAuthorizationId(authorization),
     digest,
     inputIndex: authorization.inputIndex,
     payerPublicKey: fundingPublicKey,
