@@ -354,6 +354,14 @@ function buildPaymentRetry() {
         "payment output index",
       ),
       payerAddress: ui.address.value.trim() || undefined,
+      requestHash: "0".repeat(64),
+      authorization: {
+        version: "kaspa-x402-exact-request-authorization-v1",
+        inputIndex: 0,
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        digest: "1".repeat(64),
+        signature: "2".repeat(128),
+      },
     },
   };
   pruneUndefined(paymentPayload.payload);
@@ -369,9 +377,11 @@ function buildPaymentRetry() {
   ui.paymentSignatureHeader.value = encodeHeader(paymentPayload);
   writeJson(ui.paymentOutput, {
     paymentPayload,
+    mockAuthorization:
+      "schema-only placeholder; a real payer must derive and sign the canonical exact-request authorization digest",
     mockSettlementResponse: settlement,
   });
-  setStatus("Exact retry transcript built.");
+  setStatus("Schema-only exact retry transcript built; authorization is not valid settlement evidence.");
 }
 
 async function checkTransactionStatus() {

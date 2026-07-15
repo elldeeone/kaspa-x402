@@ -481,7 +481,7 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-mock">
       <h2 id="demo-mock">Exact Mock Flow</h2>
-      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. A real gateway must still verify and settle the transaction artifact.</p>
+      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. The generated request authorization is a schema-only placeholder, not a valid signature. A real payer must derive and sign the canonical authorization digest, and a real gateway must independently verify and settle the transaction artifact.</p>
       <label for="demo-transaction">Signed transaction artifact</label>
       <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; a deterministic placeholder is used if empty"></textarea>
       <div class="demo-grid">
