@@ -103,7 +103,7 @@ Checked locally for alpha.8 on 2026-07-15:
 - all seven workspace manifests use `0.1.0-alpha.8`, and every internal
   `@kaspa-x402/*` dependency is pinned to that exact version;
 - `npm run validate:release` passes from a clean tree with all workspace builds,
-  353 tests, schemas and vectors, the immutable site, browser/PNN/WASM checks,
+  357 tests, schemas and vectors, the immutable site, browser/PNN/WASM checks,
   the Worker dry run and smoke, admin and hosted-offer checks, 22 SilverScript
   fixture checks, Rusty Kaspa full-consensus vectors, the 19-check offline
   proof, non-spending live-run readiness, package dry runs, and diff hygiene;
