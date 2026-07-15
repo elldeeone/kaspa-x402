@@ -1,8 +1,9 @@
 # Alpha Publish Checklist
 
-Status: the local `0.1.0-alpha.8` source candidate is cut and validated.
-`0.1.0-alpha.7` remains the latest published and deployed alpha. Nothing from
-the alpha.8 branch has been published, tagged, deployed, or announced.
+Status: the merged `0.1.0-alpha.8` source is cut and validated. Its four public
+packages are staged in npm with the `alpha` tag and await human approval.
+`0.1.0-alpha.7` remains the latest published and deployed alpha. Alpha.8 has
+not been approved, published, tagged, deployed, or announced.
 Publishes require npm authorization and must not happen accidentally from CI
 or an unauthenticated shell.
 
@@ -113,18 +114,19 @@ Checked locally for alpha.8 on 2026-07-15:
   temporary project and all four ESM entrypoints import successfully;
 - each public tarball contains only `LICENSE`, `README.md`, `package.json`,
   `dist/index.js`, and `dist/index.d.ts`;
-- the local tarball SHA-1 values are `e366270978d7fb5fb5b97914e1199ec36e1862e6`
+- the staged tarball SHA-1 values are `e366270978d7fb5fb5b97914e1199ec36e1862e6`
   (core), `4df4834812837dbd029ed8e6bb944c2dfb6f459e` (covenant),
-  `2fc49ce591857b68d3d07c91541229cf9b2e415b` (client), and
-  `1309639ec781d6a9b777a5b286856fe85eea6f8d` (server);
+  `eade406d27bd97fc73791d86fa1ad89e77850b75` (client), and
+  `156f37207ef2dcb6be0d53d9d79134b1258ccbed` (server); npm readback and
+  independently downloaded staged tarballs match all four values;
 - `npm audit --omit=dev --audit-level=high` reports zero production dependency
   vulnerabilities. The development tree still reports transitive
   Wrangler/Miniflare advisories;
 - funded TN10 evidence proves both exact profiles and the retained batch
   lifecycle, while mainnet checks remain read-only or deterministic synthetic
   construction only;
-- no npm stage, publish, dist-tag change, Git tag, GitHub release, Worker/site
-  deployment, or public announcement was performed.
+- no staged package approval, publish, dist-tag change, Git tag, GitHub
+  release, Worker/site deployment, or public announcement was performed.
 
 ## Alpha.7 Registry And Tarball Recheck
 
