@@ -1,8 +1,10 @@
 # Alpha Publish Checklist
 
-Status: preparing `0.1.0-alpha.8`. `0.1.0-alpha.7` remains the latest published
-and deployed alpha. Publishes require npm authorization and must not happen
-accidentally from CI or an unauthenticated shell.
+Status: the local `0.1.0-alpha.8` source candidate is cut and validated.
+`0.1.0-alpha.7` remains the latest published and deployed alpha. Nothing from
+the alpha.8 branch has been published, tagged, deployed, or announced.
+Publishes require npm authorization and must not happen accidentally from CI
+or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
@@ -93,6 +95,36 @@ links.
 The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
+
+## Alpha.8 Source Candidate And Tarball Recheck
+
+Checked locally for alpha.8 on 2026-07-15:
+
+- all seven workspace manifests use `0.1.0-alpha.8`, and every internal
+  `@kaspa-x402/*` dependency is pinned to that exact version;
+- `npm run validate:release` passes from a clean tree with all workspace builds,
+  353 tests, schemas and vectors, the immutable site, browser/PNN/WASM checks,
+  the Worker dry run and smoke, admin and hosted-offer checks, 22 SilverScript
+  fixture checks, Rusty Kaspa full-consensus vectors, the 19-check offline
+  proof, non-spending live-run readiness, package dry runs, and diff hygiene;
+- the immutable `v0.1.0-alpha.8` snapshot is locked at
+  `5d76ca9a7496f59a89badd699d3dab70a1eaa0df57b64f1a55eb89d4bd497de8`;
+- real tarballs for the four public packages install together in a clean
+  temporary project and all four ESM entrypoints import successfully;
+- each public tarball contains only `LICENSE`, `README.md`, `package.json`,
+  `dist/index.js`, and `dist/index.d.ts`;
+- the local tarball SHA-1 values are `e366270978d7fb5fb5b97914e1199ec36e1862e6`
+  (core), `4df4834812837dbd029ed8e6bb944c2dfb6f459e` (covenant),
+  `2fc49ce591857b68d3d07c91541229cf9b2e415b` (client), and
+  `1309639ec781d6a9b777a5b286856fe85eea6f8d` (server);
+- `npm audit --omit=dev --audit-level=high` reports zero production dependency
+  vulnerabilities. The development tree still reports transitive
+  Wrangler/Miniflare advisories;
+- funded TN10 evidence proves both exact profiles and the retained batch
+  lifecycle, while mainnet checks remain read-only or deterministic synthetic
+  construction only;
+- no npm stage, publish, dist-tag change, Git tag, GitHub release, Worker/site
+  deployment, or public announcement was performed.
 
 ## Alpha.7 Registry And Tarball Recheck
 

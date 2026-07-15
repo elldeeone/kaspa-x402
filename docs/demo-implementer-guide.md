@@ -27,6 +27,10 @@ Install the alpha packages explicitly:
 npm install @kaspa-x402/core@alpha @kaspa-x402/client@alpha
 ```
 
+Until alpha.8 is actually published, the registry `alpha` tag continues to
+resolve to alpha.7. Use the reviewed branch or its locally packed alpha.8
+tarballs when testing the alpha.8 source contract before publication.
+
 The public npm release includes core schema/header helpers and client
 helpers; the hosted gateway package is not published.
 
@@ -131,7 +135,9 @@ KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
 
-The flow below describes the live alpha.7 testnet contract.
+The batch contract is unchanged from alpha.7 and remains the alpha.8 batch
+profile. The public gateway still serves the deployed alpha.7 instance until
+the explicit alpha.8 cutover.
 
 Request:
 

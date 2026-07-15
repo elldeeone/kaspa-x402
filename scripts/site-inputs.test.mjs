@@ -8,7 +8,7 @@ test("deleted tracked release locks remain publishable dirty inputs", () => {
 
   assert.equal(
     isPublishableDirtyPath(
-      "site/releases/v0.1.0-alpha.7.json",
+      "site/releases/v0.1.0-alpha.8.json",
       inputs,
       "site/releases",
     ),
