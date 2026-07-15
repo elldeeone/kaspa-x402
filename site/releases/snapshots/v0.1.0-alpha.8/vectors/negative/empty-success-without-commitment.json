@@ -1,0 +1,13 @@
+{
+  "kind": "negative",
+  "name": "empty-success-without-commitment",
+  "description": "A successful empty-transaction response must carry batch voucher-only commitment fields.",
+  "schema": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "expectedError": "invalid_kaspa_settlement_response",
+  "value": {
+    "success": true,
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "amount": "700000"
+  }
+}

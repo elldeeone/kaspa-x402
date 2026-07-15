@@ -1,0 +1,173 @@
+{
+  "kind": "exact-consensus-profiles",
+  "description": "Deterministic standard-native v0 and corrected KIP-10 additive v1 transactions validated by the full Rusty Kaspa isolation and populated-UTXO consensus paths.",
+  "validation": {
+    "status": "full-consensus-cross-validated",
+    "tool": "kaspa-consensus",
+    "toolVersion": "2.0.1",
+    "sourceCommit": "78257f273a26c4be085bab0f79437dee99ca8835",
+    "command": "KASPA_X402_KASPA_CONSENSUS_ROOT=<kaspa-consensus-checkout> npm run validate:tx-v1-consensus"
+  },
+  "expected": {
+    "additive": {
+      "amount": "20000000",
+      "computeCommitments": [
+        {
+          "computeBudget": 0
+        },
+        {
+          "computeBudget": 10
+        }
+      ],
+      "computeMass": "2158",
+      "estimatedSerializedSize": 428,
+      "fee": "200000",
+      "inputs": 2,
+      "outputs": 2,
+      "profile": "additive",
+      "scriptUnits": [
+        226,
+        100001
+      ],
+      "storageMass": "23838",
+      "transaction": {
+        "gas": "0",
+        "inputs": [
+          {
+            "computeBudget": 0,
+            "previousOutpoint": {
+              "index": 0,
+              "txid": "7171717171717171717171717171717171717171717171717171717171717171"
+            },
+            "sequence": "18446744073709551615",
+            "sigOpCount": null,
+            "signatureScript": "0035632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268",
+            "utxo": {
+              "amount": "100000000",
+              "blockDaaScore": "0",
+              "isCoinbase": false,
+              "scriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87"
+            }
+          },
+          {
+            "computeBudget": 10,
+            "previousOutpoint": {
+              "index": 1,
+              "txid": "7272727272727272727272727272727272727272727272727272727272727272"
+            },
+            "sequence": "18446744073709551615",
+            "sigOpCount": null,
+            "signatureScript": "4131d7cc51e265c83f723add87206976bd00848a021b1e62aa1a54c8744bae568dc8248efeab2a1961411f3bfcaf15d75aec7504fd521c320bad19bc4e85357ca601",
+            "utxo": {
+              "amount": "40000000",
+              "blockDaaScore": "0",
+              "isCoinbase": false,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          }
+        ],
+        "lockTime": "0",
+        "outputs": [
+          {
+            "amount": "120000000",
+            "covenant": null,
+            "scriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87"
+          },
+          {
+            "amount": "19800000",
+            "covenant": null,
+            "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+          }
+        ],
+        "payload": "",
+        "storageMass": "23838",
+        "subnetworkId": "0000000000000000000000000000000000000000",
+        "version": 1
+      },
+      "transactionHash": "06119d85b0af53dc31c9acda699ea262b2f3374f4229de0f2cb6231d294f777c",
+      "transactionId": "15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e",
+      "transientMass": "1712",
+      "version": 1
+    },
+    "mutations": {
+      "additiveBadSignature": "consensus-rejected",
+      "additiveBelowThreshold": "consensus-rejected",
+      "additiveDuplicateMerchantBenefit": "profile-rejected-after-consensus-acceptance",
+      "additiveExcessiveDelta": "profile-rejected-after-consensus-acceptance",
+      "additiveOverbudget": "profile-rejected-after-consensus-acceptance",
+      "additiveUnderbudget": "consensus-rejected",
+      "additiveWrongMass": "consensus-rejected",
+      "additiveWrongScript": "consensus-rejected",
+      "additiveWrongVersion": "consensus-rejected",
+      "forgedUtxoAmount": "consensus-rejected",
+      "standardBadSignature": "consensus-rejected",
+      "standardDuplicateMerchantOutput": "profile-rejected-after-consensus-acceptance",
+      "standardExcessiveFee": "profile-rejected",
+      "standardGas": "consensus-rejected",
+      "standardMerchantOverpayment": "profile-rejected",
+      "standardPayload": "profile-rejected-after-consensus-acceptance",
+      "standardWrongMass": "consensus-rejected",
+      "standardWrongVersion": "consensus-rejected"
+    },
+    "standardNative": {
+      "amount": "20000000",
+      "computeCommitments": [
+        {
+          "sigOpCount": 1
+        }
+      ],
+      "computeMass": "2036",
+      "estimatedSerializedSize": 316,
+      "fee": "200000",
+      "inputs": 1,
+      "outputs": 2,
+      "profile": "standard-native",
+      "scriptUnits": [
+        100001
+      ],
+      "storageMass": "63557",
+      "transaction": {
+        "gas": "0",
+        "inputs": [
+          {
+            "computeBudget": null,
+            "previousOutpoint": {
+              "index": 0,
+              "txid": "7070707070707070707070707070707070707070707070707070707070707070"
+            },
+            "sequence": "18446744073709551615",
+            "sigOpCount": 1,
+            "signatureScript": "416f19fc3a1159eae0f4488158c9a32e26d28b5875d665a3002a1a62ace4f1e5cd28ba1b0dbe3c3b4ccf9e7facb22891173854989c77a6edf7d4c286b15ac70c8a01",
+            "utxo": {
+              "amount": "50000000",
+              "blockDaaScore": "0",
+              "isCoinbase": false,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          }
+        ],
+        "lockTime": "0",
+        "outputs": [
+          {
+            "amount": "20000000",
+            "covenant": null,
+            "scriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"
+          },
+          {
+            "amount": "29800000",
+            "covenant": null,
+            "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+          }
+        ],
+        "payload": "",
+        "storageMass": "63557",
+        "subnetworkId": "0000000000000000000000000000000000000000",
+        "version": 0
+      },
+      "transactionHash": "0aa8cc097ba1a6b6bfe795bab0ec551380bd16a4e424ff380e668ff7657f7769",
+      "transactionId": "90246a5068190db36c21495c313d917e6ba72bc29157b5966b426658534dd2e5",
+      "transientMass": "1264",
+      "version": 0
+    }
+  }
+}
