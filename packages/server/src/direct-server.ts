@@ -2,9 +2,9 @@ import {
   X402_VERSION,
   KASPA_LOCK_TIME_THRESHOLD,
   assertMainnetAllowed,
-  bytesToHex,
+  batchCommitmentId,
+  batchPaymentRequirementsHash,
   channelId,
-  concatBytes,
   decodePaymentResponseHeader,
   decodePaymentSignatureHeader,
   encodePaymentRequiredHeader,
@@ -15,12 +15,9 @@ import {
   exactRequestAuthorizationId,
   formatSompiString,
   hexToBytes,
-  le32,
-  le64,
   kaspaSettlementExtensions,
   parseSompiString,
   paymentIdentifierExtension,
-  sha256,
   sha256Hex,
   stableStringify,
   toX402ErrorReason,
@@ -1434,9 +1431,7 @@ export class DirectModeServer {
         currentExpiryError === "expired_challenge";
       if (
         !currentlyExpiredEvidence ||
-        !(await this.#config.store.loadExactPayment(
-          verification.transactionId,
-        ))
+        !(await this.#config.store.loadExactPayment(verification.transactionId))
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_signature",
@@ -1489,9 +1484,7 @@ export class DirectModeServer {
       maxTimeoutSeconds: verified.accepted.maxTimeoutSeconds,
       authorizationExpiresAt:
         verified.paymentPayload.payload.authorization.expiresAt,
-      ...(verified.head
-        ? { challengeExpiresAt: verified.head.expiresAt }
-        : {}),
+      ...(verified.head ? { challengeExpiresAt: verified.head.expiresAt } : {}),
     });
     if (expiryError) {
       throw new KaspaX402Error(
@@ -2232,11 +2225,14 @@ export class DirectModeServer {
     );
     const commitmentId = batchCommitmentId({
       accepted: verified.accepted,
-      channel: verified.channel,
+      channelId: verified.channel.channelId,
       requestFingerprint: fingerprint,
+      activeOutpoint: verified.channel.activeOutpoint,
       voucher: verified.voucher,
       chargedAmount,
+      chargedCumulativeBefore: verified.channel.chargedCumulativeAmount,
       chargedCumulativeAfter: chargedCumulativeAmount,
+      claimedCumulativeAmount: verified.channel.claimedCumulativeAmount,
     });
     const channel: ServerChannelRecord = {
       ...verified.channel,
@@ -2269,8 +2265,8 @@ export class DirectModeServer {
         commitmentId,
         channelId: channel.channelId,
         requestFingerprint: fingerprint,
-        paymentRequirementsHash: bytesToHex(
-          batchPaymentRequirementsHash(verified.accepted),
+        paymentRequirementsHash: batchPaymentRequirementsHash(
+          verified.accepted,
         ),
         activeOutpoint: channel.activeOutpoint,
         activeScriptPublicKey: channel.activeScriptPublicKey,
@@ -2400,7 +2396,7 @@ export class DirectModeServer {
     if (record.channelId !== channelId) return undefined;
     if (
       record.paymentRequirementsHash !==
-      bytesToHex(batchPaymentRequirementsHash(paymentPayload.accepted))
+      batchPaymentRequirementsHash(paymentPayload.accepted)
     )
       return undefined;
     if (
@@ -3666,72 +3662,6 @@ function exactHeadUnavailableSnapshot(head: ExactHeadRecord) {
 
 function scriptPublicKeyHash(scriptPublicKey: string): string {
   return sha256Hex(hexToBytes(scriptPublicKey));
-}
-
-function batchCommitmentId(input: {
-  accepted: BatchPaymentRequirements;
-  channel: ServerChannelRecord;
-  requestFingerprint: Hash32Hex;
-  voucher: Voucher;
-  chargedAmount: SompiString;
-  chargedCumulativeAfter: SompiString;
-}): Hash32Hex {
-  return bytesToHex(
-    sha256(
-      concatBytes([
-        sha256("kaspa:x402:batch-commitment:v1"),
-        hexToBytes(input.channel.channelId, {
-          expectedLength: 32,
-          label: "channelId",
-        }),
-        hexToBytes(input.requestFingerprint, {
-          expectedLength: 32,
-          label: "requestFingerprint",
-        }),
-        batchPaymentRequirementsHash(input.accepted),
-        hexToBytes(input.channel.activeOutpoint.txid, {
-          expectedLength: 32,
-          label: "activeOutpoint.txid",
-        }),
-        le32(input.channel.activeOutpoint.index),
-        le64(input.voucher.amount),
-        sha256(
-          hexToBytes(input.voucher.signature, {
-            expectedLength: 64,
-            label: "voucher.signature",
-          }),
-        ),
-        le64(input.chargedAmount),
-        le64(input.channel.chargedCumulativeAmount),
-        le64(input.chargedCumulativeAfter),
-        le64(input.channel.claimedCumulativeAmount),
-      ]),
-    ),
-  );
-}
-
-function batchPaymentRequirementsHash(
-  accepted: BatchPaymentRequirements,
-): Uint8Array {
-  return sha256(
-    concatBytes([
-      sha256("kaspa:x402:batch-payment-requirements:v1"),
-      sha256("batch-settlement"),
-      sha256(accepted.network),
-      sha256("KAS"),
-      le64(accepted.amount),
-      sha256(accepted.payTo),
-      le64(accepted.maxTimeoutSeconds),
-      sha256("kaspa-escrow-v1"),
-      sha256(accepted.extra.templateId),
-      hexToBytes(accepted.extra.serverPublicKey, {
-        expectedLength: 32,
-        label: "serverPublicKey",
-      }),
-      le64(accepted.extra.minDepositSompi),
-      le64(accepted.extra.refundTimeoutDaa),
-    ]),
-  );
 }
 
 function isAcceptedFinality(

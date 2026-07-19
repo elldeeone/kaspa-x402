@@ -1,15 +1,14 @@
-# Transaction V1 Plan
+# Batch Transaction V1 Reference
 
-This plan defines the transaction-builder requirements for Kaspa x402
-`batch-settlement` support. It is intentionally executable as a checklist:
-no mainnet builder should ship until each production path has a vector with a
-serialized transaction body/projection, transaction id, hash, sighash input,
-compute budget, and fee accounting.
+The normative transaction rules now live in
+[`kaspa-batch-settlement-v1.md`](kaspa-batch-settlement-v1.md). This document is
+retained as a compact map from those rules to the committed claim and refund
+transaction-v1 vectors.
 
 Batch claim and batch refund have reference transaction-v1 vectors under
 `vectors/tx-v1/`.
 The transaction-v1 vectors are cross-validated against `kaspa-consensus-core`
-2.0.1 at commit `ef1a093bcf8560fe05221b56f0c896f97e7d8d77` by
+2.0.1 at commit `78257f273a26c4be085bab0f79437dee99ca8835` by
 `npm run validate:tx-v1-consensus`.
 In those vectors, `serializedTransaction` is the deterministic transaction hash
 preimage/projection, not a submit-ready RPC transaction payload. The `mass`
@@ -23,6 +22,10 @@ Canonical transaction-v1 semantics used by the vectors:
 - v1 sighash excludes compute budget;
 - empty payload txid uses the canonical `PayloadDigest` empty-payload digest, while empty native sighash payload uses the zero hash;
 - storage mass and estimated serialized size are calculated by canonical consensus code.
+- both escrow branches execute through `kaspa-txscript` with populated UTXO
+  entries;
+- mutated transaction signatures are rejected;
+- each complete populated transaction passes post-Toccata consensus validation.
 
 ## Batch Settlement Claim
 

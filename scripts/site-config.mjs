@@ -11,8 +11,10 @@ export const VENDORED_KASPA_WASM = {
   source: {
     repository: "https://github.com/kaspanet/rusty-kaspa",
     release: "https://github.com/kaspanet/rusty-kaspa/releases/tag/v2.0.0",
-    archive: "https://github.com/kaspanet/rusty-kaspa/releases/download/v2.0.0/kaspa-wasm32-sdk-v2.0.0.zip",
-    archiveSha256: "eeb201e27feba98fe069f09ffefdd0032ed4f69a3f299793e64b9db9dda7df7f",
+    archive:
+      "https://github.com/kaspanet/rusty-kaspa/releases/download/v2.0.0/kaspa-wasm32-sdk-v2.0.0.zip",
+    archiveSha256:
+      "eeb201e27feba98fe069f09ffefdd0032ed4f69a3f299793e64b9db9dda7df7f",
     commit: "90dbf074275d60c1fe74a3491883196f110970c0",
     packagePath: "web/kaspa-core",
     note: "Vendored from the Rusty Kaspa v2.0.0 web/kaspa-core browser release artifacts, not from the public npm registry.",
@@ -21,27 +23,32 @@ export const VENDORED_KASPA_WASM = {
     {
       source: "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/LICENSE",
       target: "vendor/kaspa-wasm/2.0.0/kaspa-core/LICENSE",
-      sha256: "fb06b99a835c4cdade7f2f180fd87c0198d552cf1e0cd14c34716411b009a92f",
+      sha256:
+        "fb06b99a835c4cdade7f2f180fd87c0198d552cf1e0cd14c34716411b009a92f",
     },
     {
       source: "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.d.ts",
       target: "vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.d.ts",
-      sha256: "081c3027542dadfff6793f78352faf13073cbd894defe0da49f97c2466f5754a",
+      sha256:
+        "081c3027542dadfff6793f78352faf13073cbd894defe0da49f97c2466f5754a",
     },
     {
       source: "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",
       target: "vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js",
-      sha256: "84d0718fb99a9ea1fecbe5f95e82985e0cb1e7ea1c1214163b3f056ef6e9a6cb",
+      sha256:
+        "84d0718fb99a9ea1fecbe5f95e82985e0cb1e7ea1c1214163b3f056ef6e9a6cb",
     },
     {
       source: "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa_bg.wasm",
       target: "vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa_bg.wasm",
-      sha256: "2fc3ed6c3666937a2598bf6a626e3ae97896e0ac8bc872ea049cb73df221191d",
+      sha256:
+        "2fc3ed6c3666937a2598bf6a626e3ae97896e0ac8bc872ea049cb73df221191d",
     },
     {
       source: "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/package.json",
       target: "vendor/kaspa-wasm/2.0.0/kaspa-core/package.json",
-      sha256: "848c1ad33dd4236fdf71513c6021ec3b08187d49abf0c3be18f40255917871dc",
+      sha256:
+        "848c1ad33dd4236fdf71513c6021ec3b08187d49abf0c3be18f40255917871dc",
     },
   ],
 };
@@ -201,7 +208,11 @@ export const DOC_GROUPS = [
   { title: "Adoption", files: ["docs/adoption-examples.md"] },
   {
     title: "Implementation",
-    files: ["docs/demo-implementer-guide.md", "docs/server-store-contract.md", "docs/server-runtime-lock-contract.md"],
+    files: [
+      "docs/demo-implementer-guide.md",
+      "docs/server-store-contract.md",
+      "docs/server-runtime-lock-contract.md",
+    ],
   },
   {
     title: "Testnet Deployment",
@@ -209,20 +220,43 @@ export const DOC_GROUPS = [
   },
   {
     title: "Evidence",
-    files: ["docs/live-testnet-report.md", "docs/live-testnet-proof.md", "docs/review-closure-ledger.md"],
+    files: [
+      "docs/live-testnet-report.md",
+      "docs/live-testnet-proof.md",
+      "docs/review-closure-ledger.md",
+    ],
   },
-  { title: "Safety", files: ["docs/security-threat-model.md", "docs/mainnet-readiness.md"] },
-  { title: "Policy", files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md"] },
+  {
+    title: "Safety",
+    files: ["docs/security-threat-model.md", "docs/mainnet-readiness.md"],
+  },
+  {
+    title: "Policy",
+    files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md"],
+  },
 ];
 
 // Grouping for the /vectors/ index page, in display order.
 export const VECTOR_GROUPS = [
   { dir: "x402-http", note: "End-to-end HTTP envelope fixtures." },
-  { dir: "settlement-response", note: "Settlement responses for claim, refund, deposit, voucher, and failure cases." },
+  {
+    dir: "settlement-response",
+    note: "Settlement responses for claim, refund, deposit, voucher, and failure cases.",
+  },
   { dir: "voucher", note: "Voucher digest and signature binding." },
   { dir: "channel-id", note: "Canonical channel id derivation." },
-  { dir: "tx-v1", note: "Transaction-v1 claim and refund reference artifacts." },
-  { dir: "exact", note: "Full-consensus standard-native and additive exact reference transactions." },
+  {
+    dir: "tx-v1",
+    note: "Transaction-v1 claim and refund reference artifacts.",
+  },
+  {
+    dir: "exact",
+    note: "Full-consensus standard-native and additive exact reference transactions.",
+  },
+  {
+    dir: "batch",
+    note: "Language-neutral channel, escrow, voucher, commitment, claim, refund, expiry, and finality evidence.",
+  },
   { dir: "negative", note: "Inputs that must fail validation." },
 ];
 

@@ -4,6 +4,10 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  batchCommitmentId,
+  batchCommitmentPreimageHex,
+  batchPaymentRequirementsHash,
+  batchPaymentRequirementsPreimageHex,
   decodePaymentRequiredEnvelopeHeader,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -40,6 +44,8 @@ import {
   validateChannelId,
 } from "../src/index.js";
 import type {
+  BatchCommitmentInput,
+  BatchPaymentRequirements,
   ChannelConfig,
   ExactPaymentRequirements,
   PaymentIdentifierObservation,
@@ -121,6 +127,46 @@ type ExactInteropVector = {
       name: string;
       authorizationExpiresAt: string;
       challengeExpiresAt?: string;
+      expected: string;
+    }>;
+  };
+  finality: {
+    ordering: Array<"mempool" | "accepted" | "confirmed">;
+    cases: Array<{
+      actual: "mempool" | "accepted" | "confirmed";
+      required: "mempool" | "accepted" | "confirmed";
+      expected: boolean;
+    }>;
+  };
+};
+
+type BatchInteropVector = {
+  channel: {
+    config: ChannelConfig;
+    preimage: string;
+    channelId: string;
+  };
+  voucher: {
+    input: Parameters<typeof voucherDigest>[0];
+    preimage: string;
+    digest: string;
+  };
+  paymentRequirements: {
+    value: BatchPaymentRequirements;
+    preimage: string;
+    sha256: string;
+  };
+  commitment: {
+    input: BatchCommitmentInput;
+    preimage: string;
+    commitmentId: string;
+  };
+  expiry: {
+    timeoutDaa: string;
+    lockTimeBoundary: string;
+    cases: Array<{
+      currentDaa?: string;
+      timeoutDaa?: string;
       expected: string;
     }>;
   };
@@ -752,6 +798,76 @@ describe("exact v2 language-independent interoperability vector", () => {
       });
       expect(error ?? "valid", testCase.name).toBe(testCase.expected);
     }
+  });
+
+  it("reproduces every finality decision", () => {
+    for (const testCase of vector.finality.cases) {
+      expect(
+        vector.finality.ordering.indexOf(testCase.actual) >=
+          vector.finality.ordering.indexOf(testCase.required),
+      ).toBe(testCase.expected);
+    }
+  });
+});
+
+describe("batch v1 language-independent interoperability vector", () => {
+  const vector = readJson<BatchInteropVector>("vectors/batch/interop-v1.json");
+
+  it("reproduces the channel, voucher, requirements, and commitment digests", () => {
+    expect(channelIdPreimageHex(vector.channel.config)).toBe(
+      vector.channel.preimage,
+    );
+    expect(channelId(vector.channel.config)).toBe(vector.channel.channelId);
+    expect(voucherPreimageHex(vector.voucher.input)).toBe(
+      vector.voucher.preimage,
+    );
+    expect(voucherDigest(vector.voucher.input)).toBe(vector.voucher.digest);
+    expect(
+      batchPaymentRequirementsPreimageHex(vector.paymentRequirements.value),
+    ).toBe(vector.paymentRequirements.preimage);
+    expect(batchPaymentRequirementsHash(vector.paymentRequirements.value)).toBe(
+      vector.paymentRequirements.sha256,
+    );
+    expect(batchCommitmentPreimageHex(vector.commitment.input)).toBe(
+      vector.commitment.preimage,
+    );
+    expect(batchCommitmentId(vector.commitment.input)).toBe(
+      vector.commitment.commitmentId,
+    );
+  });
+
+  it("reproduces the strict DAA refund boundary", () => {
+    const timeout = BigInt(vector.expiry.timeoutDaa);
+    const boundary = BigInt(vector.expiry.lockTimeBoundary);
+    for (const testCase of vector.expiry.cases) {
+      const expected = testCase.timeoutDaa
+        ? BigInt(testCase.timeoutDaa) >= boundary
+          ? "invalid-timestamp-domain-timeout"
+          : "valid-timeout"
+        : BigInt(testCase.currentDaa!) > timeout
+          ? "refund-mature"
+          : "refund-not-mature";
+      expect(expected).toBe(testCase.expected);
+    }
+  });
+
+  it("rejects inconsistent commitment accounting and binds the active outpoint", () => {
+    expect(() =>
+      batchCommitmentId({
+        ...vector.commitment.input,
+        chargedCumulativeAfter: vector.commitment.input.chargedCumulativeBefore,
+      }),
+    ).toThrow("prior amount plus the charge");
+
+    expect(
+      batchCommitmentId({
+        ...vector.commitment.input,
+        activeOutpoint: {
+          ...vector.commitment.input.activeOutpoint,
+          index: vector.commitment.input.activeOutpoint.index + 1,
+        },
+      }),
+    ).not.toBe(vector.commitment.commitmentId);
   });
 
   it("reproduces every finality decision", () => {
