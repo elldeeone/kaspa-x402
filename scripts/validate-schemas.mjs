@@ -1120,6 +1120,21 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     rootDir,
   );
   assertEqual(
+    stableStringify(refund.input.activeOutpoint),
+    stableStringify(claim.expected.continuation.outpoint),
+    `${file}: refund continuation outpoint mismatch`,
+  );
+  assertEqual(
+    refund.input.activeAmount,
+    claim.expected.continuation.amount,
+    `${file}: refund continuation amount mismatch`,
+  );
+  assertEqual(
+    refund.input.activeScriptPublicKey,
+    claim.expected.continuation.scriptPublicKey,
+    `${file}: refund continuation script mismatch`,
+  );
+  assertEqual(
     refund.input.activeScriptPublicKey,
     escrow.scriptPublicKey,
     `${file}: refund active script mismatch`,

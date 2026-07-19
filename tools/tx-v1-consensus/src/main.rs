@@ -462,7 +462,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         )?;
     }
 
-    validate_batch_transaction_reference(
+    let claim_transaction = validate_batch_transaction_reference(
         repo_root,
         &vector["transactions"]["claim"],
         "claim",
@@ -472,7 +472,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         commitment_input,
         config,
     )?;
-    validate_batch_transaction_reference(
+    let refund_transaction = validate_batch_transaction_reference(
         repo_root,
         &vector["transactions"]["refund"],
         "refund",
@@ -481,6 +481,24 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         voucher,
         commitment_input,
         config,
+    )?;
+    if refund_transaction["input"]["activeOutpoint"]
+        != claim_transaction["expected"]["continuation"]["outpoint"]
+    {
+        return Err(anyhow!("batch refund continuation outpoint mismatch"));
+    }
+    expect_eq(
+        json_string(&refund_transaction["input"], "activeAmount")?,
+        json_string(&claim_transaction["expected"]["continuation"], "amount")?,
+        "batch refund continuation amount",
+    )?;
+    expect_eq(
+        json_string(&refund_transaction["input"], "activeScriptPublicKey")?,
+        json_string(
+            &claim_transaction["expected"]["continuation"],
+            "scriptPublicKey",
+        )?,
+        "batch refund continuation script",
     )?;
 
     Ok(json!({
@@ -530,7 +548,7 @@ fn validate_batch_transaction_reference(
     voucher: &serde_json::Value,
     commitment_input: &serde_json::Value,
     config: &serde_json::Value,
-) -> Result<()> {
+) -> Result<serde_json::Value> {
     expect_eq(
         json_string(reference, "path")?,
         expected_path,
@@ -614,7 +632,7 @@ fn validate_batch_transaction_reference(
         )?;
     }
 
-    Ok(())
+    Ok(transaction)
 }
 
 fn concat_bytes(parts: &[Vec<u8>]) -> Vec<u8> {

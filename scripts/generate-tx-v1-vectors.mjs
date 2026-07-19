@@ -111,11 +111,8 @@ const claimInput = {
 const claim = buildBatchClaimTxV1Artifact(claimInput);
 
 const refundInputWithoutMass = {
-  activeOutpoint: {
-    txid: "55".repeat(32),
-    index: 3,
-  },
-  activeAmount: "65000000",
+  activeOutpoint: claim.continuation.outpoint,
+  activeAmount: claim.continuation.amount,
   activeScriptPublicKey,
   redeemScript,
   refundOutputScriptPublicKey: REFUND_SCRIPT_PUBLIC_KEY,
@@ -209,8 +206,13 @@ function writeJson(relativePath, value) {
 }
 
 function writeVectorsWithConsensusRollback(vectors) {
-  const snapshots = vectors.map((vector) => {
-    const file = path.join(root, vector.path);
+  const outputPaths = [
+    ...vectors.map((vector) => vector.path),
+    "vectors/batch/interop-v1.json",
+    "vectors/x402-http/batch-voucher.json",
+  ];
+  const snapshots = outputPaths.map((relativePath) => {
+    const file = path.join(root, relativePath);
     const existed = fs.existsSync(file);
     return {
       file,
@@ -223,10 +225,28 @@ function writeVectorsWithConsensusRollback(vectors) {
     for (const vector of vectors) {
       writeJson(vector.path, vector.value);
     }
+    runBatchInteropGeneration();
     runConsensusValidation();
   } catch (error) {
     restoreSnapshots(snapshots);
     throw error;
+  }
+}
+
+function runBatchInteropGeneration() {
+  const result = spawnSync(
+    process.execPath,
+    [path.join(root, "scripts/generate-batch-interop-vector.mjs")],
+    {
+      cwd: root,
+      env: process.env,
+      stdio: "inherit",
+    },
+  );
+  if (result.status !== 0) {
+    throw new Error(
+      `batch interoperability vector generation failed with status ${result.status ?? 1}`,
+    );
   }
 }
 
