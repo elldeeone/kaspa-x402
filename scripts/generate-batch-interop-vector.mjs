@@ -34,7 +34,7 @@ const payoutPublicKey = bytesToHex(
 const payoutScriptPublicKey = `000020${payoutPublicKey}ac`;
 const refundScriptPublicKey = `000020${clientPublicKey}ac`;
 const payTo =
-  "kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q";
+  "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz";
 const refundAddress =
   "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu";
 const channelConfig = {

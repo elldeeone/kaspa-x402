@@ -2031,6 +2031,7 @@ version = "0.0.0"
 dependencies = [
  "anyhow",
  "hex",
+ "kaspa-addresses",
  "kaspa-consensus",
  "kaspa-consensus-core",
  "kaspa-hashes",

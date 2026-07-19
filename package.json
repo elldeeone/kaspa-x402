@@ -52,7 +52,7 @@
     "vectors:exact-interop": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs",
     "check:exact-interop-vector": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs --check",
     "vectors:batch-interop": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-batch-interop-vector.mjs",
-    "check:batch-interop-vector": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-batch-interop-vector.mjs --check",
+    "check:batch-interop-vector": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-batch-interop-vector.mjs --check && node --test scripts/batch-interop-crosslinks.test.mjs",
     "check:covenant-fixtures": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs"
   },
   "workspaces": [
