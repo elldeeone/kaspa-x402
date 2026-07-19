@@ -1,0 +1,117 @@
+{
+  "kind": "x402-http",
+  "description": "Semantic HTTP header vector for a batch-settlement voucher request.",
+  "verificationContext": {
+    "channelConfig": {
+      "network": "kaspa:testnet-10",
+      "asset": "KAS",
+      "templateId": "kaspa-x402-escrow-v1",
+      "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "refundAddress": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
+      "refundTimeoutDaa": "123456789",
+      "salt": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "channelStateBefore": {
+      "channelId": "6a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d786",
+      "activeOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "activeScriptPublicKey": "0000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387",
+      "fundingAmount": "90000000",
+      "chargedCumulativeAmount": "24300000",
+      "claimedCumulativeAmount": "0",
+      "signedMaxClaimable": "30000000"
+    },
+    "requestFingerprint": "9999999999999999999999999999999999999999999999999999999999999999"
+  },
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.test/report.pdf",
+      "description": "Research report",
+      "mimeType": "application/pdf"
+    },
+    "accepts": [
+      {
+        "scheme": "batch-settlement",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v1",
+          "templateId": "kaspa-x402-escrow-v1",
+          "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+          "minDepositSompi": "90000000",
+          "refundTimeoutDaa": "123456789"
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "batch-settlement",
+      "network": "kaspa:testnet-10",
+      "amount": "1000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-escrow-v1",
+        "templateId": "kaspa-x402-escrow-v1",
+        "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+        "minDepositSompi": "90000000",
+        "refundTimeoutDaa": "123456789"
+      }
+    },
+    "payload": {
+      "type": "voucher",
+      "channelId": "6a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d786",
+      "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "fundingOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "activeScriptPublicKey": "0000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387",
+      "voucher": {
+        "amount": "30000000",
+        "signature": "f29f5ac7461927a4862815746adbcd81ff5e6f01e2d6c989090bb5d68668ad8bd53a74cd56692caa193304885613c82bf152b06d6cce80282c5e40b2cbd4d98c"
+      }
+    }
+  },
+  "settlementResponse": {
+    "success": true,
+    "transaction": "19c2d9fcaa2172342a7b58266097c2dcd691fcf527b29665d4c6f8c03910a36b",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
+    "amount": "700000",
+    "extensions": {
+      "kaspa": {
+        "commitmentId": "19c2d9fcaa2172342a7b58266097c2dcd691fcf527b29665d4c6f8c03910a36b",
+        "chargedAmount": "700000",
+        "channelState": {
+          "channelId": "6a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d786",
+          "activeOutpoint": {
+            "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+            "index": 2
+          },
+          "activeScriptPublicKey": "0000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387",
+          "fundingAmount": "90000000",
+          "chargedCumulativeAmount": "25000000",
+          "claimedCumulativeAmount": "0",
+          "signedMaxClaimable": "30000000"
+        }
+      }
+    }
+  },
+  "headers": {
+    "paymentRequired": "eyJhY2NlcHRzIjpbeyJhbW91bnQiOiIxMDAwMDAwIiwiYXNzZXQiOiJLQVMiLCJleHRyYSI6eyJiaW5kaW5nIjoia2FzcGEtZXNjcm93LXYxIiwibWluRGVwb3NpdFNvbXBpIjoiOTAwMDAwMDAiLCJyZWZ1bmRUaW1lb3V0RGFhIjoiMTIzNDU2Nzg5Iiwic2VydmVyUHVibGljS2V5IjoiNTZiMzI4YjMwYzhiZjU4MzllMjQwNTg3NDc4Nzk0MDhiZGIzNjI0MWRjOWMyZTdjNjE5ZmFhMTJiMjkyMDk2NyIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWVzY3Jvdy12MSJ9LCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5VG8iOiJrYXNwYXRlc3Q6cXJ1ZXI3Mnk2OHNlMmpubGV6dW03Y2hxNjc4c3poNnZxYW16NjV6N3lybnZnNW5xNWRucGt3MGdndDlseiIsInNjaGVtZSI6ImJhdGNoLXNldHRsZW1lbnQifV0sInJlc291cmNlIjp7ImRlc2NyaXB0aW9uIjoiUmVzZWFyY2ggcmVwb3J0IiwibWltZVR5cGUiOiJhcHBsaWNhdGlvbi9wZGYiLCJ1cmwiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvcmVwb3J0LnBkZiJ9LCJ4NDAyVmVyc2lvbiI6Mn0=",
+    "paymentSignature": "eyJhY2NlcHRlZCI6eyJhbW91bnQiOiIxMDAwMDAwIiwiYXNzZXQiOiJLQVMiLCJleHRyYSI6eyJiaW5kaW5nIjoia2FzcGEtZXNjcm93LXYxIiwibWluRGVwb3NpdFNvbXBpIjoiOTAwMDAwMDAiLCJyZWZ1bmRUaW1lb3V0RGFhIjoiMTIzNDU2Nzg5Iiwic2VydmVyUHVibGljS2V5IjoiNTZiMzI4YjMwYzhiZjU4MzllMjQwNTg3NDc4Nzk0MDhiZGIzNjI0MWRjOWMyZTdjNjE5ZmFhMTJiMjkyMDk2NyIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWVzY3Jvdy12MSJ9LCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwicGF5VG8iOiJrYXNwYXRlc3Q6cXJ1ZXI3Mnk2OHNlMmpubGV6dW03Y2hxNjc4c3poNnZxYW16NjV6N3lybnZnNW5xNWRucGt3MGdndDlseiIsInNjaGVtZSI6ImJhdGNoLXNldHRsZW1lbnQifSwicGF5bG9hZCI6eyJhY3RpdmVTY3JpcHRQdWJsaWNLZXkiOiIwMDAwYWEyMGZmMDJiMmE2ZmE0ZjIwZjU1OGE0YWM4MTBhYWNkZmIzY2M0ZWUwYWI4NDM4MTljMGYzOTRmNjAwZTNiNDMwNjM4NyIsImNoYW5uZWxJZCI6IjZhNWYzMDM3YmE2ZTZkZGI5YjMzYzY2MTNiN2U2MDBmNzU0YTMxNGM2MTFiOGEzYjViYWU5YmRiZWRjNGQ3ODYiLCJjbGllbnRQdWJsaWNLZXkiOiI5ODljMGI3NmNiNTYzOTcxZmRjOWJlZjMxZWMwNmMzNTYwZjMyNDlkNmVlOWU1ZDgzYzU3NjI1NTk2ZTA1ZjZmIiwiZnVuZGluZ091dHBvaW50Ijp7ImluZGV4IjoyLCJ0eGlkIjoiNDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NCJ9LCJ0eXBlIjoidm91Y2hlciIsInZvdWNoZXIiOnsiYW1vdW50IjoiMzAwMDAwMDAiLCJzaWduYXR1cmUiOiJmMjlmNWFjNzQ2MTkyN2E0ODYyODE1NzQ2YWRiY2Q4MWZmNWU2ZjAxZTJkNmM5ODkwOTBiYjVkNjg2NjhhZDhiZDUzYTc0Y2Q1NjY5MmNhYTE5MzMwNDg4NTYxM2M4MmJmMTUyYjA2ZDZjY2U4MDI4MmM1ZTQwYjJjYmQ0ZDk4YyJ9fSwieDQwMlZlcnNpb24iOjJ9",
+    "paymentResponse": "eyJhbW91bnQiOiI3MDAwMDAiLCJleHRlbnNpb25zIjp7Imthc3BhIjp7ImNoYW5uZWxTdGF0ZSI6eyJhY3RpdmVPdXRwb2ludCI6eyJpbmRleCI6MiwidHhpZCI6IjQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQ0NDQifSwiYWN0aXZlU2NyaXB0UHVibGljS2V5IjoiMDAwMGFhMjBmZjAyYjJhNmZhNGYyMGY1NThhNGFjODEwYWFjZGZiM2NjNGVlMGFiODQzODE5YzBmMzk0ZjYwMGUzYjQzMDYzODciLCJjaGFubmVsSWQiOiI2YTVmMzAzN2JhNmU2ZGRiOWIzM2M2NjEzYjdlNjAwZjc1NGEzMTRjNjExYjhhM2I1YmFlOWJkYmVkYzRkNzg2IiwiY2hhcmdlZEN1bXVsYXRpdmVBbW91bnQiOiIyNTAwMDAwMCIsImNsYWltZWRDdW11bGF0aXZlQW1vdW50IjoiMCIsImZ1bmRpbmdBbW91bnQiOiI5MDAwMDAwMCIsInNpZ25lZE1heENsYWltYWJsZSI6IjMwMDAwMDAwIn0sImNoYXJnZWRBbW91bnQiOiI3MDAwMDAiLCJjb21taXRtZW50SWQiOiIxOWMyZDlmY2FhMjE3MjM0MmE3YjU4MjY2MDk3YzJkY2Q2OTFmY2Y1MjdiMjk2NjVkNGM2ZjhjMDM5MTBhMzZiIn19LCJuZXR3b3JrIjoia2FzcGE6dGVzdG5ldC0xMCIsInBheWVyIjoia2FzcGF0ZXN0OnF6dmZjem1rZWR0cmp1MGFleGwweDhrcWRzNmtwdWV5bjRod25ld2M4M3RreTR2a3VwMGs3bWt6Z3Fkd3UiLCJzdWNjZXNzIjp0cnVlLCJ0cmFuc2FjdGlvbiI6IjE5YzJkOWZjYWEyMTcyMzQyYTdiNTgyNjYwOTdjMmRjZDY5MWZjZjUyN2IyOTY2NWQ0YzZmOGMwMzkxMGEzNmIifQ=="
+  }
+}

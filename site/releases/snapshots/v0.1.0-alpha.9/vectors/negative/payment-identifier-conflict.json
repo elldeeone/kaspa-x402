@@ -1,0 +1,21 @@
+{
+  "kind": "semantic-negative",
+  "name": "payment-identifier-conflict",
+  "scenario": "payment-identifier-conflict",
+  "description": "The same payment identifier cannot be reused for a different normalized request fingerprint.",
+  "expectedError": "kaspa_payment_identifier_conflict",
+  "first": {
+    "extensionInfo": {
+      "required": true,
+      "id": "pay_7d5d747be160e280504c099d984bcfe0"
+    },
+    "requestHash": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
+  },
+  "second": {
+    "extensionInfo": {
+      "required": true,
+      "id": "pay_7d5d747be160e280504c099d984bcfe0"
+    },
+    "requestHash": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb"
+  }
+}

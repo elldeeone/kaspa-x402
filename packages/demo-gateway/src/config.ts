@@ -21,6 +21,7 @@ export interface GatewayEnv {
   KASPA_X402_RATE_LIMIT_PER_MINUTE?: string;
   KASPA_X402_CORS_ORIGIN?: string;
   KASPA_X402_SITE_BASE_URL?: string;
+  KASPA_X402_RELEASE_VERSION?: string;
   KASPA_X402_GATEWAY_BASE_URL?: string;
   KASPA_X402_ADMIN_TOKEN?: string;
   KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED?: string;
@@ -47,6 +48,7 @@ export interface GatewayConfig {
   rateLimitPerMinute: number;
   corsOrigin: string;
   siteBaseUrl: string;
+  releaseVersion: string;
   gatewayBaseUrl: string;
   adminToken?: string;
   hostedExactSettlementEnabled: boolean;
@@ -102,6 +104,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     rateLimitPerMinute: uint(env.KASPA_X402_RATE_LIMIT_PER_MINUTE ?? "60", "KASPA_X402_RATE_LIMIT_PER_MINUTE", 1, 600),
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(env.KASPA_X402_SITE_BASE_URL ?? "https://kaspa-x402.org", "KASPA_X402_SITE_BASE_URL"),
+    releaseVersion: releaseVersion(env.KASPA_X402_RELEASE_VERSION ?? "0.1.0-alpha.9"),
     gatewayBaseUrl: baseUrl(env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org", "KASPA_X402_GATEWAY_BASE_URL"),
     hostedExactSettlementEnabled: bool(
       env.KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED ?? "false",
@@ -113,6 +116,14 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     pnnAttempts: uint(env.KASPA_X402_PNN_ATTEMPTS ?? "2", "KASPA_X402_PNN_ATTEMPTS", 1, 5),
     ...(env.KASPA_X402_ADMIN_TOKEN?.trim() ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() } : {}),
   };
+}
+
+function releaseVersion(value: string): string {
+  const normalized = value.trim();
+  if (!/^0\.1\.0-alpha\.\d+$/.test(normalized)) {
+    throw new Error("KASPA_X402_RELEASE_VERSION must be an alpha release version");
+  }
+  return normalized;
 }
 
 function exactProfile(value: string): ExactProfile {

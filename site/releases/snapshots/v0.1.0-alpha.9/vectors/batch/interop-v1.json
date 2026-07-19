@@ -1,0 +1,202 @@
+{
+  "kind": "batch-interop-v1",
+  "description": "Language-independent channel, escrow, voucher, commitment, claim, refund, expiry, and finality evidence for Kaspa batch-settlement v1.",
+  "channel": {
+    "config": {
+      "network": "kaspa:testnet-10",
+      "asset": "KAS",
+      "templateId": "kaspa-x402-escrow-v1",
+      "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "refundAddress": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
+      "refundTimeoutDaa": "123456789",
+      "salt": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "preimage": "71e05be28af192a34c2c54ffc016b4c66cc47ca3b7a97c08486a17c928829e3e3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649360e7ea7b4df80d6824805f69c1c95012b11fb85911992c319458c81d99c5b2bb782538a2a76a1ad489c3a34c7eb9b8a728c85fa145fa352bcbe40624a6894dda8989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967d4c1d1ffd4bc51d19c6dac6d544664a6381362c8fccb753f5076dbfb2f8ceb8cac0e713ea308eb9e4549e842eaf149d889a3b0c5c76ae05f5cd81f96d8f7612b15cd5b07000000005555555555555555555555555555555555555555555555555555555555555555",
+    "channelId": "6a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d786"
+  },
+  "escrow": {
+    "templateId": "kaspa-x402-escrow-v1",
+    "params": {
+      "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+      "network": "kaspa:testnet-10",
+      "payoutScriptPublicKeyHash": "d6274c844d24ccb71e1dfe20b7ba2d09d185c13d468a4b1838043a0743425b5f",
+      "refundScriptPublicKeyHash": "3b8cbf34de55566551c5745eebc28aa0c3b036c6704d77f09a8a0e5299b70091",
+      "timeoutDaa": "123456789"
+    },
+    "redeemScript": "6b6c76009c637552792056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac697820cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12203b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649367eb9bfa87eb9ba7eb9bb54cd7e52797ea820989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fd76976b4529c6900c278a16900c3a820d6274c844d24ccb71e1dfe20b7ba2d09d185c13d468a4b1838043a0743425b5f876951c3b9bf876951c2b9be527994a269007a75757575516776519c63757620989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac690415cd5b07b0b9bd0058cd8769b4519c6900c3a8203b8cbf34de55566551c5745eebc28aa0c3b036c6704d77f09a8a0e5299b7009187697551677500696868",
+    "scriptPublicKey": "0000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387",
+    "payoutScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac",
+    "refundScriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+  },
+  "voucher": {
+    "input": {
+      "network": "kaspa:testnet-10",
+      "activeScriptPublicKey": "0000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387",
+      "outpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "amount": "30000000"
+    },
+    "preimage": "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d123b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649368041f1e635165e75a6d312380215ded228feedc4bf167febf1f550625a1da5b344444444444444444444444444444444444444444444444444444444444444440200000080c3c90100000000",
+    "digest": "52be510e450b8a76528a13c888a551e500f5f25dc84a3c49a9407f9cfb0afffd",
+    "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    "signature": "f29f5ac7461927a4862815746adbcd81ff5e6f01e2d6c989090bb5d68668ad8bd53a74cd56692caa193304885613c82bf152b06d6cce80282c5e40b2cbd4d98c",
+    "expected": "valid-schnorr-signature"
+  },
+  "paymentRequirements": {
+    "value": {
+      "scheme": "batch-settlement",
+      "network": "kaspa:testnet-10",
+      "amount": "1000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-escrow-v1",
+        "templateId": "kaspa-x402-escrow-v1",
+        "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+        "minDepositSompi": "90000000",
+        "refundTimeoutDaa": "123456789"
+      }
+    },
+    "preimage": "3dc79a5968345a3778799ba1786e3e7be44adf6970fa1876724450b61aefb37401cf0142dec5a2975462d2d5e06eb5c710bb1e64fcd3005313c92fb2d319acbe3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649360e7ea7b4df80d6824805f69c1c95012b11fb85911992c319458c81d99c5b2bb740420f0000000000d4c1d1ffd4bc51d19c6dac6d544664a6381362c8fccb753f5076dbfb2f8ceb8c3c00000000000000e6e08dcc7e6bb40bb7f84cdd9ed054976f9e46b44c208bb6e02514b1366518c882538a2a76a1ad489c3a34c7eb9b8a728c85fa145fa352bcbe40624a6894dda856b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967804a5d050000000015cd5b0700000000",
+    "sha256": "0816dceac603c56c9c2f99afbd67a5d11f5b0504bd87b9aac712dc0a3e6d99ee"
+  },
+  "commitment": {
+    "input": {
+      "accepted": {
+        "scheme": "batch-settlement",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v1",
+          "templateId": "kaspa-x402-escrow-v1",
+          "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+          "minDepositSompi": "90000000",
+          "refundTimeoutDaa": "123456789"
+        }
+      },
+      "channelId": "6a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d786",
+      "requestFingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "activeOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "voucher": {
+        "amount": "30000000",
+        "signature": "f29f5ac7461927a4862815746adbcd81ff5e6f01e2d6c989090bb5d68668ad8bd53a74cd56692caa193304885613c82bf152b06d6cce80282c5e40b2cbd4d98c"
+      },
+      "chargedAmount": "700000",
+      "chargedCumulativeBefore": "24300000",
+      "chargedCumulativeAfter": "25000000",
+      "claimedCumulativeAmount": "0"
+    },
+    "preimage": "f78a414c1e475ac273c9fcb2940e92e7becb33c8d8e6c031f00db83d33c46e896a5f3037ba6e6ddb9b33c6613b7e600f754a314c611b8a3b5bae9bdbedc4d78699999999999999999999999999999999999999999999999999999999999999990816dceac603c56c9c2f99afbd67a5d11f5b0504bd87b9aac712dc0a3e6d99ee44444444444444444444444444444444444444444444444444444444444444440200000080c3c90100000000336028d54d6e6f94d4531f4a8d02f1fb6279aaa8c4c4e87e9826be6228791d4960ae0a0000000000e0c972010000000040787d01000000000000000000000000",
+    "commitmentId": "19c2d9fcaa2172342a7b58266097c2dcd691fcf527b29665d4c6f8c03910a36b"
+  },
+  "transactions": {
+    "claim": {
+      "path": "vectors/tx-v1/batch-claim.json",
+      "sha256": "d353c265b314ecb6e895d6f10f3dbfb665a64b0fa760fd40e09b6196ccf9be5c",
+      "transactionId": "d9820918c4c0425fa121f6da30601ecb833f4c75f7d72d8d2b85b600a4afb8b1",
+      "transactionHash": "c33648576c065dcd377c629192a7224aba512dfcae18b41c56e50feb7f56bf23",
+      "sighash": {
+        "inputIndex": 0,
+        "hashType": "all",
+        "preimage": "01001fa476d21b16715451a89bc82107c72fda3dd2d9ec2694d858807d1dc7c457170f99135614633e507969d12522c80f967cff6ebc0436863e02ee42b2b66556fc44444444444444444444444444444444444444444444444444444444444444440200000000002300000000000000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b4306387804a5d05000000000000000000000000c161e4173b9db6d2ecf6c1deff1e271969f2f646a2a4e774d6e5ac70d8eb55af000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+        "digest": "b9ac2f8bd5ffcda0721159a675c5cffdf5fe1143942b76059ebe3d26cd5e1a5f"
+      },
+      "compute": {
+        "computeBudget": 20,
+        "scriptUnitsEstimate": 200544,
+        "scriptUnitAllowance": 209999
+      },
+      "fullConsensusValidated": true,
+      "scriptExecuted": true
+    },
+    "refund": {
+      "path": "vectors/tx-v1/batch-refund.json",
+      "sha256": "b0643fb26df8e8ffe6ad957c804f743ef8f9c34509ff11d85d07223df086f5e2",
+      "transactionId": "d5669b39ee94711ca328f9bad1253fd11ec4c5d0fb92de1ec80f867b0e231a32",
+      "transactionHash": "45007ddb8ba64730fd4474778802d3b64261623f9c749e1c3bc4b63b3a08de5d",
+      "sighash": {
+        "inputIndex": 0,
+        "hashType": "all",
+        "preimage": "0100eb960dd54c42a07fd2b543be2859469701992e8bb7e56322622f69faf6b369670f99135614633e507969d12522c80f967cff6ebc0436863e02ee42b2b66556fcd9820918c4c0425fa121f6da30601ecb833f4c75f7d72d8d2b85b600a4afb8b10100000000002300000000000000aa20ff02b2a6fa4f20f558a4ac810aacdfb3cc4ee0ab843819c0f394f600e3b430638740d2df03000000000000000000000000d7753ba0a3c9b24592c20186c831b33f55b4b6ce63cd38a7ec815c2dc0e6dd0b15cd5b070000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000001",
+        "digest": "6127ffcc8c8622a9fa0a3b278aca51997c608d1eaed4414ce0e7fd60d89594ba"
+      },
+      "compute": {
+        "computeBudget": 10,
+        "scriptUnitsEstimate": 100000,
+        "scriptUnitAllowance": 109999
+      },
+      "fullConsensusValidated": true,
+      "scriptExecuted": true
+    },
+    "note": "Funding and top-up construction is wallet-adapter-owned. The binding verifies the accepted resulting escrow UTXO and, for top-up, its transition from the prior active outpoint."
+  },
+  "expiry": {
+    "timeoutDaa": "123456789",
+    "lockTimeBoundary": "500000000000",
+    "rule": "the refund transaction lock time is at least timeoutDaa and consensus can accept it only when the current DAA score strictly exceeds that lock time",
+    "cases": [
+      {
+        "currentDaa": "123456788",
+        "expected": "refund-not-mature"
+      },
+      {
+        "currentDaa": "123456789",
+        "expected": "refund-not-mature"
+      },
+      {
+        "currentDaa": "123456790",
+        "expected": "refund-mature"
+      },
+      {
+        "timeoutDaa": "500000000000",
+        "expected": "invalid-timestamp-domain-timeout"
+      }
+    ]
+  },
+  "finality": {
+    "ordering": [
+      "mempool",
+      "accepted",
+      "confirmed"
+    ],
+    "cases": [
+      {
+        "actual": "mempool",
+        "required": "accepted",
+        "expected": false
+      },
+      {
+        "actual": "accepted",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "accepted",
+        "required": "confirmed",
+        "expected": false
+      },
+      {
+        "actual": "confirmed",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "confirmed",
+        "required": "confirmed",
+        "expected": true
+      }
+    ]
+  }
+}

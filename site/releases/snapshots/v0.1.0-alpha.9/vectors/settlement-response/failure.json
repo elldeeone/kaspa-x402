@@ -1,0 +1,11 @@
+{
+  "kind": "settlement-response",
+  "description": "Generic settlement failure response.",
+  "response": {
+    "success": false,
+    "errorReason": "invalid_transaction_state",
+    "transaction": "",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq"
+  }
+}

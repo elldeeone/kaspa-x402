@@ -283,7 +283,7 @@ export async function runGatewayCanary(
   checks.push(
     await checked("release-snapshot", async () => {
       const response = await fetchWithTimeout(
-        `${config.siteBaseUrl}/v0.1.0-alpha.1/release.json?canary=${Date.now()}`,
+        `${config.siteBaseUrl}/v${config.releaseVersion}/release.json?canary=${Date.now()}`,
       );
       if (!response.ok)
         throw new Error(`release snapshot returned ${response.status}`);
@@ -292,10 +292,10 @@ export async function runGatewayCanary(
         MAX_CANARY_JSON_BYTES,
         "release snapshot",
       );
-      if (release.version !== "0.1.0-alpha.1")
+      if (release.version !== config.releaseVersion)
         throw new Error("release snapshot version mismatch");
       return {
-        detail: "immutable alpha.1 release snapshot resolved",
+        detail: `immutable ${config.releaseVersion} release snapshot resolved`,
         evidence: { status: response.status },
       };
     }),

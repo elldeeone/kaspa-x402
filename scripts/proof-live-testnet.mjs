@@ -27,6 +27,7 @@ const requiredFlows = [
   "concurrent additive conflict and loser refresh",
   "duplicate exact settlement idempotency",
   "invalid exact signature rejected before protected work",
+  "expired exact authorization rejected before protected work",
   "post-broadcast exact restart and trusted settlement reconciliation",
   "external additive head advancement and trusted reconciliation",
   "batch deposit-voucher settlement",
@@ -354,6 +355,9 @@ function validateLiveProofResult(result, flows) {
   require(result.exact?.invalidSignature?.handlerExecutions === 0 &&
     result.exact?.invalidSignature?.broadcasts ===
       0, "exact.invalidSignature", "must reject before protected work or broadcast");
+  require(result.exact?.expiredAuthorization?.handlerExecutions === 0 &&
+    result.exact?.expiredAuthorization?.broadcasts ===
+      0, "exact.expiredAuthorization", "must reject before protected work or broadcast");
   require(result.exact?.recovery?.initialStatus === 503 &&
     result.exact?.recovery?.retryStatus === 200 &&
     result.exact?.recovery?.handlerExecutions ===

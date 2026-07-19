@@ -1,0 +1,19 @@
+{
+  "kind": "tx-v1-plan",
+  "description": "Implemented transaction v1 reference vectors for covenant-backed Kaspa x402 paths.",
+  "mainnetReadiness": {},
+  "coveredVectors": [
+    {
+      "name": "batch-claim-transaction-body",
+      "path": "vectors/tx-v1/batch-claim.json",
+      "validation": "full-consensus-and-script-execution-offline-reference",
+      "description": "Reference transaction-v1 artifact that claims the active charged amount and creates the continuation output."
+    },
+    {
+      "name": "batch-refund-transaction-body",
+      "path": "vectors/tx-v1/batch-refund.json",
+      "validation": "full-consensus-and-script-execution-offline-reference",
+      "description": "Reference transaction-v1 artifact that refunds remaining escrow value after timeout."
+    }
+  ]
+}
