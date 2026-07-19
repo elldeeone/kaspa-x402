@@ -325,7 +325,7 @@ describe("escrow covenant template", () => {
     expect(item.expected.fee.continuationOutputAmount).toBe("65000000");
     expect(item.expected.transaction.inputs[0]?.computeBudget).toBe(CLAIM_COMPUTE_BUDGET);
     expect(item.expected.transaction.mass).toBe("44274");
-    expect(item.expected.transaction.estimatedSerializedSize).toBe(734);
+    expect(item.expected.transaction.estimatedSerializedSize).toBe(735);
   });
 
   it("rejects malformed batch claim transaction-v1 plans", () => {
@@ -404,7 +404,7 @@ describe("escrow covenant template", () => {
     expect(item.expected.fee.refundOutputAmount).toBe("64999100");
     expect(item.expected.transaction.inputs[0]?.computeBudget).toBe(REFUND_COMPUTE_BUDGET);
     expect(item.expected.transaction.mass).toBe("0");
-    expect(item.expected.transaction.estimatedSerializedSize).toBe(607);
+    expect(item.expected.transaction.estimatedSerializedSize).toBe(608);
   });
 
   it("rejects malformed batch refund transaction-v1 plans", () => {

@@ -6,13 +6,13 @@
     {
       "name": "batch-claim-transaction-body",
       "path": "vectors/tx-v1/batch-claim.json",
-      "validation": "consensus-cross-validated-offline-reference",
+      "validation": "full-consensus-and-script-execution-offline-reference",
       "description": "Reference transaction-v1 artifact that claims the active charged amount and creates the continuation output."
     },
     {
       "name": "batch-refund-transaction-body",
       "path": "vectors/tx-v1/batch-refund.json",
-      "validation": "consensus-cross-validated-offline-reference",
+      "validation": "full-consensus-and-script-execution-offline-reference",
       "description": "Reference transaction-v1 artifact that refunds remaining escrow value after timeout."
     }
   ]

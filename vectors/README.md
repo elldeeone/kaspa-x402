@@ -31,6 +31,9 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
+- `batch`: reconstruct the complete batch channel, escrow, voucher, request
+  commitment, transaction references, DAA expiry boundaries, and finality
+  ordering independently of the TypeScript runtime.
 - `x402-http`: validate decoded objects and recompute the three HTTP headers. The
   exact-transaction fixture is also verified against the hosted verifier and the
   pinned rusty-kaspa consensus harness so its KIP-10 script and transaction shape

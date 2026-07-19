@@ -1,12 +1,18 @@
 export const X402_VERSION = 2;
 
-export const SUPPORTED_NETWORKS = ["kaspa:mainnet", "kaspa:testnet-10"] as const;
+export const SUPPORTED_NETWORKS = [
+  "kaspa:mainnet",
+  "kaspa:testnet-10",
+] as const;
 
 export const ASSET_ID = "KAS";
 export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v1";
 
 export const VOUCHER_DOMAIN_TAG = "kaspa:x402:escrow-voucher:v1";
 export const CHANNEL_DOMAIN_TAG = "kaspa:x402:channel:v1";
+export const BATCH_PAYMENT_REQUIREMENTS_DOMAIN_TAG =
+  "kaspa:x402:batch-payment-requirements:v1";
+export const BATCH_COMMITMENT_DOMAIN_TAG = "kaspa:x402:batch-commitment:v1";
 
 export const U32_MAX = 0xffff_ffff;
 export const U64_MAX = 0xffff_ffff_ffff_ffffn;

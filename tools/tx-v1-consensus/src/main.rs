@@ -1,4 +1,5 @@
 use anyhow::{Context, Result, anyhow};
+use kaspa_addresses::{Address, Prefix};
 use kaspa_consensus::processes::transaction_validator::{
     TransactionValidator, tx_validation_in_utxo_context::TxValidationFlags,
 };
@@ -31,7 +32,7 @@ use kaspa_txscript::{
         OpCheckSig, OpElse, OpEndIf, OpEqualVerify, OpFalse, OpGreaterThanOrEqual, OpIf, OpSub,
         OpTxInputAmount, OpTxInputIndex, OpTxInputSpk, OpTxOutputAmount, OpTxOutputSpk,
     },
-    pay_to_script_hash_script,
+    pay_to_address_script, pay_to_script_hash_script,
     script_builder::ScriptBuilder,
 };
 use secp256k1::{Keypair, Message, SECP256K1, XOnlyPublicKey, schnorr::Signature};
@@ -168,6 +169,7 @@ fn main() -> Result<()> {
     validate_exact_profiles_vector(repo_root, &exact_profiles)?;
     let exact_interop = validate_exact_interop_vector(repo_root, &exact_profiles)?;
     let kip10 = validate_kip10_exact_template(&exact_profiles)?;
+    let batch_interop = validate_batch_interop_vector(repo_root)?;
 
     println!(
         "{}",
@@ -182,10 +184,468 @@ fn main() -> Result<()> {
             "kip10Exact": kip10,
             "exactProfiles": exact_profiles,
             "exactInterop": exact_interop,
+            "batchInterop": batch_interop,
         }))?
     );
 
     Ok(())
+}
+
+fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> {
+    let relative_path = "vectors/batch/interop-v1.json";
+    let contents = fs::read_to_string(repo_root.join(relative_path))
+        .with_context(|| format!("reading {relative_path}"))?;
+    let vector: serde_json::Value =
+        serde_json::from_str(&contents).with_context(|| format!("parsing {relative_path}"))?;
+
+    let channel = &vector["channel"];
+    let config = &channel["config"];
+    let channel_preimage = concat_bytes(&[
+        sha256_bytes(b"kaspa:x402:channel:v1"),
+        sha256_bytes(json_string(config, "network")?.as_bytes()),
+        sha256_bytes(b"KAS"),
+        sha256_bytes(json_string(config, "templateId")?.as_bytes()),
+        parse_hex(json_string(config, "clientPublicKey")?, "clientPublicKey")?,
+        parse_hex(json_string(config, "serverPublicKey")?, "serverPublicKey")?,
+        sha256_bytes(json_string(config, "payTo")?.as_bytes()),
+        sha256_bytes(json_string(config, "refundAddress")?.as_bytes()),
+        json_u64(config, "refundTimeoutDaa")?.to_le_bytes().to_vec(),
+        parse_hex(json_string(config, "salt")?, "salt")?,
+    ]);
+    expect_eq(
+        hex::encode(&channel_preimage),
+        json_string(channel, "preimage")?,
+        "batch channel preimage",
+    )?;
+    expect_eq(
+        hex::encode(Sha256::digest(&channel_preimage)),
+        json_string(channel, "channelId")?,
+        "batch channel id",
+    )?;
+
+    let escrow = &vector["escrow"];
+    let escrow_params = &escrow["params"];
+    expect_eq(
+        json_string(escrow, "templateId")?,
+        json_string(config, "templateId")?,
+        "batch escrow template",
+    )?;
+    for (field, label) in [
+        ("clientPublicKey", "batch escrow client key"),
+        ("serverPublicKey", "batch escrow server key"),
+        ("network", "batch escrow network"),
+    ] {
+        expect_eq(
+            json_string(escrow_params, field)?,
+            json_string(config, field)?,
+            label,
+        )?;
+    }
+    expect_eq(
+        json_string(escrow_params, "timeoutDaa")?,
+        json_string(config, "refundTimeoutDaa")?,
+        "batch escrow timeout",
+    )?;
+    validate_address_script_binding(
+        json_string(config, "payTo")?,
+        json_string(config, "network")?,
+        json_string(escrow, "payoutScriptPublicKey")?,
+        "batch payTo payout script",
+    )?;
+    validate_address_script_binding(
+        json_string(config, "refundAddress")?,
+        json_string(config, "network")?,
+        json_string(escrow, "refundScriptPublicKey")?,
+        "batch refund address script",
+    )?;
+
+    let voucher = &vector["voucher"];
+    let voucher_input = &voucher["input"];
+    let voucher_outpoint = &voucher_input["outpoint"];
+    let voucher_preimage = concat_bytes(&[
+        sha256_bytes(b"kaspa:x402:escrow-voucher:v1"),
+        sha256_bytes(json_string(voucher_input, "network")?.as_bytes()),
+        sha256_bytes(&parse_hex(
+            json_string(voucher_input, "activeScriptPublicKey")?,
+            "activeScriptPublicKey",
+        )?),
+        parse_hex(
+            json_string(voucher_outpoint, "txid")?,
+            "voucher outpoint txid",
+        )?,
+        json_u32(voucher_outpoint, "index")?.to_le_bytes().to_vec(),
+        json_u64(voucher_input, "amount")?.to_le_bytes().to_vec(),
+    ]);
+    expect_eq(
+        hex::encode(&voucher_preimage),
+        json_string(voucher, "preimage")?,
+        "batch voucher preimage",
+    )?;
+    let voucher_digest = Sha256::digest(&voucher_preimage);
+    expect_eq(
+        hex::encode(voucher_digest),
+        json_string(voucher, "digest")?,
+        "batch voucher digest",
+    )?;
+    let voucher_public_key = XOnlyPublicKey::from_str(json_string(voucher, "signerPublicKey")?)
+        .context("parsing batch voucher signer public key")?;
+    expect_eq(
+        json_string(voucher, "signerPublicKey")?,
+        json_string(config, "clientPublicKey")?,
+        "batch voucher signer",
+    )?;
+    expect_eq(
+        json_string(voucher_input, "network")?,
+        json_string(config, "network")?,
+        "batch voucher network",
+    )?;
+    expect_eq(
+        json_string(voucher_input, "activeScriptPublicKey")?,
+        json_string(escrow, "scriptPublicKey")?,
+        "batch voucher active script",
+    )?;
+    let voucher_signature = Signature::from_slice(&parse_hex(
+        json_string(voucher, "signature")?,
+        "batch voucher signature",
+    )?)
+    .context("parsing batch voucher Schnorr signature")?;
+    let voucher_message = Message::from_digest_slice(&voucher_digest)
+        .context("constructing batch voucher message")?;
+    SECP256K1
+        .verify_schnorr(&voucher_signature, &voucher_message, &voucher_public_key)
+        .context("verifying batch voucher Schnorr signature")?;
+    let mut mutated_voucher_bytes = voucher_signature.as_ref().to_vec();
+    mutated_voucher_bytes[0] ^= 0x01;
+    let mutated_voucher = Signature::from_slice(&mutated_voucher_bytes)
+        .context("parsing mutated batch voucher signature")?;
+    if SECP256K1
+        .verify_schnorr(&mutated_voucher, &voucher_message, &voucher_public_key)
+        .is_ok()
+    {
+        return Err(anyhow!("mutated batch voucher signature was accepted"));
+    }
+
+    let requirements = &vector["paymentRequirements"];
+    let accepted = &requirements["value"];
+    let extra = &accepted["extra"];
+    for (accepted_field, config_field, label) in [
+        ("network", "network", "batch requirements network"),
+        ("asset", "asset", "batch requirements asset"),
+        ("payTo", "payTo", "batch requirements payTo"),
+    ] {
+        expect_eq(
+            json_string(accepted, accepted_field)?,
+            json_string(config, config_field)?,
+            label,
+        )?;
+    }
+    for (extra_field, config_field, label) in [
+        ("templateId", "templateId", "batch requirements template"),
+        (
+            "serverPublicKey",
+            "serverPublicKey",
+            "batch requirements server key",
+        ),
+        (
+            "refundTimeoutDaa",
+            "refundTimeoutDaa",
+            "batch requirements timeout",
+        ),
+    ] {
+        expect_eq(
+            json_string(extra, extra_field)?,
+            json_string(config, config_field)?,
+            label,
+        )?;
+    }
+    let requirements_preimage = concat_bytes(&[
+        sha256_bytes(b"kaspa:x402:batch-payment-requirements:v1"),
+        sha256_bytes(b"batch-settlement"),
+        sha256_bytes(json_string(accepted, "network")?.as_bytes()),
+        sha256_bytes(b"KAS"),
+        json_u64(accepted, "amount")?.to_le_bytes().to_vec(),
+        sha256_bytes(json_string(accepted, "payTo")?.as_bytes()),
+        json_u64_number(accepted, "maxTimeoutSeconds")?
+            .to_le_bytes()
+            .to_vec(),
+        sha256_bytes(b"kaspa-escrow-v1"),
+        sha256_bytes(json_string(extra, "templateId")?.as_bytes()),
+        parse_hex(json_string(extra, "serverPublicKey")?, "serverPublicKey")?,
+        json_u64(extra, "minDepositSompi")?.to_le_bytes().to_vec(),
+        json_u64(extra, "refundTimeoutDaa")?.to_le_bytes().to_vec(),
+    ]);
+    expect_eq(
+        hex::encode(&requirements_preimage),
+        json_string(requirements, "preimage")?,
+        "batch payment requirements preimage",
+    )?;
+    let requirements_hash = Sha256::digest(&requirements_preimage);
+    expect_eq(
+        hex::encode(requirements_hash),
+        json_string(requirements, "sha256")?,
+        "batch payment requirements hash",
+    )?;
+
+    let commitment = &vector["commitment"];
+    let commitment_input = &commitment["input"];
+    let active_outpoint = &commitment_input["activeOutpoint"];
+    let commitment_voucher = &commitment_input["voucher"];
+    let before = json_u64(commitment_input, "chargedCumulativeBefore")?;
+    let charged = json_u64(commitment_input, "chargedAmount")?;
+    let after = json_u64(commitment_input, "chargedCumulativeAfter")?;
+    if before.checked_add(charged) != Some(after) {
+        return Err(anyhow!("batch commitment cumulative accounting mismatch"));
+    }
+    if &commitment_input["accepted"] != accepted {
+        return Err(anyhow!("batch commitment payment requirements mismatch"));
+    }
+    expect_eq(
+        json_string(commitment_input, "channelId")?,
+        json_string(channel, "channelId")?,
+        "batch commitment channel id",
+    )?;
+    if active_outpoint != &voucher_input["outpoint"] {
+        return Err(anyhow!("batch commitment active outpoint mismatch"));
+    }
+    if commitment_voucher["amount"] != voucher_input["amount"]
+        || commitment_voucher["signature"] != voucher["signature"]
+    {
+        return Err(anyhow!("batch commitment voucher mismatch"));
+    }
+    let commitment_preimage = concat_bytes(&[
+        sha256_bytes(b"kaspa:x402:batch-commitment:v1"),
+        parse_hex(json_string(commitment_input, "channelId")?, "channelId")?,
+        parse_hex(
+            json_string(commitment_input, "requestFingerprint")?,
+            "requestFingerprint",
+        )?,
+        requirements_hash.to_vec(),
+        parse_hex(
+            json_string(active_outpoint, "txid")?,
+            "active outpoint txid",
+        )?,
+        json_u32(active_outpoint, "index")?.to_le_bytes().to_vec(),
+        json_u64(commitment_voucher, "amount")?
+            .to_le_bytes()
+            .to_vec(),
+        sha256_bytes(&parse_hex(
+            json_string(commitment_voucher, "signature")?,
+            "commitment voucher signature",
+        )?),
+        charged.to_le_bytes().to_vec(),
+        before.to_le_bytes().to_vec(),
+        after.to_le_bytes().to_vec(),
+        json_u64(commitment_input, "claimedCumulativeAmount")?
+            .to_le_bytes()
+            .to_vec(),
+    ]);
+    expect_eq(
+        hex::encode(&commitment_preimage),
+        json_string(commitment, "preimage")?,
+        "batch commitment preimage",
+    )?;
+    expect_eq(
+        hex::encode(Sha256::digest(&commitment_preimage)),
+        json_string(commitment, "commitmentId")?,
+        "batch commitment id",
+    )?;
+
+    for (script_field, hash_field) in [
+        ("payoutScriptPublicKey", "payoutScriptPublicKeyHash"),
+        ("refundScriptPublicKey", "refundScriptPublicKeyHash"),
+    ] {
+        let script = parse_hex(json_string(escrow, script_field)?, script_field)?;
+        expect_eq(
+            hex::encode(Sha256::digest(script)),
+            json_string(&escrow["params"], hash_field)?,
+            hash_field,
+        )?;
+    }
+
+    let claim_transaction = validate_batch_transaction_reference(
+        repo_root,
+        &vector["transactions"]["claim"],
+        "claim",
+        "vectors/tx-v1/batch-claim.json",
+        escrow,
+        voucher,
+        commitment_input,
+        config,
+    )?;
+    let refund_transaction = validate_batch_transaction_reference(
+        repo_root,
+        &vector["transactions"]["refund"],
+        "refund",
+        "vectors/tx-v1/batch-refund.json",
+        escrow,
+        voucher,
+        commitment_input,
+        config,
+    )?;
+    if refund_transaction["input"]["activeOutpoint"]
+        != claim_transaction["expected"]["continuation"]["outpoint"]
+    {
+        return Err(anyhow!("batch refund continuation outpoint mismatch"));
+    }
+    expect_eq(
+        json_string(&refund_transaction["input"], "activeAmount")?,
+        json_string(&claim_transaction["expected"]["continuation"], "amount")?,
+        "batch refund continuation amount",
+    )?;
+    expect_eq(
+        json_string(&refund_transaction["input"], "activeScriptPublicKey")?,
+        json_string(
+            &claim_transaction["expected"]["continuation"],
+            "scriptPublicKey",
+        )?,
+        "batch refund continuation script",
+    )?;
+
+    Ok(json!({
+        "vector": relative_path,
+        "channel": "sha256-matched",
+        "voucher": "sha256-and-schnorr-matched",
+        "mutatedVoucherSignature": "rejected",
+        "paymentRequirements": "sha256-matched",
+        "commitment": "sha256-matched",
+        "claimAndRefund": "full-consensus-and-script-execution-validated",
+    }))
+}
+
+fn validate_address_script_binding(
+    address: &str,
+    network: &str,
+    expected_script_public_key: &str,
+    label: &str,
+) -> Result<()> {
+    let address = Address::try_from(address).with_context(|| format!("parsing {label} address"))?;
+    let expected_prefix = match network {
+        "kaspa:mainnet" => Prefix::Mainnet,
+        "kaspa:testnet-10" => Prefix::Testnet,
+        _ => {
+            return Err(anyhow!(
+                "unsupported batch interoperability network {network}"
+            ));
+        }
+    };
+    if address.prefix != expected_prefix {
+        return Err(anyhow!("{label} address prefix does not match {network}"));
+    }
+    expect_eq(
+        serialize_script_public_key(&pay_to_address_script(&address)),
+        expected_script_public_key,
+        label,
+    )
+}
+
+#[allow(clippy::too_many_arguments)]
+fn validate_batch_transaction_reference(
+    repo_root: &Path,
+    reference: &serde_json::Value,
+    name: &str,
+    expected_path: &str,
+    escrow: &serde_json::Value,
+    voucher: &serde_json::Value,
+    commitment_input: &serde_json::Value,
+    config: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    expect_eq(
+        json_string(reference, "path")?,
+        expected_path,
+        &format!("batch {name} path"),
+    )?;
+    let bytes = fs::read(repo_root.join(expected_path))
+        .with_context(|| format!("reading {expected_path}"))?;
+    expect_eq(
+        hex::encode(Sha256::digest(&bytes)),
+        json_string(reference, "sha256")?,
+        &format!("batch {name} file hash"),
+    )?;
+    let transaction: serde_json::Value =
+        serde_json::from_slice(&bytes).with_context(|| format!("parsing {expected_path}"))?;
+    let expected = &transaction["expected"];
+    for field in ["transactionId", "transactionHash"] {
+        expect_eq(
+            json_string(expected, field)?,
+            json_string(reference, field)?,
+            &format!("batch {name} {field}"),
+        )?;
+    }
+    if expected["sighash"] != reference["sighash"] {
+        return Err(anyhow!("batch {name} sighash evidence mismatch"));
+    }
+    if expected["compute"] != reference["compute"] {
+        return Err(anyhow!("batch {name} compute evidence mismatch"));
+    }
+
+    let input = &transaction["input"];
+    expect_eq(
+        json_string(input, "activeScriptPublicKey")?,
+        json_string(escrow, "scriptPublicKey")?,
+        &format!("batch {name} active script"),
+    )?;
+    expect_eq(
+        json_string(input, "redeemScript")?,
+        json_string(escrow, "redeemScript")?,
+        &format!("batch {name} redeem script"),
+    )?;
+
+    if name == "claim" {
+        if input["activeOutpoint"] != voucher["input"]["outpoint"] {
+            return Err(anyhow!("batch claim active outpoint mismatch"));
+        }
+        expect_eq(
+            json_string(input, "serverOutputScriptPublicKey")?,
+            json_string(escrow, "payoutScriptPublicKey")?,
+            "batch claim payout script",
+        )?;
+        expect_eq(
+            json_string(input, "voucherSignature")?,
+            json_string(voucher, "signature")?,
+            "batch claim voucher signature",
+        )?;
+        expect_eq(
+            json_string(input, "expectedPayoutScriptPublicKeyHash")?,
+            json_string(&escrow["params"], "payoutScriptPublicKeyHash")?,
+            "batch claim payout hash",
+        )?;
+        expect_eq(
+            json_string(input, "claimAmount")?,
+            json_string(commitment_input, "chargedCumulativeAfter")?,
+            "batch claim amount",
+        )?;
+    } else {
+        expect_eq(
+            json_string(input, "refundOutputScriptPublicKey")?,
+            json_string(escrow, "refundScriptPublicKey")?,
+            "batch refund output script",
+        )?;
+        expect_eq(
+            json_string(input, "expectedRefundScriptPublicKeyHash")?,
+            json_string(&escrow["params"], "refundScriptPublicKeyHash")?,
+            "batch refund output hash",
+        )?;
+        expect_eq(
+            json_string(input, "timeoutDaa")?,
+            json_string(config, "refundTimeoutDaa")?,
+            "batch refund timeout",
+        )?;
+    }
+
+    Ok(transaction)
+}
+
+fn concat_bytes(parts: &[Vec<u8>]) -> Vec<u8> {
+    let capacity = parts.iter().map(Vec::len).sum();
+    let mut bytes = Vec::with_capacity(capacity);
+    for part in parts {
+        bytes.extend_from_slice(part);
+    }
+    bytes
+}
+
+fn sha256_bytes(bytes: &[u8]) -> Vec<u8> {
+    Sha256::digest(bytes).to_vec()
 }
 
 fn validate_exact_consensus_profiles() -> Result<serde_json::Value> {
@@ -1010,9 +1470,9 @@ fn validate_kip10_exact_template(exact_profiles: &serde_json::Value) -> Result<s
     let additive = &exact_profiles["additive"];
     let head_input = &additive["transaction"]["inputs"][0];
     let signature_script = json_string(head_input, "signatureScript")?;
-    let expected_script = signature_script
-        .strip_prefix("0035")
-        .ok_or_else(|| anyhow!("additive exact head witness must use OP_FALSE and a 53-byte redeem script push"))?;
+    let expected_script = signature_script.strip_prefix("0035").ok_or_else(|| {
+        anyhow!("additive exact head witness must use OP_FALSE and a 53-byte redeem script push")
+    })?;
     let script = parse_hex(expected_script, "borrowRedeemScript")?;
     if script.len() < 34 || script[0] != OpIf || script[1] != 32 {
         return Err(anyhow!(
@@ -1139,6 +1599,18 @@ fn json_u32(value: &serde_json::Value, field: &str) -> Result<u32> {
     number
         .try_into()
         .map_err(|_| anyhow!("{field} exceeds uint32"))
+}
+
+fn json_u64(value: &serde_json::Value, field: &str) -> Result<u64> {
+    json_string(value, field)?
+        .parse::<u64>()
+        .with_context(|| format!("{field} must be a uint64 decimal string"))
+}
+
+fn json_u64_number(value: &serde_json::Value, field: &str) -> Result<u64> {
+    value[field]
+        .as_u64()
+        .ok_or_else(|| anyhow!("{field} must be an unsigned integer"))
 }
 
 fn execute_kip10_input(tx: &Transaction, utxo: &UtxoEntry) -> Result<()> {
@@ -1278,7 +1750,53 @@ fn validate_vector(vector: &VectorFile) -> Result<()> {
     }
     validate_compute_budget_hash_boundary(&vector.expected)?;
 
+    let batch_entries = build_utxo_entries(&vector.expected.transaction)?;
+    validate_full_consensus(&tx, &batch_entries)
+        .context("batch transaction must pass full populated-UTXO consensus validation")?;
+    execute_populated_input(&tx, &batch_entries, 0)
+        .context("batch covenant input must execute with the committed signatures")?;
+    let mut bad_signature = tx.clone();
+    let signature_byte = bad_signature.inputs[0]
+        .signature_script
+        .get_mut(1)
+        .ok_or_else(|| anyhow!("batch signature script is unexpectedly empty"))?;
+    *signature_byte ^= 0x01;
+    if execute_populated_input(&bad_signature, &batch_entries, 0).is_ok() {
+        return Err(anyhow!("batch covenant accepted a mutated signature"));
+    }
+
     Ok(())
+}
+
+fn execute_populated_input(
+    tx: &Transaction,
+    entries: &[UtxoEntry],
+    input_index: usize,
+) -> Result<()> {
+    let populated = PopulatedTransaction::new(tx, entries.to_vec());
+    let input = populated
+        .tx
+        .inputs
+        .get(input_index)
+        .ok_or_else(|| anyhow!("input index is out of range"))?;
+    let utxo = entries
+        .get(input_index)
+        .ok_or_else(|| anyhow!("UTXO index is out of range"))?;
+    let cache = Cache::new(64);
+    let reused = SigHashReusedValuesUnsync::new();
+    let ctx = EngineCtx::new(&cache).with_reused(&reused);
+    let mut engine = TxScriptEngine::from_transaction_input(
+        &populated,
+        input,
+        input_index,
+        utxo,
+        ctx,
+        EngineFlags {
+            covenants_enabled: true,
+            ..Default::default()
+        },
+    );
+    engine.execute().map_err(|error| anyhow!(error.to_string()))
 }
 
 fn sighash_all_preimage(

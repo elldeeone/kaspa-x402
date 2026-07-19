@@ -9,11 +9,13 @@ const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
 const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
-const TX_V1_CONSENSUS_COMMIT = "ef1a093bcf8560fe05221b56f0c896f97e7d8d77";
+const TX_V1_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const EXACT_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
+const KASPA_ADDRESS_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
+const KASPA_ADDRESS_CHECKSUM_LENGTH = 8;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -197,6 +199,40 @@ function channelIdPreimage(input) {
     sha256(Buffer.from(input.refundAddress, "utf8")),
     le64(input.refundTimeoutDaa),
     hexToBytes(input.salt),
+  ]);
+}
+
+function batchPaymentRequirementsPreimage(accepted) {
+  return Buffer.concat([
+    sha256(Buffer.from("kaspa:x402:batch-payment-requirements:v1", "utf8")),
+    sha256(Buffer.from("batch-settlement", "utf8")),
+    sha256(Buffer.from(accepted.network, "utf8")),
+    sha256(Buffer.from("KAS", "utf8")),
+    le64(accepted.amount),
+    sha256(Buffer.from(accepted.payTo, "utf8")),
+    le64(accepted.maxTimeoutSeconds),
+    sha256(Buffer.from("kaspa-escrow-v1", "utf8")),
+    sha256(Buffer.from(accepted.extra.templateId, "utf8")),
+    hexToBytes(accepted.extra.serverPublicKey),
+    le64(accepted.extra.minDepositSompi),
+    le64(accepted.extra.refundTimeoutDaa),
+  ]);
+}
+
+function batchCommitmentPreimage(input) {
+  return Buffer.concat([
+    sha256(Buffer.from("kaspa:x402:batch-commitment:v1", "utf8")),
+    hexToBytes(input.channelId),
+    hexToBytes(input.requestFingerprint),
+    sha256(batchPaymentRequirementsPreimage(input.accepted)),
+    hexToBytes(input.activeOutpoint.txid),
+    le32(input.activeOutpoint.index),
+    le64(input.voucher.amount),
+    sha256(hexToBytes(input.voucher.signature)),
+    le64(input.chargedAmount),
+    le64(input.chargedCumulativeBefore),
+    le64(input.chargedCumulativeAfter),
+    le64(input.claimedCumulativeAmount),
   ]);
 }
 
@@ -408,15 +444,13 @@ function assertTxV1Validation(file, validation) {
   if (!validation || typeof validation !== "object") {
     throw new Error(`${file}: tx-v1 vector requires validation metadata`);
   }
-  if (validation.status !== "consensus-cross-validated") {
+  if (validation.status !== "full-consensus-cross-validated") {
     throw new Error(
-      `${file}: tx-v1 validation.status must be consensus-cross-validated`,
+      `${file}: tx-v1 validation.status must be full-consensus-cross-validated`,
     );
   }
-  if (validation.tool !== "kaspa-consensus-core") {
-    throw new Error(
-      `${file}: tx-v1 validation.tool must be kaspa-consensus-core`,
-    );
+  if (validation.tool !== "kaspa-consensus") {
+    throw new Error(`${file}: tx-v1 validation.tool must be kaspa-consensus`);
   }
   if (validation.toolVersion !== "2.0.1") {
     throw new Error(`${file}: tx-v1 validation.toolVersion must be 2.0.1`);
@@ -460,6 +494,9 @@ function assertTxV1Validation(file, validation) {
     "transaction.estimatedSerializedSize",
     "transaction.inputs[].computeBudget",
     "transaction.outputs[].covenant",
+    "fullConsensus",
+    "scriptExecution",
+    "mutatedSignatureRejection",
   ]) {
     if (!checkedFields.includes(field)) {
       throw new Error(
@@ -713,11 +750,11 @@ function validateVector(ajv, file, vector, rootDir = root) {
       const requiredValidationByPath = new Map([
         [
           "vectors/tx-v1/batch-claim.json",
-          "consensus-cross-validated-offline-reference",
+          "full-consensus-and-script-execution-offline-reference",
         ],
         [
           "vectors/tx-v1/batch-refund.json",
-          "consensus-cross-validated-offline-reference",
+          "full-consensus-and-script-execution-offline-reference",
         ],
       ]);
       for (const item of vector.coveredVectors) {
@@ -767,9 +804,511 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactInteropVector(ajv, file, vector);
       break;
     }
+    case "batch-interop-v1": {
+      assertBatchInteropVector(ajv, file, vector, rootDir);
+      break;
+    }
     default:
       throw new Error(`${file}: unknown vector kind ${vector.kind}`);
   }
+}
+
+function assertBatchInteropVector(ajv, file, vector, rootDir) {
+  assertBatchInteropCrossLinks(file, vector, rootDir);
+
+  const channelPreimage = channelIdPreimage(vector.channel.config);
+  assertEqual(
+    channelPreimage.toString("hex"),
+    vector.channel.preimage,
+    `${file}:channel.preimage`,
+  );
+  assertEqual(
+    sha256(channelPreimage).toString("hex"),
+    vector.channel.channelId,
+    `${file}:channel.channelId`,
+  );
+
+  const voucherBytes = voucherPreimage(vector.voucher.input);
+  assertEqual(
+    voucherBytes.toString("hex"),
+    vector.voucher.preimage,
+    `${file}:voucher.preimage`,
+  );
+  assertEqual(
+    sha256(voucherBytes).toString("hex"),
+    vector.voucher.digest,
+    `${file}:voucher.digest`,
+  );
+  assertHash32(
+    vector.voucher.signerPublicKey,
+    `${file}:voucher.signerPublicKey`,
+  );
+  if (!SIGNATURE64_PATTERN.test(vector.voucher.signature)) {
+    throw new Error(`${file}: voucher signature must be 64-byte hex`);
+  }
+
+  assertValid(
+    ajv,
+    "https://kaspa-x402.org/schemas/payment-required.schema.json",
+    {
+      x402Version: 2,
+      resource: { url: "kaspa-x402:batch-interop-vector" },
+      accepts: [vector.paymentRequirements.value],
+    },
+    `${file}:paymentRequirements.value`,
+  );
+  const requirementsBytes = batchPaymentRequirementsPreimage(
+    vector.paymentRequirements.value,
+  );
+  assertEqual(
+    requirementsBytes.toString("hex"),
+    vector.paymentRequirements.preimage,
+    `${file}:paymentRequirements.preimage`,
+  );
+  assertEqual(
+    sha256(requirementsBytes).toString("hex"),
+    vector.paymentRequirements.sha256,
+    `${file}:paymentRequirements.sha256`,
+  );
+
+  const commitment = vector.commitment.input;
+  if (
+    BigInt(commitment.chargedCumulativeBefore) +
+      BigInt(commitment.chargedAmount) !==
+    BigInt(commitment.chargedCumulativeAfter)
+  ) {
+    throw new Error(`${file}: commitment cumulative accounting is invalid`);
+  }
+  const commitmentBytes = batchCommitmentPreimage(commitment);
+  assertEqual(
+    commitmentBytes.toString("hex"),
+    vector.commitment.preimage,
+    `${file}:commitment.preimage`,
+  );
+  assertEqual(
+    sha256(commitmentBytes).toString("hex"),
+    vector.commitment.commitmentId,
+    `${file}:commitment.commitmentId`,
+  );
+
+  for (const name of ["claim", "refund"]) {
+    const reference = vector.transactions?.[name];
+    const absolutePath = path.join(rootDir, reference?.path ?? "");
+    if (!reference || !fs.existsSync(absolutePath)) {
+      throw new Error(`${file}: missing ${name} transaction reference`);
+    }
+    const bytes = fs.readFileSync(absolutePath);
+    assertEqual(
+      sha256(bytes).toString("hex"),
+      reference.sha256,
+      `${file}:transactions.${name}.sha256`,
+    );
+    const transactionVector = JSON.parse(bytes.toString("utf8"));
+    assertEqual(
+      transactionVector.expected.transactionId,
+      reference.transactionId,
+      `${file}:transactions.${name}.transactionId`,
+    );
+    assertEqual(
+      transactionVector.expected.transactionHash,
+      reference.transactionHash,
+      `${file}:transactions.${name}.transactionHash`,
+    );
+    if (
+      reference.fullConsensusValidated !== true ||
+      reference.scriptExecuted !== true
+    ) {
+      throw new Error(`${file}: ${name} lacks full consensus evidence`);
+    }
+  }
+
+  const timeout = BigInt(vector.expiry.timeoutDaa);
+  const boundary = BigInt(vector.expiry.lockTimeBoundary);
+  for (const testCase of vector.expiry.cases ?? []) {
+    const actual = testCase.timeoutDaa
+      ? BigInt(testCase.timeoutDaa) >= boundary
+        ? "invalid-timestamp-domain-timeout"
+        : "valid-timeout"
+      : BigInt(testCase.currentDaa) > timeout
+        ? "refund-mature"
+        : "refund-not-mature";
+    assertEqual(actual, testCase.expected, `${file}:expiry.case`);
+  }
+  if (
+    stableStringify(vector.finality?.ordering) !==
+    stableStringify(["mempool", "accepted", "confirmed"])
+  ) {
+    throw new Error(`${file}: finality ordering is invalid`);
+  }
+  for (const testCase of vector.finality.cases ?? []) {
+    const actual = vector.finality.ordering.indexOf(testCase.actual);
+    const required = vector.finality.ordering.indexOf(testCase.required);
+    if (
+      actual < 0 ||
+      required < 0 ||
+      actual >= required !== testCase.expected
+    ) {
+      throw new Error(
+        `${file}: invalid finality case ${stableStringify(testCase)}`,
+      );
+    }
+  }
+}
+
+export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
+  const config = vector.channel.config;
+  const escrow = vector.escrow;
+  const voucher = vector.voucher;
+  const accepted = vector.paymentRequirements.value;
+  const commitment = vector.commitment.input;
+
+  assertEqual(
+    accepted.network,
+    config.network,
+    `${file}: payment requirements network mismatch`,
+  );
+  assertEqual(
+    accepted.asset,
+    config.asset,
+    `${file}: payment requirements asset mismatch`,
+  );
+  assertEqual(
+    accepted.payTo,
+    config.payTo,
+    `${file}: payment requirements payTo mismatch`,
+  );
+  assertEqual(
+    accepted.extra.templateId,
+    config.templateId,
+    `${file}: payment requirements template mismatch`,
+  );
+  assertEqual(
+    accepted.extra.serverPublicKey,
+    config.serverPublicKey,
+    `${file}: payment requirements server key mismatch`,
+  );
+  assertEqual(
+    accepted.extra.refundTimeoutDaa,
+    config.refundTimeoutDaa,
+    `${file}: payment requirements timeout mismatch`,
+  );
+
+  assertEqual(
+    escrow.templateId,
+    config.templateId,
+    `${file}: escrow template mismatch`,
+  );
+  assertEqual(
+    escrow.params.clientPublicKey,
+    config.clientPublicKey,
+    `${file}: escrow client key mismatch`,
+  );
+  assertEqual(
+    escrow.params.serverPublicKey,
+    config.serverPublicKey,
+    `${file}: escrow server key mismatch`,
+  );
+  assertEqual(
+    escrow.params.network,
+    config.network,
+    `${file}: escrow network mismatch`,
+  );
+  assertEqual(
+    escrow.params.timeoutDaa,
+    config.refundTimeoutDaa,
+    `${file}: escrow timeout mismatch`,
+  );
+  assertEqual(
+    scriptPublicKeyForKaspaAddress(config.payTo, config.network),
+    escrow.payoutScriptPublicKey,
+    `${file}: payTo script public key mismatch`,
+  );
+  assertEqual(
+    scriptPublicKeyForKaspaAddress(config.refundAddress, config.network),
+    escrow.refundScriptPublicKey,
+    `${file}: refund script public key mismatch`,
+  );
+
+  assertEqual(
+    voucher.signerPublicKey,
+    config.clientPublicKey,
+    `${file}: voucher signer mismatch`,
+  );
+  assertEqual(
+    voucher.input.network,
+    config.network,
+    `${file}: voucher network mismatch`,
+  );
+  assertEqual(
+    voucher.input.activeScriptPublicKey,
+    escrow.scriptPublicKey,
+    `${file}: voucher escrow script mismatch`,
+  );
+
+  assertEqual(
+    commitment.channelId,
+    vector.channel.channelId,
+    `${file}: commitment channel id mismatch`,
+  );
+  assertEqual(
+    stableStringify(commitment.accepted),
+    stableStringify(accepted),
+    `${file}: commitment payment requirements mismatch`,
+  );
+  assertEqual(
+    stableStringify(commitment.activeOutpoint),
+    stableStringify(voucher.input.outpoint),
+    `${file}: commitment active outpoint mismatch`,
+  );
+  assertEqual(
+    stableStringify(commitment.voucher),
+    stableStringify({
+      amount: voucher.input.amount,
+      signature: voucher.signature,
+    }),
+    `${file}: commitment voucher mismatch`,
+  );
+
+  const claim = readReferencedTransaction(
+    file,
+    vector.transactions.claim,
+    "claim",
+    "vectors/tx-v1/batch-claim.json",
+    rootDir,
+  );
+  assertEqual(
+    stableStringify(claim.input.activeOutpoint),
+    stableStringify(voucher.input.outpoint),
+    `${file}: claim active outpoint mismatch`,
+  );
+  assertEqual(
+    claim.input.activeScriptPublicKey,
+    escrow.scriptPublicKey,
+    `${file}: claim active script mismatch`,
+  );
+  assertEqual(
+    claim.input.redeemScript,
+    escrow.redeemScript,
+    `${file}: claim redeem script mismatch`,
+  );
+  assertEqual(
+    claim.input.serverOutputScriptPublicKey,
+    escrow.payoutScriptPublicKey,
+    `${file}: claim payout script mismatch`,
+  );
+  assertEqual(
+    claim.input.expectedPayoutScriptPublicKeyHash,
+    escrow.params.payoutScriptPublicKeyHash,
+    `${file}: claim payout hash mismatch`,
+  );
+  assertEqual(
+    claim.input.voucherSignature,
+    voucher.signature,
+    `${file}: claim voucher signature mismatch`,
+  );
+  assertEqual(
+    claim.input.claimAmount,
+    commitment.chargedCumulativeAfter,
+    `${file}: claim amount mismatch`,
+  );
+
+  const refund = readReferencedTransaction(
+    file,
+    vector.transactions.refund,
+    "refund",
+    "vectors/tx-v1/batch-refund.json",
+    rootDir,
+  );
+  assertEqual(
+    stableStringify(refund.input.activeOutpoint),
+    stableStringify(claim.expected.continuation.outpoint),
+    `${file}: refund continuation outpoint mismatch`,
+  );
+  assertEqual(
+    refund.input.activeAmount,
+    claim.expected.continuation.amount,
+    `${file}: refund continuation amount mismatch`,
+  );
+  assertEqual(
+    refund.input.activeScriptPublicKey,
+    claim.expected.continuation.scriptPublicKey,
+    `${file}: refund continuation script mismatch`,
+  );
+  assertEqual(
+    refund.input.activeScriptPublicKey,
+    escrow.scriptPublicKey,
+    `${file}: refund active script mismatch`,
+  );
+  assertEqual(
+    refund.input.redeemScript,
+    escrow.redeemScript,
+    `${file}: refund redeem script mismatch`,
+  );
+  assertEqual(
+    refund.input.refundOutputScriptPublicKey,
+    escrow.refundScriptPublicKey,
+    `${file}: refund output script mismatch`,
+  );
+  assertEqual(
+    refund.input.expectedRefundScriptPublicKeyHash,
+    escrow.params.refundScriptPublicKeyHash,
+    `${file}: refund output hash mismatch`,
+  );
+  assertEqual(
+    refund.input.timeoutDaa,
+    config.refundTimeoutDaa,
+    `${file}: refund timeout mismatch`,
+  );
+}
+
+function readReferencedTransaction(
+  file,
+  reference,
+  name,
+  expectedPath,
+  rootDir,
+) {
+  assertEqual(reference?.path, expectedPath, `${file}: ${name} path mismatch`);
+  const absolutePath = path.join(rootDir, expectedPath);
+  const bytes = fs.readFileSync(absolutePath);
+  assertEqual(
+    sha256(bytes).toString("hex"),
+    reference.sha256,
+    `${file}: ${name} file hash mismatch`,
+  );
+  const transaction = JSON.parse(bytes.toString("utf8"));
+  assertEqual(
+    transaction.expected.transactionId,
+    reference.transactionId,
+    `${file}: ${name} transaction id mismatch`,
+  );
+  assertEqual(
+    transaction.expected.transactionHash,
+    reference.transactionHash,
+    `${file}: ${name} transaction hash mismatch`,
+  );
+  assertEqual(
+    stableStringify(transaction.expected.sighash),
+    stableStringify(reference.sighash),
+    `${file}: ${name} sighash mismatch`,
+  );
+  assertEqual(
+    stableStringify(transaction.expected.compute),
+    stableStringify(reference.compute),
+    `${file}: ${name} compute evidence mismatch`,
+  );
+  return transaction;
+}
+
+function scriptPublicKeyForKaspaAddress(address, network) {
+  const decoded = decodeKaspaAddress(address);
+  const expectedPrefix = {
+    "kaspa:mainnet": "kaspa",
+    "kaspa:testnet-10": "kaspatest",
+  }[network];
+  if (!expectedPrefix || decoded.prefix !== expectedPrefix) {
+    throw new Error(`address prefix does not match ${network}`);
+  }
+
+  let script;
+  if (decoded.version === 0 && decoded.payload.length === 32) {
+    script = Buffer.concat([
+      Buffer.from([0x20]),
+      decoded.payload,
+      Buffer.from([0xac]),
+    ]);
+  } else if (decoded.version === 1 && decoded.payload.length === 33) {
+    script = Buffer.concat([
+      Buffer.from([0x21]),
+      decoded.payload,
+      Buffer.from([0xab]),
+    ]);
+  } else if (decoded.version === 8 && decoded.payload.length === 32) {
+    script = Buffer.concat([
+      Buffer.from([0xaa, 0x20]),
+      decoded.payload,
+      Buffer.from([0x87]),
+    ]);
+  } else {
+    throw new Error("unsupported Kaspa address version or payload length");
+  }
+  return Buffer.concat([Buffer.from([0, 0]), script]).toString("hex");
+}
+
+function decodeKaspaAddress(address) {
+  const separator = address.indexOf(":");
+  if (separator <= 0 || address !== address.toLowerCase()) {
+    throw new Error("invalid Kaspa address encoding");
+  }
+  const prefix = address.slice(0, separator);
+  const encoded = Array.from(address.slice(separator + 1), (character) => {
+    const value = KASPA_ADDRESS_CHARSET.indexOf(character);
+    if (value < 0) throw new Error("invalid Kaspa address character");
+    return value;
+  });
+  if (encoded.length <= KASPA_ADDRESS_CHECKSUM_LENGTH) {
+    throw new Error("Kaspa address payload is too short");
+  }
+  const payload = encoded.slice(0, -KASPA_ADDRESS_CHECKSUM_LENGTH);
+  const checksum = encoded.slice(-KASPA_ADDRESS_CHECKSUM_LENGTH);
+  if (kaspaAddressChecksum(prefix, payload) !== fiveBitToBigInt(checksum)) {
+    throw new Error("invalid Kaspa address checksum");
+  }
+  const decoded = convertFiveToEight(payload);
+  if (decoded.length < 1) throw new Error("Kaspa address payload is empty");
+  return { prefix, version: decoded[0], payload: decoded.subarray(1) };
+}
+
+function kaspaAddressChecksum(prefix, payload) {
+  const values = [
+    ...Array.from(prefix, (character) => character.charCodeAt(0) & 0x1f),
+    0,
+    ...payload,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+    0,
+  ];
+  let checksum = 1n;
+  for (const value of values) {
+    const high = checksum >> 35n;
+    checksum = ((checksum & 0x07ffffffffn) << 5n) ^ BigInt(value);
+    if ((high & 0x01n) !== 0n) checksum ^= 0x98f2bc8e61n;
+    if ((high & 0x02n) !== 0n) checksum ^= 0x79b76d99e2n;
+    if ((high & 0x04n) !== 0n) checksum ^= 0xf33e5fb3c4n;
+    if ((high & 0x08n) !== 0n) checksum ^= 0xae2eabe2a8n;
+    if ((high & 0x10n) !== 0n) checksum ^= 0x1e4f43e470n;
+  }
+  return checksum ^ 1n;
+}
+
+function convertFiveToEight(values) {
+  const output = Buffer.alloc(Math.floor((values.length * 5) / 8));
+  let outputIndex = 0;
+  let buffer = 0;
+  let bits = 0;
+  for (const value of values) {
+    buffer = (buffer << 5) | value;
+    bits += 5;
+    while (bits >= 8) {
+      bits -= 8;
+      output[outputIndex++] = (buffer >> bits) & 0xff;
+      buffer &= (1 << bits) - 1;
+    }
+  }
+  return output;
+}
+
+function fiveBitToBigInt(values) {
+  let result = 0n;
+  for (const byte of convertFiveToEight(values)) {
+    result = (result << 8n) | BigInt(byte);
+  }
+  return result;
 }
 
 function assertExactInteropVector(ajv, file, vector) {

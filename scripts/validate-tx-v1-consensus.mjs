@@ -236,6 +236,9 @@ function cargoToml(kaspaRoot) {
   const hashesPath = path
     .join(kaspaRoot, "crypto/hashes")
     .replaceAll("\\", "\\\\");
+  const addressesPath = path
+    .join(kaspaRoot, "crypto/addresses")
+    .replaceAll("\\", "\\\\");
   const txscriptPath = path
     .join(kaspaRoot, "crypto/txscript")
     .replaceAll("\\", "\\\\");
@@ -252,6 +255,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kaspa-consensus-core = { path = "${consensusPath}" }
 kaspa-consensus = { path = "${validatorPath}" }
+kaspa-addresses = { path = "${addressesPath}" }
 kaspa-hashes = { path = "${hashesPath}" }
 kaspa-txscript = { path = "${txscriptPath}" }
 secp256k1 = { version = "0.29.0", features = ["global-context"] }

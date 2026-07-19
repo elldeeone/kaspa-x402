@@ -14,19 +14,35 @@ sdk.initSync(wasm);
 
 const privateKey = new sdk.PrivateKey("1".repeat(64));
 const address = privateKey.toAddress(networkId).toString();
-const resolverUrl = await withRetries("resolver lookup", async () => {
-  const resolver = new sdk.Resolver();
-  return withTimeout(resolver.getUrl(sdk.Encoding.Borsh, networkId), "resolver lookup");
+const endpoint =
+  process.env.KASPA_X402_PNN_ENDPOINT ??
+  (await withRetries("resolver lookup", async () => {
+    const resolver = new sdk.Resolver();
+    return withTimeout(
+      resolver.getUrl(sdk.Encoding.Borsh, networkId),
+      "resolver lookup",
+    );
+  }));
+const rpc = new sdk.RpcClient({
+  url: endpoint,
+  networkId,
+  encoding: sdk.Encoding.Borsh,
 });
-const endpoint = process.env.KASPA_X402_PNN_ENDPOINT || resolverUrl;
-const rpc = new sdk.RpcClient({ url: endpoint, networkId, encoding: sdk.Encoding.Borsh });
 
 try {
-  await withRetries("rpc connect", () => withTimeout(rpc.connect(), "rpc connect"));
+  await withRetries("rpc connect", () =>
+    withTimeout(rpc.connect(), "rpc connect"),
+  );
   const [serverInfo, blockDagInfo, utxos] = await Promise.all([
-    withRetries("getServerInfo", () => withTimeout(rpc.getServerInfo(), "getServerInfo")),
-    withRetries("getBlockDagInfo", () => withTimeout(rpc.getBlockDagInfo(), "getBlockDagInfo")),
-    withRetries("getUtxosByAddresses", () => withTimeout(rpc.getUtxosByAddresses([address]), "getUtxosByAddresses")),
+    withRetries("getServerInfo", () =>
+      withTimeout(rpc.getServerInfo(), "getServerInfo"),
+    ),
+    withRetries("getBlockDagInfo", () =>
+      withTimeout(rpc.getBlockDagInfo(), "getBlockDagInfo"),
+    ),
+    withRetries("getUtxosByAddresses", () =>
+      withTimeout(rpc.getUtxosByAddresses([address]), "getUtxosByAddresses"),
+    ),
   ]);
   console.log(
     JSON.stringify(
@@ -38,7 +54,9 @@ try {
         serverInfo,
         blockDagInfo,
         address,
-        utxoEntryCount: Array.isArray(utxos?.entries) ? utxos.entries.length : undefined,
+        utxoEntryCount: Array.isArray(utxos?.entries)
+          ? utxos.entries.length
+          : undefined,
       },
       bigintReplacer,
       2,
@@ -46,18 +64,26 @@ try {
   );
 } finally {
   try {
-    await rpc.disconnect();
+    await withTimeout(rpc.disconnect(), "rpc disconnect");
   } catch {
-    // Nothing to clean up if connect failed before the websocket opened.
+    // Nothing else can be done if connect failed or websocket cleanup stalls.
   }
 }
+
+// The vendored WASM SDK may retain background websocket handles after a clean
+// disconnect. This is a standalone diagnostic, so terminate once its bounded
+// work and cleanup have completed.
+process.exit(0);
 
 function withTimeout(promise, label) {
   let timer;
   return Promise.race([
     promise,
     new Promise((_, reject) => {
-      timer = setTimeout(() => reject(new Error(`${label} timed out after ${timeoutMs}ms`)), timeoutMs);
+      timer = setTimeout(
+        () => reject(new Error(`${label} timed out after ${timeoutMs}ms`)),
+        timeoutMs,
+      );
     }),
   ]).finally(() => clearTimeout(timer));
 }
@@ -72,7 +98,9 @@ async function withRetries(label, task) {
       if (attempt < attempts) await sleep(500 * attempt);
     }
   }
-  throw new Error(`${label} failed after ${attempts} attempts: ${lastError?.message ?? lastError}`);
+  throw new Error(
+    `${label} failed after ${attempts} attempts: ${lastError?.message ?? lastError}`,
+  );
 }
 
 function sleep(ms) {

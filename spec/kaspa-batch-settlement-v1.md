@@ -66,22 +66,22 @@ reserved profile name, not a readiness claim.
 }
 ```
 
-| Field | Required | Rule |
-| ----- | -------- | ---- |
-| `scheme` | yes | Must equal `"batch-settlement"`. |
-| `network` | yes | Must be `kaspa:mainnet` or `kaspa:testnet-10`. |
-| `amount` | yes | Decimal string in sompi. This is the maximum per-request charge. |
-| `asset` | yes | Must equal `"KAS"`. |
-| `payTo` | yes | Non-empty server payout address. This is not the client-specific escrow address. |
-| `maxTimeoutSeconds` | yes | Positive maximum time, in seconds, that the client may take to provide a payment commitment. |
-| `extra.binding` | yes | Must equal `"kaspa-escrow-v1"`. |
-| `extra.templateId` | yes | Must equal `"kaspa-x402-escrow-v1"` for this profile. |
-| `extra.serverPublicKey` | yes | Server key allowed to verify vouchers and authorize claim transactions according to the covenant rules. Refunds require the client key. |
-| `extra.minDepositSompi` | yes | Minimum initial escrow deposit. |
-| `extra.refundTimeoutDaa` | yes | Absolute DAA score after which unilateral refund is available. |
-| `extra.claimPolicy` | no | Server policy for when it intends to claim vouchers on-chain. |
-| `extra.channelState` | no | Corrective-only server channel snapshot for client resynchronization. |
-| `extra.voucherState` | no | Corrective-only latest signed voucher proof for client resynchronization. |
+| Field                    | Required | Rule                                                                                                                                    |
+| ------------------------ | -------- | --------------------------------------------------------------------------------------------------------------------------------------- |
+| `scheme`                 | yes      | Must equal `"batch-settlement"`.                                                                                                        |
+| `network`                | yes      | Must be `kaspa:mainnet` or `kaspa:testnet-10`.                                                                                          |
+| `amount`                 | yes      | Decimal string in sompi. This is the maximum per-request charge.                                                                        |
+| `asset`                  | yes      | Must equal `"KAS"`.                                                                                                                     |
+| `payTo`                  | yes      | Non-empty server payout address. This is not the client-specific escrow address.                                                        |
+| `maxTimeoutSeconds`      | yes      | Positive maximum time, in seconds, that the client may take to provide a payment commitment.                                            |
+| `extra.binding`          | yes      | Must equal `"kaspa-escrow-v1"`.                                                                                                         |
+| `extra.templateId`       | yes      | Must equal `"kaspa-x402-escrow-v1"` for this profile.                                                                                   |
+| `extra.serverPublicKey`  | yes      | Server key allowed to verify vouchers and authorize claim transactions according to the covenant rules. Refunds require the client key. |
+| `extra.minDepositSompi`  | yes      | Minimum initial escrow deposit.                                                                                                         |
+| `extra.refundTimeoutDaa` | yes      | Absolute DAA score after which unilateral refund is available.                                                                          |
+| `extra.claimPolicy`      | no       | Server policy for when it intends to claim vouchers on-chain.                                                                           |
+| `extra.channelState`     | no       | Corrective-only server channel snapshot for client resynchronization.                                                                   |
+| `extra.voucherState`     | no       | Corrective-only latest signed voucher proof for client resynchronization.                                                               |
 
 `amount` is a ceiling. The server may charge less after executing the request. The actual charge is returned as top-level `SettlementResponse.amount` and echoed in `SettlementResponse.extensions.kaspa.chargedAmount`.
 
@@ -148,10 +148,12 @@ Initial domain tags:
 ```text
 kaspa:x402:channel:v1
 kaspa:x402:escrow-voucher:v1
+kaspa:x402:batch-payment-requirements:v1
 kaspa:x402:batch-commitment:v1
-kaspa:x402:claim:v1
-kaspa:x402:refund:v1
 ```
+
+Claim and refund transaction inputs use Kaspa transaction-v1 `SIGHASH_ALL`.
+They do not introduce a second application-level claim or refund digest.
 
 ## PaymentPayload
 
@@ -242,7 +244,7 @@ Supported types:
 
 ### Refund
 
-`refund` cooperatively returns unclaimed escrow or initiates the template-defined unilateral refund path.
+`refund` initiates the template-defined unilateral refund path after timeout.
 
 ```json
 {
@@ -286,25 +288,185 @@ Digest rules:
 - the digest binds the exact active escrow outpoint and active input script public key;
 - a voucher for one escrow UTXO must not verify for a continuation, top-up, refund, or replacement UTXO.
 
+## Escrow Template Construction
+
+`kaspa-x402-escrow-v1` is the byte-exact script compiled from
+`contracts/kaspa-x402-escrow-v1.sil`. Constructor values are derived as follows:
+
+```text
+clientKey                  = hex_decode(clientPublicKey)
+serverKey                  = hex_decode(serverPublicKey)
+networkHash                = sha256(network utf8)
+payoutScriptPublicKeyHash  = sha256(serialized_script_public_key(payTo))
+refundScriptPublicKeyHash  = sha256(serialized_script_public_key(refundAddress))
+timeout                    = refundTimeoutDaa
+```
+
+`serialized_script_public_key(address)` is `uint16_be(version) || script`.
+This binding accepts version `0` only. The escrow output script public key is
+the version-0 pay-to-script-hash script derived from the complete redeem script.
+
+Implementations MUST reproduce the redeem script and escrow script public key
+in `vectors/batch/interop-v1.json`. Treating an address, script hash, or
+client-provided script as equivalent without reconstructing these bytes is not
+conformant.
+
+## Transaction V1 Interchange
+
+Claim and refund vectors use a language-neutral transaction projection. It is
+not an RPC payload. Each transaction contains:
+
+- version `1`;
+- ordered inputs with outpoint, signature script, sequence, sig-op count, and
+  compute budget;
+- ordered outputs with value, versioned script public key, and null covenant;
+- lock time, native subnetwork id, gas `0`, empty payload, and storage mass.
+
+All integer fields use their Rusty Kaspa consensus widths. Hex values represent
+raw bytes in canonical display order. Implementations MUST derive transaction
+identifiers, hashes, and signature hashes from the consensus fields rather than
+hashing JSON text.
+
+For transaction v1:
+
+- the transaction id excludes signature scripts, compute budgets, payload, and
+  storage mass through the canonical transaction-id serialization;
+- the transaction hash includes signature scripts, compute budgets, payload,
+  and storage mass through the canonical transaction-hash serialization;
+- the native `SIGHASH_ALL` preimage excludes compute budget as defined by
+  Rusty Kaspa;
+- contextual storage mass and compute commitment MUST be recomputed under the
+  active post-Toccata rules.
+
+The complete preimages and expected digests are committed in
+`vectors/tx-v1/batch-claim.json` and `vectors/tx-v1/batch-refund.json` and are
+independently checked by the pinned Rust harness.
+
+`fundingTransaction` in a `deposit-voucher` payload is optional opaque adapter
+evidence, not a canonical interchange format and never authoritative. The
+verifier MUST obtain the accepted funding outpoint, amount, script, transaction
+lineage, and finality from a trusted Kaspa node or chain adapter.
+
+## Canonical Claim Transaction
+
+The claim spends exactly one active escrow input and creates exactly two
+outputs:
+
+```text
+input[0]  = active escrow outpoint
+output[0] = server payout
+output[1] = same-script continuation escrow
+```
+
+Its input signature script is:
+
+```text
+push(server_transaction_signature_65) ||
+push(voucher_signature_64) ||
+push(voucher_amount_le64) ||
+OP_FALSE ||
+push(redeem_script)
+```
+
+The server transaction signature is a 64-byte Schnorr signature followed by
+the one-byte `SIGHASH_ALL` type. The voucher signature is the separate raw
+64-byte signature defined by the voucher digest above.
+
+Required claim invariants:
+
+- native subnetwork, gas `0`, empty payload, lock time `0`, and input sequence
+  `0`;
+- every output covenant is null;
+- output 0 script hashes to the payout script hash embedded in the escrow;
+- output 0 value is at most the voucher ceiling;
+- output 1 has the exact active escrow script public key;
+- output 1 value is at least `input value - voucher amount` and positive;
+- the reference runtime additionally requires output 1 value to equal
+  `input value - actual active charge`, so fees come from the server payout;
+- the input compute budget covers measured script units and does not exceed
+  configured policy.
+
+The x402 server MUST also require the claimed amount to equal the actual
+unclaimed charge. The covenant ceiling alone cannot prove application
+accounting.
+
+## Canonical Refund Transaction
+
+The refund spends exactly one refundable escrow input and creates exactly one
+refund output:
+
+```text
+input[0]  = refundable escrow outpoint
+output[0] = client refund
+```
+
+Its input signature script is:
+
+```text
+push(client_transaction_signature_65) ||
+OP_TRUE ||
+push(redeem_script)
+```
+
+Required refund invariants:
+
+- native subnetwork, gas `0`, empty payload, input sequence `0`;
+- transaction lock time is at least the escrow `refundTimeoutDaa`;
+- consensus may accept the transaction only when current DAA is strictly
+  greater than its DAA-domain lock time;
+- `refundTimeoutDaa` and the transaction lock time are below
+  `500000000000`, where Kaspa lock time changes to timestamp interpretation;
+- the single output script hashes to the refund script hash embedded in the
+  escrow;
+- the output covenant is null and fees come from the refunded value;
+- the client transaction signature is a 64-byte Schnorr signature followed by
+  the one-byte `SIGHASH_ALL` type.
+
+## Language-Neutral Verification Algorithm
+
+Before protected work, a batch implementation MUST:
+
+1. Validate the x402 envelope and selected `PaymentRequirements`.
+2. Recompute `channelId` from the complete immutable `ChannelConfig`.
+3. Reconstruct the escrow redeem script and active script public key.
+4. Resolve the active outpoint from a trusted chain source and compare its
+   amount and script with the payload.
+5. For a deposit or top-up, prove accepted-chain finality and the required
+   transition from the prior active outpoint before adopting it.
+6. Recompute the voucher digest from the selected network, trusted active
+   script, full active outpoint, and cumulative voucher amount.
+7. Verify the 64-byte Schnorr voucher signature against `clientPublicKey`.
+8. Apply the cumulative accounting, balance, expiry, replay, and per-channel
+   serialization rules below.
+9. Run the protected handler, calculate the actual charge, and durably store
+   the canonical commitment before releasing the result.
+
+Before broadcasting a claim or refund, the facilitator MUST additionally
+reconstruct the transaction from authoritative UTXO data, recompute its id,
+hash, sighash, mass, script units, and compute budget, verify its transaction
+signature, execute the escrow input under active consensus rules, and enforce
+the claim or refund invariants above. Adapter-returned identifiers, fees,
+scripts, masses, or finality assertions are evidence to check, not authority.
+
 ## Request Processing
 
 The server must serialize request processing per channel. It must not update request charge or request commitment state until the protected handler succeeds. Accepted funding, top-up, claim, refund, and continuation transition state may be recorded independently of handler success when needed to keep channel state aligned with accepted on-chain state.
 
 Per-channel state:
 
-| State Field | Rule |
-| ----------- | ---- |
-| `channelId` | Canonical channel id derived from `ChannelConfig`. |
-| `channelConfig` | Immutable channel configuration. |
-| `activeOutpoint` | Current escrow UTXO that future vouchers must bind. |
-| `activeScriptPublicKey` | Script public key for `activeOutpoint`. |
-| `fundingAmount` | Current spendable escrow value, in sompi. |
-| `chargedCumulativeAmount` | Lifetime actual accumulated charges for the channel. |
-| `claimedCumulativeAmount` | Lifetime actual charges already claimed on-chain before the current active outpoint. |
-| `activeChargedAmount` | `chargedCumulativeAmount - claimedCumulativeAmount`. This is the actual charge accumulated against the current active outpoint. |
-| `signedMaxClaimable` | Latest client-signed voucher amount for the current active outpoint. |
-| `voucherSignature` | Signature for `signedMaxClaimable` on the current active outpoint. |
-| `lastCommitmentId` | Latest stored request commitment id. |
+| State Field               | Rule                                                                                                                            |
+| ------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `channelId`               | Canonical channel id derived from `ChannelConfig`.                                                                              |
+| `channelConfig`           | Immutable channel configuration.                                                                                                |
+| `activeOutpoint`          | Current escrow UTXO that future vouchers must bind.                                                                             |
+| `activeScriptPublicKey`   | Script public key for `activeOutpoint`.                                                                                         |
+| `fundingAmount`           | Current spendable escrow value, in sompi.                                                                                       |
+| `chargedCumulativeAmount` | Lifetime actual accumulated charges for the channel.                                                                            |
+| `claimedCumulativeAmount` | Lifetime actual charges already claimed on-chain before the current active outpoint.                                            |
+| `activeChargedAmount`     | `chargedCumulativeAmount - claimedCumulativeAmount`. This is the actual charge accumulated against the current active outpoint. |
+| `signedMaxClaimable`      | Latest client-signed voucher amount for the current active outpoint.                                                            |
+| `voucherSignature`        | Signature for `signedMaxClaimable` on the current active outpoint.                                                              |
+| `lastCommitmentId`        | Latest stored request commitment id.                                                                                            |
 
 Processing steps for `deposit-voucher` and `voucher`:
 
@@ -652,6 +814,27 @@ The mainnet profile targets transaction v1 and Toccata covenants:
 - SilverScript source plus generated byte fixtures should be the reviewable covenant source of truth.
 
 The v1 SilverScript shape is a script-level escrow covenant: it binds the active script public key into vouchers, validates the continuation output, and validates payout/refund destinations by script-public-key hash. Stateful Toccata wrappers may add covenant IDs and `validateOutputState(...)` lineage checks later, but those IDs do not replace the v1 script-level payout, refund, continuation, and full-outpoint checks.
+
+## Interoperability Evidence
+
+`vectors/batch/interop-v1.json` is the normative cross-language example for
+this draft. It fixes one complete channel and includes:
+
+- the channel preimage and id;
+- escrow constructor values, redeem script, and script public key;
+- a valid cumulative voucher preimage, digest, public key, and signature;
+- the structured payment-requirements preimage and hash;
+- the request commitment preimage and id;
+- referenced claim and refund transaction-v1 preimages, ids, hashes, sighashes,
+  compute budgets, and full-consensus results;
+- DAA expiry boundary cases and finality ordering cases.
+
+The TypeScript tests reconstruct these values from their semantic inputs. The
+Rust harness independently reconstructs the cryptographic preimages, verifies
+the voucher signature, executes both escrow branches, mutates signatures to
+prove rejection, and validates both populated transactions with
+`kaspa-consensus-core` and `kaspa-txscript` 2.0.1 at commit
+`78257f273a26c4be085bab0f79437dee99ca8835`.
 
 ## Security Requirements
 
