@@ -662,9 +662,14 @@ async function runExpiredExactAuthorization({
     },
   );
   const broadcasts = pendingBroadcasts.size - broadcastsBefore;
-  if (response.status < 400 || handlerExecutions !== 0 || broadcasts !== 0) {
+  if (
+    response.status !== 402 ||
+    response.body?.error !== "invalid_payload" ||
+    handlerExecutions !== 0 ||
+    broadcasts !== 0
+  ) {
     throw new Error(
-      "expired exact authorization reached protected work or broadcast",
+      "expired exact authorization did not return the expected corrective 402 invalid_payload rejection",
     );
   }
   return {

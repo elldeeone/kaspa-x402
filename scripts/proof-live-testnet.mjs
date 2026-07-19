@@ -355,9 +355,11 @@ function validateLiveProofResult(result, flows) {
   require(result.exact?.invalidSignature?.handlerExecutions === 0 &&
     result.exact?.invalidSignature?.broadcasts ===
       0, "exact.invalidSignature", "must reject before protected work or broadcast");
-  require(result.exact?.expiredAuthorization?.handlerExecutions === 0 &&
+  require(result.exact?.expiredAuthorization?.status === 402 &&
+    result.exact?.expiredAuthorization?.error === "invalid_payload" &&
+    result.exact?.expiredAuthorization?.handlerExecutions === 0 &&
     result.exact?.expiredAuthorization?.broadcasts ===
-      0, "exact.expiredAuthorization", "must reject before protected work or broadcast");
+      0, "exact.expiredAuthorization", "must return corrective 402 invalid_payload before protected work or broadcast");
   require(result.exact?.recovery?.initialStatus === 503 &&
     result.exact?.recovery?.retryStatus === 200 &&
     result.exact?.recovery?.handlerExecutions ===
