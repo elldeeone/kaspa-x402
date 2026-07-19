@@ -44,6 +44,10 @@ Every JSON vector has a `kind` field:
 - `exact-consensus-profiles`: reproduce deterministic standard-native v0 and
   corrected KIP-10 additive v1 transactions, then validate them and their
   mutations through Rusty Kaspa's isolation and populated-UTXO consensus paths.
+- `exact-interop-v1`: reproduce both transaction identifiers from explicit
+  consensus-hash preimages, the canonical payment-requirements and request-
+  authorization SHA-256 preimages, the payer signature, expiry decisions, and
+  finality ordering without depending on TypeScript.
 
 Regenerate the exact consensus vector with `npm run vectors:exact-consensus`.
 The generator uses fixed public test keys and deterministic Schnorr signatures;

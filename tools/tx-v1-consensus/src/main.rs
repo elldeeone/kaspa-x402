@@ -20,7 +20,10 @@ use kaspa_consensus_core::{
         TransactionInput, TransactionOutpoint, TransactionOutput, UtxoEntry, VerifiableTransaction,
     },
 };
-use kaspa_hashes::{Hash, Hasher, HasherBase, TransactionHash};
+use kaspa_hashes::{
+    Hash, Hasher, HasherBase, TransactionHash,
+    sha2::{Digest, Sha256},
+};
 use kaspa_txscript::{
     EngineCtx, EngineFlags, TxScriptEngine,
     caches::Cache,
@@ -31,7 +34,7 @@ use kaspa_txscript::{
     pay_to_script_hash_script,
     script_builder::ScriptBuilder,
 };
-use secp256k1::{Keypair, Message, SECP256K1};
+use secp256k1::{Keypair, Message, SECP256K1, XOnlyPublicKey, schnorr::Signature};
 use serde::Deserialize;
 use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
@@ -163,6 +166,7 @@ fn main() -> Result<()> {
     }
     let exact_profiles = validate_exact_consensus_profiles()?;
     validate_exact_profiles_vector(repo_root, &exact_profiles)?;
+    let exact_interop = validate_exact_interop_vector(repo_root, &exact_profiles)?;
     let kip10 = validate_kip10_exact_template(&exact_profiles)?;
 
     println!(
@@ -177,6 +181,7 @@ fn main() -> Result<()> {
             "vectors": checked,
             "kip10Exact": kip10,
             "exactProfiles": exact_profiles,
+            "exactInterop": exact_interop,
         }))?
     );
 
@@ -828,10 +833,38 @@ fn exact_evidence(
 ) -> serde_json::Value {
     let calculator = MassCalculator::new_with_consensus_params(&TESTNET_PARAMS);
     let non_contextual = calculator.calc_non_contextual_masses(tx);
+    let transaction_id = tx.id().to_string();
+    let txid = if tx.version == 0 {
+        json!({
+            "algorithm": "blake2b-256-keyed",
+            "domain": "TransactionID",
+            "preimage": hex::encode(tx_hashing::transaction_v0_id_preimage(tx)),
+            "digest": transaction_id,
+        })
+    } else {
+        let payload_digest = tx_hashing::payload_digest(&tx.payload);
+        let rest_preimage = tx_hashing::transaction_v1_rest_preimage(tx);
+        let rest_digest = tx_hashing::v1_rest_digest(tx);
+        let mut preimage = Vec::with_capacity(64);
+        preimage.extend_from_slice(&payload_digest.as_bytes());
+        preimage.extend_from_slice(&rest_digest.as_bytes());
+        json!({
+            "algorithm": "blake3-256-keyed",
+            "payloadDomain": "PayloadDigest",
+            "payloadDigest": payload_digest.to_string(),
+            "restDomain": "TransactionRest",
+            "restPreimage": hex::encode(rest_preimage),
+            "restDigest": rest_digest.to_string(),
+            "domain": "TransactionV1Id",
+            "preimage": hex::encode(preimage),
+            "digest": transaction_id,
+        })
+    };
     json!({
         "profile": profile,
         "version": tx.version,
-        "transactionId": tx.id().to_string(),
+        "transactionId": transaction_id,
+        "txid": txid,
         "transactionHash": tx_hashing::hash(tx).to_string(),
         "amount": EXACT_PAYMENT_SOMPI.to_string(),
         "fee": transaction_fee(tx, entries).expect("validated exact fee").to_string(),
@@ -906,6 +939,71 @@ fn validate_exact_profiles_vector(repo_root: &Path, actual: &serde_json::Value) 
         ));
     }
     Ok(())
+}
+
+fn validate_exact_interop_vector(
+    repo_root: &Path,
+    exact_profiles: &serde_json::Value,
+) -> Result<serde_json::Value> {
+    if env::var("KASPA_X402_GENERATE_EXACT_VECTORS").as_deref() == Ok("1") {
+        return Ok(json!({ "status": "skipped-while-generating-consensus-vector" }));
+    }
+    let relative_path = "vectors/exact/interop-v1.json";
+    let contents = fs::read_to_string(repo_root.join(relative_path))
+        .with_context(|| format!("reading {relative_path}"))?;
+    let vector: serde_json::Value =
+        serde_json::from_str(&contents).with_context(|| format!("parsing {relative_path}"))?;
+
+    for (vector_key, profile_key) in [
+        ("standardNative", "standardNative"),
+        ("additive", "additive"),
+    ] {
+        let interop = &vector["transactionEncoding"]["profiles"][vector_key];
+        let consensus = &exact_profiles[profile_key];
+        if interop["transactionId"] != consensus["transactionId"]
+            || interop["txid"] != consensus["txid"]
+        {
+            return Err(anyhow!(
+                "{relative_path} {vector_key} transaction-id evidence does not match the Rust consensus oracle"
+            ));
+        }
+    }
+
+    let requirements = &vector["paymentRequirements"];
+    let requirements_preimage = json_string(requirements, "canonicalJsonUtf8")?;
+    expect_eq(
+        hex::encode(Sha256::digest(requirements_preimage.as_bytes())),
+        json_string(requirements, "sha256")?,
+        "paymentRequirements SHA-256",
+    )?;
+
+    let authorization = &vector["requestAuthorization"];
+    let authorization_preimage = json_string(authorization, "canonicalJsonUtf8")?;
+    let authorization_digest = Sha256::digest(authorization_preimage.as_bytes());
+    expect_eq(
+        hex::encode(authorization_digest),
+        json_string(authorization, "sha256")?,
+        "requestAuthorization SHA-256",
+    )?;
+    let public_key = XOnlyPublicKey::from_str(json_string(authorization, "signerPublicKey")?)
+        .context("parsing request-authorization signer public key")?;
+    let signature = Signature::from_slice(&parse_hex(
+        json_string(authorization, "signature")?,
+        "requestAuthorization.signature",
+    )?)
+    .context("parsing request-authorization Schnorr signature")?;
+    let message = Message::from_digest_slice(&authorization_digest)
+        .context("constructing request-authorization message")?;
+    SECP256K1
+        .verify_schnorr(&signature, &message, &public_key)
+        .context("verifying request-authorization Schnorr signature")?;
+
+    Ok(json!({
+        "vector": relative_path,
+        "transactionIds": "rust-consensus-matched",
+        "paymentRequirementsHash": "sha256-matched",
+        "requestAuthorization": "sha256-and-schnorr-matched",
+    }))
 }
 
 fn validate_kip10_exact_template(exact_profiles: &serde_json::Value) -> Result<serde_json::Value> {

@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   X402_VERSION,
   channelId,
+  exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   readKaspaSettlementExtension,
@@ -1132,7 +1133,12 @@ function fakeExactAuthorization(
   accepted: ExactPaymentRequirements,
   requestHash: Hash32Hex,
 ): ExactRequestAuthorization {
-  const expiresAt = "2099-01-01T00:00:00.000Z";
+  const expiresAt = exactAuthorizationExpiresAt(
+    accepted.maxTimeoutSeconds,
+    accepted.extra.profile === "additive"
+      ? accepted.extra.challengeExpiresAt
+      : undefined,
+  );
   return {
     version: "kaspa-x402-exact-request-authorization-v1",
     inputIndex: 0,

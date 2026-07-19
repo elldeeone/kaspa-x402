@@ -763,8 +763,105 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactConsensusProfiles(file, vector);
       break;
     }
+    case "exact-interop-v1": {
+      assertExactInteropVector(ajv, file, vector);
+      break;
+    }
     default:
       throw new Error(`${file}: unknown vector kind ${vector.kind}`);
+  }
+}
+
+function assertExactInteropVector(ajv, file, vector) {
+  const profiles = vector.transactionEncoding?.profiles;
+  for (const field of ["standardNative", "additive"]) {
+    const profile = profiles?.[field];
+    if (!profile || !HEX32_PATTERN.test(profile.transactionId)) {
+      throw new Error(`${file}: ${field} requires a canonical transaction id`);
+    }
+    assertEqual(
+      profile.artifact?.id,
+      profile.transactionId,
+      `${file}:${field}:artifact.id`,
+    );
+    assertEqual(
+      profile.txid?.digest,
+      profile.transactionId,
+      `${file}:${field}:txid.digest`,
+    );
+    if (!HEX_BYTES_PATTERN.test(profile.txid?.preimage ?? "")) {
+      throw new Error(`${file}: ${field} txid preimage must be byte hex`);
+    }
+  }
+
+  const requirements = vector.paymentRequirements;
+  assertValid(
+    ajv,
+    "https://kaspa-x402.org/schemas/payment-required.schema.json",
+    {
+      x402Version: 2,
+      resource: { url: "kaspa-x402:exact-interop-vector" },
+      accepts: [requirements?.value],
+    },
+    `${file}:paymentRequirements.value`,
+  );
+  const requirementsPreimage = stableStringify(requirements.value);
+  assertEqual(
+    requirementsPreimage,
+    requirements.canonicalJsonUtf8,
+    `${file}:paymentRequirements.canonicalJsonUtf8`,
+  );
+  assertEqual(
+    sha256(Buffer.from(requirementsPreimage)).toString("hex"),
+    requirements.sha256,
+    `${file}:paymentRequirements.sha256`,
+  );
+
+  const authorization = vector.requestAuthorization;
+  const authorizationPreimage = stableStringify({
+    scope: "kaspa-x402-exact-request-authorization-v1",
+    ...authorization.input,
+  });
+  assertEqual(
+    authorizationPreimage,
+    authorization.canonicalJsonUtf8,
+    `${file}:requestAuthorization.canonicalJsonUtf8`,
+  );
+  assertEqual(
+    sha256(Buffer.from(authorizationPreimage)).toString("hex"),
+    authorization.sha256,
+    `${file}:requestAuthorization.sha256`,
+  );
+  if (
+    !HEX32_PATTERN.test(authorization.signerPublicKey) ||
+    !SIGNATURE64_PATTERN.test(authorization.signature) ||
+    authorization.expected !== "valid-schnorr-signature"
+  ) {
+    throw new Error(`${file}: request authorization evidence is incomplete`);
+  }
+
+  if (
+    !Array.isArray(vector.expiry?.cases) ||
+    vector.expiry.cases.length < 6 ||
+    stableStringify(vector.finality?.ordering) !==
+      stableStringify(["mempool", "accepted", "confirmed"]) ||
+    !Array.isArray(vector.finality?.cases) ||
+    vector.finality.cases.length < 5
+  ) {
+    throw new Error(`${file}: expiry or finality cases are incomplete`);
+  }
+  for (const testCase of vector.finality.cases) {
+    const actual = vector.finality.ordering.indexOf(testCase.actual);
+    const required = vector.finality.ordering.indexOf(testCase.required);
+    if (
+      actual < 0 ||
+      required < 0 ||
+      actual >= required !== testCase.expected
+    ) {
+      throw new Error(
+        `${file}: invalid finality case ${stableStringify(testCase)}`,
+      );
+    }
   }
 }
 
