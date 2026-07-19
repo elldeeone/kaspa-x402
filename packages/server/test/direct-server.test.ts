@@ -39,6 +39,7 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
+  MemoryChannelLockManager,
   MemoryServerChannelStore,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -1188,6 +1189,216 @@ describe("direct-mode server", () => {
     });
     expect(verifierCalls).toBe(0);
     expect(executed).toBe(false);
+  });
+
+  it("rejects standard-native authorization that expires during verification", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      let verifierEnteredBeforeExpiry = false;
+      const setup = makeServer({
+        maxTimeoutSeconds: 1,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            verifierEnteredBeforeExpiry =
+              Date.now() < Date.parse(request.authorization.expiresAt);
+            vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: {
+                amount: request.amount,
+                scriptPublicKey: request.payToScriptPublicKey,
+              },
+              finality: "accepted" as const,
+              payerAddress: "kaspatest:refund",
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
+            };
+          },
+        },
+      });
+      const payment = makeExactPayment(setup);
+      let executed = false;
+
+      const response = await setup.server.handlePaidRequest(
+        requestWithPayment(payment, { paymentScheme: "exact" }),
+        async () => {
+          executed = true;
+          return { body: "must not run" };
+        },
+      );
+
+      expect(verifierEnteredBeforeExpiry).toBe(true);
+      expect(response).toMatchObject({
+        status: 402,
+        body: { error: "invalid_payload" },
+      });
+      expect(executed).toBe(false);
+      await expect(
+        setup.store.loadExactPayment(EXACT_TX_ID),
+      ).resolves.toBeUndefined();
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects additive authorization that expires during verification", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      let verifierEnteredBeforeExpiry = false;
+      const setup = await makeAdditiveServer({
+        maxTimeoutSeconds: 1,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            verifierEnteredBeforeExpiry =
+              Date.now() < Date.parse(request.authorization.expiresAt);
+            vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+            const head = request.head!;
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: {
+                amount: request.amount,
+                scriptPublicKey: request.payToScriptPublicKey,
+              },
+              continuation: {
+                outpoint: { txid: EXACT_TX_ID, index: 0 },
+                amount: (
+                  BigInt(head.headAmount) + BigInt(request.amount)
+                ).toString(),
+                scriptPublicKey: head.headScriptPublicKey,
+              },
+              finality: "accepted" as const,
+              payerAddress: "kaspatest:refund",
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
+            };
+          },
+        },
+      });
+      const unpaid = await setup.server.handlePaidRequest(
+        { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+        async () => ({ body: "unreachable" }),
+      );
+      const accepted = decodePaymentRequiredHeader(
+        unpaid.headers[PAYMENT_REQUIRED_HEADER],
+      ).accepts[0] as ExactPaymentRequirements;
+      const payment = makeAdditivePayment(accepted);
+      let executed = false;
+
+      const response = await setup.server.handlePaidRequest(
+        requestWithPayment(payment, { paymentScheme: "exact" }),
+        async () => {
+          executed = true;
+          return { body: "must not run" };
+        },
+      );
+
+      expect(verifierEnteredBeforeExpiry).toBe(true);
+      expect(response).toMatchObject({
+        status: 402,
+        body: { error: "invalid_payload" },
+      });
+      expect(executed).toBe(false);
+      await expect(
+        setup.store.loadExactPayment(EXACT_TX_ID),
+      ).resolves.toBeUndefined();
+      await expect(
+        setup.store.loadExactHead(EXACT_HEAD_ID),
+      ).resolves.toMatchObject({ status: "available", version: "0" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects exact authorization that expires while waiting for the canonical transaction lock", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    let releaseCanonicalLock!: () => void;
+    try {
+      const memoryLockManager = new MemoryChannelLockManager();
+      const canonicalLockKey = sha256Hex(
+        stableStringify({
+          scope: "kaspa:x402:exact-payment-transaction:v1",
+          transactionId: EXACT_TX_ID,
+        }),
+      );
+      let canonicalLockEntered!: () => void;
+      const canonicalLockReady = new Promise<void>((resolve) => {
+        canonicalLockEntered = resolve;
+      });
+      const canonicalLockRelease = new Promise<void>((resolve) => {
+        releaseCanonicalLock = resolve;
+      });
+      const blocker = memoryLockManager.runExclusive(
+        canonicalLockKey,
+        async () => {
+          canonicalLockEntered();
+          await canonicalLockRelease;
+        },
+      );
+      await canonicalLockReady;
+
+      let canonicalLockRequested!: () => void;
+      const waitingForCanonicalLock = new Promise<void>((resolve) => {
+        canonicalLockRequested = resolve;
+      });
+      const lockManager = {
+        runExclusive<T>(key: Hash32Hex, fn: () => Promise<T>): Promise<T> {
+          if (key === canonicalLockKey) canonicalLockRequested();
+          return memoryLockManager.runExclusive(key, fn);
+        },
+      };
+      const setup = makeServer({
+        maxTimeoutSeconds: 1,
+        lockManager,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: {
+                amount: request.amount,
+                scriptPublicKey: request.payToScriptPublicKey,
+              },
+              finality: "accepted" as const,
+              payerAddress: "kaspatest:refund",
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
+            };
+          },
+        },
+      });
+      const payment = makeExactPayment(setup);
+      let executed = false;
+      const pendingResponse = setup.server.handlePaidRequest(
+        requestWithPayment(payment, { paymentScheme: "exact" }),
+        async () => {
+          executed = true;
+          return { body: "must not run" };
+        },
+      );
+
+      await waitingForCanonicalLock;
+      vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+      releaseCanonicalLock();
+      await blocker;
+      const response = await pendingResponse;
+
+      expect(response).toMatchObject({
+        status: 402,
+        body: { error: "invalid_payload" },
+      });
+      expect(executed).toBe(false);
+      await expect(
+        setup.store.loadExactPayment(EXACT_TX_ID),
+      ).resolves.toBeUndefined();
+    } finally {
+      releaseCanonicalLock?.();
+      vi.useRealTimers();
+    }
   });
 
   it("rejects a second exact payment from the same transaction", async () => {

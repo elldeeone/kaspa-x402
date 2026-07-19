@@ -501,8 +501,10 @@ Let `now` be the verifier's current time:
   `challengeExpiresAt`.
 
 The resource server or facilitator checks authorization ordering before
-protected work. The additive head/challenge provider checks challenge liveness
-and head state. An adapter may repeat these checks but cannot weaken them.
+protected work. It MUST re-evaluate expiry against the current time after any
+awaited transaction verification and before creating a new settlement. The
+additive head/challenge provider checks challenge liveness and head state. An
+adapter may repeat these checks but cannot weaken them.
 
 Expiry prevents a new settlement or protected-handler execution. It does not
 invalidate an idempotent retry whose transaction and response were already
