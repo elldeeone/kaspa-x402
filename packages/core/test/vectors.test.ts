@@ -12,6 +12,8 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactAuthorizationExpiryError,
+  exactRequestAuthorizationPreimage,
   formatSompiString,
   isDecimalSompi,
   isKaspaX402Network,
@@ -24,6 +26,8 @@ import {
   parseSompiString,
   readMcpPaymentRequired,
   readMcpPaymentResponse,
+  sha256Hex,
+  stableStringify,
   validateKaspaPaymentRequirement,
   validatePaymentIdentifierReuse,
   validatePaymentRequired,
@@ -37,6 +41,7 @@ import {
 } from "../src/index.js";
 import type {
   ChannelConfig,
+  ExactPaymentRequirements,
   PaymentIdentifierObservation,
   PaymentPayload,
   PaymentRequired,
@@ -95,6 +100,37 @@ type ExactConsensusProfile = {
     version: 0 | 1;
     inputs: Array<{ utxo: { amount: string; scriptPublicKey: string } }>;
     outputs: Array<{ amount: string; scriptPublicKey: string; covenant: null }>;
+  };
+};
+
+type ExactInteropVector = {
+  paymentRequirements: {
+    value: ExactPaymentRequirements;
+    canonicalJsonUtf8: string;
+    sha256: string;
+  };
+  requestAuthorization: {
+    input: Parameters<typeof exactRequestAuthorizationPreimage>[0];
+    canonicalJsonUtf8: string;
+    sha256: string;
+  };
+  expiry: {
+    referenceTime: string;
+    maxTimeoutSeconds: number;
+    cases: Array<{
+      name: string;
+      authorizationExpiresAt: string;
+      challengeExpiresAt?: string;
+      expected: string;
+    }>;
+  };
+  finality: {
+    ordering: Array<"mempool" | "accepted" | "confirmed">;
+    cases: Array<{
+      actual: "mempool" | "accepted" | "confirmed";
+      required: "mempool" | "accepted" | "confirmed";
+      expected: boolean;
+    }>;
   };
 };
 
@@ -682,6 +718,49 @@ describe("exact v2 profile schemas", () => {
         },
       ).ok,
     ).toBe(false);
+  });
+});
+
+describe("exact v2 language-independent interoperability vector", () => {
+  const vector = readJson<ExactInteropVector>("vectors/exact/interop-v1.json");
+
+  it("reproduces the payment-requirements and authorization hashes", () => {
+    expect(stableStringify(vector.paymentRequirements.value)).toBe(
+      vector.paymentRequirements.canonicalJsonUtf8,
+    );
+    expect(sha256Hex(vector.paymentRequirements.canonicalJsonUtf8)).toBe(
+      vector.paymentRequirements.sha256,
+    );
+    expect(
+      exactRequestAuthorizationPreimage(vector.requestAuthorization.input),
+    ).toBe(vector.requestAuthorization.canonicalJsonUtf8);
+    expect(sha256Hex(vector.requestAuthorization.canonicalJsonUtf8)).toBe(
+      vector.requestAuthorization.sha256,
+    );
+  });
+
+  it("reproduces every expiry decision", () => {
+    const nowMs = Date.parse(vector.expiry.referenceTime);
+    for (const testCase of vector.expiry.cases) {
+      const error = exactAuthorizationExpiryError({
+        maxTimeoutSeconds: vector.expiry.maxTimeoutSeconds,
+        authorizationExpiresAt: testCase.authorizationExpiresAt,
+        ...(testCase.challengeExpiresAt
+          ? { challengeExpiresAt: testCase.challengeExpiresAt }
+          : {}),
+        nowMs,
+      });
+      expect(error ?? "valid", testCase.name).toBe(testCase.expected);
+    }
+  });
+
+  it("reproduces every finality decision", () => {
+    for (const testCase of vector.finality.cases) {
+      expect(
+        vector.finality.ordering.indexOf(testCase.actual) >=
+          vector.finality.ordering.indexOf(testCase.required),
+      ).toBe(testCase.expected);
+    }
   });
 });
 

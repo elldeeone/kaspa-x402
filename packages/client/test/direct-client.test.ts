@@ -221,6 +221,7 @@ describe("direct-mode client", () => {
         payTo: "kaspatest:payout",
         payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
         requestHash: "99".repeat(32),
+        authorizationExpiresAt: expect.any(String),
       },
     ]);
     expect(payment.paymentPayload.payload).toMatchObject({
@@ -329,6 +330,35 @@ describe("direct-mode client", () => {
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       paymentOutputIndex: 0,
     });
+  });
+
+  it("does not authorize an additive payment beyond its head challenge", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-07-19T00:00:00.000Z"));
+    try {
+      const provider = new FakeFundingProvider();
+      const client = makeClient({ provider, store: new MemoryChannelStore() });
+      const challengeExpiresAt = "2026-07-19T00:00:30.000Z";
+
+      await client.createPayment(
+        encodePaymentRequiredHeader(
+          makeAdditiveExactRequired({
+            amount: "20000000",
+            challengeExpiresAt,
+          }),
+        ),
+        {
+          url: "https://api.example.test/file",
+          requestHash: "96".repeat(32),
+        },
+      );
+
+      expect(provider.exactPayments[0]?.authorizationExpiresAt).toBe(
+        challengeExpiresAt,
+      );
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("rejects additive offers below their head threshold before invoking the funding adapter", async () => {
@@ -1797,6 +1827,7 @@ function makeStandardExactRequired(input: {
 function makeAdditiveExactRequired(input: {
   amount: string;
   network?: NetworkId;
+  challengeExpiresAt?: string;
 }): PaymentRequired {
   return {
     x402Version: X402_VERSION,
@@ -1825,7 +1856,8 @@ function makeAdditiveExactRequired(input: {
           additiveThresholdSompi: "10000000",
           paymentOutputIndex: 0,
           challengeId: EXACT_CHALLENGE_ID,
-          challengeExpiresAt: "2099-01-01T00:00:00.000Z",
+          challengeExpiresAt:
+            input.challengeExpiresAt ?? "2099-01-01T00:00:00.000Z",
         },
       } satisfies ExactPaymentRequirements,
     ],
@@ -1986,6 +2018,7 @@ class FakeFundingProvider implements FundingProvider {
     payTo: string;
     payToScriptPublicKey?: string;
     requestHash?: string;
+    authorizationExpiresAt?: string;
     head?: ExactPaymentRequest["head"];
   }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
@@ -2051,6 +2084,7 @@ class FakeFundingProvider implements FundingProvider {
       payTo: request.payTo,
       payToScriptPublicKey: request.payToScriptPublicKey,
       ...(request.requestHash ? { requestHash: request.requestHash } : {}),
+      authorizationExpiresAt: request.authorizationExpiresAt,
       ...(request.head ? { head: request.head } : {}),
     });
     if (this.exactMode === "artifactless") {

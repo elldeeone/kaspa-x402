@@ -42,13 +42,15 @@
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
     "proof:hosted-exact": "node scripts/proof-hosted-exact.mjs",
     "pack:public:dry-run": "node scripts/pack-public-workspaces.mjs",
-    "validate:release": "npm run build && npm test && npm run validate:schemas && npm run site:deploy:check && npm run check:site-input-guards && npm run check:browser-demo && npm run check:pnn-browser && npm run check:vendor-wasm && npm run check:demo-gateway && npm run check:admin-security && npm run check:hosted-offer-pins && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus && npm run check:exact-consensus-vector && npm run check:exact-http-vector && npm run proof:offline && npm run proof:live:check -- --write-report && npm run pack:public:dry-run >/tmp/kaspa-x402-pack.json && npm run check:diff",
+    "validate:release": "npm run build && npm test && npm run validate:schemas && npm run site:deploy:check && npm run check:site-input-guards && npm run check:browser-demo && npm run check:pnn-browser && npm run check:vendor-wasm && npm run check:demo-gateway && npm run check:admin-security && npm run check:hosted-offer-pins && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus && npm run check:exact-consensus-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run proof:offline && npm run proof:live:check -- --write-report && npm run pack:public:dry-run >/tmp/kaspa-x402-pack.json && npm run check:diff",
     "validate:release:live": "npm run validate:release && npm run proof:live:check -- --live --write-report",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
     "vectors:exact-consensus": "node scripts/generate-exact-consensus-vectors.mjs",
     "check:exact-consensus-vector": "node scripts/generate-exact-consensus-vectors.mjs --check",
     "vectors:exact-http": "node scripts/generate-exact-http-vector.mjs",
     "check:exact-http-vector": "node scripts/generate-exact-http-vector.mjs --check",
+    "vectors:exact-interop": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs",
+    "check:exact-interop-vector": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs --check",
     "check:covenant-fixtures": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs"
   },
   "workspaces": [

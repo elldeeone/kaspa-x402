@@ -10,6 +10,7 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactAuthorizationExpiryError,
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   formatSompiString,
@@ -1329,6 +1330,20 @@ export class DirectModeServer {
       profile === "additive"
         ? await this.#verifiedExactHead(accepted, payload)
         : undefined;
+    const expiryError = exactAuthorizationExpiryError({
+      maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+      authorizationExpiresAt: payload.authorization.expiresAt,
+      ...(head ? { challengeExpiresAt: head.expiresAt } : {}),
+    });
+    const expiredEvidence =
+      expiryError === "expired_authorization" ||
+      expiryError === "expired_challenge";
+    if (expiryError && !expiredEvidence) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        `exact request authorization expiry is invalid: ${expiryError}`,
+      );
+    }
     const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
     const requiredFinality = strongerExactFinality(
       this.#config.acceptedFinality,
@@ -1398,14 +1413,12 @@ export class DirectModeServer {
       );
     }
     if (
-      head &&
-      Date.parse(head.expiresAt) <= Date.now() &&
-      verification.finality !== "accepted" &&
-      verification.finality !== "confirmed"
+      expiredEvidence &&
+      !(await this.#config.store.loadExactPayment(verification.transactionId))
     ) {
       throw new KaspaX402Error(
-        "invalid_kaspa_transaction",
-        "additive exact head challenge has expired",
+        "invalid_kaspa_signature",
+        `exact request authorization expiry is invalid: ${expiryError}`,
       );
     }
     if (verification.paymentOutput.amount !== accepted.amount) {

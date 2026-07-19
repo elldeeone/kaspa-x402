@@ -9,6 +9,7 @@ import {
   decodePaymentResponseHeader,
   encodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   mcpToolCallFingerprint,
@@ -1150,6 +1151,42 @@ describe("direct-mode server", () => {
 
     expect(replay.status).toBe(402);
     expect(replay.body).toEqual({ error: "invalid_payload" });
+    expect(executed).toBe(false);
+  });
+
+  it("rejects exact authorization that outlives the advertised timeout before verification", async () => {
+    let verifierCalls = 0;
+    const setup = makeServer({
+      maxTimeoutSeconds: 1,
+      exactTransactionVerifier: {
+        verifyExactPayment() {
+          verifierCalls += 1;
+          throw new Error("must not verify an overlong authorization");
+        },
+      },
+    });
+    const payment = makeExactPayment(setup);
+    if (payment.payload.type !== "exact-transaction") {
+      throw new Error("expected exact transaction payload");
+    }
+    payment.payload.authorization.expiresAt = new Date(
+      Date.now() + 2_000,
+    ).toISOString();
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { paymentScheme: "exact" }),
+      async () => {
+        executed = true;
+        return { body: "must not run" };
+      },
+    );
+
+    expect(response).toMatchObject({
+      status: 402,
+      body: { error: "invalid_payload" },
+    });
+    expect(verifierCalls).toBe(0);
     expect(executed).toBe(false);
   });
 
@@ -3854,7 +3891,12 @@ function fakeExactAuthorization(input: {
   inputIndex: number;
   paymentOutputIndex?: number;
 }) {
-  const expiresAt = "2099-01-01T00:00:00.000Z";
+  const expiresAt = exactAuthorizationExpiresAt(
+    input.accepted.maxTimeoutSeconds,
+    input.profile === "additive"
+      ? input.accepted.extra.challengeExpiresAt
+      : undefined,
+  );
   const paymentOutputIndex = input.paymentOutputIndex ?? 0;
   const digest = exactRequestAuthorizationDigest({
     network: input.accepted.network,

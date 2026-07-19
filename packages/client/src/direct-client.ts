@@ -4,6 +4,7 @@ import {
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
   formatSompiString,
   hexToBytes,
@@ -631,6 +632,13 @@ export class DirectModeClient {
         "exact request authorization requires a canonical request hash",
       );
     }
+    const head = exactHeadHint(accepted);
+    if (profile === "additive" && !head) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "additive exact requirements must include head challenge terms",
+      );
+    }
     const exactRequest: ExactPaymentRequest = {
       network: accepted.network,
       profile,
@@ -644,22 +652,16 @@ export class DirectModeClient {
         : {}),
       requestHash: context.requestHash,
       paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
-      authorizationExpiresAt: new Date(
-        Date.now() + accepted.maxTimeoutSeconds * 1_000,
-      ).toISOString(),
+      authorizationExpiresAt: exactAuthorizationExpiresAt(
+        accepted.maxTimeoutSeconds,
+        head?.challengeExpiresAt,
+      ),
       requiredFinality: accepted.extra.finality,
       fundingSource: this.#options.fundingPolicy?.requiredSource,
     };
-    const head = exactHeadHint(accepted);
     let exact: ExactTransactionPaymentResult;
     let payload: PaymentPayload["payload"];
     let payerAddress: string | undefined;
-    if (profile === "additive" && !head) {
-      throw new KaspaX402Error(
-        "invalid_kaspa_x402_payload",
-        "additive exact requirements must include head challenge terms",
-      );
-    }
     const transactionRequest: ExactPaymentRequest = {
       ...exactRequest,
       ...(head ? { head } : {}),
@@ -1692,7 +1694,8 @@ function assertPaidFetchResponseTarget(
   let expected: URL;
   let effective: URL;
   try {
-    const browserBase = (globalThis as { location?: { href?: string } }).location?.href;
+    const browserBase = (globalThis as { location?: { href?: string } })
+      .location?.href;
     expected = browserBase
       ? new URL(requestedUrl, browserBase)
       : new URL(requestedUrl);

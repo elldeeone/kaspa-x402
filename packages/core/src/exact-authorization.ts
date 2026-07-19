@@ -26,6 +26,22 @@ export interface ExactRequestAuthorizationDigestInput {
   expiresAt: string;
 }
 
+export type ExactAuthorizationExpiryError =
+  | "invalid_max_timeout"
+  | "invalid_authorization_expiry"
+  | "expired_authorization"
+  | "authorization_exceeds_max_timeout"
+  | "invalid_challenge_expiry"
+  | "expired_challenge"
+  | "authorization_exceeds_challenge";
+
+export interface ExactAuthorizationExpiryInput {
+  maxTimeoutSeconds: number;
+  authorizationExpiresAt: string;
+  challengeExpiresAt?: string;
+  nowMs?: number;
+}
+
 /**
  * Canonical payer-authorized intent for one exact Kaspa transaction.
  *
@@ -36,23 +52,76 @@ export interface ExactRequestAuthorizationDigestInput {
 export function exactRequestAuthorizationDigest(
   input: ExactRequestAuthorizationDigestInput,
 ): Hash32Hex {
-  return sha256Hex(
-    stableStringify({
-      scope: EXACT_REQUEST_AUTHORIZATION_VERSION,
-      network: input.network,
-      profile: input.profile,
-      transactionId: input.transactionId.toLowerCase(),
-      paymentOutputIndex: input.paymentOutputIndex,
-      amount: input.amount,
-      payTo: input.payTo,
-      payToScriptPublicKey: input.payToScriptPublicKey.toLowerCase(),
-      paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
-      requestHash: input.requestHash.toLowerCase(),
-      challengeId: input.challengeId?.toLowerCase() ?? null,
-      inputIndex: input.inputIndex,
-      expiresAt: input.expiresAt,
-    }),
-  );
+  return sha256Hex(exactRequestAuthorizationPreimage(input));
+}
+
+/** UTF-8 JSON bytes hashed by {@link exactRequestAuthorizationDigest}. */
+export function exactRequestAuthorizationPreimage(
+  input: ExactRequestAuthorizationDigestInput,
+): string {
+  return stableStringify({
+    scope: EXACT_REQUEST_AUTHORIZATION_VERSION,
+    network: input.network,
+    profile: input.profile,
+    transactionId: input.transactionId.toLowerCase(),
+    paymentOutputIndex: input.paymentOutputIndex,
+    amount: input.amount,
+    payTo: input.payTo,
+    payToScriptPublicKey: input.payToScriptPublicKey.toLowerCase(),
+    paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
+    requestHash: input.requestHash.toLowerCase(),
+    challengeId: input.challengeId?.toLowerCase() ?? null,
+    inputIndex: input.inputIndex,
+    expiresAt: input.expiresAt,
+  });
+}
+
+/**
+ * Selects the payer authorization deadline. Additive authorization cannot
+ * outlive the server-issued head challenge on which it depends.
+ */
+export function exactAuthorizationExpiresAt(
+  maxTimeoutSeconds: number,
+  challengeExpiresAt?: string,
+  nowMs = Date.now(),
+): string {
+  if (!Number.isInteger(maxTimeoutSeconds) || maxTimeoutSeconds <= 0) {
+    throw new RangeError("maxTimeoutSeconds must be a positive integer");
+  }
+  const timeoutExpiresAt = nowMs + maxTimeoutSeconds * 1_000;
+  if (challengeExpiresAt === undefined) {
+    return new Date(timeoutExpiresAt).toISOString();
+  }
+  const challenge = Date.parse(challengeExpiresAt);
+  if (!Number.isFinite(challenge) || challenge <= nowMs) {
+    throw new RangeError("challengeExpiresAt must be a future timestamp");
+  }
+  return new Date(Math.min(timeoutExpiresAt, challenge)).toISOString();
+}
+
+/** Pure verifier for the exact authorization and additive challenge ordering. */
+export function exactAuthorizationExpiryError(
+  input: ExactAuthorizationExpiryInput,
+): ExactAuthorizationExpiryError | undefined {
+  const nowMs = input.nowMs ?? Date.now();
+  if (
+    !Number.isInteger(input.maxTimeoutSeconds) ||
+    input.maxTimeoutSeconds <= 0
+  ) {
+    return "invalid_max_timeout";
+  }
+  const authorization = Date.parse(input.authorizationExpiresAt);
+  if (!Number.isFinite(authorization)) return "invalid_authorization_expiry";
+  if (authorization <= nowMs) return "expired_authorization";
+  if (authorization > nowMs + input.maxTimeoutSeconds * 1_000) {
+    return "authorization_exceeds_max_timeout";
+  }
+  if (input.challengeExpiresAt === undefined) return undefined;
+  const challenge = Date.parse(input.challengeExpiresAt);
+  if (!Number.isFinite(challenge)) return "invalid_challenge_expiry";
+  if (challenge <= nowMs) return "expired_challenge";
+  if (authorization > challenge) return "authorization_exceeds_challenge";
+  return undefined;
 }
 
 export function exactRequestAuthorizationId(

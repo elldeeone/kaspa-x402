@@ -36,14 +36,22 @@ const payerAddress =
 const artifact = {
   id: additive.transactionId,
   ...additive.transaction,
-  inputs: additive.transaction.inputs.map(({ previousOutpoint, ...input }) => ({
-    ...input,
-    previousOutpoint: {
-      transactionId: previousOutpoint.txid,
-      index: previousOutpoint.index,
-    },
-    sigOpCount: 0,
-  })),
+  inputs: additive.transaction.inputs.map(
+    ({ previousOutpoint, utxo, ...input }) => ({
+      computeBudget: input.computeBudget,
+      sequence: input.sequence,
+      previousOutpoint: {
+        transactionId: previousOutpoint.txid,
+        index: previousOutpoint.index,
+      },
+      sigOpCount: 0,
+      signatureScript: input.signatureScript,
+      utxo: {
+        amount: utxo.amount,
+        scriptPublicKey: utxo.scriptPublicKey,
+      },
+    }),
+  ),
   outputs: additive.transaction.outputs.map(({ amount, ...output }) => ({
     ...output,
     value: amount,

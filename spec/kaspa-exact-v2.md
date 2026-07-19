@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: alpha.8 draft
+Status: post-alpha.8 interoperability draft
 
 This document defines the Kaspa network binding for x402 v2 `exact`. It
 supersedes `kaspa-exact-v1` for new implementations while preserving the v1
@@ -80,7 +80,7 @@ Both profiles include:
 | `amount`                     | MUST be a canonical positive uint64 sompi string. It is the entire merchant gain for this request. |
 | `asset`                      | MUST equal `KAS`.                                                                                  |
 | `payTo`                      | MUST be a valid recipient address for `network`.                                                   |
-| `maxTimeoutSeconds`          | MUST be a positive uint32.                                                                         |
+| `maxTimeoutSeconds`          | MUST be a positive uint32. It bounds payment authorization validity as defined under Expiry.       |
 | `extra.binding`              | MUST equal `kaspa-exact-v2`.                                                                       |
 | `extra.profile`              | MUST equal `standard-native` or `additive`.                                                        |
 | `extra.finality`             | MUST equal `accepted` or `confirmed` in the reference alpha. A stricter server policy is allowed.  |
@@ -255,6 +255,128 @@ payer spends exactly `amount + fee`. The previous alpha.7 construction that
 combined a threshold top-up with a separate merchant output is not valid under
 this binding.
 
+## Transaction interchange and identifiers
+
+### `kaspa-sdk-safe-json-v2.0.0`
+
+`PaymentPayload.payload.transaction` is a UTF-8 JSON string containing this
+bounded transaction projection:
+
+```json
+{
+  "id": "<32-byte transaction id hex>",
+  "version": 0,
+  "inputs": [
+    {
+      "previousOutpoint": { "transactionId": "<32-byte hex>", "index": 0 },
+      "sequence": "18446744073709551615",
+      "sigOpCount": 1,
+      "signatureScript": "<hex>",
+      "utxo": { "amount": "50000000", "scriptPublicKey": "<serialized hex>" }
+    }
+  ],
+  "outputs": [
+    {
+      "value": "20000000",
+      "scriptPublicKey": "<serialized hex>",
+      "covenant": null
+    }
+  ],
+  "lockTime": "0",
+  "subnetworkId": "0000000000000000000000000000000000000000",
+  "gas": "0",
+  "payload": "",
+  "storageMass": "63557"
+}
+```
+
+Version 1 inputs replace the version-0 `sigOpCount` commitment with the
+`computeBudget` field required by consensus. The safe projection carries
+`sigOpCount: 0` for those inputs because the JSON source type exposes both
+fields. Verifiers MUST use `computeBudget` for version 1 and MUST NOT interpret
+that zero as a version-0 sigop commitment.
+
+Rules:
+
+- uint64 values are canonical decimal strings;
+- `version`, outpoint `index`, `sigOpCount`, and `computeBudget` are JSON
+  integers in their consensus ranges;
+- byte data and hashes are even-length hex and are normalized to lowercase;
+- `scriptPublicKey` is the two-byte big-endian script version followed by the
+  script bytes;
+- every output includes `covenant`, which MUST be `null` in this binding;
+- embedded UTXO data is required for deterministic hashing and signature
+  preflight but MUST match trusted chain data before acceptance;
+- object-key order and insignificant JSON whitespace do not affect a
+  transaction identifier;
+- unknown JSON properties do not enter the consensus transaction projection
+  and MAY be rejected by an implementation;
+- omitted `lockTime`, `subnetworkId`, `gas`, and `payload` normalize to the
+  zero or empty values shown above; `storageMass` is mandatory for both exact
+  profiles.
+
+The transaction identifier is computed from the normalized consensus fields,
+not by hashing the JSON string.
+
+### Integer and byte serialization
+
+The identifier preimages use the Rusty Kaspa consensus encoding:
+
+- integers are unsigned little-endian;
+- transaction version and script version are uint16;
+- outpoint index is uint32;
+- values, sequences, gas, lock time, counts, and byte lengths are uint64;
+- a variable byte string is `uint64_length || bytes`;
+- an outpoint is the 32 transaction-id bytes followed by its uint32 index;
+- an output is uint64 value, uint16 script version, and variable script bytes;
+- version 1 outputs additionally append one byte indicating covenant presence,
+  followed by its binding only when present.
+
+### Version 0 transaction id
+
+For `standard-native`, construct this preimage:
+
+```text
+u16(version)
+u64(input count)
+for each input:
+  outpoint
+  varbytes(empty signature script)
+  u64(sequence)
+u64(output count)
+for each output:
+  output
+u64(lock time)
+20-byte subnetwork id
+u64(gas)
+varbytes(payload)
+```
+
+The version-0 transaction id is BLAKE2b-256 keyed by the UTF-8 bytes
+`TransactionID` over that preimage. It excludes signature scripts, sigop
+counts, and storage mass.
+
+### Version 1 transaction id
+
+For `additive`:
+
+1. `payloadDigest` is keyed BLAKE3-256 with domain `PayloadDigest` over the raw
+   payload bytes.
+2. `restPreimage` uses the transaction serialization above with signature
+   scripts and payload replaced by empty byte strings and with compute budgets
+   and storage mass omitted.
+3. `restDigest` is keyed BLAKE3-256 with domain `TransactionRest` over
+   `restPreimage`.
+4. The transaction-id preimage is `payloadDigest || restDigest`.
+5. The transaction id is keyed BLAKE3-256 with domain `TransactionV1Id` over
+   that 64-byte preimage.
+
+For these BLAKE3 hashes, the 32-byte key is the ASCII domain copied into a
+zero-filled 32-byte array. The BLAKE2b domain is the native variable-length
+key. `vectors/exact/interop-v1.json` carries the complete preimages and digests
+for both profiles. The same transactions are independently constructed and
+validated by the pinned Rust consensus harness.
+
 ## PaymentPayload
 
 Both profiles use one bounded transaction-artifact envelope:
@@ -314,6 +436,84 @@ The verifier MUST derive the transaction id from the canonical transaction. A
 separate client-authoritative transaction id is forbidden. If the interchange
 format includes a convenience `id`, it MUST equal the independently recomputed
 identifier.
+
+## Canonical request authorization
+
+### Payment requirements hash
+
+`paymentRequirementsHash` is SHA-256 over the UTF-8 bytes of the complete
+selected `PaymentRequirements` object after recursive canonical JSON
+serialization:
+
+- object keys are sorted in ascending UTF-16 code-unit order;
+- arrays retain their order;
+- strings, booleans, integers, and `null` use compact JSON encoding;
+- no whitespace is inserted;
+- undefined values, non-finite numbers, and non-JSON values are invalid.
+
+All documented field names are ASCII, so their ordering is identical in
+ordinary bytewise and Unicode-code-point sorts. Implementations accepting
+additional fields MUST still include them in this canonical object and hash.
+
+### Authorization digest
+
+Construct this object, using lowercase hex for every hex field and explicit
+`null` for a missing standard-native challenge:
+
+```json
+{
+  "scope": "kaspa-x402-exact-request-authorization-v1",
+  "network": "kaspa:testnet-10",
+  "profile": "additive",
+  "transactionId": "<lowercase transaction id>",
+  "paymentOutputIndex": 0,
+  "amount": "20000000",
+  "payTo": "kaspatest:...",
+  "payToScriptPublicKey": "<lowercase serialized script>",
+  "paymentRequirementsHash": "<lowercase hash>",
+  "requestHash": "<lowercase hash>",
+  "challengeId": "<lowercase hash or null>",
+  "inputIndex": 1,
+  "expiresAt": "2099-01-01T00:00:00.000Z"
+}
+```
+
+Apply the same canonical JSON serialization and SHA-256 the UTF-8 result. The
+64-byte Schnorr signature in `authorization.signature` signs this 32-byte
+digest directly. Its public key MUST be the x-only public key committed by the
+authoritative standard P2PK UTXO at `authorization.inputIndex`.
+
+The exact interoperability vector includes the selected requirements, both
+canonical JSON preimages, both SHA-256 results, signer public key, and valid
+signature. No TypeScript-specific serialization is needed to reproduce it.
+
+## Expiry
+
+Let `now` be the verifier's current time:
+
+- `authorization.expiresAt` MUST parse as a timestamp strictly after `now`;
+- it MUST be no later than `now + maxTimeoutSeconds`;
+- for additive, `challengeExpiresAt` MUST also be strictly after `now` and
+  `authorization.expiresAt` MUST be no later than `challengeExpiresAt`;
+- a client SHOULD set standard-native authorization expiry to
+  `clientNow + maxTimeoutSeconds`;
+- an additive client MUST select the earlier of that value and the advertised
+  `challengeExpiresAt`.
+
+The resource server or facilitator checks authorization ordering before
+protected work. The additive head/challenge provider checks challenge liveness
+and head state. An adapter may repeat these checks but cannot weaken them.
+
+Expiry prevents a new settlement or protected-handler execution. It does not
+invalidate an idempotent retry whose transaction and response were already
+durably accepted for the same request. An implementation MAY verify enough of
+an expired artifact to identify that exact stored result, but MUST NOT execute
+the protected handler or create a new settlement when no matching durable
+record exists.
+
+The committed interoperability vector fixes a reference clock and supplies
+positive and negative expiry cases so results do not depend on the test
+runner's wall clock.
 
 ## Verification
 
@@ -428,10 +628,27 @@ advance a head by the threshold. Standard-native remains the default and
 fallback. Operators SHOULD combine sensible thresholds, independent shards,
 trusted reconciliation, balance monitoring, and sweep/rotation policies.
 
+This is an intentional liveness and wallet-UX tradeoff of a public borrower,
+not a merchant-funds-loss path. An external advance makes transactions against
+the previous head stale. With `maxPaymentRetries: 0`, each replacement requires
+a new explicit wallet authorization. Merely hiding or authenticating the 402
+offer does not remove the on-chain public borrower. Restricting the borrower
+would require a different, pre-authorized head design and would no longer be
+the permissionless additive profile defined here.
+
 ## Finality and reorgs
 
 `accepted` means accepted under the configured trusted-node policy.
 `confirmed` means the stronger confirmation policy documented by the adapter.
+
+The binding orders finality as `mempool < accepted < confirmed`. The effective
+requirement is the stronger of the offer and resource-server policies.
+`accepted` is the alpha interoperability baseline and means the trusted node
+reports the transaction in accepted chain state, not merely in its mempool.
+There is no universal numeric confirmation depth in this alpha. An adapter
+offering `confirmed` MUST document and consistently enforce its stronger depth,
+time, or virtual-chain policy. Other implementations MUST NOT assume a numeric
+depth from the word alone.
 
 A reorg or node disagreement after response delivery is an operationally
 ambiguous settlement. The implementation MUST retain consumed evidence, mark
