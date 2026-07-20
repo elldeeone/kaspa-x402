@@ -1,6 +1,6 @@
 # Testnet Gateway
 
-Status: paid-canary-proven alpha.8 deployment on `kaspa:testnet-10`.
+Status: paid-canary-proven alpha.9 deployment on `kaspa:testnet-10`.
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
@@ -144,16 +144,16 @@ exposes `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE`. Paid retries may send
 it only over TLS to the intended gateway and do not publish or log unused
 payment headers or transaction material.
 
-## Current Alpha.8 Evidence
+## Current Alpha.9 Evidence
 
-The 2026-07-15 deployment completed a funded `standard-native` exact run:
+The 2026-07-20 deployment completed a funded `standard-native` exact run:
 
-- Worker version `d9bac848-bc14-4326-9945-7a5a5722d63a`, built from commit
-  `37a4704`;
+- Worker version `d28e6b35-54c6-459f-b8cd-02084a769593`, built from commit
+  `4997713`;
 - `/supported` advertised exact and batch settlement;
 - unpaid `/exact` returned a valid `20000000` sompi offer without inventory;
 - transaction id
-  `198191204a1b1cc5ab79e56d83621f8cf880358ef970adf545379e0b9e3584f9`;
+  `2fa08f26792721ea2b2f3e791affc6bafe7d36878d660a39dae826473cca38d7`;
 - paid request returned HTTP `200` at accepted finality;
 - identical retry returned the same settlement;
 - cross-resource reuse returned HTTP `409` with
@@ -161,11 +161,9 @@ The 2026-07-15 deployment completed a funded `standard-native` exact run:
 - the merchant outpoint was observed through an operator-controlled synced
   TN10 node.
 
-The first cutover attempt found two adapter compatibility gaps before payment
-acceptance: missing contextual KIP-9 storage mass and rejection of the Rusty
-Kaspa SDK's explicit zero v0 compute budget. Commit `37a4704` fixed both and
-added regression coverage. The transaction above is from the corrected
-deployment.
+The alpha.9 source, package, specification, vector, and live-proof gates were
+completed before deployment. The transaction above is from the released
+source and public npm package version.
 
 ## Testnet Funding
 

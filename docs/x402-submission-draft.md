@@ -40,13 +40,13 @@ gates.
 - Hosted testnet gateway: https://demo.kaspa-x402.org is a Cloudflare Worker
   with Durable Object state serving public `batch-settlement` and
   `exact-transaction` integration endpoints against live `kaspa:testnet-10`
-  chain evidence, with a scheduled public canary at `/canary`. The alpha.8
+  chain evidence, with a scheduled public canary at `/canary`. The alpha.9
   source defaults to ordinary `standard-native` exact transfers. Optional
   KIP-10 `additive` uses operator-registered durable head chains. The Worker
   holds no spending keys, and exact transaction artifacts are submitted through
   TN10 PNN/WSS.
 - Recorded live paid evidence is split intentionally: gateway docs cover hosted
-  batch evidence and the hosted exact proof; the alpha.8 private TN10
+  batch evidence and the hosted exact proof; the alpha.9 private TN10
   live harness covers replay handling and the batch escrow claim/refund
   lifecycle.
 - Reference implementation on npm under prerelease tags:

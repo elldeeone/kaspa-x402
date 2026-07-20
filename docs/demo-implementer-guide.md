@@ -1,6 +1,6 @@
 # Demo Implementer Guide
 
-Status: alpha, testnet-only guide for the deployed alpha.8 contract. The hosted
+Status: alpha, testnet-only guide for the deployed alpha.9 contract. The hosted
 gateway is an integration target, not a production or mainnet service.
 
 ## Start With The Artifacts
@@ -25,7 +25,7 @@ Install the alpha packages explicitly:
 npm install @kaspa-x402/core@alpha @kaspa-x402/client@alpha
 ```
 
-The registry `alpha` tag resolves to `0.1.0-alpha.8`. Pin the exact prerelease
+The registry `alpha` tag resolves to `0.1.0-alpha.9`. Pin the exact prerelease
 version when repeatable conformance results matter.
 
 The public npm release includes core schema/header helpers and client
@@ -58,7 +58,7 @@ Hosted capability, subject to live availability:
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - `scheme: "batch-settlement"`;
-- `scheme: "exact"` under the configured alpha.8 profile. `standard-native`
+- `scheme: "exact"` under the configured exact profile. `standard-native`
   needs no merchant inventory; optional `additive` needs an available reusable
   KIP-10 head;
 - accepted finality: `accepted`.
@@ -67,11 +67,11 @@ No mainnet profile is advertised. If `exact` is absent from `/supported` or
 `/exact` returns `503 exact_unavailable`, exact settlement is disabled or an
 additive deployment has no available head; use `batch-settlement` instead.
 
-The 2026-07-15 alpha.8 paid canary proved hosted standard-native exact,
-identical replay, and cross-resource rejection. Historical alpha.7 evidence
-also records batch deposit/voucher reuse, stale-voucher rejection, and a stable
-absolute refund DAA. Transaction and channel evidence is recorded in the
-gateway reference.
+The 2026-07-20 alpha.9 paid canary proved hosted standard-native exact,
+identical replay, and cross-resource rejection. The alpha.9 live harness also
+records both exact profiles and the batch deposit, voucher, claim, replay, and
+refund lifecycle. Transaction and channel evidence is recorded in the gateway
+reference and live testnet report.
 
 ## Exact Flow
 
@@ -133,8 +133,7 @@ KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Batch Flow
 
-The batch contract is unchanged from alpha.7 and remains the deployed alpha.8
-batch profile.
+The batch contract remains deployed alongside the alpha.9 exact profiles.
 
 Request:
 

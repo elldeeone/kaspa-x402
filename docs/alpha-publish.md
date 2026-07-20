@@ -1,8 +1,7 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.9` is the current source-release candidate. It is not yet
-published to npm, tagged, or deployed. Alpha.8 remains the public npm, GitHub,
-site, and hosted Worker release until the staged alpha.9 gates below complete.
+Status: `0.1.0-alpha.9` is published to npm, tagged, released, and deployed on
+`kaspa:testnet-10`. Its funded hosted `standard-native` exact canary passed.
 Publishes require npm authorization and must not happen accidentally from CI
 or an unauthenticated shell.
 
@@ -100,23 +99,33 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
-## Alpha.9 Source Candidate And Tarball Recheck
+## Alpha.9 Release Recheck
 
-Before publishing alpha.9, verify:
+Completed on 2026-07-20:
 
-- all seven workspace manifests and internal `@kaspa-x402/*` dependencies use
-  exactly `0.1.0-alpha.9`;
-- `npm run validate:release` passes from a clean committed source candidate;
-- the immutable `v0.1.0-alpha.9` snapshot is generated, stored, and hash-locked;
-- the four public tarballs install and import together from a clean project;
-- production dependency audit results are recorded;
-- funded TN10 evidence covers both exact profiles, replay and expiry rejection,
-  and the batch deposit, voucher, claim, replay, and refund lifecycle;
-- the release diff has completed its final security review.
-
-Only after those gates pass should the four public packages be staged for human
-npm approval. Tagging, Worker deployment, hosted canaries, and the public site
-deployment follow registry verification.
+- merged source commit `49977139b8200336968f38e83a8e6700a1e3a36c` passed
+  `npm run validate:release`, including 370 tests, schemas, immutable site,
+  browser/PNN/WASM checks, Worker dry run, SilverScript fixtures, Rusty Kaspa
+  consensus and interop vectors, offline proof, live readiness, package checks,
+  and diff hygiene;
+- the immutable `v0.1.0-alpha.9` snapshot is locked at
+  `04e12eae72b406b147d5634ed4d78b8283151558aa718fac51c727298407e256`;
+- the four public tarballs installed and imported together in a clean project
+  with zero production dependency vulnerabilities;
+- npm registry SHA-1 values match the staged tarballs: core
+  `4e568d1bfe201595c69586b0e2703661f6d5211e`, covenant
+  `efa7aec34480d704fb105141a0ca6eb03efb45a5`, client
+  `100de3ee085f7235128aaeb2307a9e1064b4791b`, and server
+  `259c20436cd36a7e26179f7536e5fb06d891a54b`;
+- the npm `alpha` dist-tag resolves to `0.1.0-alpha.9` for all four packages,
+  while `latest` remains on `0.1.0-alpha.4`;
+- annotated tag `v0.1.0-alpha.9` and its GitHub prerelease were created after
+  registry verification;
+- Worker version `d28e6b35-54c6-459f-b8cd-02084a769593`, built from commit
+  `4997713`, passed a funded hosted standard-native exact canary. Transaction
+  `2fa08f26792721ea2b2f3e791affc6bafe7d36878d660a39dae826473cca38d7`
+  settled `20000000` sompi at accepted finality, replayed idempotently, and was
+  rejected when reused for another resource.
 
 ## Alpha.8 Source Candidate And Tarball Recheck
 
@@ -227,14 +236,14 @@ Checked for alpha.5 on 2026-07-06:
 
 ## Hosted Evidence Gate
 
-For alpha.8, the source release gate is not the same as the public hosted
-gateway gate. Both are now complete for the configured `standard-native`
+For alpha.9, the source release gate is not the same as the public hosted
+gateway gate. Both are complete for the configured `standard-native`
 deployment. Working verification, PNN broadcast, accepted finality,
 idempotent replay, and cross-resource replay rejection were observed without
 merchant inventory. Optional `additive` remains separately availability-gated
 by a durable KIP-10 head.
 
-Before advertising alpha.8 source live evidence, run:
+Before advertising source live evidence, run:
 
 ```sh
 npm run proof:live:check -- --live --write-report
@@ -251,7 +260,7 @@ KASPA_X402_LIVE_CONFIRM=I_UNDERSTAND_THIS_USES_TESTNET_FUNDS \
   npm run proof:hosted-exact
 ```
 
-The expected alpha.8 live proof must include:
+The expected current live proof must include:
 
 - tiny and normal standard-native exact settlement and replay rejection;
 - additive exact settlement proving the KIP-10 successor delta equals the
@@ -396,6 +405,6 @@ Every alpha release note should state:
 - no production custody system;
 - no mainnet readiness claim;
 - package APIs and wire details can change before the first stable spec tag;
-- alpha.8 exact supports signed `exact-transaction` artifacts under default
+- alpha.9 exact supports signed `exact-transaction` artifacts under default
   standard-native or optional durable additive-head semantics;
 - live proof evidence is testnet-only.

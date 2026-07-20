@@ -6,7 +6,7 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Live testnet integration gateway (paid-canary-proven alpha.8):
+- Live testnet integration gateway (paid-canary-proven alpha.9):
   https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 

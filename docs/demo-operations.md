@@ -7,8 +7,8 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: alpha.8 Worker version
-`d9bac848-bc14-4326-9945-7a5a5722d63a`, built from commit `37a4704`. The funded
+Current deployment: alpha.9 Worker version
+`d28e6b35-54c6-459f-b8cd-02084a769593`, built from commit `4997713`. The funded
 `standard-native` exact canary passed with accepted finality, identical replay,
 and cross-resource replay rejection. The default exact profile needs no
 merchant inventory; optional `additive` uses durable KIP-10 head chains.
@@ -29,7 +29,7 @@ Important non-secret variables:
 | `KASPA_X402_PAY_TO`                          | Testnet address receiving exact payments.                                                                                                                      |
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
-| `KASPA_X402_EXACT_PROFILE`                   | Alpha.8 exact profile: `standard-native` (default) or optional `additive`.                                                                                     |
+| `KASPA_X402_EXACT_PROFILE`                   | Exact profile: `standard-native` (default) or optional `additive`.                                                                                             |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI`               | Batch escrow deposit floor. Must be at least `10000000`.                                                                                                       |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
@@ -269,8 +269,8 @@ operator pins.
 
 Also confirm that legacy observe-only `exact-transfer` evidence is rejected and
 does not return protected content. Alpha.6/alpha.7 reservation and borrow
-instructions are historical only; alpha.8 uses standard-native by default and
-reusable additive heads when explicitly enabled.
+instructions are historical only; alpha.8 and later use standard-native by
+default and reusable additive heads when explicitly enabled.
 
 ## Durable State Policy
 

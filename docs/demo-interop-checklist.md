@@ -1,7 +1,7 @@
 # Demo Interoperability Checklist
 
 Status: external-style readiness checklist for the public alpha demo surface.
-Reviewed on 2026-07-15.
+Reviewed on 2026-07-20.
 
 This checklist is written from the perspective of an implementer arriving at
 the site without repository context.
@@ -13,7 +13,7 @@ the site without repository context.
 | Can a reader find the canonical schemas?                  | Yes. `/schemas/` lists every schema with a purpose note and hash.                                                                                                                                                                          |
 | Can a reader find the supported schemes and networks?     | Yes. The homepage, specs, and gateway docs state `exact`, `batch-settlement`, `kaspa:testnet-10`, and `KAS`.                                                                                                                               |
 | Can a reader run fixture validation?                      | Yes. `/vectors/` groups fixtures by directory and `npm run validate:schemas` validates committed fixtures locally.                                                                                                                         |
-| Can a reader hit a real endpoint?                         | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch` from the paid-canary-proven alpha.8 Worker.                                                                                          |
+| Can a reader hit a real endpoint?                         | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch` from the paid-canary-proven alpha.9 Worker.                                                                                          |
 | Does the endpoint advertise current payable terms?        | Yes. Exact advertises `standard-native` under `kaspa-exact-v2`; batch retains its persisted absolute DAA timeout. Optional `additive` is available only when the operator deploys that profile with a durable head.                        |
 | Does the endpoint publish operational status?             | Yes. `/health` exposes chain evidence, metrics, enabled state, and latest canary when present; `/canary` exposes enabled state and the stored canary report after the scheduled job has run, including a release-snapshot freshness check. |
 | Does the public material imply mainnet readiness?         | No. The site and gateway docs frame the deployment as alpha and `kaspa:testnet-10` only.                                                                                                                                                   |

@@ -9,7 +9,7 @@ upstream v2 specification (`specs/x402-specification-v2.md`) and transports
 
 ## Verdict
 
-The Kaspa binding is wire-compatible with upstream x402 v2. Alpha.8 keeps the
+The Kaspa binding is wire-compatible with upstream x402 v2. Alpha.9 keeps the
 Kaspa exact evidence inside the ecosystem-defined `exact` payload as a signed
 `exact-transaction` artifact, with explicit `standard-native` and optional
 KIP-10 `additive` profiles. One cosmetic delta remains
