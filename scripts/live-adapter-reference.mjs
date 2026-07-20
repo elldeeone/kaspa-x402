@@ -335,6 +335,14 @@ export async function runLiveProof(context) {
         server: standardServer,
         pendingBroadcasts,
       });
+      report.exact.expiredAuthorization = await runExpiredExactAuthorization({
+        client,
+        server: standardServer,
+        pendingBroadcasts,
+        sdk,
+        schnorr,
+        fundingPrivateKeyHex,
+      });
       report.exact.recovery = await runExactRestartRecovery({
         client,
         baseServerConfig,
@@ -572,6 +580,7 @@ function reauthorizeExactPayload({
   requestHash,
   schnorr,
   fundingPrivateKeyHex,
+  expiresAt,
 }) {
   const replay = JSON.parse(JSON.stringify(paymentPayload));
   const accepted = replay.accepted;
@@ -588,11 +597,12 @@ function reauthorizeExactPayload({
     requestHash,
     challengeId: replay.payload.challengeId,
     inputIndex: authorization.inputIndex,
-    expiresAt: authorization.expiresAt,
+    expiresAt: expiresAt ?? authorization.expiresAt,
   });
   replay.payload.requestHash = requestHash;
   replay.payload.authorization = {
     ...authorization,
+    expiresAt: expiresAt ?? authorization.expiresAt,
     digest,
     signature: bytesToHex(
       schnorr.sign(
@@ -602,6 +612,72 @@ function reauthorizeExactPayload({
     ),
   };
   return replay;
+}
+
+async function runExpiredExactAuthorization({
+  client,
+  server,
+  pendingBroadcasts,
+  sdk,
+  schnorr,
+  fundingPrivateKeyHex,
+}) {
+  const { resource, paymentRequired } = await exactChallenge({
+    server,
+    profile: "standard-native",
+    amount: EXACT_TINY_AMOUNT,
+    label: "expired-authorization",
+  });
+  const payment = await client.createPayment(paymentRequired, {
+    url: resource.url,
+  });
+  const requestHash = payment.paymentPayload.payload.requestHash;
+  if (!requestHash)
+    throw new Error("expired-authorization payment has no request hash");
+  const transactionId = exactArtifactTransactionId(
+    sdk,
+    payment.paymentPayload.payload.transaction,
+  );
+  const expired = reauthorizeExactPayload({
+    paymentPayload: payment.paymentPayload,
+    transactionId,
+    requestHash,
+    schnorr,
+    fundingPrivateKeyHex,
+    expiresAt: new Date(Date.now() - 1_000).toISOString(),
+  });
+  let handlerExecutions = 0;
+  const broadcastsBefore = pendingBroadcasts.size;
+  const response = await server.handlePaidRequest(
+    requestWithPayment(expired, {
+      url: resource.url,
+      resource,
+      scheme: "exact",
+      amount: EXACT_TINY_AMOUNT,
+      requestHash,
+    }),
+    async () => {
+      handlerExecutions += 1;
+      return { status: 200, body: { ok: false } };
+    },
+  );
+  const broadcasts = pendingBroadcasts.size - broadcastsBefore;
+  if (
+    response.status !== 402 ||
+    response.body?.error !== "invalid_payload" ||
+    handlerExecutions !== 0 ||
+    broadcasts !== 0
+  ) {
+    throw new Error(
+      "expired exact authorization did not return the expected corrective 402 invalid_payload rejection",
+    );
+  }
+  return {
+    status: response.status,
+    error: response.body?.error,
+    handlerExecutions,
+    broadcasts,
+  };
 }
 
 async function exactChallenge({

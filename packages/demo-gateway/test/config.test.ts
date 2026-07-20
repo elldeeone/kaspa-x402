@@ -75,7 +75,14 @@ describe("gateway config", () => {
       enabled: false,
       siteBaseUrl: "https://kaspa-x402.org",
       gatewayBaseUrl: "https://demo.kaspa-x402.org",
+      releaseVersion: "0.1.0-alpha.9",
     });
+  });
+
+  it("rejects an invalid release canary version", () => {
+    expect(() => readGatewayConfig({ ...BASE_ENV, KASPA_X402_RELEASE_VERSION: "latest" })).toThrow(
+      "KASPA_X402_RELEASE_VERSION must be an alpha release version",
+    );
   });
 
   it("rejects invalid operator switch values", () => {

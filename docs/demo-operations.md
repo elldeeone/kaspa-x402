@@ -34,6 +34,7 @@ Important non-secret variables:
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
 | `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
+| `KASPA_X402_RELEASE_VERSION`                 | Immutable alpha release snapshot checked by the scheduled canary.                                                                                              |
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
 | `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact.                                                                    |
@@ -193,7 +194,7 @@ The canary checks:
 
 - `kaspa:testnet-10` REST health and virtual DAA evidence;
 - the public `payment-required` schema URL;
-- the immutable `v0.1.0-alpha.1` release snapshot with a cache-busted request;
+- the configured immutable alpha release snapshot with a cache-busted request;
 - the public docs index and expected page marker;
 - exact support advertisement only when hosted exact settlement is enabled and,
   for `additive`, a head is available, without claiming that head;

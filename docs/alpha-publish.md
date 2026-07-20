@@ -1,9 +1,8 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.8` is tagged and published as a GitHub prerelease. Its four
-public packages are published in npm and the `alpha` tag resolves to alpha.8.
-The alpha.8 Worker is deployed and its `standard-native` exact path has passed
-a funded hosted TN10 canary. No community announcement has been posted.
+Status: `0.1.0-alpha.9` is the current source-release candidate. It is not yet
+published to npm, tagged, or deployed. Alpha.8 remains the public npm, GitHub,
+site, and hosted Worker release until the staged alpha.9 gates below complete.
 Publishes require npm authorization and must not happen accidentally from CI
 or an unauthenticated shell.
 
@@ -46,6 +45,10 @@ full-outpoint voucher binding, and recovery-safe claim accounting.
 contract with `kaspa-exact-v2`: default `standard-native` exact transfers and
 an optional durable KIP-10 `additive` head profile whose exact successor delta
 is the sole merchant payment. Unanswered 402s no longer consume inventory.
+`0.1.0-alpha.9` preserves both exact profiles and batch settlement while making
+their wire formats, transaction construction, verification order, expiry
+rules, commitment preimages, and consensus cross-checks independently
+implementable from the specifications and vectors.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -96,6 +99,24 @@ links.
 The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
+
+## Alpha.9 Source Candidate And Tarball Recheck
+
+Before publishing alpha.9, verify:
+
+- all seven workspace manifests and internal `@kaspa-x402/*` dependencies use
+  exactly `0.1.0-alpha.9`;
+- `npm run validate:release` passes from a clean committed source candidate;
+- the immutable `v0.1.0-alpha.9` snapshot is generated, stored, and hash-locked;
+- the four public tarballs install and import together from a clean project;
+- production dependency audit results are recorded;
+- funded TN10 evidence covers both exact profiles, replay and expiry rejection,
+  and the batch deposit, voucher, claim, replay, and refund lifecycle;
+- the release diff has completed its final security review.
+
+Only after those gates pass should the four public packages be staged for human
+npm approval. Tagging, Worker deployment, hosted canaries, and the public site
+deployment follow registry verification.
 
 ## Alpha.8 Source Candidate And Tarball Recheck
 
