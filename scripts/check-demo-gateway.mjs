@@ -27,6 +27,8 @@ const child = spawn(
     "127.0.0.1",
     "--port",
     String(port),
+    "--var",
+    "KASPA_X402_GATEWAY_ENABLED:true",
   ],
   {
     cwd: gatewayDir,
@@ -105,8 +107,16 @@ async function smokeGateway(baseUrl) {
     "batch offer did not advertise batch-settlement",
   );
   assert(
-    batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v1",
-    "batch offer binding changed",
+    batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v2",
+    "batch offer did not advertise the Alpha.10 escrow binding",
+  );
+  assert(
+    batchRequired.accepts[0]?.extra?.templateId === "kaspa-x402-escrow-v2",
+    "batch offer did not advertise the KIP-20 escrow template",
+  );
+  assert(
+    batchRequired.accepts[0]?.extra?.claimReserveSompi === "10000000",
+    "batch offer did not advertise the Alpha.10 claim reserve",
   );
   assert(
     unsupported.status === 402 &&
@@ -121,6 +131,14 @@ async function smokeGateway(baseUrl) {
   assert(
     Array.isArray(supported.body.kinds) && supported.body.kinds.length === 2,
     "supported kinds changed",
+  );
+  const supportedBatch = supported.body.kinds.find(
+    (kind) => kind.scheme === "batch-settlement",
+  );
+  assert(
+    supportedBatch?.extra?.binding === "kaspa-escrow-v2" &&
+      supportedBatch?.extra?.templateId === "kaspa-x402-escrow-v2",
+    "supported endpoint did not expose the Alpha.10 KIP-20 batch kind",
   );
 
   return {
@@ -140,6 +158,9 @@ async function smokeGateway(baseUrl) {
     batch: {
       scheme: batchRequired.accepts[0].scheme,
       amount: batchRequired.accepts[0].amount,
+      binding: batchRequired.accepts[0].extra.binding,
+      templateId: batchRequired.accepts[0].extra.templateId,
+      claimReserveSompi: batchRequired.accepts[0].extra.claimReserveSompi,
     },
     unsupported: unsupported.body.error,
   };

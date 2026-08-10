@@ -137,7 +137,8 @@ function writeHomePage() {
   "asset": "KAS",
   "amount": "<max per-request sompi>",
   "extra": {
-    "binding": "kaspa-escrow-v1"
+    "binding": "kaspa-escrow-v2",
+    "templateId": "kaspa-x402-escrow-v2"
   }
 }`;
   writeHtml(
@@ -153,7 +154,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs the paid-canary-proven alpha.9 <code>standard-native</code> exact profile and <code>batch-settlement</code> on <code>kaspa:testnet-10</code>. The <a href="/docs/testnet-gateway/">gateway reference</a> records the deployed evidence.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.9 deployment until an explicit Alpha.10 cutover. The unversioned site describes the active ${escapeHtml(releaseVersion)} source; the <a href="/docs/testnet-gateway/">gateway reference</a> records deployed evidence separately.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -170,21 +171,21 @@ function writeHomePage() {
     <p>The claims below are engineering rationale, each specified or backed by testnet evidence. None of them is a mainnet claim.</p>
     <ul>
       <li><strong>Settlement latency close to request latency.</strong> Paying per HTTP request only works when payment confirmation is not the slow path. Kaspa's block cadence makes one-shot native payments practical at request time; the <a href="/docs/live-testnet-report/">live testnet report</a> records executed end-to-end flows.</li>
-      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). KIP-9 storage mass depends on the complete transaction shape; Kaspa does not define a universal 0.1 KAS consensus dust floor. The reference runtime applies a conservative 10,000,000 sompi output policy. <a href="/spec/kaspa-batch-settlement-v1/">Batch-settlement</a> vouchers can price individual requests below that application policy.</li>
+      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). KIP-9 storage mass depends on the complete transaction shape; Kaspa does not define a universal 0.1 KAS consensus dust floor. The reference runtime applies a conservative 10,000,000 sompi output policy. <a href="/spec/kaspa-batch-settlement-v2/">Batch-settlement</a> vouchers can price individual requests below that application policy.</li>
       <li><strong>Direct verification, no facilitator lock-in.</strong> Kaspa is UTXO-native, so a server can verify and settle against a node it trusts: payment identity is bound to transaction ids, outpoints, and script-public-key material rather than to a hosted intermediary. A <a href="/spec/facilitator-profile/">self-hosted facilitator profile</a> exists for x402 <code>/supported</code>, <code>/verify</code>, <code>/settle</code> compatibility, but it is optional.</li>
-      <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v1/">batch settlement</a> funds a covenant-backed escrow once, signs a cumulative voucher per paid request, and touches the chain again only at claim or refund time.</li>
+      <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v2/">batch settlement</a> creates one singleton KIP-20 genesis, signs lifetime cumulative ceilings off-chain, supports repeated partial claims and same-lineage top-ups, and ends with a timed refund. The stable covenant ID and A/S/T accounting survive successor rotation and runtime restart.</li>
     </ul>
 
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
-    <p><code>batch-settlement</code> — repeated or variable-cost requests against escrow/channel state. Spec: <a href="/spec/kaspa-batch-settlement-v1/">kaspa-batch-settlement-v1</a>.</p>
+    <p><code>batch-settlement</code> — repeated or variable-cost requests against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v2/">kaspa-batch-settlement-v2</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
 
     <h2>Start here</h2>
     <ul>
-      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v1/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v2/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
       <li><strong>Testing:</strong> use the <a href="/docs/testnet-gateway/">hosted gateway reference</a> and the <a href="/demo/">browser demo</a>.</li>
       <li><strong>Reviewing:</strong> start with the <a href="/docs/security-threat-model/">threat model</a>, <a href="/docs/live-testnet-report/">live testnet report</a>, and <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
@@ -392,7 +393,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs the paid-canary-proven alpha.9 <code>standard-native</code> exact profile; see the <a href="/docs/testnet-gateway/">gateway reference</a> for deployed evidence.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or Alpha.10 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.9 deployment until an explicit cutover; see the <a href="/docs/testnet-gateway/">gateway reference</a> for deployed evidence.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -470,12 +471,52 @@ function writeDemoPage() {
       <label for="demo-pay-to">Pay-to address</label>
       <input id="demo-pay-to" type="text" spellcheck="false" placeholder="kaspatest:...">
       <div id="demo-batch-fields" hidden>
+        <h3>Alpha.10 Batch Requirements</h3>
         <label for="demo-server-public-key">Server public key</label>
-        <input id="demo-server-public-key" type="text" spellcheck="false" value="0000000000000000000000000000000000000000000000000000000000000000">
+        <input id="demo-server-public-key" type="text" spellcheck="false" value="22222222222222222222222222222222222222222222222222222222222222bb">
         <label for="demo-min-deposit">Minimum deposit (sompi)</label>
         <input id="demo-min-deposit" type="text" inputmode="numeric" value="20000000">
         <label for="demo-refund-daa">Refund timeout DAA</label>
         <input id="demo-refund-daa" type="text" inputmode="numeric" value="1000000">
+        <h3>Current Lane And Voucher</h3>
+        <p class="muted"><code>covenantId</code> is the stable KIP-20 lineage; it does not locate the UTXO. The current outpoint and script must be persisted and advanced after every accepted claim or top-up.</p>
+        <label for="demo-channel-id">Channel id</label>
+        <input id="demo-channel-id" type="text" spellcheck="false" value="4444444444444444444444444444444444444444444444444444444444444444">
+        <label for="demo-covenant-id">Covenant id (stable)</label>
+        <input id="demo-covenant-id" type="text" spellcheck="false" value="7777777777777777777777777777777777777777777777777777777777777777">
+        <div class="demo-grid">
+          <label>Current outpoint txid
+            <input id="demo-current-txid" type="text" spellcheck="false" value="8888888888888888888888888888888888888888888888888888888888888888">
+          </label>
+          <label>Current outpoint index
+            <input id="demo-current-index" type="number" min="0" max="4294967295" value="1">
+          </label>
+        </div>
+        <label for="demo-current-script-public-key">Current serialized script public key</label>
+        <textarea id="demo-current-script-public-key" rows="2" spellcheck="false">0000aa20055732f4cde47799ad439700e5055c9670feaaec97381746f908584bb39f980987</textarea>
+        <div class="demo-grid">
+          <label>Current covenant value (V)
+            <input id="demo-funding-amount" type="text" inputmode="numeric" value="88300000">
+          </label>
+          <label>Lifetime charged (A)
+            <input id="demo-charged-amount" type="text" inputmode="numeric" value="2500000">
+          </label>
+          <label>Lifetime claimed (S)
+            <input id="demo-claimed-amount" type="text" inputmode="numeric" value="1700000">
+          </label>
+          <label>Signed lifetime ceiling (T)
+            <input id="demo-signed-max" type="text" inputmode="numeric" value="30000000">
+          </label>
+          <label>Advertised claim reserve (R)
+            <input id="demo-claim-reserve" type="text" inputmode="numeric" value="10000000">
+          </label>
+          <label>Partial claim preview (D)
+            <input id="demo-partial-claim" type="text" inputmode="numeric" value="800000">
+          </label>
+        </div>
+        <label for="demo-voucher-signature">Voucher signature (schema-only sample)</label>
+        <textarea id="demo-voucher-signature" rows="2" spellcheck="false">cdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcdcd</textarea>
+        <p class="muted">The preview enforces <code>0 &lt;= S &lt;= A &lt;= T</code> and <code>(T - S) + R &lt;= V</code>. A partial claim advances <code>S</code> and reduces <code>V</code>; <code>A</code>, <code>T</code>, the voucher signature, and <code>covenantId</code> stay unchanged.</p>
       </div>
       <div class="demo-actions">
         <button type="button" id="demo-build-offer">Build Offer</button>
@@ -487,23 +528,27 @@ function writeDemoPage() {
     </section>
 
     <section class="demo-panel" aria-labelledby="demo-mock">
-      <h2 id="demo-mock">Exact Mock Flow</h2>
-      <p class="muted">Use this to rehearse the 402 retry envelope against a mock or local gateway. The generated request authorization is a schema-only placeholder, not a valid signature. A real payer must derive and sign the canonical authorization digest, and a real gateway must independently verify and settle the transaction artifact.</p>
-      <label for="demo-transaction">Signed transaction artifact</label>
-      <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; a deterministic placeholder is used if empty"></textarea>
-      <div class="demo-grid">
-        <label>Payment output index
-          <input id="demo-output-index" type="number" min="0" max="4294967295" value="0">
-        </label>
-        <label>Observed transaction id
-          <input id="demo-transaction-id" type="text" spellcheck="false" placeholder="required 64 hex characters">
-        </label>
+      <h2 id="demo-mock">Mock Payment Retry</h2>
+      <p class="muted">Use this to rehearse the selected 402 retry envelope. Exact uses a schema-only request authorization. Batch uses a schema-only voucher signature and shows the current lane plus a partial-claim successor. These placeholders are not valid settlement evidence.</p>
+      <div id="demo-exact-payment-fields">
+        <label for="demo-transaction">Signed transaction artifact</label>
+        <textarea id="demo-transaction" rows="4" spellcheck="false" placeholder="safe JSON Transaction object from the SDK; a deterministic placeholder is used if empty"></textarea>
+        <div class="demo-grid">
+          <label>Payment output index
+            <input id="demo-output-index" type="number" min="0" max="4294967295" value="0">
+          </label>
+          <label>Observed transaction id
+            <input id="demo-transaction-id" type="text" spellcheck="false" placeholder="required 64 hex characters">
+          </label>
+        </div>
       </div>
       <div class="demo-actions">
         <button type="button" id="demo-build-payment">Build Payment Retry</button>
         <button type="button" id="demo-copy-signature">Copy PAYMENT-SIGNATURE</button>
-        <button type="button" id="demo-check-tx">Check Tx Status</button>
-        <button type="button" id="demo-broadcast-tx">Broadcast Transaction JSON</button>
+        <span id="demo-exact-payment-actions" class="demo-inline-actions">
+          <button type="button" id="demo-check-tx">Check Tx Status</button>
+          <button type="button" id="demo-broadcast-tx">Broadcast Transaction JSON</button>
+        </span>
       </div>
       <label for="demo-payment-signature">PAYMENT-SIGNATURE</label>
       <textarea id="demo-payment-signature" readonly rows="4"></textarea>
@@ -558,6 +603,9 @@ function writePnnSpikeJson() {
         "sdk initialization",
         "throwaway testnet key generation",
         "exact header generation",
+        "Alpha.10 batch voucher header generation",
+        "batch A/S/T/V/R invariant checks",
+        "batch partial-claim successor preview",
         "mixed-offer narrowing",
         "node info",
         "DAA score",
@@ -571,7 +619,7 @@ function writePnnSpikeJson() {
     },
     worker: {
       status:
-        "live paid-canary-proven alpha.9 Worker deployment at https://demo.kaspa-x402.org",
+        "live paid-canary-proven alpha.9 Worker deployment at https://demo.kaspa-x402.org; Alpha.10 cutover not yet performed",
       verifiedCapabilities: [
         "REST chain health",
         "Durable Object state",
@@ -654,14 +702,17 @@ function copyCollection(files, routeRoot) {
 }
 
 function releaseArtifacts(copiedArtifacts) {
-  const releaseSources = new Set([
+  const releaseSources = [
     ...schemaFiles,
     ...specFiles,
     ...releaseDocFiles,
     ...vectorFiles,
-  ]);
-  return copiedArtifacts.filter((artifact) =>
-    releaseSources.has(artifact.source),
+  ];
+  const copiedBySource = new Map(
+    copiedArtifacts.map((artifact) => [artifact.source, artifact]),
+  );
+  return releaseSources.map(
+    (source) => copiedBySource.get(source) ?? artifactRecord(source, source),
   );
 }
 

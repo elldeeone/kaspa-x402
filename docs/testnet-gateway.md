@@ -55,14 +55,18 @@ The gateway uses:
 - exact price `20000000` sompi;
 - batch voucher charge `500` sompi;
 - batch minimum deposit `20000000` sompi;
+- batch claim reserve `10000000` sompi;
 - batch refund horizon of current virtual DAA plus at most `36000`;
 - minimum server refund safety lead of `1000` DAA score.
 
 Kaspa has no universal `10000000` sompi consensus dust floor. KIP-9 storage
 mass depends on the complete transaction shape. The reference Worker uses
-`10000000` sompi as a conservative application policy for on-chain outputs.
+`10000000` sompi as a conservative application policy for on-chain outputs,
+including the advertised batch successor reserve.
 
-Batch offers carry `extra.binding: "kaspa-escrow-v1"`. Exact offers carry
+The deployed Alpha.9 Worker still emits batch offers with
+`extra.binding: "kaspa-escrow-v1"`; this is deployment evidence, not the active
+Alpha.10 source contract. Its exact offers carry
 `extra.binding: "kaspa-exact-v2"` and an explicit profile:
 
 - `standard-native` needs no merchant head inventory;

@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import type {
   BatchCommitmentRecord,
+  BatchSettlementAttemptRecord,
   ClaimAttemptRecord,
   ExactHeadRecord,
   ExactPaymentRecord,
@@ -17,6 +18,7 @@ import {
 import { GatewayLedger, type GatewayStorage } from "../src/state.js";
 
 const CHANNEL_ID = "11".repeat(32);
+const COVENANT_ID = "10".repeat(32);
 const REQUEST = "22".repeat(32);
 const REQUIREMENTS = "33".repeat(32);
 const PAYLOAD = "44".repeat(32);
@@ -285,6 +287,178 @@ describe("gateway durable ledger", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("persists protected batch work before atomically applying settlement", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const previous = channel();
+    await ledger.saveChannel(previous);
+    const attempt = batchSettlementAttempt(previous);
+
+    await expect(ledger.claimBatchSettlement(attempt)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(
+      ledger.claimBatchSettlement({
+        ...attempt,
+        createdAt: "2026-07-07T00:00:01.000Z",
+      }),
+    ).resolves.toMatchObject({ created: false });
+    await expect(
+      ledger.claimBatchSettlement({
+        ...attempt,
+        attemptId: OTHER_TX,
+        paymentPayloadHash: OTHER_TX,
+      }),
+    ).rejects.toThrow("pending batch settlement");
+    await expect(
+      ledger.beginBatchHandler(ATTEMPT, "2026-07-07T00:00:02.000Z"),
+    ).resolves.toBe(true);
+    await expect(
+      ledger.beginBatchHandler(ATTEMPT, "2026-07-07T00:00:03.000Z"),
+    ).resolves.toBe(false);
+    await ledger.recordBatchHandlerResult(
+      ATTEMPT,
+      { body: "download", chargedAmount: "100" },
+      "2026-07-07T00:00:03.000Z",
+    );
+
+    const commit = settlementCommit(previous, {
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+    await ledger.commitSettlement(commit);
+
+    await expect(
+      ledger.loadBatchSettlementAttempt(ATTEMPT),
+    ).resolves.toMatchObject({
+      status: "applied",
+      paymentPayloadHash: PAYLOAD,
+      handlerResult: { body: "download", chargedAmount: "100" },
+    });
+    await expect(ledger.loadChannel(CHANNEL_ID)).resolves.toMatchObject({
+      covenantId: COVENANT_ID,
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "100",
+    });
+  });
+
+  it("rejects malformed batch settlement attempts before durable state changes", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const current = channel();
+    await ledger.saveChannel(current);
+    const base = batchSettlementAttempt(current);
+    const invalid: Array<{
+      name: string;
+      attempt: BatchSettlementAttemptRecord;
+      message: string;
+    }> = [
+      {
+        name: "uppercase attempt id",
+        attempt: { ...base, attemptId: "AA".repeat(32) },
+        message: "canonical lowercase",
+      },
+      {
+        name: "zero covenant id",
+        attempt: {
+          ...base,
+          covenantId: "00".repeat(32),
+          expected: { ...base.expected, covenantId: "00".repeat(32) },
+        },
+        message: "canonical lowercase",
+      },
+      {
+        name: "uppercase request fingerprint",
+        attempt: {
+          ...base,
+          requestFingerprint: "AB".repeat(32),
+        },
+        message: "request fingerprint",
+      },
+      {
+        name: "uppercase requirements hash",
+        attempt: {
+          ...base,
+          paymentRequirementsHash: "CD".repeat(32),
+        },
+        message: "payment requirements hash",
+      },
+      {
+        name: "uppercase payload hash",
+        attempt: {
+          ...base,
+          paymentPayloadHash: "EF".repeat(32),
+        },
+        message: "payment payload hash",
+      },
+      {
+        name: "uppercase active outpoint transaction id",
+        attempt: {
+          ...base,
+          expected: {
+            ...base.expected,
+            activeOutpoint: {
+              ...base.expected.activeOutpoint,
+              txid: "AA".repeat(32),
+            },
+          },
+        },
+        message: "active outpoint transaction id",
+      },
+      {
+        name: "noncanonical maximum charge",
+        attempt: { ...base, maximumCharge: "01" },
+        message: "canonical",
+      },
+      {
+        name: "invalid accounting",
+        attempt: {
+          ...base,
+          expected: {
+            ...base.expected,
+            chargedCumulativeAmount: "101",
+            signedMaxClaimable: "100",
+          },
+        },
+        message: "signed cumulative ceiling",
+      },
+      {
+        name: "invalid date",
+        attempt: { ...base, updatedAt: "not-a-date" },
+        message: "ISO date string",
+      },
+    ];
+
+    for (const testCase of invalid) {
+      await expect(
+        ledger.claimBatchSettlement(testCase.attempt),
+        testCase.name,
+      ).rejects.toThrow(testCase.message);
+    }
+    await expect(
+      ledger.loadBatchSettlementAttempt(base.attemptId),
+    ).resolves.toBeUndefined();
+  });
+
+  it("fails a started batch handler closed for explicit recovery", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const previous = channel();
+    await ledger.saveChannel(previous);
+    await ledger.claimBatchSettlement(batchSettlementAttempt(previous));
+    await ledger.beginBatchHandler(ATTEMPT, "2026-07-07T00:00:02.000Z");
+    await ledger.markBatchHandlerRecoveryRequired(
+      ATTEMPT,
+      "handler outcome is uncertain",
+      "2026-07-07T00:00:03.000Z",
+    );
+
+    await expect(
+      ledger.loadBatchSettlementAttempt(ATTEMPT),
+    ).resolves.toMatchObject({
+      status: "pending",
+      recoveryReason: "handler outcome is uncertain",
+    });
+  });
+
   it("serializes lock ownership with expiring leases", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     await expect(
@@ -375,13 +549,104 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX })),
     ).rejects.toThrow("already pending");
+    const broadcast: ClaimAttemptRecord = {
+      ...first,
+      status: "broadcast",
+      finality: "broadcast",
+    };
+    const accepted: ClaimAttemptRecord = {
+      ...broadcast,
+      status: "accepted",
+      finality: "accepted",
+    };
+    await ledger.saveClaimAttempt(broadcast);
+    await ledger.saveClaimAttempt(accepted);
     await ledger.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
     await expect(
       ledger.applyClaimAttempt(
         { ...channel(), claimedCumulativeAmount: "100" },
-        first,
+        accepted,
       ),
     ).rejects.toThrow("channel state changed");
+  });
+
+  it("binds claim attempts to one immutable artifact and monotonic state", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.saveChannel(channel());
+    const pending = claimAttempt({ attemptId: ATTEMPT });
+    await ledger.saveClaimAttempt(pending);
+
+    await expect(
+      ledger.saveClaimAttempt({ ...pending, transactionId: OTHER_TX }),
+    ).rejects.toThrow("immutable artifact");
+    await expect(
+      ledger.saveClaimAttempt({ ...pending, transaction: "cd".repeat(32) }),
+    ).rejects.toThrow("immutable artifact");
+    await expect(
+      ledger.saveClaimAttempt({ ...pending, requiredFinality: "confirmed" }),
+    ).rejects.toThrow("immutable artifact");
+    await expect(
+      ledger.saveClaimAttempt({
+        ...pending,
+        status: "accepted",
+        finality: "accepted",
+      }),
+    ).rejects.toThrow("status transition");
+
+    const broadcast: ClaimAttemptRecord = {
+      ...pending,
+      status: "broadcast",
+      finality: "broadcast",
+    };
+    await ledger.saveClaimAttempt(broadcast);
+    await expect(ledger.saveClaimAttempt(pending)).rejects.toThrow(
+      "status transition",
+    );
+    await expect(
+      ledger.saveClaimAttempt({
+        ...broadcast,
+        status: "applied",
+        finality: "accepted",
+      }),
+    ).rejects.toThrow("applied atomically");
+
+    const accepted: ClaimAttemptRecord = {
+      ...broadcast,
+      status: "accepted",
+      finality: "accepted",
+    };
+    await ledger.saveClaimAttempt(accepted);
+    await expect(
+      ledger.saveClaimAttempt({ ...accepted, finality: "confirmed" }),
+    ).rejects.toThrow("same-state update");
+    await expect(
+      ledger.applyClaimAttempt(
+        { ...channel(), claimedCumulativeAmount: "100" },
+        { ...accepted, transactionId: OTHER_TX },
+      ),
+    ).rejects.toThrow("persisted accepted attempt");
+    const changedChannel = {
+      ...channel(),
+      chargedCumulativeAmount: "1",
+      signedMaxClaimable: "1",
+    };
+    await ledger.saveChannel(changedChannel);
+    await expect(
+      ledger.applyClaimAttempt(
+        { ...changedChannel, claimedCumulativeAmount: "100" },
+        {
+          ...accepted,
+          chargedCumulativeAmount: "1",
+          signedMaxClaimable: "1",
+        },
+      ),
+    ).rejects.toThrow("persisted accepted attempt");
+    await expect(ledger.loadOpenClaimAttempt(CHANNEL_ID)).resolves.toEqual(
+      accepted,
+    );
+    await expect(ledger.loadChannel(CHANNEL_ID)).resolves.toEqual(
+      changedChannel,
+    );
   });
 });
 
@@ -445,10 +710,20 @@ function channel(
 ): ServerChannelRecord {
   return {
     channelId: CHANNEL_ID,
+    covenantId: COVENANT_ID,
+    genesisEvidence: {
+      covenantId: COVENANT_ID,
+      authorizingInput: { txid: FUNDING_TX, index: 1 },
+      genesisOutpoint: { txid: TX, index: 0 },
+      genesisScriptPublicKey: SCRIPT,
+      genesisAmount: "1000",
+      totalOutputCount: 1,
+      authorizedOutputCount: 1,
+    },
     channelConfig: {
       network: "kaspa:testnet-10",
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v1",
+      templateId: "kaspa-x402-escrow-v2",
       clientPublicKey: "12".repeat(32),
       serverPublicKey: "13".repeat(32),
       payTo: "kaspatest:payout",
@@ -476,11 +751,17 @@ function settlementCommit(
   const commitment: BatchCommitmentRecord = {
     commitmentId: "15".repeat(32),
     channelId: previous.channelId,
+    covenantId: previous.covenantId,
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
+    paymentPayloadHash: PAYLOAD,
     activeOutpoint: previous.activeOutpoint,
     activeScriptPublicKey: previous.activeScriptPublicKey,
-    voucher: { amount: "100", signature: "16".repeat(64) },
+    voucher: {
+      covenantId: previous.covenantId,
+      amount: "100",
+      signature: "16".repeat(64),
+    },
     chargedAmount: "100",
     chargedCumulativeBefore: previous.chargedCumulativeAmount,
     chargedCumulativeAfter: updated.chargedCumulativeAmount,
@@ -494,17 +775,52 @@ function settlementCommit(
     response: { status: 200, headers: {}, body: "ok" },
   };
   return {
+    batchAttemptId: ATTEMPT,
     channel: updated,
     commitment,
     expected: {
       channelId: previous.channelId,
+      covenantId: previous.covenantId,
+      fundingAmount: previous.fundingAmount,
       chargedCumulativeAmount: previous.chargedCumulativeAmount,
       claimedCumulativeAmount: previous.claimedCumulativeAmount,
       signedMaxClaimable: previous.signedMaxClaimable,
+      voucherSignature: previous.voucherSignature,
       activeOutpoint: previous.activeOutpoint,
       activeScriptPublicKey: previous.activeScriptPublicKey,
       status: previous.status,
     },
+  };
+}
+
+function batchSettlementAttempt(
+  previous: ServerChannelRecord,
+  overrides: Partial<BatchSettlementAttemptRecord> = {},
+): BatchSettlementAttemptRecord {
+  return {
+    attemptId: ATTEMPT,
+    channelId: previous.channelId,
+    covenantId: previous.covenantId,
+    requestFingerprint: REQUEST,
+    paymentRequirementsHash: REQUIREMENTS,
+    paymentPayloadHash: PAYLOAD,
+    maximumCharge: "100",
+    expected: {
+      channelId: previous.channelId,
+      covenantId: previous.covenantId,
+      fundingAmount: previous.fundingAmount,
+      chargedCumulativeAmount: previous.chargedCumulativeAmount,
+      claimedCumulativeAmount: previous.claimedCumulativeAmount,
+      signedMaxClaimable: previous.signedMaxClaimable,
+      voucherSignature: previous.voucherSignature,
+      activeOutpoint: previous.activeOutpoint,
+      activeScriptPublicKey: previous.activeScriptPublicKey,
+      status: previous.status,
+    },
+    status: "pending",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+    ...overrides,
   };
 }
 
@@ -621,6 +937,7 @@ function claimAttempt(
   return {
     attemptId: ATTEMPT,
     channelId: CHANNEL_ID,
+    covenantId: COVENANT_ID,
     activeOutpoint: { txid: TX, index: 0 },
     activeScriptPublicKey: SCRIPT,
     fundingAmount: "1000",
@@ -630,6 +947,8 @@ function claimAttempt(
     signedMaxClaimable: "0",
     channelStatus: "active",
     transaction: "aa",
+    transactionId: TX,
+    requiredFinality: "accepted",
     status: "pending",
     ...overrides,
   };

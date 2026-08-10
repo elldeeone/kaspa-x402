@@ -108,20 +108,15 @@ function checkCopiedArtifacts() {
   const releasePath = readJson(
     path.join(outDir, "site-manifest.json"),
   ).releasePath;
-  const releaseLock = readJson(
-    path.join(root, RELEASE_LOCK_DIR, `${releasePath}.json`),
-  );
   for (const source of activeFiles) {
     assertSameBytes(path.join(root, source), path.join(outDir, source), source);
   }
-  if (releaseLock.frozen !== true) {
-    for (const source of releaseFiles) {
-      assertSameBytes(
-        path.join(root, source),
-        path.join(outDir, releasePath, source),
-        `${releasePath}/${source}`,
-      );
-    }
+  for (const source of releaseFiles) {
+    assertSameBytes(
+      path.join(root, source),
+      path.join(outDir, releasePath, source),
+      `${releasePath}/${source}`,
+    );
   }
 }
 
@@ -136,10 +131,8 @@ function checkMetadataFreshness() {
   );
   const releasePackages = { releaseVersion: manifest.releaseVersion, packages };
   const dirtyInputs = dirtyPublishableInputs();
-  const currentLock = readJson(
-    path.join(root, RELEASE_LOCK_DIR, `v${manifest.releaseVersion}.json`),
-  );
-  const releaseDirtyInputs = currentLock.frozen === true ? [] : dirtyInputs;
+  const currentLock = readReleaseLock(manifest.releaseVersion);
+  const releaseDirtyInputs = currentLock?.frozen === true ? [] : dirtyInputs;
   const expectedReleaseHash = releaseContentHash(
     manifest.releasePath,
     lockedReleaseMetadata(release),
@@ -212,6 +205,19 @@ function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
     metadata: `/v${entry.version}/release.json`,
     contentSha256: entry.contentSha256,
   }));
+  if (
+    !releaseLocks.some((entry) => entry.version === manifest.releaseVersion)
+  ) {
+    expectedReleases.push({
+      version: manifest.releaseVersion,
+      path: `/v${manifest.releaseVersion}/`,
+      metadata: `/v${manifest.releaseVersion}/release.json`,
+      contentSha256: undefined,
+    });
+    expectedReleases.sort((left, right) =>
+      compareVersions(left.version, right.version),
+    );
+  }
   if (JSON.stringify(manifest.releases) !== JSON.stringify(expectedReleases))
     fail("site-manifest release list is stale");
 
@@ -436,7 +442,7 @@ function checkContent() {
 
   const activeTextFiles = textFiles.filter((file) => {
     const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
-    return !/^v0\.1\.0-alpha\.[0-6]\//.test(relative);
+    return !/^v[^/]+\//.test(relative);
   });
   const staleCurrentClaims = [
     /standard-output storage-mass floor(?:,|\s*\()/i,
@@ -469,6 +475,26 @@ function checkContent() {
   const specIndex = path.join(outDir, "spec/index.html");
   const docsIndex = path.join(outDir, "docs/index.html");
   assertContains(home, "Payment schemes", "homepage scheme heading");
+  assertContains(
+    home,
+    "kaspa-batch-settlement-v2",
+    "homepage active batch specification",
+  );
+  assertNotContains(
+    home,
+    "kaspa-batch-settlement-v1",
+    "homepage excludes superseded batch binding",
+  );
+  assertContains(
+    path.join(outDir, "demo/index.html"),
+    "Current Lane And Voucher",
+    "browser demo exposes Alpha.10 batch lane state",
+  );
+  assertContains(
+    path.join(outDir, "assets/demo.js"),
+    'binding: "kaspa-escrow-v2"',
+    "browser demo uses active escrow binding",
+  );
   for (const stale of [
     "kaspa-exact-v1",
     "live-covenant-proof-harness",
@@ -479,10 +505,7 @@ function checkContent() {
   for (const stale of ["public-proposal", "demo-interop-checklist"]) {
     assertNotContains(docsIndex, stale, `active docs index excludes ${stale}`);
   }
-  for (const privatePackage of [
-    "@kaspa-x402/cli",
-    "@kaspa-x402/facilitator",
-  ]) {
+  for (const privatePackage of ["@kaspa-x402/cli", "@kaspa-x402/facilitator"]) {
     assertNotContains(
       home,
       `<code>${privatePackage}</code>`,
@@ -491,6 +514,11 @@ function checkContent() {
   }
 
   const redirectsPath = path.join(outDir, "_redirects");
+  assertNotContains(
+    redirectsPath,
+    "/spec/kaspa-exact-v1/",
+    "active redirects exclude historical exact binding",
+  );
   for (const { from, to, status } of ACTIVE_REDIRECTS) {
     assertContains(
       redirectsPath,

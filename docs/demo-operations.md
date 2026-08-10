@@ -30,7 +30,9 @@ Important non-secret variables:
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
 | `KASPA_X402_EXACT_PROFILE`                   | Exact profile: `standard-native` (default) or optional `additive`.                                                                                             |
+| `KASPA_X402_BATCH_AMOUNT`                    | Maximum per-request Alpha.10 batch charge in sompi.                                                                                                            |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI`               | Batch escrow deposit floor. Must be at least `10000000`.                                                                                                       |
+| `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised Alpha.10 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.   |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
 | `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
@@ -49,13 +51,48 @@ Secret variables:
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration, reconciliation, and stats endpoints. Set with `wrangler secret put`; do not commit it. |
 
+## Alpha.10 Cutover
+
+Alpha.10 is a clean-state cutover, not an Alpha.9 Durable Object migration.
+The Worker resolves `GATEWAY_STATE` with the logical object name
+`demo-gateway-alpha.10`; it MUST NOT read, import, or overwrite the Alpha.9
+object.
+
+1. Create the new Alpha.10 release snapshot and content lock, pass the release
+   gate from a clean checkout, then deploy the static apex and `www` site first.
+   Verify the Alpha.10 release metadata, schemas, vectors, and docs publicly.
+2. Disable the Alpha.9 public gateway before replacing its Worker. Keep the
+   Alpha.9 deployment and Durable Object untouched for rollback evidence.
+3. Confirm the Worker advertises `0.1.0-alpha.10`, `kaspa-escrow-v2`,
+   `kaspa-x402-escrow-v2`, and R, and resolves fresh
+   `demo-gateway-alpha.10` state.
+4. Validate the disabled Alpha.10 Worker, then run funded exact and batch
+   canaries through an operator-controlled preview. Re-register any verified,
+   still-unspent additive heads; exact replay records, payment identifiers, and
+   batch channels are intentionally not copied from Alpha.9.
+5. Enable the public Alpha.10 Worker only after its canaries pass. New batch
+   clients must open singleton v2 genesis lanes; no older batch lane continues
+   across the cutover.
+
 ## Deploy
+
+Do not deploy the Alpha.10 Worker until the locked Alpha.10 static site is live.
+The Worker canary reads `KASPA_X402_RELEASE_VERSION`, so Worker-first deployment
+would fail its release-snapshot check.
 
 From the repository root:
 
 ```sh
 npm --workspace @kaspa-x402/demo-gateway run build
 npm --workspace @kaspa-x402/demo-gateway exec -- wrangler deploy --config wrangler.jsonc
+```
+
+The checked-in candidate configuration is fail-closed with
+`KASPA_X402_GATEWAY_ENABLED=false`. After the disabled deployment and funded
+operator canaries pass, the separate public-enable deployment is:
+
+```sh
+npm --workspace @kaspa-x402/demo-gateway exec -- wrangler deploy --config wrangler.jsonc --var KASPA_X402_GATEWAY_ENABLED:true
 ```
 
 After deployment, verify:
@@ -139,9 +176,9 @@ Rollback procedure:
    deliberately enabled and tested.
 5. Record the version, reason, and verification result in the operator notes.
 
-If the bad deployment changed durable state shape, disable the gateway first
-with `KASPA_X402_GATEWAY_ENABLED=false`, then inspect state compatibility before
-rolling forward again.
+Alpha.9 and Alpha.10 use separate logical Durable Objects. A rollback to the
+Alpha.9 Worker must continue resolving its Alpha.9 state; never point either
+Worker version at the other release's object.
 
 ## Emergency Disable
 
@@ -289,12 +326,13 @@ Policy for the public alpha:
 - production operators should design their own backup and state-partitioning
   policy before using this code outside the hosted demo.
 
-When a release changes wire format or durable state, document a release-specific
-migration before deployment. Disable the gateway before any destructive state
-change, preserve replay evidence where formats remain compatible, and require
-fresh paid exact and batch canaries before re-enabling public guidance. The
-immutable [release snapshots](/releases/) retain the earlier alpha cutover
-records.
+For Alpha.10, `demo-gateway-alpha.10` starts empty by design. This resets exact
+replay and payment-identifier records, additive-head inventory, batch channels,
+settlement commitments, counters, metrics, and canary history. Re-register only
+independently verified, still-unspent additive heads and require every batch
+client to create a new v2 lane. Do not copy Alpha.9 rows or reuse its logical
+object name. The immutable [release snapshots](/releases/) and untouched
+Alpha.9 object retain the earlier cutover record.
 
 ## Rotate Addresses And Keys
 
@@ -306,8 +344,9 @@ or a clean public demo history is needed.
 3. Generate a new server public key for batch terms. Keep any private signing
    material outside the Worker.
 4. Update `KASPA_X402_PAY_TO` and `KASPA_X402_SERVER_PUBLIC_KEY`.
-5. Decide whether to preserve or reset the Durable Object namespace. Preserve
-   state for replay continuity; reset state for a clean demo history.
+5. Keep the current release's logical Durable Object name unless an incident
+   explicitly requires another disclosed fresh-state cutover. Never reuse an
+   older alpha's logical object name.
 6. Deploy and verify `/health`, `/canary`, unpaid offers, paid exact only when
    hosted exact settlement is enabled, batch deposit-voucher, voucher-only
    reuse, and replay rejection.
