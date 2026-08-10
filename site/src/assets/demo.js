@@ -11,6 +11,8 @@ const NETWORK_ID = "testnet-10";
 const NETWORK = "kaspa:testnet-10";
 const SDK_ROUTE = "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js";
 const UINT64_MAX = 18446744073709551615n;
+const BATCH_INT64_MAX = 9223372036854775807n;
+const LOCK_TIME_THRESHOLD = 500000000000n;
 const CONNECT_TIMEOUT_MS = 15_000;
 const PUBLIC_WSS_ENDPOINTS = [
   "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh",
@@ -44,9 +46,23 @@ const ui = {
   description: element("demo-description"),
   payTo: element("demo-pay-to"),
   batchFields: element("demo-batch-fields"),
+  exactPaymentFields: element("demo-exact-payment-fields"),
+  exactPaymentActions: element("demo-exact-payment-actions"),
   serverPublicKey: element("demo-server-public-key"),
   minDeposit: element("demo-min-deposit"),
   refundDaa: element("demo-refund-daa"),
+  channelId: element("demo-channel-id"),
+  covenantId: element("demo-covenant-id"),
+  currentTxid: element("demo-current-txid"),
+  currentIndex: element("demo-current-index"),
+  currentScriptPublicKey: element("demo-current-script-public-key"),
+  fundingAmount: element("demo-funding-amount"),
+  chargedAmount: element("demo-charged-amount"),
+  claimedAmount: element("demo-claimed-amount"),
+  signedMax: element("demo-signed-max"),
+  claimReserve: element("demo-claim-reserve"),
+  partialClaim: element("demo-partial-claim"),
+  voucherSignature: element("demo-voucher-signature"),
   paymentRequiredHeader: element("demo-payment-required"),
   offerOutput: element("demo-offer-output"),
   transaction: element("demo-transaction"),
@@ -81,9 +97,7 @@ bind("demo-narrow-offer", inspectAccepts);
 const initialCustomEndpoint = customEndpointFromQuery();
 if (initialCustomEndpoint) ui.endpoint.value = initialCustomEndpoint;
 
-ui.profile.addEventListener("change", () => {
-  ui.batchFields.hidden = ui.profile.value !== "batch-settlement";
-});
+ui.profile.addEventListener("change", syncProfileUi);
 ui.revealKey.addEventListener("change", () => {
   ui.privateKey.type = ui.revealKey.checked ? "text" : "password";
 });
@@ -93,6 +107,14 @@ writeJson(ui.rpcOutput, {
   sdk: SDK_ROUTE,
   endpoints: PUBLIC_WSS_ENDPOINTS,
 });
+syncProfileUi();
+
+function syncProfileUi() {
+  const batch = ui.profile.value === "batch-settlement";
+  ui.batchFields.hidden = !batch;
+  ui.exactPaymentFields.hidden = batch;
+  ui.exactPaymentActions.hidden = batch;
+}
 
 async function initializeSdk() {
   if (state.sdkReady) {
@@ -252,7 +274,10 @@ async function loadUtxos() {
 
 function buildOffer() {
   const profile = ui.profile.value;
-  const amount = canonicalAmount(ui.amount.value, "amount");
+  const amount =
+    profile === "batch-settlement"
+      ? canonicalBatchAmount(ui.amount.value, "amount")
+      : canonicalAmount(ui.amount.value, "amount");
   const timeout = positiveBoundedInteger(ui.timeout.value, "timeout seconds");
   const resourceUrl = requiredText(ui.resourceUrl.value, "resource URL");
   const payTo = requiredText(ui.payTo.value, "pay-to address");
@@ -316,11 +341,21 @@ function batchExtra() {
   if (!/^[0-9a-f]{64}$/.test(serverPublicKey))
     throw new Error("Server public key must be 64 hex characters.");
   return {
-    binding: "kaspa-escrow-v1",
-    templateId: "kaspa-x402-escrow-v1",
+    binding: "kaspa-escrow-v2",
+    templateId: "kaspa-x402-escrow-v2",
     serverPublicKey,
-    minDepositSompi: canonicalAmount(ui.minDeposit.value, "minimum deposit"),
-    refundTimeoutDaa: canonicalAmount(ui.refundDaa.value, "refund timeout DAA"),
+    minDepositSompi: canonicalBatchAmount(
+      ui.minDeposit.value,
+      "minimum deposit",
+    ),
+    claimReserveSompi: canonicalBatchAmount(
+      ui.claimReserve.value,
+      "claim reserve",
+    ),
+    refundTimeoutDaa: canonicalDaaScore(
+      ui.refundDaa.value,
+      "refund timeout DAA",
+    ),
     assetKind: "native",
     assetDecimals: 8,
   };
@@ -329,9 +364,14 @@ function batchExtra() {
 function buildPaymentRetry() {
   if (!state.paymentRequired) buildOffer();
   const accepted = state.paymentRequired.accepts[0];
-  if (accepted.scheme !== "exact") {
-    throw new Error("The mock retry builder is only for exact offers.");
+  if (accepted.scheme === "batch-settlement") {
+    buildBatchPaymentRetry(accepted);
+    return;
   }
+  buildExactPaymentRetry(accepted);
+}
+
+function buildExactPaymentRetry(accepted) {
   const transactionId = normalizedTxId(
     requiredText(ui.transactionId.value, "transaction id"),
   );
@@ -381,7 +421,217 @@ function buildPaymentRetry() {
       "schema-only placeholder; a real payer must derive and sign the canonical exact-request authorization digest",
     mockSettlementResponse: settlement,
   });
-  setStatus("Schema-only exact retry transcript built; authorization is not valid settlement evidence.");
+  setStatus(
+    "Schema-only exact retry transcript built; authorization is not valid settlement evidence.",
+  );
+}
+
+function buildBatchPaymentRetry(accepted) {
+  const lane = batchLanePreview(accepted);
+  const clientPublicKey = currentXOnlyPublicKey();
+  const voucher = {
+    covenantId: lane.current.covenantId,
+    amount: lane.current.signedMaxClaimable,
+    signature: lane.voucherSignature,
+  };
+  const paymentPayload = {
+    x402Version: 2,
+    accepted,
+    payload: {
+      type: "voucher",
+      channelId: lane.current.channelId,
+      clientPublicKey,
+      fundingOutpoint: lane.current.activeOutpoint,
+      activeScriptPublicKey: lane.current.activeScriptPublicKey,
+      voucher,
+    },
+  };
+  const commitmentId = "9".repeat(64);
+  const settlement = {
+    success: true,
+    transaction: commitmentId,
+    network: NETWORK,
+    payer: ui.address.value.trim() || undefined,
+    amount: accepted.amount,
+    extensions: {
+      kaspa: {
+        commitmentId,
+        covenantId: lane.current.covenantId,
+        chargedAmount: accepted.amount,
+        channelState: lane.afterSuccessfulWork,
+      },
+    },
+  };
+  pruneUndefined(settlement);
+  state.paymentPayload = paymentPayload;
+  ui.paymentSignatureHeader.value = encodeHeader(paymentPayload);
+  writeJson(ui.paymentOutput, {
+    paymentPayload,
+    mockVoucher:
+      "schema-only placeholder; a real buyer must sign the v2 voucher digest for covenantId and lifetime T",
+    mockSettlementResponse: settlement,
+    lanePreview: lane.preview,
+  });
+  setStatus(
+    "Alpha.10 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
+  );
+}
+
+function batchLanePreview(accepted) {
+  const channelId = normalizedHash32(
+    requiredText(ui.channelId.value, "channel id"),
+    "Channel id",
+  );
+  const covenantId = normalizedNonZeroHash32(
+    requiredText(ui.covenantId.value, "covenant id"),
+    "Covenant id",
+  );
+  const activeOutpoint = {
+    txid: normalizedHash32(
+      requiredText(ui.currentTxid.value, "current outpoint txid"),
+      "Current outpoint transaction id",
+    ),
+    index: boundedInteger(ui.currentIndex.value, "current outpoint index"),
+  };
+  const activeScriptPublicKey = requiredText(
+    ui.currentScriptPublicKey.value,
+    "current script public key",
+  ).toLowerCase();
+  if (!isSerializedScriptPublicKey(activeScriptPublicKey)) {
+    throw new Error(
+      "Current script public key must be a serialized version-0 Kaspa script public key.",
+    );
+  }
+
+  const fundingAmount = batchBigInt(ui.fundingAmount.value, "V");
+  const chargedCumulativeAmount = batchBigInt(ui.chargedAmount.value, "A");
+  const claimedCumulativeAmount = batchBigInt(ui.claimedAmount.value, "S");
+  const signedMaxClaimable = batchBigInt(ui.signedMax.value, "T");
+  const reserve = batchBigInt(accepted.extra.claimReserveSompi, "R");
+  const claimAmount = batchBigInt(ui.partialClaim.value, "partial claim D");
+  const maximumNewCharge = BigInt(
+    canonicalBatchAmount(accepted.amount, "batch request amount"),
+  );
+
+  if (claimedCumulativeAmount > chargedCumulativeAmount) {
+    throw new Error("Batch lane invariant failed: S cannot exceed A.");
+  }
+  if (chargedCumulativeAmount > signedMaxClaimable) {
+    throw new Error("Batch lane invariant failed: A cannot exceed T.");
+  }
+  if (signedMaxClaimable - claimedCumulativeAmount + reserve > fundingAmount) {
+    throw new Error("Batch lane invariant failed: (T - S) + R cannot exceed V.");
+  }
+
+  const chargedAfterWork = chargedCumulativeAmount + maximumNewCharge;
+  if (chargedAfterWork > signedMaxClaimable) {
+    throw new Error(
+      "The signed lifetime ceiling T does not cover A plus this request's maximum charge.",
+    );
+  }
+  const outstandingAfterWork = chargedAfterWork - claimedCumulativeAmount;
+  if (claimAmount <= 0n || claimAmount > outstandingAfterWork) {
+    throw new Error(
+      "Partial claim D must be positive and no greater than the outstanding actual charge after this request.",
+    );
+  }
+  if (claimAmount > signedMaxClaimable - claimedCumulativeAmount) {
+    throw new Error("Partial claim D exceeds the voucher's remaining authorization.");
+  }
+  if (claimAmount >= fundingAmount) {
+    throw new Error("Partial claim D must leave a positive covenant successor.");
+  }
+
+  const successorFundingAmount = fundingAmount - claimAmount;
+  const successorClaimedAmount = claimedCumulativeAmount + claimAmount;
+  if (
+    signedMaxClaimable - successorClaimedAmount + reserve >
+    successorFundingAmount
+  ) {
+    throw new Error(
+      "Partial claim successor would violate (T - S') + R <= V'.",
+    );
+  }
+
+  const voucherSignature = requiredText(
+    ui.voucherSignature.value,
+    "voucher signature",
+  ).toLowerCase();
+  if (!/^[0-9a-f]{128}$/.test(voucherSignature)) {
+    throw new Error("Voucher signature must be 128 hex characters.");
+  }
+
+  const current = {
+    channelId,
+    covenantId,
+    activeOutpoint,
+    activeScriptPublicKey,
+    fundingAmount: fundingAmount.toString(),
+    chargedCumulativeAmount: chargedCumulativeAmount.toString(),
+    claimedCumulativeAmount: claimedCumulativeAmount.toString(),
+    signedMaxClaimable: signedMaxClaimable.toString(),
+  };
+  const afterSuccessfulWork = {
+    ...current,
+    chargedCumulativeAmount: chargedAfterWork.toString(),
+  };
+  return {
+    current,
+    afterSuccessfulWork,
+    voucherSignature,
+    preview: {
+      symbols: {
+        A: "chargedCumulativeAmount",
+        S: "claimedCumulativeAmount",
+        T: "signedMaxClaimable / voucher.amount",
+        V: "fundingAmount",
+        R: "advertised successor reserve",
+      },
+      beforeRequest: {
+        covenantId,
+        activeOutpoint,
+        A: chargedCumulativeAmount.toString(),
+        S: claimedCumulativeAmount.toString(),
+        T: signedMaxClaimable.toString(),
+        V: fundingAmount.toString(),
+        R: reserve.toString(),
+      },
+      afterSuccessfulWork: {
+        A: chargedAfterWork.toString(),
+        outstandingActualCharge: outstandingAfterWork.toString(),
+      },
+      partialClaim: {
+        D: claimAmount.toString(),
+        successor: {
+          covenantId,
+          activeOutpoint: {
+            txid: "advance to the accepted claim transaction id",
+            index: 1,
+          },
+          A: chargedAfterWork.toString(),
+          S: successorClaimedAmount.toString(),
+          T: signedMaxClaimable.toString(),
+          V: successorFundingAmount.toString(),
+          R: reserve.toString(),
+          voucherSignature: "unchanged",
+        },
+      },
+    },
+  };
+}
+
+function currentXOnlyPublicKey() {
+  if (!state.privateKey) {
+    throw new Error("Generate or import a testnet key before building a voucher.");
+  }
+  const publicKey = state.privateKey.toPublicKey();
+  const xOnly = publicKey.toXOnlyPublicKey();
+  try {
+    return xOnly.toString();
+  } finally {
+    xOnly.free();
+    publicKey.free();
+  }
 }
 
 async function checkTransactionStatus() {
@@ -473,7 +723,9 @@ function isSupportedRequirement(entry) {
   if (!isAmount(entry.amount) || !isNonEmptyString(entry.payTo)) return false;
   if (!isPositiveUint32(entry.maxTimeoutSeconds)) return false;
   if (entry.scheme === "exact") return isExactExtra(entry.extra);
-  if (entry.scheme === "batch-settlement") return isBatchExtra(entry.extra);
+  if (entry.scheme === "batch-settlement") {
+    return isBatchAmount(entry.amount) && isBatchExtra(entry.extra);
+  }
   return false;
 }
 
@@ -484,6 +736,8 @@ function skipReason(entry) {
   if (entry.scheme !== "exact" && entry.scheme !== "batch-settlement")
     return "unsupported scheme";
   if (!isAmount(entry.amount)) return "invalid amount";
+  if (entry.scheme === "batch-settlement" && !isBatchAmount(entry.amount))
+    return "batch amount exceeds signed-int64 range";
   if (!isNonEmptyString(entry.payTo)) return "missing payTo";
   if (!isPositiveUint32(entry.maxTimeoutSeconds)) return "invalid timeout";
   if (entry.scheme === "exact" && !isExactExtra(entry.extra))
@@ -559,22 +813,87 @@ function isHash32(value) {
   return typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value);
 }
 
+function isNonZeroHash32(value) {
+  return isHash32(value) && !/^0{64}$/.test(value);
+}
+
 function isBatchExtra(extra) {
   if (!extra || typeof extra !== "object") return false;
-  if (extra.binding !== "kaspa-escrow-v1") return false;
-  if (extra.templateId !== "kaspa-x402-escrow-v1") return false;
+  if (extra.binding !== "kaspa-escrow-v2") return false;
+  if (extra.templateId !== "kaspa-x402-escrow-v2") return false;
   if (
     typeof extra.serverPublicKey !== "string" ||
     !/^[0-9a-fA-F]{64}$/.test(extra.serverPublicKey)
   )
     return false;
-  if (!isAmount(extra.minDepositSompi) || !isAmount(extra.refundTimeoutDaa))
+  if (
+    !isBatchAmount(extra.minDepositSompi) ||
+    !isBatchAmount(extra.claimReserveSompi) ||
+    !isDaaScore(extra.refundTimeoutDaa)
+  )
     return false;
+  if (extra.claimPolicy !== undefined) {
+    if (!extra.claimPolicy || typeof extra.claimPolicy !== "object") return false;
+    if (
+      extra.claimPolicy.claimWhenUnclaimedAmountExceeds !== undefined &&
+      !isBatchAmount(extra.claimPolicy.claimWhenUnclaimedAmountExceeds)
+    )
+      return false;
+    if (
+      extra.claimPolicy.claimAfterSeconds !== undefined &&
+      !isUint32(extra.claimPolicy.claimAfterSeconds)
+    )
+      return false;
+  }
+  if (
+    extra.channelState !== undefined &&
+    !isBatchLaneState(extra.channelState)
+  )
+    return false;
+  if (extra.voucherState !== undefined && !isBatchVoucher(extra.voucherState))
+    return false;
+  if (extra.channelState && extra.voucherState) {
+    if (extra.channelState.covenantId !== extra.voucherState.covenantId)
+      return false;
+    if (extra.channelState.signedMaxClaimable !== extra.voucherState.amount)
+      return false;
+  }
   if (extra.assetKind !== undefined && extra.assetKind !== "native")
     return false;
   if (extra.assetDecimals !== undefined && extra.assetDecimals !== 8)
     return false;
   return true;
+}
+
+function isBatchLaneState(value) {
+  if (!value || typeof value !== "object") return false;
+  if (!isHash32(value.channelId) || !isNonZeroHash32(value.covenantId))
+    return false;
+  if (!isOutpoint(value.activeOutpoint)) return false;
+  if (!isSerializedScriptPublicKey(value.activeScriptPublicKey)) return false;
+  if (
+    !isBatchAmount(value.fundingAmount) ||
+    !isBatchAmount(value.chargedCumulativeAmount) ||
+    !isBatchAmount(value.claimedCumulativeAmount) ||
+    !isBatchAmount(value.signedMaxClaimable)
+  )
+    return false;
+  const V = BigInt(value.fundingAmount);
+  const A = BigInt(value.chargedCumulativeAmount);
+  const S = BigInt(value.claimedCumulativeAmount);
+  const T = BigInt(value.signedMaxClaimable);
+  return S <= A && A <= T && T - S <= V;
+}
+
+function isBatchVoucher(value) {
+  return Boolean(
+    value &&
+      typeof value === "object" &&
+      isNonZeroHash32(value.covenantId) &&
+      isBatchAmount(value.amount) &&
+      typeof value.signature === "string" &&
+      /^[0-9a-fA-F]{128}$/.test(value.signature),
+  );
 }
 
 function element(id) {
@@ -683,6 +1002,50 @@ function isAmount(value) {
   if (typeof value !== "string" || !/^(?:0|[1-9][0-9]*)$/.test(value))
     return false;
   return BigInt(value) <= UINT64_MAX;
+}
+
+function canonicalBatchAmount(value, label) {
+  const text = String(value).trim();
+  if (!isBatchAmount(text)) {
+    throw new Error(
+      `${label} must be a canonical decimal string in the batch signed-int64 range.`,
+    );
+  }
+  return text;
+}
+
+function isBatchAmount(value) {
+  return isAmount(value) && BigInt(value) <= BATCH_INT64_MAX;
+}
+
+function batchBigInt(value, label) {
+  return BigInt(canonicalBatchAmount(value, label));
+}
+
+function canonicalDaaScore(value, label) {
+  const text = canonicalBatchAmount(value, label);
+  if (!isDaaScore(text)) {
+    throw new Error(`${label} must stay below the Kaspa lock-time threshold.`);
+  }
+  return text;
+}
+
+function isDaaScore(value) {
+  return isBatchAmount(value) && BigInt(value) < LOCK_TIME_THRESHOLD;
+}
+
+function normalizedHash32(value, label) {
+  const text = String(value).trim().toLowerCase();
+  if (!/^[0-9a-f]{64}$/.test(text)) {
+    throw new Error(`${label} must be 64 hex characters.`);
+  }
+  return text;
+}
+
+function normalizedNonZeroHash32(value, label) {
+  const text = normalizedHash32(value, label);
+  if (/^0{64}$/.test(text)) throw new Error(`${label} must be non-zero.`);
+  return text;
 }
 
 function normalizedTxId(value) {

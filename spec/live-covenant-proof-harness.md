@@ -22,9 +22,11 @@ The runner requires live evidence for:
    advertised amount, plus replay rejection;
 3. batch deposit-voucher settlement;
 4. batch voucher-only settlement;
-5. batch claim construction and broadcast;
-6. replay rejection across exact and batch-settlement;
-7. batch refund construction and broadcast after timeout.
+5. batch partial claim construction and broadcast, followed by reuse of the
+   same lifetime voucher for a second claim;
+6. batch top-up with the same KIP-20 covenant id;
+7. replay rejection across exact and batch-settlement;
+8. batch refund construction and broadcast after timeout.
 
 The live result must state transaction ids, transaction versions, version
 evidence source, finality for every broadcast transaction, final rejection for
@@ -36,11 +38,13 @@ transaction-artifact hash, server broadcast result, final settlement
 transaction id, and transaction-version evidence. Additive evidence must also
 identify the durable head/version and consumed outpoint and prove
 `successorAmount - headAmount == advertisedAmount`. Claim evidence must
-reconcile the funding input, previous claimed
-cumulative amount, active charged amount, claim amount, server output, fee, and
-continuation amount. Refund evidence must reconcile the continuation input,
-refund amount, and fee. Batch voucher-only evidence must prove it continues the
-same channel and active outpoint opened by the deposit-voucher flow.
+reconcile the funding input, covenant id, previous on-chain lifetime settled
+amount, outstanding actual charge, claim amount, provider output, fee, successor
+state/value, and new current outpoint. Top-up evidence must preserve the
+covenant id and state while increasing value. Refund evidence must reconcile
+the current input, terminal same-id count, refund amount, and fee. Batch
+voucher-only evidence must prove it continues the same channel and covenant id
+while using the persisted current outpoint.
 
 ## Report And Recovery Files
 
@@ -64,9 +68,11 @@ record with:
 - server public key;
 - refund timeout DAA score;
 - escrow address;
+- covenant id and verified singleton-genesis evidence;
 - active outpoint;
 - active script public key;
 - funding amount in sompi;
+- charged and settled lifetime totals in sompi;
 - latest signed cumulative voucher amount in sompi;
 - latest voucher signature;
 - submitted transaction ids;
@@ -82,8 +88,13 @@ record with:
 - Refuse to accept missing or inconsistent transaction-version evidence.
 - Refuse to accept missing accepted-or-confirmed finality for funding,
   settlement, claim, or refund transactions.
-- Refuse to claim more than the latest voucher amount.
-- Refuse to claim when the continuation output would be below `inputAmount - voucherAmount`.
+- Refuse any batch arithmetic value above signed-int64 maximum.
+- Refuse to claim more than either outstanding actual charges or remaining
+  voucher authorization.
+- Refuse a claim unless the continuation equals `inputAmount - claimAmount`
+  and the fee reduces only the provider output.
+- Refuse a top-up that changes covenant id or state, or fails to increase the
+  active covenant value.
 - Refuse to accept a claim or refund report whose input/output/fee accounting
   does not reconcile with the active charged amount and continuation amount.
 - Refuse to publish if the script public key differs from the fixture-derived value.

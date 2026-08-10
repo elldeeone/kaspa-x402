@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/facilitator",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "private": true,
   "description": "Self-hosted facilitator endpoints for Kaspa x402.",
   "license": "MIT",
@@ -21,7 +21,7 @@
     "test": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/server run build && vitest run"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.1.0-alpha.9",
-    "@kaspa-x402/server": "0.1.0-alpha.9"
+    "@kaspa-x402/core": "0.1.0-alpha.10",
+    "@kaspa-x402/server": "0.1.0-alpha.10"
   }
 }

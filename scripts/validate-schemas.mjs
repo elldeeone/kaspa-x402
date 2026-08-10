@@ -7,15 +7,16 @@ import { fileURLToPath } from "node:url";
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
+const BATCH_AMOUNT_DECIMAL_PATTERN =
+  /^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$/;
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
+const NONZERO_HEX32_PATTERN = /^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])/;
 const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
 const TX_V1_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const EXACT_CONSENSUS_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
-const KASPA_ADDRESS_CHARSET = "qpzry9x8gf2tvdw0s3jn54khce6mua7l";
-const KASPA_ADDRESS_CHECKSUM_LENGTH = 8;
 
 function readJson(file) {
   return JSON.parse(fs.readFileSync(file, "utf8"));
@@ -75,10 +76,14 @@ function isUint64String(value) {
   return typeof value === "string" && U64_DECIMAL_PATTERN.test(value);
 }
 
+function isBatchAmountString(value) {
+  return typeof value === "string" && BATCH_AMOUNT_DECIMAL_PATTERN.test(value);
+}
+
 function expectedBindingForScheme(scheme) {
   return {
     exact: "kaspa-exact-v2",
-    "batch-settlement": "kaspa-escrow-v1",
+    "batch-settlement": "kaspa-escrow-v2",
   }[scheme];
 }
 
@@ -102,8 +107,18 @@ function classifyInvalidValue(schemaId, value) {
       return "invalid_kaspa_x402_scheme";
     if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(requirement.network))
       return "invalid_kaspa_x402_network";
+    if (
+      requirement.scheme === "batch-settlement" &&
+      requirement.network !== "kaspa:testnet-10"
+    )
+      return "invalid_kaspa_x402_network";
     if (requirement.asset !== "KAS") return "invalid_kaspa_x402_asset";
     if (!isUint64String(requirement.amount)) return "invalid_kaspa_x402_amount";
+    if (
+      requirement.scheme === "batch-settlement" &&
+      !isBatchAmountString(requirement.amount)
+    )
+      return "invalid_kaspa_x402_amount";
     if (
       requirement.extra?.binding !==
       expectedBindingForScheme(requirement.scheme)
@@ -128,6 +143,14 @@ function classifyInvalidValue(schemaId, value) {
     "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
   ) {
     if (
+      (value?.covenantId !== undefined &&
+        !NONZERO_HEX32_PATTERN.test(value.covenantId)) ||
+      (value?.voucher?.covenantId !== undefined &&
+        !NONZERO_HEX32_PATTERN.test(value.voucher.covenantId))
+    ) {
+      return "invalid_kaspa_x402_binding";
+    }
+    if (
       value?.clientPublicKey !== undefined &&
       !HEX32_PATTERN.test(value.clientPublicKey)
     )
@@ -146,14 +169,22 @@ function classifyInvalidValue(schemaId, value) {
       return "invalid_kaspa_signature";
     if (
       value?.voucher?.amount !== undefined &&
-      !isUint64String(value.voucher.amount)
+      !isBatchAmountString(value.voucher.amount)
     )
       return "invalid_kaspa_x402_amount";
-    if (value?.claimAmount !== undefined && !isUint64String(value.claimAmount))
+    if (
+      value?.fundingAmountSompi !== undefined &&
+      !isBatchAmountString(value.fundingAmountSompi)
+    )
+      return "invalid_kaspa_x402_amount";
+    if (
+      value?.claimAmount !== undefined &&
+      !isBatchAmountString(value.claimAmount)
+    )
       return "invalid_kaspa_x402_amount";
     if (
       value?.refundAmount !== undefined &&
-      !isUint64String(value.refundAmount)
+      !isBatchAmountString(value.refundAmount)
     )
       return "invalid_kaspa_x402_amount";
     return "invalid_kaspa_x402_payload";
@@ -178,11 +209,9 @@ function classifyInvalidValue(schemaId, value) {
 
 function voucherPreimage(input) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:escrow-voucher:v1", "utf8")),
+    sha256(Buffer.from("kaspa:x402:escrow-voucher:v2", "utf8")),
     sha256(Buffer.from(input.network, "utf8")),
-    sha256(hexToBytes(input.activeScriptPublicKey)),
-    hexToBytes(input.outpoint.txid),
-    le32(input.outpoint.index),
+    hexToBytes(input.covenantId),
     le64(input.amount),
   ]);
 }
@@ -204,25 +233,27 @@ function channelIdPreimage(input) {
 
 function batchPaymentRequirementsPreimage(accepted) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:batch-payment-requirements:v1", "utf8")),
+    sha256(Buffer.from("kaspa:x402:batch-payment-requirements:v2", "utf8")),
     sha256(Buffer.from("batch-settlement", "utf8")),
     sha256(Buffer.from(accepted.network, "utf8")),
     sha256(Buffer.from("KAS", "utf8")),
     le64(accepted.amount),
     sha256(Buffer.from(accepted.payTo, "utf8")),
     le64(accepted.maxTimeoutSeconds),
-    sha256(Buffer.from("kaspa-escrow-v1", "utf8")),
+    sha256(Buffer.from("kaspa-escrow-v2", "utf8")),
     sha256(Buffer.from(accepted.extra.templateId, "utf8")),
     hexToBytes(accepted.extra.serverPublicKey),
     le64(accepted.extra.minDepositSompi),
+    le64(accepted.extra.claimReserveSompi),
     le64(accepted.extra.refundTimeoutDaa),
   ]);
 }
 
 function batchCommitmentPreimage(input) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:batch-commitment:v1", "utf8")),
+    sha256(Buffer.from("kaspa:x402:batch-commitment:v2", "utf8")),
     hexToBytes(input.channelId),
+    hexToBytes(input.voucher.covenantId),
     hexToBytes(input.requestFingerprint),
     sha256(batchPaymentRequirementsPreimage(input.accepted)),
     hexToBytes(input.activeOutpoint.txid),
@@ -290,13 +321,19 @@ function assertHash32(value, label) {
   }
 }
 
+function assertCovenantId(value, label) {
+  if (typeof value !== "string" || !NONZERO_HEX32_PATTERN.test(value)) {
+    throw new Error(`${label} must be a non-zero 32-byte hex string`);
+  }
+}
+
 function assertTxV1Vector(file, vector, expectedKind) {
   if (!vector.input || !vector.expected) {
     throw new Error(`${file}: tx-v1 vectors require input and expected`);
   }
   assertTxV1Validation(file, vector.validation);
   const artifact = vector.expected;
-  if (artifact.format !== "kaspa-x402-tx-v1-reference-v1") {
+  if (artifact.format !== "kaspa-x402-tx-v1-reference-v2") {
     throw new Error(`${file}: unexpected tx-v1 artifact format`);
   }
   if (artifact.kind !== expectedKind) {
@@ -339,34 +376,59 @@ function assertTxV1Vector(file, vector, expectedKind) {
   assertHash32(artifact.txid?.payloadDigest, `${file}:txid.payloadDigest`);
   assertHexBytes(artifact.txid?.restPreimage, `${file}:txid.restPreimage`);
   assertHash32(artifact.txid?.restDigest, `${file}:txid.restDigest`);
-  assertHexBytes(artifact.sighash?.preimage, `${file}:sighash.preimage`);
-  assertHash32(artifact.sighash?.digest, `${file}:sighash.digest`);
-  if (artifact.sighash?.hashType !== "all") {
-    throw new Error(`${file}: only sighash-all vectors are supported`);
-  }
-  const computeBudget = artifact.compute?.computeBudget;
-  const scriptUnitsEstimate = artifact.compute?.scriptUnitsEstimate;
-  const scriptUnitAllowance = artifact.compute?.scriptUnitAllowance;
   if (
-    !Number.isInteger(computeBudget) ||
-    computeBudget < 0 ||
-    computeBudget > 0xffff
+    !Array.isArray(artifact.sighashes) ||
+    artifact.sighashes.length !== artifact.transaction.inputs.length
   ) {
-    throw new Error(`${file}: compute budget must fit in uint16`);
+    throw new Error(`${file}: sighash evidence must cover every input`);
   }
-  if (!Number.isSafeInteger(scriptUnitsEstimate) || scriptUnitsEstimate < 0) {
-    throw new Error(
-      `${file}: script-unit estimate must be a non-negative integer`,
+  const sighashInputIndexes = new Set();
+  for (const [index, sighash] of artifact.sighashes.entries()) {
+    if (
+      !Number.isSafeInteger(sighash.inputIndex) ||
+      sighash.inputIndex < 0 ||
+      sighash.inputIndex >= artifact.transaction.inputs.length ||
+      sighashInputIndexes.has(sighash.inputIndex)
+    ) {
+      throw new Error(`${file}:sighashes[${index}].inputIndex is invalid`);
+    }
+    sighashInputIndexes.add(sighash.inputIndex);
+    assertHexBytes(sighash.preimage, `${file}:sighashes[${index}].preimage`);
+    assertHash32(sighash.digest, `${file}:sighashes[${index}].digest`);
+    if (sighash.hashType !== "all") {
+      throw new Error(`${file}: only sighash-all vectors are supported`);
+    }
+  }
+  if (artifact.compute !== undefined) {
+    const computeBudget = artifact.compute?.computeBudget;
+    const scriptUnitsEstimate = artifact.compute?.scriptUnitsEstimate;
+    const scriptUnitAllowance = artifact.compute?.scriptUnitAllowance;
+    if (
+      !Number.isInteger(computeBudget) ||
+      computeBudget < 0 ||
+      computeBudget > 0xffff
+    ) {
+      throw new Error(`${file}: compute budget must fit in uint16`);
+    }
+    if (!Number.isSafeInteger(scriptUnitsEstimate) || scriptUnitsEstimate < 0) {
+      throw new Error(
+        `${file}: script-unit estimate must be a non-negative integer`,
+      );
+    }
+    assertEqual(
+      computeBudget * 10000 + 9999,
+      scriptUnitAllowance,
+      `${file}:scriptUnitAllowance`,
     );
-  }
-  assertEqual(
-    computeBudget * 10000 + 9999,
-    scriptUnitAllowance,
-    `${file}:scriptUnitAllowance`,
-  );
-  if (scriptUnitAllowance < scriptUnitsEstimate) {
-    throw new Error(
-      `${file}: compute budget does not cover script-unit estimate`,
+    if (scriptUnitAllowance < scriptUnitsEstimate) {
+      throw new Error(
+        `${file}: compute budget does not cover script-unit estimate`,
+      );
+    }
+    assertEqual(
+      artifact.transaction.inputs[0]?.computeBudget,
+      computeBudget,
+      `${file}:inputs[0].computeBudget`,
     );
   }
   for (const [index, input] of (artifact.transaction.inputs ?? []).entries()) {
@@ -386,10 +448,15 @@ function assertTxV1Vector(file, vector, expectedKind) {
       throw new Error(
         `${file}:inputs[${index}].sequence must be a uint64 string`,
       );
-    if (input.computeBudget !== computeBudget)
+    if (
+      !Number.isInteger(input.computeBudget) ||
+      input.computeBudget < 0 ||
+      input.computeBudget > 0xffff
+    ) {
       throw new Error(
-        `${file}:inputs[${index}].computeBudget must match artifact compute budget`,
+        `${file}:inputs[${index}].computeBudget must fit in uint16`,
       );
+    }
     assertHexBytes(
       input.utxo?.scriptPublicKey,
       `${file}:inputs[${index}].utxo.scriptPublicKey`,
@@ -398,6 +465,12 @@ function assertTxV1Vector(file, vector, expectedKind) {
       throw new Error(
         `${file}:inputs[${index}].utxo.amount must be a uint64 string`,
       );
+    if (input.utxo?.covenantId !== null) {
+      assertCovenantId(
+        input.utxo?.covenantId,
+        `${file}:inputs[${index}].utxo.covenantId`,
+      );
+    }
   }
   for (const [index, output] of (
     artifact.transaction.outputs ?? []
@@ -410,13 +483,52 @@ function assertTxV1Vector(file, vector, expectedKind) {
       output.scriptPublicKey,
       `${file}:outputs[${index}].scriptPublicKey`,
     );
-    if (output.covenant !== null)
-      throw new Error(
-        `${file}:outputs[${index}].covenant must be null unless explicitly supported`,
+    if (output.covenant !== null) {
+      if (
+        !Number.isInteger(output.covenant?.authorizingInput) ||
+        output.covenant.authorizingInput < 0 ||
+        output.covenant.authorizingInput > 0xffff
+      ) {
+        throw new Error(
+          `${file}:outputs[${index}].covenant.authorizingInput must fit in uint16`,
+        );
+      }
+      assertCovenantId(
+        output.covenant?.covenantId,
+        `${file}:outputs[${index}].covenant.covenantId`,
       );
+    }
   }
 
-  if (expectedKind === "batch-claim") {
+  if (expectedKind === "batch-genesis") {
+    if (artifact.fee?.source !== "funding-inputs") {
+      throw new Error(`${file}: genesis fee source must be funding-inputs`);
+    }
+    assertCovenantId(artifact.covenantId, `${file}:covenantId`);
+    assertEqual(artifact.escrow?.outputIndex, 0, `${file}:escrow.outputIndex`);
+    assertEqual(
+      artifact.escrow?.outpoint?.txid,
+      artifact.transactionId,
+      `${file}:escrow.outpoint.txid`,
+    );
+    assertEqual(
+      artifact.transaction.outputs[0]?.covenant?.covenantId,
+      artifact.covenantId,
+      `${file}:genesis covenantId`,
+    );
+    assertEqual(
+      artifact.transaction.outputs[0]?.covenant?.authorizingInput,
+      0,
+      `${file}:genesis authorizingInput`,
+    );
+    if (
+      artifact.transaction.outputs
+        .slice(1)
+        .some((output) => output.covenant !== null)
+    ) {
+      throw new Error(`${file}: genesis change outputs must be unbound`);
+    }
+  } else if (expectedKind === "batch-claim") {
     if (artifact.fee?.source !== "server-output")
       throw new Error(`${file}: claim fee source must be server-output`);
     if ((artifact.transaction.outputs ?? []).length !== 2)
@@ -432,11 +544,64 @@ function assertTxV1Vector(file, vector, expectedKind) {
       artifact.transactionId,
       `${file}:continuation.outpoint.txid`,
     );
+    if (artifact.transaction.outputs[0]?.covenant !== null) {
+      throw new Error(`${file}: claim payout must be unbound`);
+    }
+    assertEqual(
+      artifact.transaction.outputs[1]?.covenant?.covenantId,
+      artifact.continuation?.covenantId,
+      `${file}: claim continuation covenantId`,
+    );
+    assertEqual(
+      artifact.transaction.outputs[1]?.covenant?.authorizingInput,
+      0,
+      `${file}: claim continuation authorizingInput`,
+    );
+  } else if (expectedKind === "batch-top-up") {
+    if (artifact.fee?.source !== "funding-inputs") {
+      throw new Error(`${file}: top-up fee source must be funding-inputs`);
+    }
+    if ((artifact.transaction.inputs ?? []).length < 2) {
+      throw new Error(`${file}: top-up vector must have at least two inputs`);
+    }
+    assertEqual(
+      artifact.continuation?.outputIndex,
+      0,
+      `${file}:continuation.outputIndex`,
+    );
+    assertEqual(
+      artifact.continuation?.outpoint?.txid,
+      artifact.transactionId,
+      `${file}:continuation.outpoint.txid`,
+    );
+    assertEqual(
+      artifact.transaction.outputs[0]?.covenant?.covenantId,
+      artifact.continuation?.covenantId,
+      `${file}: top-up continuation covenantId`,
+    );
+    assertEqual(
+      artifact.transaction.outputs[0]?.covenant?.authorizingInput,
+      0,
+      `${file}: top-up continuation authorizingInput`,
+    );
+    if (
+      artifact.transaction.outputs
+        .slice(1)
+        .some((output) => output.covenant !== null)
+    ) {
+      throw new Error(`${file}: top-up change outputs must be unbound`);
+    }
   } else if (expectedKind === "batch-refund") {
     if (artifact.fee?.source !== "refund-output")
       throw new Error(`${file}: refund fee source must be refund-output`);
     if ((artifact.transaction.outputs ?? []).length !== 1)
       throw new Error(`${file}: refund vector must have one output`);
+    assertCovenantId(artifact.covenantId, `${file}:covenantId`);
+    if (artifact.transaction.outputs[0]?.covenant !== null) {
+      throw new Error(
+        `${file}: refund output must terminate the covenant lineage`,
+      );
+    }
   }
 }
 
@@ -488,14 +653,16 @@ function assertTxV1Validation(file, validation) {
     "txid.payloadDigest",
     "txid.restPreimage",
     "txid.restDigest",
-    "sighash.preimage",
-    "sighash.digest",
+    "sighashes[].preimage",
+    "sighashes[].digest",
     "transaction.mass",
     "transaction.estimatedSerializedSize",
     "transaction.inputs[].computeBudget",
+    "transaction.inputs[].utxo.covenantId",
     "transaction.outputs[].covenant",
-    "fullConsensus",
-    "scriptExecution",
+    "fullTransactionValidator",
+    "measuredScriptUnits",
+    "minimumComputeBudget",
     "mutatedSignatureRejection",
   ]) {
     if (!checkedFields.includes(field)) {
@@ -749,7 +916,19 @@ function validateVector(ajv, file, vector, rootDir = root) {
       const coveredPaths = new Set();
       const requiredValidationByPath = new Map([
         [
+          "vectors/tx-v1/batch-genesis.json",
+          "full-consensus-and-script-execution-offline-reference",
+        ],
+        [
           "vectors/tx-v1/batch-claim.json",
+          "full-consensus-and-script-execution-offline-reference",
+        ],
+        [
+          "vectors/tx-v1/batch-claim-second.json",
+          "full-consensus-and-script-execution-offline-reference",
+        ],
+        [
+          "vectors/tx-v1/batch-top-up.json",
           "full-consensus-and-script-execution-offline-reference",
         ],
         [
@@ -788,8 +967,16 @@ function validateVector(ajv, file, vector, rootDir = root) {
       }
       break;
     }
+    case "tx-v1-batch-genesis": {
+      assertTxV1Vector(file, vector, "batch-genesis");
+      break;
+    }
     case "tx-v1-batch-claim": {
       assertTxV1Vector(file, vector, "batch-claim");
+      break;
+    }
+    case "tx-v1-batch-top-up": {
+      assertTxV1Vector(file, vector, "batch-top-up");
       break;
     }
     case "tx-v1-batch-refund": {
@@ -804,7 +991,7 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactInteropVector(ajv, file, vector);
       break;
     }
-    case "batch-interop-v1": {
+    case "batch-interop-v2": {
       assertBatchInteropVector(ajv, file, vector, rootDir);
       break;
     }
@@ -891,37 +1078,6 @@ function assertBatchInteropVector(ajv, file, vector, rootDir) {
     `${file}:commitment.commitmentId`,
   );
 
-  for (const name of ["claim", "refund"]) {
-    const reference = vector.transactions?.[name];
-    const absolutePath = path.join(rootDir, reference?.path ?? "");
-    if (!reference || !fs.existsSync(absolutePath)) {
-      throw new Error(`${file}: missing ${name} transaction reference`);
-    }
-    const bytes = fs.readFileSync(absolutePath);
-    assertEqual(
-      sha256(bytes).toString("hex"),
-      reference.sha256,
-      `${file}:transactions.${name}.sha256`,
-    );
-    const transactionVector = JSON.parse(bytes.toString("utf8"));
-    assertEqual(
-      transactionVector.expected.transactionId,
-      reference.transactionId,
-      `${file}:transactions.${name}.transactionId`,
-    );
-    assertEqual(
-      transactionVector.expected.transactionHash,
-      reference.transactionHash,
-      `${file}:transactions.${name}.transactionHash`,
-    );
-    if (
-      reference.fullConsensusValidated !== true ||
-      reference.scriptExecuted !== true
-    ) {
-      throw new Error(`${file}: ${name} lacks full consensus evidence`);
-    }
-  }
-
   const timeout = BigInt(vector.expiry.timeoutDaa);
   const boundary = BigInt(vector.expiry.lockTimeBoundary);
   for (const testCase of vector.expiry.cases ?? []) {
@@ -957,10 +1113,18 @@ function assertBatchInteropVector(ajv, file, vector, rootDir) {
 
 export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
   const config = vector.channel.config;
-  const escrow = vector.escrow;
+  const lineage = vector.lineage;
   const voucher = vector.voucher;
   const accepted = vector.paymentRequirements.value;
   const commitment = vector.commitment.input;
+
+  assertEqual(vector.kind, "batch-interop-v2", `${file}: vector kind`);
+  assertEqual(
+    vector.scope?.transactionEvidenceIncluded,
+    false,
+    `${file}: non-transaction scope`,
+  );
+  assertCovenantId(lineage?.covenantId, `${file}: lineage covenant id`);
 
   assertEqual(
     accepted.network,
@@ -994,42 +1158,6 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
   );
 
   assertEqual(
-    escrow.templateId,
-    config.templateId,
-    `${file}: escrow template mismatch`,
-  );
-  assertEqual(
-    escrow.params.clientPublicKey,
-    config.clientPublicKey,
-    `${file}: escrow client key mismatch`,
-  );
-  assertEqual(
-    escrow.params.serverPublicKey,
-    config.serverPublicKey,
-    `${file}: escrow server key mismatch`,
-  );
-  assertEqual(
-    escrow.params.network,
-    config.network,
-    `${file}: escrow network mismatch`,
-  );
-  assertEqual(
-    escrow.params.timeoutDaa,
-    config.refundTimeoutDaa,
-    `${file}: escrow timeout mismatch`,
-  );
-  assertEqual(
-    scriptPublicKeyForKaspaAddress(config.payTo, config.network),
-    escrow.payoutScriptPublicKey,
-    `${file}: payTo script public key mismatch`,
-  );
-  assertEqual(
-    scriptPublicKeyForKaspaAddress(config.refundAddress, config.network),
-    escrow.refundScriptPublicKey,
-    `${file}: refund script public key mismatch`,
-  );
-
-  assertEqual(
     voucher.signerPublicKey,
     config.clientPublicKey,
     `${file}: voucher signer mismatch`,
@@ -1039,10 +1167,11 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     config.network,
     `${file}: voucher network mismatch`,
   );
+  assertCovenantId(voucher.input.covenantId, `${file}: voucher covenant id`);
   assertEqual(
-    voucher.input.activeScriptPublicKey,
-    escrow.scriptPublicKey,
-    `${file}: voucher escrow script mismatch`,
+    voucher.input.covenantId,
+    lineage.covenantId,
+    `${file}: voucher covenant id mismatch`,
   );
 
   assertEqual(
@@ -1056,259 +1185,161 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     `${file}: commitment payment requirements mismatch`,
   );
   assertEqual(
-    stableStringify(commitment.activeOutpoint),
-    stableStringify(voucher.input.outpoint),
-    `${file}: commitment active outpoint mismatch`,
-  );
-  assertEqual(
     stableStringify(commitment.voucher),
     stableStringify({
+      covenantId: voucher.input.covenantId,
       amount: voucher.input.amount,
       signature: voucher.signature,
     }),
     `${file}: commitment voucher mismatch`,
   );
-
-  const claim = readReferencedTransaction(
-    file,
-    vector.transactions.claim,
-    "claim",
-    "vectors/tx-v1/batch-claim.json",
-    rootDir,
-  );
   assertEqual(
-    stableStringify(claim.input.activeOutpoint),
-    stableStringify(voucher.input.outpoint),
-    `${file}: claim active outpoint mismatch`,
-  );
-  assertEqual(
-    claim.input.activeScriptPublicKey,
-    escrow.scriptPublicKey,
-    `${file}: claim active script mismatch`,
-  );
-  assertEqual(
-    claim.input.redeemScript,
-    escrow.redeemScript,
-    `${file}: claim redeem script mismatch`,
-  );
-  assertEqual(
-    claim.input.serverOutputScriptPublicKey,
-    escrow.payoutScriptPublicKey,
-    `${file}: claim payout script mismatch`,
-  );
-  assertEqual(
-    claim.input.expectedPayoutScriptPublicKeyHash,
-    escrow.params.payoutScriptPublicKeyHash,
-    `${file}: claim payout hash mismatch`,
-  );
-  assertEqual(
-    claim.input.voucherSignature,
-    voucher.signature,
-    `${file}: claim voucher signature mismatch`,
-  );
-  assertEqual(
-    claim.input.claimAmount,
-    commitment.chargedCumulativeAfter,
-    `${file}: claim amount mismatch`,
+    stableStringify(commitment.activeOutpoint),
+    stableStringify(lineage.currentHead.outpoint),
+    `${file}: current head outpoint mismatch`,
   );
 
-  const refund = readReferencedTransaction(
-    file,
-    vector.transactions.refund,
-    "refund",
-    "vectors/tx-v1/batch-refund.json",
-    rootDir,
+  const genesis = lineage.genesisDerivation;
+  assertHash32(
+    genesis.authorizingInput?.txid,
+    `${file}: genesis authorizing input txid`,
+  );
+  if (!isUint32(genesis.authorizingInput?.index)) {
+    throw new Error(`${file}: genesis authorizing input index must fit uint32`);
+  }
+  if (genesis.authorizedOutputs?.length !== 1) {
+    throw new Error(`${file}: genesis must describe one authorized output`);
+  }
+  assertEqual(
+    genesis.authorizedOutputs[0].index,
+    0,
+    `${file}: genesis authorized output index`,
+  );
+  if (!isBatchAmountString(genesis.authorizedOutputs[0].amount)) {
+    throw new Error(`${file}: genesis amount must fit signed int64`);
+  }
+  assertHexBytes(
+    genesis.authorizedOutputs[0].scriptPublicKey,
+    `${file}: genesis script public key`,
+  );
+
+  const before = vector.accounting.beforeRequest;
+  const afterRequest = vector.accounting.afterRequest;
+  const afterClaim = vector.accounting.afterClaim;
+  for (const [name, state] of Object.entries({
+    before,
+    afterRequest,
+    afterClaim,
+  })) {
+    assertEqual(
+      state.channelId,
+      vector.channel.channelId,
+      `${file}: ${name} channel id`,
+    );
+    assertEqual(
+      state.covenantId,
+      lineage.covenantId,
+      `${file}: ${name} covenant id`,
+    );
+    assertBatchAccountingState(file, name, state);
+  }
+  assertEqual(
+    stableStringify(before.activeOutpoint),
+    stableStringify(lineage.currentHead.outpoint),
+    `${file}: before-request outpoint`,
   );
   assertEqual(
-    stableStringify(refund.input.activeOutpoint),
-    stableStringify(claim.expected.continuation.outpoint),
-    `${file}: refund continuation outpoint mismatch`,
+    before.activeScriptPublicKey,
+    lineage.currentHead.scriptPublicKey,
+    `${file}: before-request script`,
   );
   assertEqual(
-    refund.input.activeAmount,
-    claim.expected.continuation.amount,
-    `${file}: refund continuation amount mismatch`,
+    stableStringify(afterClaim.activeOutpoint),
+    stableStringify(lineage.successorHead.outpoint),
+    `${file}: successor outpoint`,
   );
   assertEqual(
-    refund.input.activeScriptPublicKey,
-    claim.expected.continuation.scriptPublicKey,
-    `${file}: refund continuation script mismatch`,
+    afterClaim.activeScriptPublicKey,
+    lineage.successorHead.scriptPublicKey,
+    `${file}: successor script`,
+  );
+
+  const chargedAmount = BigInt(commitment.chargedAmount);
+  assertEqual(
+    (BigInt(before.chargedCumulativeAmount) + chargedAmount).toString(),
+    afterRequest.chargedCumulativeAmount,
+    `${file}: request charge transition`,
+  );
+  for (const field of [
+    "fundingAmount",
+    "claimedCumulativeAmount",
+    "signedMaxClaimable",
+  ]) {
+    assertEqual(
+      afterRequest[field],
+      before[field],
+      `${file}: request ${field}`,
+    );
+  }
+
+  const claimAmount = BigInt(vector.accounting.claimAmount);
+  if (claimAmount <= 0n)
+    throw new Error(`${file}: claim amount must be positive`);
+  assertEqual(
+    (BigInt(afterRequest.fundingAmount) - claimAmount).toString(),
+    afterClaim.fundingAmount,
+    `${file}: claim funding transition`,
   );
   assertEqual(
-    refund.input.activeScriptPublicKey,
-    escrow.scriptPublicKey,
-    `${file}: refund active script mismatch`,
+    (BigInt(afterRequest.claimedCumulativeAmount) + claimAmount).toString(),
+    afterClaim.claimedCumulativeAmount,
+    `${file}: claim settled transition`,
   );
   assertEqual(
-    refund.input.redeemScript,
-    escrow.redeemScript,
-    `${file}: refund redeem script mismatch`,
+    afterClaim.chargedCumulativeAmount,
+    afterRequest.chargedCumulativeAmount,
+    `${file}: claim actual-charge preservation`,
   );
   assertEqual(
-    refund.input.refundOutputScriptPublicKey,
-    escrow.refundScriptPublicKey,
-    `${file}: refund output script mismatch`,
+    afterClaim.signedMaxClaimable,
+    afterRequest.signedMaxClaimable,
+    `${file}: claim signed-ceiling preservation`,
   );
-  assertEqual(
-    refund.input.expectedRefundScriptPublicKeyHash,
-    escrow.params.refundScriptPublicKeyHash,
-    `${file}: refund output hash mismatch`,
-  );
-  assertEqual(
-    refund.input.timeoutDaa,
-    config.refundTimeoutDaa,
-    `${file}: refund timeout mismatch`,
-  );
+
+  const reserve = BigInt(vector.accounting.reserveAmount);
+  if (
+    BigInt(afterRequest.signedMaxClaimable) -
+      BigInt(afterRequest.claimedCumulativeAmount) +
+      reserve >
+    BigInt(afterRequest.fundingAmount)
+  ) {
+    throw new Error(`${file}: voucher reserve invariant is invalid`);
+  }
+
+  void rootDir;
 }
 
-function readReferencedTransaction(
-  file,
-  reference,
-  name,
-  expectedPath,
-  rootDir,
-) {
-  assertEqual(reference?.path, expectedPath, `${file}: ${name} path mismatch`);
-  const absolutePath = path.join(rootDir, expectedPath);
-  const bytes = fs.readFileSync(absolutePath);
-  assertEqual(
-    sha256(bytes).toString("hex"),
-    reference.sha256,
-    `${file}: ${name} file hash mismatch`,
-  );
-  const transaction = JSON.parse(bytes.toString("utf8"));
-  assertEqual(
-    transaction.expected.transactionId,
-    reference.transactionId,
-    `${file}: ${name} transaction id mismatch`,
-  );
-  assertEqual(
-    transaction.expected.transactionHash,
-    reference.transactionHash,
-    `${file}: ${name} transaction hash mismatch`,
-  );
-  assertEqual(
-    stableStringify(transaction.expected.sighash),
-    stableStringify(reference.sighash),
-    `${file}: ${name} sighash mismatch`,
-  );
-  assertEqual(
-    stableStringify(transaction.expected.compute),
-    stableStringify(reference.compute),
-    `${file}: ${name} compute evidence mismatch`,
-  );
-  return transaction;
-}
-
-function scriptPublicKeyForKaspaAddress(address, network) {
-  const decoded = decodeKaspaAddress(address);
-  const expectedPrefix = {
-    "kaspa:mainnet": "kaspa",
-    "kaspa:testnet-10": "kaspatest",
-  }[network];
-  if (!expectedPrefix || decoded.prefix !== expectedPrefix) {
-    throw new Error(`address prefix does not match ${network}`);
-  }
-
-  let script;
-  if (decoded.version === 0 && decoded.payload.length === 32) {
-    script = Buffer.concat([
-      Buffer.from([0x20]),
-      decoded.payload,
-      Buffer.from([0xac]),
-    ]);
-  } else if (decoded.version === 1 && decoded.payload.length === 33) {
-    script = Buffer.concat([
-      Buffer.from([0x21]),
-      decoded.payload,
-      Buffer.from([0xab]),
-    ]);
-  } else if (decoded.version === 8 && decoded.payload.length === 32) {
-    script = Buffer.concat([
-      Buffer.from([0xaa, 0x20]),
-      decoded.payload,
-      Buffer.from([0x87]),
-    ]);
-  } else {
-    throw new Error("unsupported Kaspa address version or payload length");
-  }
-  return Buffer.concat([Buffer.from([0, 0]), script]).toString("hex");
-}
-
-function decodeKaspaAddress(address) {
-  const separator = address.indexOf(":");
-  if (separator <= 0 || address !== address.toLowerCase()) {
-    throw new Error("invalid Kaspa address encoding");
-  }
-  const prefix = address.slice(0, separator);
-  const encoded = Array.from(address.slice(separator + 1), (character) => {
-    const value = KASPA_ADDRESS_CHARSET.indexOf(character);
-    if (value < 0) throw new Error("invalid Kaspa address character");
-    return value;
-  });
-  if (encoded.length <= KASPA_ADDRESS_CHECKSUM_LENGTH) {
-    throw new Error("Kaspa address payload is too short");
-  }
-  const payload = encoded.slice(0, -KASPA_ADDRESS_CHECKSUM_LENGTH);
-  const checksum = encoded.slice(-KASPA_ADDRESS_CHECKSUM_LENGTH);
-  if (kaspaAddressChecksum(prefix, payload) !== fiveBitToBigInt(checksum)) {
-    throw new Error("invalid Kaspa address checksum");
-  }
-  const decoded = convertFiveToEight(payload);
-  if (decoded.length < 1) throw new Error("Kaspa address payload is empty");
-  return { prefix, version: decoded[0], payload: decoded.subarray(1) };
-}
-
-function kaspaAddressChecksum(prefix, payload) {
-  const values = [
-    ...Array.from(prefix, (character) => character.charCodeAt(0) & 0x1f),
-    0,
-    ...payload,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-    0,
-  ];
-  let checksum = 1n;
-  for (const value of values) {
-    const high = checksum >> 35n;
-    checksum = ((checksum & 0x07ffffffffn) << 5n) ^ BigInt(value);
-    if ((high & 0x01n) !== 0n) checksum ^= 0x98f2bc8e61n;
-    if ((high & 0x02n) !== 0n) checksum ^= 0x79b76d99e2n;
-    if ((high & 0x04n) !== 0n) checksum ^= 0xf33e5fb3c4n;
-    if ((high & 0x08n) !== 0n) checksum ^= 0xae2eabe2a8n;
-    if ((high & 0x10n) !== 0n) checksum ^= 0x1e4f43e470n;
-  }
-  return checksum ^ 1n;
-}
-
-function convertFiveToEight(values) {
-  const output = Buffer.alloc(Math.floor((values.length * 5) / 8));
-  let outputIndex = 0;
-  let buffer = 0;
-  let bits = 0;
-  for (const value of values) {
-    buffer = (buffer << 5) | value;
-    bits += 5;
-    while (bits >= 8) {
-      bits -= 8;
-      output[outputIndex++] = (buffer >> bits) & 0xff;
-      buffer &= (1 << bits) - 1;
+function assertBatchAccountingState(file, name, state) {
+  for (const field of [
+    "fundingAmount",
+    "chargedCumulativeAmount",
+    "claimedCumulativeAmount",
+    "signedMaxClaimable",
+  ]) {
+    if (!isBatchAmountString(state[field])) {
+      throw new Error(`${file}: ${name}.${field} must fit signed int64`);
     }
   }
-  return output;
-}
-
-function fiveBitToBigInt(values) {
-  let result = 0n;
-  for (const byte of convertFiveToEight(values)) {
-    result = (result << 8n) | BigInt(byte);
+  const value = BigInt(state.fundingAmount);
+  const actual = BigInt(state.chargedCumulativeAmount);
+  const settled = BigInt(state.claimedCumulativeAmount);
+  const signed = BigInt(state.signedMaxClaimable);
+  if (settled > actual || actual > signed) {
+    throw new Error(`${file}: ${name} violates S <= A <= T`);
   }
-  return result;
+  if (actual - settled > value || signed - settled > value) {
+    throw new Error(`${file}: ${name} exceeds current covenant value`);
+  }
 }
 
 function assertExactInteropVector(ajv, file, vector) {

@@ -15,7 +15,10 @@ export interface EscrowTemplateParams {
   payoutScriptPublicKeyHash: string;
   refundScriptPublicKeyHash: string;
   timeoutDaa: bigint | number | string;
+  settledTotal: bigint | number | string;
 }
+
+export type EscrowV2TemplateParams = EscrowTemplateParams;
 
 export interface ScriptPublicKey {
   version: number;
@@ -33,7 +36,20 @@ export type KaspaAddressEncoder = (input: DeriveEscrowAddressInput) => string;
 export interface ClaimArgsInput {
   serverSignature: string | Uint8Array;
   voucherSignature: string | Uint8Array;
-  amount: bigint | number | string;
+  totalAuthorized: bigint | number | string;
+  claimAmount: bigint | number | string;
+}
+
+export type ClaimV2ArgsInput = ClaimArgsInput;
+
+export interface TopUpV2ArgsInput {
+  clientSignature: string | Uint8Array;
+}
+
+export type TopUpArgsInput = TopUpV2ArgsInput;
+
+export interface RefundV2ArgsInput {
+  clientSignature: string | Uint8Array;
 }
 
 export interface RefundArgsInput {
@@ -42,10 +58,11 @@ export interface RefundArgsInput {
 
 export interface VoucherPreimageInput {
   network: NetworkId;
-  activeScriptPublicKey: string;
-  outpoint: FundingOutpoint;
-  amount: bigint | number | string;
+  covenantId: string;
+  totalAuthorized: bigint | number | string;
 }
+
+export type VoucherV2PreimageInput = VoucherPreimageInput;
 
 export interface Kip10AdditiveTemplateParams {
   ownerPublicKey: string;
@@ -57,58 +74,58 @@ export interface ParsedKip10AdditiveRedeemScript {
   amount: string;
 }
 
-export interface ClaimOutputPlan {
-  inputAmount: bigint | number | string;
-  voucherAmount: bigint | number | string;
-  serverOutputAmount: bigint | number | string;
-  serverOutputScriptPublicKey: string;
-  expectedPayoutScriptPublicKeyHash: string;
-  continuationOutputAmount: bigint | number | string;
-  continuationScriptPublicKey: string;
-  expectedContinuationScriptPublicKey: string;
-}
-
-export interface RefundOutputPlan {
-  inputSequence: bigint | number | string;
-  refundOutputScriptPublicKey: string;
-  expectedRefundScriptPublicKeyHash: string;
-}
-
-export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v1";
-export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v1";
-export const ESCROW_VOUCHER_DOMAIN_TAG = "cfb6a056b632c3375107a9a811270f099594a25805f8c8edcdfafd95ce842d12";
+export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v2";
+export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v2";
+export const ESCROW_VOUCHER_DOMAIN_TAG = "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b";
+export const ESCROW_V2_TEMPLATE_ID = ESCROW_TEMPLATE_ID;
+export const ESCROW_V2_VOUCHER_DOMAIN = ESCROW_VOUCHER_DOMAIN;
+export const ESCROW_V2_VOUCHER_DOMAIN_TAG = ESCROW_VOUCHER_DOMAIN_TAG;
+export const SCRIPT_INT64_MAX = 0x7fff_ffff_ffff_ffffn;
 export const KIP10_ADDITIVE_TEMPLATE_ID = "kaspa-x402-kip10-additive-v1";
 export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
 export const KASPA_LOCK_TIME_THRESHOLD = 500_000_000_000n;
-
-export const CLAIM_SCRIPT_UNITS_ESTIMATE = 200_544;
-export const REFUND_SCRIPT_UNITS_ESTIMATE = 100_000;
 export const SCRIPT_UNITS_PER_COMPUTE_BUDGET = 10_000;
 export const FREE_SCRIPT_UNITS_PER_INPUT = 9_999;
-export const CLAIM_COMPUTE_BUDGET = computeBudgetForScriptUnits(CLAIM_SCRIPT_UNITS_ESTIMATE);
-export const REFUND_COMPUTE_BUDGET = computeBudgetForScriptUnits(REFUND_SCRIPT_UNITS_ESTIMATE);
 
-const U32_MAX = 0xffff_ffff;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 const HEX_BYTE_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 
-const SEG_0 = "6b6c76009c63755279";
-const SEG_1 = `ac697820${ESCROW_VOUCHER_DOMAIN_TAG}`;
-const SEG_2 = "7eb9bfa87eb9ba7eb9bb54cd7e52797ea8";
-const SEG_3 = "d76976b4529c6900c278a16900c3a8";
-const SEG_4 = "876951c3b9bf876951c2b9be527994a269007a75757575516776519c637576";
-const SEG_5 = "ac69";
-const SEG_6 = "b0b9bd0058cd8769b4519c6900c3a8";
-const SEG_7 = "87697551677500696868";
+// silverc 6f9e078b1d8b5389212755183b592704de99fea5 slot map for
+// contracts/kaspa-x402-escrow-v2.sil. State is the fixed-width little-endian
+// int64 between V2_SEG_0 and V2_SEG_1. Every constructor slot is fixed-width,
+// including timeout, so silverc's generated state-transition offsets remain
+// valid for every supported parameter value.
+const V2_SEG_0 = "6b08";
+const V2_SEG_1 =
+  "6c76009c6375527982589d757882589d75b9cbb9cfd2789c697856795579b2519c69b5009c69b3519c69b4529c69b9009c69b9bd080000000000000000876978014001417f0101876978";
+const V2_SEG_2 =
+  "ac69b9cf76d0519c6976d2519c69b9cb519c69b900cc519c6900d5200000000000000000000000000000000000000000000000000000000000000000876951d5788769587920dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b";
+const V2_SEG_3 = "7e52797e53797ea8";
+const V2_SEG_4 = "d769785779557900a269785679a0697600a069765279577994a169b9be78789f6900c200a06900c25279a16900c3a8";
+const V2_SEG_5 =
+  "876951c2785379949c695779519c690108577953799358cd7eb976c902b20394765193bc7c7eb976c97602a883937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc38875757575757575757575757575516776519c6375b9cbb9cfd2789c69785379b2519c69b5009c69b351a069b400a069b452a169b9009c69b9bd080000000000000000876976014001417f0101876976";
+const V2_SEG_6 =
+  "ac69b9cf76d0519c6976d2519c69b9cb519c69b900cc009c6900d5788769527900a26900c2b9bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a06951c3a8";
+const V2_SEG_7 =
+  "8769685379519c690108537958cd7eb976c902b20394765193bc7c7eb976c97602a883937cbc7eaa02000001aa7e01207e7c7e01877eb900ccc388757575757575516776529c6375b2519c69b3519c69b4519c69b9009c69b9bd0800000000000000008769";
+const V2_SEG_8 = "b078014001417f0101876978";
+const V2_SEG_9 =
+  "ac69b9cf76d0519c6976d2009c69b9cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c2b9bea16900c3a8";
+const V2_SEG_10 = "876975757551676a686868";
 
 export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
+  return buildEscrowV2RedeemScript(params);
+}
+
+export function buildEscrowV2RedeemScript(params: EscrowV2TemplateParams): string {
   const client = hexToBytes(params.clientPublicKey, 32, "clientPublicKey");
   const server = hexToBytes(params.serverPublicKey, 32, "serverPublicKey");
   const payoutScriptPublicKeyHash = hexToBytes(params.payoutScriptPublicKeyHash, 32, "payoutScriptPublicKeyHash");
   const refundScriptPublicKeyHash = hexToBytes(params.refundScriptPublicKeyHash, 32, "refundScriptPublicKeyHash");
-  const timeout = normalizeUint64(params.timeoutDaa, "timeoutDaa");
+  const timeout = normalizeScriptInt64(params.timeoutDaa, "timeoutDaa");
+  const settledTotal = normalizeScriptInt64(params.settledTotal, "settledTotal");
   if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
     throw new Error("timeoutDaa must remain below the consensus timestamp boundary");
   }
@@ -116,21 +133,27 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
 
   return bytesToHex(
     concatBytes([
-      hexToBytes(SEG_0, undefined, "SEG_0"),
+      hexToBytes(V2_SEG_0, undefined, "V2_SEG_0"),
+      int64Le(settledTotal),
+      hexToBytes(V2_SEG_1, undefined, "V2_SEG_1"),
       pushData(server),
-      hexToBytes(SEG_1, undefined, "SEG_1"),
+      hexToBytes(V2_SEG_2, undefined, "V2_SEG_2"),
       pushData(network),
-      hexToBytes(SEG_2, undefined, "SEG_2"),
+      hexToBytes(V2_SEG_3, undefined, "V2_SEG_3"),
       pushData(client),
-      hexToBytes(SEG_3, undefined, "SEG_3"),
+      hexToBytes(V2_SEG_4, undefined, "V2_SEG_4"),
       pushData(payoutScriptPublicKeyHash),
-      hexToBytes(SEG_4, undefined, "SEG_4"),
+      hexToBytes(V2_SEG_5, undefined, "V2_SEG_5"),
       pushData(client),
-      hexToBytes(SEG_5, undefined, "SEG_5"),
-      pushScriptNumber(timeout),
-      hexToBytes(SEG_6, undefined, "SEG_6"),
+      hexToBytes(V2_SEG_6, undefined, "V2_SEG_6"),
       pushData(refundScriptPublicKeyHash),
-      hexToBytes(SEG_7, undefined, "SEG_7"),
+      hexToBytes(V2_SEG_7, undefined, "V2_SEG_7"),
+      pushData(int64Le(timeout)),
+      hexToBytes(V2_SEG_8, undefined, "V2_SEG_8"),
+      pushData(client),
+      hexToBytes(V2_SEG_9, undefined, "V2_SEG_9"),
+      pushData(refundScriptPublicKeyHash),
+      hexToBytes(V2_SEG_10, undefined, "V2_SEG_10"),
     ]),
   );
 }
@@ -199,6 +222,10 @@ export function escrowScriptPublicKey(params: EscrowTemplateParams): ScriptPubli
   return payToScriptHashScript(buildEscrowRedeemScript(params));
 }
 
+export function escrowV2ScriptPublicKey(params: EscrowV2TemplateParams): ScriptPublicKey {
+  return payToScriptHashScript(buildEscrowV2RedeemScript(params));
+}
+
 export function serializedScriptPublicKey(scriptPublicKey: ScriptPublicKey): string {
   const version = scriptPublicKey.version;
   if (!Number.isInteger(version) || version < 0 || version > 0xffff) {
@@ -210,6 +237,11 @@ export function serializedScriptPublicKey(scriptPublicKey: ScriptPublicKey): str
 
 export function escrowScriptPubKeyHash(paramsOrScriptPublicKey: EscrowTemplateParams | ScriptPublicKey): string {
   const spk = "script" in paramsOrScriptPublicKey ? paramsOrScriptPublicKey : escrowScriptPublicKey(paramsOrScriptPublicKey);
+  return bytesToHex(sha256(hexToBytes(serializedScriptPublicKey(spk), undefined, "serializedScriptPublicKey")));
+}
+
+export function escrowV2ScriptPubKeyHash(paramsOrScriptPublicKey: EscrowV2TemplateParams | ScriptPublicKey): string {
+  const spk = "script" in paramsOrScriptPublicKey ? paramsOrScriptPublicKey : escrowV2ScriptPublicKey(paramsOrScriptPublicKey);
   return bytesToHex(sha256(hexToBytes(serializedScriptPublicKey(spk), undefined, "serializedScriptPublicKey")));
 }
 
@@ -226,73 +258,86 @@ export function deriveEscrowAddress(params: EscrowTemplateParams, encodeAddress:
   return address;
 }
 
+export function deriveEscrowV2Address(params: EscrowV2TemplateParams, encodeAddress: KaspaAddressEncoder): string {
+  const scriptPublicKey = escrowV2ScriptPublicKey(params);
+  const address = encodeAddress({
+    network: params.network,
+    scriptPublicKey,
+    serializedScriptPublicKey: serializedScriptPublicKey(scriptPublicKey),
+  });
+  if (typeof address !== "string" || address.length === 0) {
+    throw new Error("address encoder must return a non-empty address string");
+  }
+  return address;
+}
+
 export function buildClaimArgs(input: ClaimArgsInput): string {
+  return buildClaimV2Args(input);
+}
+
+export function buildClaimV2Args(input: ClaimV2ArgsInput): string {
   const serverSignature = bytesFromHexOrBytes(input.serverSignature, 65, "serverSignature");
   const voucherSignature = bytesFromHexOrBytes(input.voucherSignature, 64, "voucherSignature");
-  const amount = u64Le(input.amount);
-  return bytesToHex(concatBytes([pushData(serverSignature), pushData(voucherSignature), pushData(amount), Uint8Array.of(0x00)]));
-}
-
-export function buildRefundArgs(input: RefundArgsInput): string {
-  const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
-  return bytesToHex(concatBytes([pushData(clientSignature), Uint8Array.of(0x51)]));
-}
-
-export function voucherPreimage(input: VoucherPreimageInput): string {
+  const totalAuthorizedValue = normalizeScriptInt64(input.totalAuthorized, "totalAuthorized");
+  const claimAmountValue = normalizeScriptInt64(input.claimAmount, "claimAmount");
+  if (totalAuthorizedValue === 0n) throw new Error("totalAuthorized must be positive");
+  if (claimAmountValue === 0n) throw new Error("claimAmount must be positive");
+  const totalAuthorized = int64Le(totalAuthorizedValue);
+  const claimAmount = int64Le(claimAmountValue);
   return bytesToHex(
     concatBytes([
-      hexToBytes(ESCROW_VOUCHER_DOMAIN_TAG, 32, "domainTag"),
-      networkHash(input.network),
-      sha256(serializedScriptPublicKeyBytes(input.activeScriptPublicKey, "activeScriptPublicKey")),
-      hexToBytes(input.outpoint.txid, 32, "outpoint.txid"),
-      u32Le(input.outpoint.index),
-      u64Le(input.amount),
+      pushData(serverSignature),
+      pushData(voucherSignature),
+      pushData(totalAuthorized),
+      pushData(claimAmount),
+      Uint8Array.of(0x00),
     ]),
   );
 }
 
+export function buildTopUpV2Args(input: TopUpV2ArgsInput): string {
+  const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
+  return bytesToHex(concatBytes([pushData(clientSignature), Uint8Array.of(0x51)]));
+}
+
+export function buildTopUpArgs(input: TopUpArgsInput): string {
+  return buildTopUpV2Args(input);
+}
+
+export function buildRefundV2Args(input: RefundV2ArgsInput): string {
+  const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
+  return bytesToHex(concatBytes([pushData(clientSignature), Uint8Array.of(0x52)]));
+}
+
+export function buildRefundArgs(input: RefundArgsInput): string {
+  return buildRefundV2Args(input);
+}
+
+export function voucherPreimage(input: VoucherPreimageInput): string {
+  return voucherV2Preimage(input);
+}
+
 export function voucherDigest(input: VoucherPreimageInput): string {
-  return bytesToHex(sha256(hexToBytes(voucherPreimage(input), undefined, "voucherPreimage")));
+  return voucherV2Digest(input);
 }
 
-export function validateClaimOutputPlan(plan: ClaimOutputPlan): true {
-  const inputAmount = normalizeUint64(plan.inputAmount, "inputAmount");
-  const voucherAmount = normalizeUint64(plan.voucherAmount, "voucherAmount");
-  const serverOutputAmount = normalizeUint64(plan.serverOutputAmount, "serverOutputAmount");
-  const serverOutputHash = bytesToHex(sha256(serializedScriptPublicKeyBytes(plan.serverOutputScriptPublicKey, "serverOutputScriptPublicKey")));
-  const expectedPayoutHash = normalizeHex(plan.expectedPayoutScriptPublicKeyHash, "expectedPayoutScriptPublicKeyHash");
-  const continuationOutputAmount = normalizeUint64(plan.continuationOutputAmount, "continuationOutputAmount");
-  const continuationScript = bytesToHex(serializedScriptPublicKeyBytes(plan.continuationScriptPublicKey, "continuationScriptPublicKey"));
-  const expectedScript = bytesToHex(serializedScriptPublicKeyBytes(plan.expectedContinuationScriptPublicKey, "expectedContinuationScriptPublicKey"));
-
-  if (voucherAmount > inputAmount) {
-    throw new Error("voucher amount cannot exceed input amount");
-  }
-  if (serverOutputAmount > voucherAmount) {
-    throw new Error("server output cannot exceed voucher amount");
-  }
-  if (serverOutputHash !== expectedPayoutHash) {
-    throw new Error("server output script public key must match the configured payout hash");
-  }
-  if (continuationScript !== expectedScript) {
-    throw new Error("continuation script public key must match the active escrow script");
-  }
-  if (continuationOutputAmount < inputAmount - voucherAmount) {
-    throw new Error("continuation output must preserve the escrow remainder");
-  }
-  return true;
+export function voucherV2Preimage(input: VoucherV2PreimageInput): string {
+  const totalAuthorized = normalizeScriptInt64(input.totalAuthorized, "totalAuthorized");
+  if (totalAuthorized === 0n) throw new Error("totalAuthorized must be positive");
+  const covenantId = hexToBytes(input.covenantId, 32, "covenantId");
+  if (covenantId.every((byte) => byte === 0)) throw new Error("covenantId must identify a bound KIP-20 lineage");
+  return bytesToHex(
+    concatBytes([
+      hexToBytes(ESCROW_V2_VOUCHER_DOMAIN_TAG, 32, "domainTag"),
+      networkHash(input.network),
+      covenantId,
+      int64Le(totalAuthorized),
+    ]),
+  );
 }
 
-export function validateRefundOutputPlan(plan: RefundOutputPlan): true {
-  if (normalizeUint64(plan.inputSequence, "inputSequence") !== 0n) {
-    throw new Error("refund input sequence must be 0");
-  }
-  const refundOutputHash = bytesToHex(sha256(serializedScriptPublicKeyBytes(plan.refundOutputScriptPublicKey, "refundOutputScriptPublicKey")));
-  const expectedRefundHash = normalizeHex(plan.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash");
-  if (refundOutputHash !== expectedRefundHash) {
-    throw new Error("refund output script public key must match the configured refund hash");
-  }
-  return true;
+export function voucherV2Digest(input: VoucherV2PreimageInput): string {
+  return bytesToHex(sha256(hexToBytes(voucherV2Preimage(input), undefined, "voucherPreimage")));
 }
 
 export function computeBudgetForScriptUnits(scriptUnits: number): number {
@@ -304,7 +349,7 @@ export function computeBudgetForScriptUnits(scriptUnits: number): number {
   }
   const budget = Math.ceil((scriptUnits - FREE_SCRIPT_UNITS_PER_INPUT) / SCRIPT_UNITS_PER_COMPUTE_BUDGET);
   if (budget > 0xffff) {
-    throw new Error("script units exceed the v1 compute budget range");
+    throw new Error("script units exceed the transaction-v1 compute budget range");
   }
   return budget;
 }
@@ -344,22 +389,6 @@ export function hexToBytes(hex: string, expectedLength?: number, label = "hex"):
     throw new Error(`${label} must be ${expectedLength} bytes`);
   }
   return Uint8Array.from(Buffer.from(hex, "hex"));
-}
-
-function normalizeHex(hex: string, label: string): string {
-  return bytesToHex(hexToBytes(hex, undefined, label));
-}
-
-function serializedScriptPublicKeyBytes(hex: string, label: string): Uint8Array {
-  const bytes = hexToBytes(hex, undefined, label);
-  if (bytes.byteLength < 3) {
-    throw new Error(`${label} must be serialized as uint16_be version followed by script bytes`);
-  }
-  const version = (bytes[0] << 8) | bytes[1];
-  if (version !== 0) {
-    throw new Error(`${label} version must be 0 for kaspa-x402 v1`);
-  }
-  return bytes;
 }
 
 function bytesFromHexOrBytes(value: string | Uint8Array, expectedLength: number, label: string): Uint8Array {
@@ -451,18 +480,9 @@ function stringToUint64(value: string, label: string): bigint {
   return BigInt(value);
 }
 
-function u32Le(value: number): Uint8Array {
-  if (!Number.isInteger(value) || value < 0 || value > U32_MAX) {
-    throw new Error("outpoint index must fit in uint32");
-  }
-  const buffer = Buffer.alloc(4);
-  buffer.writeUInt32LE(value);
-  return Uint8Array.from(buffer);
-}
-
-function u64Le(value: bigint | number | string): Uint8Array {
+function int64Le(value: bigint): Uint8Array {
   const buffer = Buffer.alloc(8);
-  buffer.writeBigUInt64LE(normalizeUint64(value, "amount"));
+  buffer.writeBigInt64LE(value);
   return Uint8Array.from(buffer);
 }
 

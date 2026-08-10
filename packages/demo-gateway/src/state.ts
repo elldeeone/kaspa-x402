@@ -1,6 +1,8 @@
 import { parseSompiString, sha256Hex } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
+  BatchSettlementAttemptRecord,
+  BatchSettlementClaimResult,
   ChannelLockManager,
   ClaimAttemptRecord,
   ExactPaymentRecord,
@@ -21,11 +23,17 @@ import type {
 import {
   acceptExactHead,
   applyExactHeadLineage as applyExactHeadLineageRecord,
+  assertBatchHandlerResultTransition,
+  batchSettlementAttemptIsReadyToCommit,
+  batchSettlementAttemptsMatch,
+  claimAttemptsMatch,
   claimExactHead,
   exactHeadMatchesSelection,
   exactSettlementAttemptsMatch,
   normalizeExactHeadRecord,
   normalizeExactSettlementAttempt,
+  normalizeBatchSettlementAttempt,
+  normalizeClaimAttempt,
   releaseExactHeadClaim,
 } from "@kaspa-x402/server";
 
@@ -82,6 +90,11 @@ export type GatewayStateMethod =
   | "retireChannel"
   | "listChannels"
   | "loadCommitment"
+  | "claimBatchSettlement"
+  | "loadBatchSettlementAttempt"
+  | "beginBatchHandler"
+  | "recordBatchHandlerResult"
+  | "markBatchHandlerRecoveryRequired"
   | "loadPaymentIdentifier"
   | "loadExactPayment"
   | "registerExactHead"
@@ -167,6 +180,118 @@ export class GatewayLedger implements ServerStateStore {
     );
   }
 
+  async claimBatchSettlement(
+    input: BatchSettlementAttemptRecord,
+  ): Promise<BatchSettlementClaimResult> {
+    const attempt = normalizeBatchSettlementAttempt(input);
+    return this.#storage.transaction(async (txn) => {
+      const existing = await txn.get<BatchSettlementAttemptRecord>(
+        batchAttemptKey(attempt.attemptId),
+      );
+      if (existing) {
+        if (!batchSettlementAttemptsMatch(existing, attempt)) {
+          throw new Error(
+            "batch payment is already claimed for a different request",
+          );
+        }
+        return { attempt: clone(existing), created: false };
+      }
+      if (
+        !matchesExpectedChannel(
+          await txn.get<ServerChannelRecord>(channelKey(attempt.channelId)),
+          attempt.expected,
+        )
+      ) {
+        throw new Error("channel state changed before batch settlement claim");
+      }
+      const openAttemptId = await txn.get<string>(
+        openBatchAttemptKey(attempt.channelId),
+      );
+      if (openAttemptId) {
+        const open = await txn.get<BatchSettlementAttemptRecord>(
+          batchAttemptKey(openAttemptId),
+        );
+        if (open?.status === "pending") {
+          throw new Error("channel already has a pending batch settlement");
+        }
+        await txn.delete(openBatchAttemptKey(attempt.channelId));
+      }
+      await txn.put(batchAttemptKey(attempt.attemptId), clone(attempt));
+      await txn.put(openBatchAttemptKey(attempt.channelId), attempt.attemptId);
+      return { attempt: clone(attempt), created: true };
+    });
+  }
+
+  async loadBatchSettlementAttempt(
+    attemptId: string,
+  ): Promise<BatchSettlementAttemptRecord | undefined> {
+    return cloneOrUndefined(
+      await this.#storage.get<BatchSettlementAttemptRecord>(
+        batchAttemptKey(attemptId),
+      ),
+    );
+  }
+
+  async beginBatchHandler(
+    attemptId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const attempt = await requireBatchAttempt(txn, attemptId);
+      if (attempt.status !== "pending" || attempt.handlerStartedAt)
+        return false;
+      assertIsoDate(startedAt, "batch handler start time");
+      await txn.put(batchAttemptKey(attempt.attemptId), {
+        ...attempt,
+        handlerStartedAt: startedAt,
+        updatedAt: startedAt,
+      });
+      return true;
+    });
+  }
+
+  async recordBatchHandlerResult(
+    attemptId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireBatchAttempt(txn, attemptId);
+      assertBatchHandlerResultTransition(attempt, result, completedAt);
+      if (attempt.handlerResult) return;
+      await txn.put(batchAttemptKey(attempt.attemptId), {
+        ...attempt,
+        handlerResult: clone(result),
+        handlerCompletedAt: completedAt,
+        recoveryReason: undefined,
+        updatedAt: completedAt,
+      });
+    });
+  }
+
+  async markBatchHandlerRecoveryRequired(
+    attemptId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const attempt = await requireBatchAttempt(txn, attemptId);
+      if (
+        attempt.status !== "pending" ||
+        !attempt.handlerStartedAt ||
+        attempt.handlerResult
+      ) {
+        throw new Error("batch handler is not awaiting recovery");
+      }
+      assertIsoDate(observedAt, "batch handler recovery time");
+      await txn.put(batchAttemptKey(attempt.attemptId), {
+        ...attempt,
+        recoveryReason: reason,
+        updatedAt: observedAt,
+      });
+    });
+  }
+
   async loadPaymentIdentifier(
     id: string,
   ): Promise<PaymentIdentifierRecord | undefined> {
@@ -250,9 +375,7 @@ export class GatewayLedger implements ServerStateStore {
       });
       const candidates: ExactHeadRecord[] = [];
       for (const entry of indexed.values()) {
-        const head = await txn.get<ExactHeadRecord>(
-          exactHeadKey(entry.headId),
-        );
+        const head = await txn.get<ExactHeadRecord>(exactHeadKey(entry.headId));
         if (head && exactHeadMatchesSelection(head, request)) {
           candidates.push(head);
         }
@@ -489,6 +612,12 @@ export class GatewayLedger implements ServerStateStore {
       if (!matchesExpectedChannel(current, record.expected)) {
         throw new Error("channel state changed before settlement commit");
       }
+      const attempt = await txn.get<BatchSettlementAttemptRecord>(
+        batchAttemptKey(record.batchAttemptId),
+      );
+      if (!batchSettlementAttemptIsReadyToCommit(attempt, record)) {
+        throw new Error("batch settlement attempt is not ready to apply");
+      }
       if (record.paymentIdentifier)
         await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
       await txn.put(
@@ -504,6 +633,12 @@ export class GatewayLedger implements ServerStateStore {
         channelKey(record.channel.channelId),
         clone(record.channel),
       );
+      await txn.put(batchAttemptKey(attempt.attemptId), {
+        ...attempt,
+        status: "applied",
+        updatedAt: new Date().toISOString(),
+      });
+      await txn.delete(openBatchAttemptKey(attempt.channelId));
     });
   }
 
@@ -567,19 +702,22 @@ export class GatewayLedger implements ServerStateStore {
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const openAttemptId = await txn.get<string>(
-        openClaimKey(record.channelId),
+      const existing = await txn.get<ClaimAttemptRecord>(
+        claimAttemptKey(record.attemptId),
       );
-      if (openAttemptId && openAttemptId !== record.attemptId) {
+      const attempt = normalizeClaimAttempt(record, existing);
+      const openAttemptId = await txn.get<string>(
+        openClaimKey(attempt.channelId),
+      );
+      if (openAttemptId && openAttemptId !== attempt.attemptId) {
         const open = await txn.get<ClaimAttemptRecord>(
           claimAttemptKey(openAttemptId),
         );
         if (open && open.status !== "applied")
           throw new Error("claim attempt is already pending");
       }
-      await txn.put(claimAttemptKey(record.attemptId), clone(record));
-      if (record.status !== "applied")
-        await txn.put(openClaimKey(record.channelId), record.attemptId);
+      await txn.put(claimAttemptKey(attempt.attemptId), attempt);
+      await txn.put(openClaimKey(attempt.channelId), attempt.attemptId);
     });
   }
 
@@ -591,21 +729,28 @@ export class GatewayLedger implements ServerStateStore {
       const currentAttempt = await txn.get<ClaimAttemptRecord>(
         claimAttemptKey(attempt.attemptId),
       );
-      if (!currentAttempt || currentAttempt.status === "applied") {
-        throw new Error("claim attempt is not open");
+      if (
+        !currentAttempt ||
+        currentAttempt.status !== "accepted" ||
+        attempt.status !== "accepted" ||
+        !claimAttemptsMatch(currentAttempt, attempt)
+      ) {
+        throw new Error(
+          "claim apply must match the persisted accepted attempt",
+        );
       }
       const currentChannel = await txn.get<ServerChannelRecord>(
         channelKey(channel.channelId),
       );
-      if (!matchesClaimSnapshot(currentChannel, attempt)) {
+      if (!matchesClaimSnapshot(currentChannel, currentAttempt)) {
         throw new Error("channel state changed before claim apply");
       }
       await txn.put(channelKey(channel.channelId), clone(channel));
-      await txn.put(claimAttemptKey(attempt.attemptId), {
-        ...clone(attempt),
+      await txn.put(claimAttemptKey(currentAttempt.attemptId), {
+        ...clone(currentAttempt),
         status: "applied",
       });
-      await txn.delete(openClaimKey(attempt.channelId));
+      await txn.delete(openClaimKey(currentAttempt.channelId));
     });
   }
 
@@ -789,6 +934,44 @@ export async function dispatchGatewayState(
       return ledger.loadCommitment(
         readPayload<{ commitmentId: string }>(request).commitmentId,
       );
+    case "claimBatchSettlement":
+      return ledger.claimBatchSettlement(
+        readPayload<{ record: BatchSettlementAttemptRecord }>(request).record,
+      );
+    case "loadBatchSettlementAttempt":
+      return ledger.loadBatchSettlementAttempt(
+        readPayload<{ attemptId: string }>(request).attemptId,
+      );
+    case "beginBatchHandler": {
+      const payload = readPayload<{ attemptId: string; startedAt: string }>(
+        request,
+      );
+      return ledger.beginBatchHandler(payload.attemptId, payload.startedAt);
+    }
+    case "recordBatchHandlerResult": {
+      const payload = readPayload<{
+        attemptId: string;
+        result: ProtectedHandlerResult;
+        completedAt: string;
+      }>(request);
+      return ledger.recordBatchHandlerResult(
+        payload.attemptId,
+        payload.result,
+        payload.completedAt,
+      );
+    }
+    case "markBatchHandlerRecoveryRequired": {
+      const payload = readPayload<{
+        attemptId: string;
+        reason: string;
+        observedAt: string;
+      }>(request);
+      return ledger.markBatchHandlerRecoveryRequired(
+        payload.attemptId,
+        payload.reason,
+        payload.observedAt,
+      );
+    }
     case "loadPaymentIdentifier":
       return ledger.loadPaymentIdentifier(
         readPayload<{ id: string }>(request).id,
@@ -1018,9 +1201,12 @@ function matchesExpectedChannel(
   }
   return (
     current.channelId === expected.channelId &&
+    current.covenantId === expected.covenantId &&
+    current.fundingAmount === expected.fundingAmount &&
     current.chargedCumulativeAmount === expected.chargedCumulativeAmount &&
     current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
     current.signedMaxClaimable === expected.signedMaxClaimable &&
+    current.voucherSignature === expected.voucherSignature &&
     current.status === expected.status &&
     current.activeOutpoint.txid.toLowerCase() ===
       expected.activeOutpoint.txid.toLowerCase() &&
@@ -1036,6 +1222,8 @@ function matchesClaimSnapshot(
 ): boolean {
   return Boolean(
     current &&
+    current.channelId === attempt.channelId &&
+    current.covenantId.toLowerCase() === attempt.covenantId.toLowerCase() &&
     current.activeOutpoint.txid.toLowerCase() ===
       attempt.activeOutpoint.txid.toLowerCase() &&
     current.activeOutpoint.index === attempt.activeOutpoint.index &&
@@ -1056,6 +1244,14 @@ function channelKey(channelId: string): string {
 
 function commitmentKey(commitmentId: string): string {
   return `commitment:${commitmentId.toLowerCase()}`;
+}
+
+function batchAttemptKey(attemptId: string): string {
+  return `batch-attempt:${attemptId.toLowerCase()}`;
+}
+
+function openBatchAttemptKey(channelId: string): string {
+  return `open-batch-attempt:${channelId.toLowerCase()}`;
 }
 
 function exactPaymentKey(transactionId: string): string {
@@ -1214,6 +1410,22 @@ function clone<T>(value: T): T {
 
 function cloneOrUndefined<T>(value: T | undefined): T | undefined {
   return value === undefined ? undefined : clone(value);
+}
+
+async function requireBatchAttempt(
+  txn: GatewayTransaction,
+  attemptId: string,
+): Promise<BatchSettlementAttemptRecord> {
+  const attempt = await txn.get<BatchSettlementAttemptRecord>(
+    batchAttemptKey(attemptId),
+  );
+  if (!attempt) throw new Error("batch settlement attempt was not found");
+  return attempt;
+}
+
+function assertIsoDate(value: string, label: string): void {
+  if (Number.isNaN(Date.parse(value)))
+    throw new Error(`${label} must be an ISO date string`);
 }
 
 async function requireExactAttempt(

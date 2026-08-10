@@ -4,8 +4,11 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  applyBatchClaimAccounting,
+  assertBatchVoucherReserve,
   batchCommitmentId,
   batchCommitmentPreimageHex,
+  batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
   decodePaymentRequiredEnvelopeHeader,
@@ -34,6 +37,7 @@ import {
   stableStringify,
   validateKaspaPaymentRequirement,
   validatePaymentIdentifierReuse,
+  validatePaymentPayload,
   validatePaymentRequired,
   validatePaymentRetry,
   validateSchemaById,
@@ -46,6 +50,7 @@ import {
 import type {
   BatchCommitmentInput,
   BatchPaymentRequirements,
+  ChannelState,
   ChannelConfig,
   ExactPaymentRequirements,
   PaymentIdentifierObservation,
@@ -146,6 +151,9 @@ type BatchInteropVector = {
     preimage: string;
     channelId: string;
   };
+  lineage: {
+    covenantId: string;
+  };
   voucher: {
     input: Parameters<typeof voucherDigest>[0];
     preimage: string;
@@ -160,6 +168,13 @@ type BatchInteropVector = {
     input: BatchCommitmentInput;
     preimage: string;
     commitmentId: string;
+  };
+  accounting: {
+    reserveAmount: string;
+    claimAmount: string;
+    beforeRequest: ChannelState;
+    afterRequest: ChannelState;
+    afterClaim: ChannelState;
   };
   expiry: {
     timeoutDaa: string;
@@ -273,7 +288,7 @@ describe("amount and network primitives", () => {
 
 describe("voucher digest vectors", () => {
   const vector = readJson<VoucherVector>(
-    "vectors/voucher/full-outpoint-binding.json",
+    "vectors/voucher/stable-covenant-binding.json",
   );
 
   for (const item of vector.cases) {
@@ -283,16 +298,16 @@ describe("voucher digest vectors", () => {
     });
   }
 
-  it("rejects bare script bytes for activeScriptPublicKey", () => {
+  it("rejects the all-zero KIP-20 unbound sentinel", () => {
     const item = vector.cases[0];
     if (!item) throw new Error("missing base voucher vector");
 
     expect(() =>
       voucherDigest({
         ...item.input,
-        activeScriptPublicKey: item.input.activeScriptPublicKey.slice(4),
+        covenantId: "00".repeat(32),
       }),
-    ).toThrow("activeScriptPublicKey version must be 0");
+    ).toThrow("bound KIP-20 lineage");
   });
 });
 
@@ -767,6 +782,25 @@ describe("exact v2 profile schemas", () => {
   });
 });
 
+describe("Alpha.10 batch network boundary", () => {
+  it("classifies mainnet batch requirements and payloads as network errors", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const paymentRequired = structuredClone(vector.paymentRequired);
+    paymentRequired.accepts[0]!.network = "kaspa:mainnet";
+    expectFailureCode(
+      validatePaymentRequired(paymentRequired),
+      "invalid_kaspa_x402_network",
+    );
+
+    const paymentPayload = structuredClone(vector.paymentPayload);
+    paymentPayload.accepted.network = "kaspa:mainnet";
+    expectFailureCode(
+      validatePaymentPayload(paymentPayload),
+      "invalid_kaspa_x402_network",
+    );
+  });
+});
+
 describe("exact v2 language-independent interoperability vector", () => {
   const vector = readJson<ExactInteropVector>("vectors/exact/interop-v1.json");
 
@@ -810,8 +844,8 @@ describe("exact v2 language-independent interoperability vector", () => {
   });
 });
 
-describe("batch v1 language-independent interoperability vector", () => {
-  const vector = readJson<BatchInteropVector>("vectors/batch/interop-v1.json");
+describe("batch v2 language-independent interoperability vector", () => {
+  const vector = readJson<BatchInteropVector>("vectors/batch/interop-v2.json");
 
   it("reproduces the channel, voucher, requirements, and commitment digests", () => {
     expect(channelIdPreimageHex(vector.channel.config)).toBe(
@@ -822,6 +856,10 @@ describe("batch v1 language-independent interoperability vector", () => {
       vector.voucher.preimage,
     );
     expect(voucherDigest(vector.voucher.input)).toBe(vector.voucher.digest);
+    expect(vector.voucher.input.covenantId).toBe(vector.lineage.covenantId);
+    expect(vector.commitment.input.voucher.covenantId).toBe(
+      vector.lineage.covenantId,
+    );
     expect(
       batchPaymentRequirementsPreimageHex(vector.paymentRequirements.value),
     ).toBe(vector.paymentRequirements.preimage);
@@ -851,7 +889,43 @@ describe("batch v1 language-independent interoperability vector", () => {
     }
   });
 
-  it("rejects inconsistent commitment accounting and binds the active outpoint", () => {
+  it("reproduces lifetime accounting without resetting the voucher ceiling", () => {
+    expect(batchLaneAccounting(vector.accounting.beforeRequest)).toMatchObject({
+      activeChargedAmount: 7_300_000n,
+      remainingAuthorizedAmount: 13_000_000n,
+    });
+    expect(batchLaneAccounting(vector.accounting.afterRequest)).toMatchObject({
+      activeChargedAmount: 8_000_000n,
+      remainingAuthorizedAmount: 13_000_000n,
+    });
+    expect(
+      applyBatchClaimAccounting(
+        vector.accounting.afterRequest,
+        vector.accounting.claimAmount,
+      ),
+    ).toMatchObject({
+      fundingAmount: vector.accounting.afterClaim.fundingAmount,
+      chargedCumulativeAmount:
+        vector.accounting.afterClaim.chargedCumulativeAmount,
+      claimedCumulativeAmount:
+        vector.accounting.afterClaim.claimedCumulativeAmount,
+      signedMaxClaimable: vector.accounting.afterClaim.signedMaxClaimable,
+    });
+    expect(vector.accounting.afterClaim.signedMaxClaimable).toBe(
+      vector.accounting.beforeRequest.signedMaxClaimable,
+    );
+    expect(vector.accounting.reserveAmount).toBe(
+      vector.paymentRequirements.value.extra.claimReserveSompi,
+    );
+    expect(
+      assertBatchVoucherReserve(
+        vector.accounting.afterRequest,
+        vector.accounting.reserveAmount,
+      ),
+    ).toBe(true);
+  });
+
+  it("rejects inconsistent commitment accounting and binds lane plus active head", () => {
     expect(() =>
       batchCommitmentId({
         ...vector.commitment.input,
@@ -865,6 +939,16 @@ describe("batch v1 language-independent interoperability vector", () => {
         activeOutpoint: {
           ...vector.commitment.input.activeOutpoint,
           index: vector.commitment.input.activeOutpoint.index + 1,
+        },
+      }),
+    ).not.toBe(vector.commitment.commitmentId);
+
+    expect(
+      batchCommitmentId({
+        ...vector.commitment.input,
+        voucher: {
+          ...vector.commitment.input.voucher,
+          covenantId: "67".repeat(32),
         },
       }),
     ).not.toBe(vector.commitment.commitmentId);

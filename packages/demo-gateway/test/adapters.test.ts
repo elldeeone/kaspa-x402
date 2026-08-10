@@ -9,6 +9,7 @@ import {
   calculateKaspaStorageMass,
   payToScriptHashScript,
   serializedScriptPublicKey,
+  transactionV1CovenantId,
   transactionV1Id,
   type TxV1ReferenceTransaction,
 } from "@kaspa-x402/covenant";
@@ -27,7 +28,7 @@ import {
   encodeScriptAddress,
   scriptPublicKeyForAddress,
 } from "../src/kaspa-native.js";
-import type { ExactHeadRecord } from "@kaspa-x402/server";
+import type { ExactHeadRecord, ServerChannelRecord } from "@kaspa-x402/server";
 import { exactRequestAuthorizationDigest } from "@kaspa-x402/core";
 
 const originalFetch = globalThis.fetch;
@@ -105,13 +106,52 @@ describe("RestKaspaChainProvider", () => {
   const scriptPublicKey =
     "000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac";
   const txid = "aa".repeat(32);
+  const authorizingTxid = "ab".repeat(32);
   const addressUtxosPath = `https://api.example.test/addresses/${encodeURIComponent(address)}/utxos`;
 
-  it("returns funding evidence only from the current address UTXO set", async () => {
+  it("reads one persisted current outpoint and enriches its covenant id", async () => {
+    const covenantId = transactionV1CovenantId(
+      { txid: authorizingTxid, index: 1 },
+      [
+        {
+          index: 0,
+          output: {
+            amount: "1000",
+            scriptPublicKey,
+            covenant: null,
+          },
+        },
+      ],
+    );
     const requests: string[] = [];
     const fetchMock = vi.fn((input: RequestInfo | URL) => {
       const url = input.toString();
       requests.push(url);
+      if (url.includes(`/transactions/${txid}`)) {
+        return Promise.resolve(
+          Response.json({
+            transaction_id: txid,
+            version: 1,
+            is_accepted: true,
+            inputs: [
+              {
+                previous_outpoint_hash: authorizingTxid,
+                previous_outpoint_index: "1",
+                covenant_id: null,
+              },
+            ],
+            outputs: [
+              {
+                index: 0,
+                amount: "1000",
+                script_public_key: scriptPublicKey.slice(4),
+                covenant_authorizing_input: 0,
+                covenant_id: covenantId,
+              },
+            ],
+          }),
+        );
+      }
       expect(url).toBe(addressUtxosPath);
       return Promise.resolve(
         new Response(
@@ -129,7 +169,7 @@ describe("RestKaspaChainProvider", () => {
       );
     }) as typeof fetch;
     const book = new ScriptAddressBook();
-    book.record(scriptPublicKey, address);
+    book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
     const utxo = await new RestKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
@@ -142,8 +182,12 @@ describe("RestKaspaChainProvider", () => {
       amount: "1000",
       scriptPublicKey,
       finality: "accepted",
+      covenantId,
     });
-    expect(requests).toEqual([addressUtxosPath]);
+    expect(requests).toEqual([
+      addressUtxosPath,
+      expect.stringContaining(`/transactions/${txid}`),
+    ]);
   });
 
   it("does not accept historical transaction outputs when the outpoint is no longer unspent", async () => {
@@ -164,7 +208,7 @@ describe("RestKaspaChainProvider", () => {
       );
     }) as typeof fetch;
     const book = new ScriptAddressBook();
-    book.record(scriptPublicKey, address);
+    book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
     const utxo = await new RestKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
@@ -174,6 +218,279 @@ describe("RestKaspaChainProvider", () => {
 
     expect(utxo).toBeNull();
     expect(requests).toEqual([addressUtxosPath]);
+  });
+
+  it("resolves an unpersisted funding outpoint from its exact output script without scanning addresses", async () => {
+    const covenantId = transactionV1CovenantId(
+      { txid: authorizingTxid, index: 1 },
+      [
+        {
+          index: 0,
+          output: {
+            amount: "1000",
+            scriptPublicKey,
+            covenant: null,
+          },
+        },
+      ],
+    );
+    const requests: string[] = [];
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      const url = input.toString();
+      requests.push(url);
+      if (url.includes(`/transactions/${txid}`)) {
+        return Promise.resolve(
+          Response.json({
+            transaction_id: txid,
+            version: 1,
+            is_accepted: true,
+            inputs: [
+              {
+                previous_outpoint_hash: authorizingTxid,
+                previous_outpoint_index: "1",
+                covenant_id: null,
+              },
+            ],
+            outputs: [
+              {
+                index: 0,
+                amount: "1000",
+                script_public_key: scriptPublicKey.slice(4),
+                covenant_authorizing_input: 0,
+                covenant_id: covenantId,
+              },
+            ],
+          }),
+        );
+      }
+      expect(url).toBe(addressUtxosPath);
+      return Promise.resolve(
+        Response.json([
+          {
+            outpoint: { transactionId: txid, index: 0 },
+            utxoEntry: {
+              amount: "1000",
+              scriptPublicKey: { scriptPublicKey },
+            },
+          },
+        ]),
+      );
+    }) as typeof fetch;
+    const book = new ScriptAddressBook();
+    book.record(scriptPublicKey, address);
+    book.record("0000aa", "kaspatest:qother");
+
+    const utxo = await new RestKaspaChainProvider(
+      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      book,
+      "100",
+    ).getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
+
+    expect(utxo?.covenantId).toBe(covenantId);
+    expect(requests).toEqual([
+      expect.stringContaining(`/transactions/${txid}`),
+      addressUtxosPath,
+    ]);
+  });
+
+  it("recomputes trusted singleton covenant genesis evidence", async () => {
+    const covenantId = transactionV1CovenantId(
+      { txid: authorizingTxid, index: 1 },
+      [
+        {
+          index: 0,
+          output: { amount: "1000", scriptPublicKey, covenant: null },
+        },
+      ],
+    );
+    const fetchMock = vi.fn((input: RequestInfo | URL) => {
+      expect(input.toString()).toContain(`/transactions/${txid}`);
+      return Promise.resolve(
+        Response.json({
+          transaction_id: txid,
+          version: 1,
+          is_accepted: true,
+          inputs: [
+            {
+              previous_outpoint_hash: authorizingTxid,
+              previous_outpoint_index: 1,
+              covenant_id: null,
+            },
+          ],
+          outputs: [
+            {
+              index: 0,
+              amount: "1000",
+              script_public_key: scriptPublicKey.slice(4),
+              covenant_authorizing_input: 0,
+              covenant_id: covenantId,
+            },
+          ],
+        }),
+      );
+    }) as typeof fetch;
+    const provider = new RestKaspaChainProvider(
+      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new ScriptAddressBook(),
+      "100",
+    );
+
+    await expect(
+      provider.verifyCovenantGenesis({
+        utxo: {
+          outpoint: { txid, index: 0 },
+          covenantId,
+          amount: "1000",
+          scriptPublicKey,
+          finality: "accepted",
+        },
+        payment: {} as never,
+      }),
+    ).resolves.toEqual({
+      covenantId,
+      authorizingInput: { txid: authorizingTxid, index: 1 },
+      genesisOutpoint: { txid, index: 0 },
+      genesisScriptPublicKey: scriptPublicKey,
+      genesisAmount: "1000",
+      totalOutputCount: 1,
+      authorizedOutputCount: 1,
+    });
+  });
+
+  it("rejects covenant genesis with an extra unauthorized output", async () => {
+    const covenantId = transactionV1CovenantId(
+      { txid: authorizingTxid, index: 1 },
+      [
+        {
+          index: 0,
+          output: { amount: "1000", scriptPublicKey, covenant: null },
+        },
+      ],
+    );
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          transaction_id: txid,
+          version: 1,
+          is_accepted: true,
+          inputs: [
+            {
+              previous_outpoint_hash: authorizingTxid,
+              previous_outpoint_index: 1,
+              covenant_id: null,
+            },
+          ],
+          outputs: [
+            {
+              index: 0,
+              amount: "1000",
+              script_public_key: scriptPublicKey.slice(4),
+              covenant_authorizing_input: 0,
+              covenant_id: covenantId,
+            },
+            {
+              index: 1,
+              amount: "1",
+              script_public_key: "51",
+              covenant_id: null,
+            },
+          ],
+        }),
+      ),
+    ) as typeof fetch;
+    const provider = new RestKaspaChainProvider(
+      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new ScriptAddressBook(),
+      "100",
+    );
+
+    await expect(
+      provider.verifyCovenantGenesis({
+        utxo: {
+          outpoint: { txid, index: 0 },
+          covenantId,
+          amount: "1000",
+          scriptPublicKey,
+          finality: "accepted",
+        },
+        payment: {} as never,
+      }),
+    ).resolves.toBeNull();
+  });
+
+  it("returns structured proof for one accepted top-up successor", async () => {
+    const covenantId = "bc".repeat(32);
+    const previousOutpoint = { txid: "bd".repeat(32), index: 0 };
+    const nextOutpoint = { txid: "be".repeat(32), index: 0 };
+    const previous = batchChannel({
+      covenantId,
+      activeOutpoint: previousOutpoint,
+      activeScriptPublicKey: scriptPublicKey,
+      fundingAmount: "1000",
+    });
+    const next = batchChannel({
+      covenantId,
+      activeOutpoint: nextOutpoint,
+      activeScriptPublicKey: scriptPublicKey,
+      fundingAmount: "2000",
+    });
+    const fetchMock = vi.fn(() =>
+      Promise.resolve(
+        Response.json({
+          transaction_id: nextOutpoint.txid,
+          version: 1,
+          is_accepted: true,
+          inputs: [
+            {
+              previous_outpoint_hash: previousOutpoint.txid,
+              previous_outpoint_index: previousOutpoint.index,
+              covenant_id: covenantId,
+            },
+            {
+              previous_outpoint_hash: "bf".repeat(32),
+              previous_outpoint_index: 1,
+              covenant_id: null,
+            },
+          ],
+          outputs: [
+            {
+              index: 0,
+              amount: "2000",
+              script_public_key: scriptPublicKey.slice(4),
+              covenant_authorizing_input: 0,
+              covenant_id: covenantId,
+            },
+          ],
+        }),
+      ),
+    ) as typeof fetch;
+    const provider = new RestKaspaChainProvider(
+      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new ScriptAddressBook(),
+      "100",
+    );
+
+    await expect(
+      provider.verifyTopUp({
+        previous,
+        next,
+        utxo: {
+          outpoint: nextOutpoint,
+          covenantId,
+          amount: "2000",
+          scriptPublicKey,
+          finality: "accepted",
+        },
+        payment: {} as never,
+      }),
+    ).resolves.toEqual({
+      covenantId,
+      spentOutpoint: previousOutpoint,
+      successorOutpoint: nextOutpoint,
+      successorScriptPublicKey: scriptPublicKey,
+      successorAmount: "2000",
+      authorizedSuccessorCount: 1,
+    });
   });
 
   it("submits exact transaction artifacts and waits for accepted transaction evidence", async () => {
@@ -595,6 +912,7 @@ describe("RestExactTransactionVerifier", () => {
       payload: string;
     };
     let candidateAccepted = false;
+    let acceptedComputeBudget: number | null | "absent" = "absent";
     let inputUnspent = true;
     const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
       const url = new URL(request.toString());
@@ -650,6 +968,9 @@ describe("RestExactTransactionVerifier", () => {
               signature_script: entry.signatureScript,
               sequence: entry.sequence,
               sig_op_count: entry.sigOpCount,
+              ...(acceptedComputeBudget === "absent"
+                ? {}
+                : { compute_budget: acceptedComputeBudget }),
             })),
             outputs: safeArtifact.outputs.map((entry, index) => ({
               index,
@@ -819,6 +1140,23 @@ describe("RestExactTransactionVerifier", () => {
       finality: "accepted",
     });
 
+    sdkSafeArtifact.inputs[0]!.computeBudget = 0;
+    acceptedComputeBudget = "absent";
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(sdkSafeArtifact),
+      }),
+    ).resolves.toMatchObject({ transactionId: standard.transactionId });
+
+    acceptedComputeBudget = null;
+    await expect(
+      verifier.verifyExactPayment({
+        ...request,
+        transaction: JSON.stringify(sdkSafeArtifact),
+      }),
+    ).resolves.toMatchObject({ transactionId: standard.transactionId });
+
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2100-01-01T00:00:00.000Z"));
     try {
@@ -890,6 +1228,7 @@ describe("RestExactTransactionVerifier", () => {
     };
     const artifact = JSON.stringify(artifactObject);
     let candidateAccepted = false;
+    let includeAcceptedComputeBudget = true;
     const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
       const url = new URL(request.toString());
       const input = additive.transaction.inputs.find(
@@ -927,7 +1266,9 @@ describe("RestExactTransactionVerifier", () => {
             signature_script: entry.signatureScript,
             sequence: entry.sequence,
             sig_op_count: entry.sigOpCount,
-            compute_budget: entry.computeBudget,
+            ...(includeAcceptedComputeBudget
+              ? { compute_budget: entry.computeBudget }
+              : {}),
           })),
           outputs: artifactObject.outputs.map((entry, index) => ({
             index,
@@ -1148,6 +1489,17 @@ describe("RestExactTransactionVerifier", () => {
     ).rejects.toThrow("payer signature is invalid");
 
     candidateAccepted = true;
+    await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({
+      transactionId: additive.transactionId,
+      finality: "accepted",
+    });
+
+    includeAcceptedComputeBudget = false;
+    await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
+      "accepted transaction computeBudget does not match exact artifact",
+    );
+    includeAcceptedComputeBudget = true;
+
     vi.useFakeTimers();
     vi.setSystemTime(new Date("2100-01-01T00:00:00.000Z"));
     try {
@@ -1241,7 +1593,11 @@ describe("NativeVoucherVerifier", () => {
         clientPublicKey: publicKey,
         digest,
         preimage: "22".repeat(32),
-        voucher: { amount: "100", signature },
+        voucher: {
+          covenantId: "23".repeat(32),
+          amount: "100",
+          signature,
+        },
       }),
     ).toBe(true);
     expect(
@@ -1250,7 +1606,11 @@ describe("NativeVoucherVerifier", () => {
         clientPublicKey: publicKey,
         digest: "22".repeat(32),
         preimage: "22".repeat(32),
-        voucher: { amount: "100", signature },
+        voucher: {
+          covenantId: "23".repeat(32),
+          amount: "100",
+          signature,
+        },
       }),
     ).toBe(false);
   });
@@ -1279,11 +1639,61 @@ describe("NativeVoucherVerifier", () => {
         clientPublicKey: publicKey,
         digest,
         preimage: "22".repeat(32),
-        voucher: { amount: "100", signature },
+        voucher: {
+          covenantId: "23".repeat(32),
+          amount: "100",
+          signature,
+        },
       }),
     ).toBe(false);
   });
 });
+
+function batchChannel(
+  overrides: Partial<ServerChannelRecord>,
+): ServerChannelRecord {
+  const covenantId = overrides.covenantId ?? "c0".repeat(32);
+  const activeOutpoint = overrides.activeOutpoint ?? {
+    txid: "c1".repeat(32),
+    index: 0,
+  };
+  const activeScriptPublicKey =
+    overrides.activeScriptPublicKey ?? `0000${"c2".repeat(34)}`;
+  const fundingAmount = overrides.fundingAmount ?? "1000";
+  return {
+    channelId: "c3".repeat(32),
+    covenantId,
+    genesisEvidence: {
+      covenantId,
+      authorizingInput: { txid: "c4".repeat(32), index: 0 },
+      genesisOutpoint: { txid: "c5".repeat(32), index: 0 },
+      genesisScriptPublicKey: activeScriptPublicKey,
+      genesisAmount: "1000",
+      totalOutputCount: 1,
+      authorizedOutputCount: 1,
+    },
+    channelConfig: {
+      network: "kaspa:testnet-10",
+      asset: "KAS",
+      templateId: "kaspa-x402-escrow-v2",
+      clientPublicKey: "c6".repeat(32),
+      serverPublicKey: "c7".repeat(32),
+      payTo: "kaspatest:payout",
+      refundAddress: "kaspatest:refund",
+      refundTimeoutDaa: "2000",
+      salt: "c8".repeat(32),
+    },
+    escrowAddress: "kaspatest:escrow",
+    activeOutpoint,
+    activeScriptPublicKey,
+    fundingAmount,
+    chargedCumulativeAmount: "0",
+    claimedCumulativeAmount: "0",
+    signedMaxClaimable: "0",
+    status: "active",
+    ...overrides,
+  };
+}
 
 type MockPnnRpc = {
   connect(): Promise<void>;
@@ -1491,6 +1901,7 @@ function refreshAdditiveArtifact(artifact: AdditiveSafeArtifact): void {
         scriptPublicKey: input.utxo.scriptPublicKey,
         blockDaaScore: "0",
         isCoinbase: false,
+        covenantId: null,
       },
     })),
     outputs: artifact.outputs.map((output) => ({

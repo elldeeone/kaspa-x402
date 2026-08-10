@@ -18,6 +18,9 @@ import type {
   ExactTransactionVerificationRequest,
   ExactTransactionVerifier,
   ServerChainProvider,
+  TopUpVerificationRequest,
+  TopUpVerificationResult,
+  TopUpVerifier,
   TransactionBroadcast,
   VoucherVerificationRequest,
   VoucherVerifier,
@@ -31,6 +34,7 @@ import {
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
+  transactionV1CovenantId,
   transactionV1Id,
   transactionV1SchnorrSignatureEvidence,
   type DeriveEscrowAddressInput,
@@ -88,9 +92,19 @@ type KaspaPnnClientOptions = {
 
 export class ScriptAddressBook {
   readonly #scriptToAddress = new Map<string, string>();
+  readonly #outpointToAddress = new Map<string, string>();
 
   record(scriptPublicKey: string, address: string): void {
     this.#scriptToAddress.set(scriptPublicKey.toLowerCase(), address);
+  }
+
+  recordOutpoint(
+    outpoint: FundingOutpoint,
+    scriptPublicKey: string,
+    address: string,
+  ): void {
+    this.record(scriptPublicKey, address);
+    this.#outpointToAddress.set(outpointKey(outpoint), address);
   }
 
   addresses(): string[] {
@@ -99,6 +113,10 @@ export class ScriptAddressBook {
 
   addressForScriptPublicKey(scriptPublicKey: string): string | undefined {
     return this.#scriptToAddress.get(scriptPublicKey.toLowerCase());
+  }
+
+  addressForOutpoint(outpoint: FundingOutpoint): string | undefined {
+    return this.#outpointToAddress.get(outpointKey(outpoint));
   }
 }
 
@@ -124,7 +142,9 @@ export class NativeAddressCodec implements AddressCodec {
   }
 }
 
-export class RestKaspaChainProvider implements ServerChainProvider {
+export class RestKaspaChainProvider
+  implements ServerChainProvider, TopUpVerifier
+{
   readonly #client: KaspaRestClient;
   readonly #book: ScriptAddressBook;
   readonly #claimFeeSompi: SompiString;
@@ -144,13 +164,200 @@ export class RestKaspaChainProvider implements ServerChainProvider {
     network: NetworkId,
   ): Promise<ChainUtxo | null> {
     assertTestnet(network);
-    for (const address of this.#book.addresses()) {
-      const match = (await this.#client.getUtxosForAddress(address)).find(
-        (utxo) => sameOutpoint(utxo.outpoint, outpoint),
+    let transaction: RestTransaction | null | undefined;
+    let address = this.#book.addressForOutpoint(outpoint);
+    if (!address) {
+      transaction = await this.#client.getTransaction(outpoint.txid);
+      const output = transactionOutputAt(transaction, outpoint);
+      if (!output) return null;
+      address = this.#book.addressForScriptPublicKey(
+        normalizeRestScript(requiredRestScript(output)),
       );
-      if (match) return match;
     }
-    return null;
+    if (!address) {
+      throw invalidTransaction(
+        "current covenant output script has no derived address",
+      );
+    }
+    const match = (await this.#client.getUtxosForAddress(address)).find(
+      (utxo) => sameOutpoint(utxo.outpoint, outpoint),
+    );
+    if (!match) return null;
+
+    transaction ??= await this.#client.getTransaction(outpoint.txid);
+    const output = transactionOutputAt(transaction, outpoint);
+    if (!output) return match;
+    if (
+      String(output.amount) !== match.amount ||
+      normalizeRestScript(requiredRestScript(output)).toLowerCase() !==
+        match.scriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "current covenant outpoint conflicts with its transaction output",
+      );
+    }
+    this.#book.recordOutpoint(outpoint, match.scriptPublicKey, address);
+    const covenantId = restOutputCovenant(output)?.covenantId;
+    return covenantId ? { ...match, covenantId } : match;
+  }
+
+  async verifyCovenantGenesis(
+    request: Parameters<ServerChainProvider["verifyCovenantGenesis"]>[0],
+  ): Promise<
+    Awaited<ReturnType<ServerChainProvider["verifyCovenantGenesis"]>>
+  > {
+    const covenantId = request.utxo.covenantId;
+    if (!isNonzeroHash32(covenantId)) return null;
+    const transaction = await this.#client.getTransaction(
+      request.utxo.outpoint.txid,
+    );
+    if (
+      !transaction?.is_accepted ||
+      transaction.version !== 1 ||
+      transaction.transaction_id?.toLowerCase() !==
+        request.utxo.outpoint.txid.toLowerCase() ||
+      !Array.isArray(transaction.inputs) ||
+      !Array.isArray(transaction.outputs) ||
+      transaction.outputs.length !== 1
+    ) {
+      return null;
+    }
+    const genesisOutput = transactionOutputAt(
+      transaction,
+      request.utxo.outpoint,
+    );
+    const binding = genesisOutput
+      ? restOutputCovenant(genesisOutput)
+      : undefined;
+    if (
+      !genesisOutput ||
+      !binding ||
+      binding.covenantId !== covenantId ||
+      String(genesisOutput.amount) !== request.utxo.amount ||
+      normalizeRestScript(requiredRestScript(genesisOutput)) !==
+        request.utxo.scriptPublicKey.toLowerCase()
+    ) {
+      return null;
+    }
+    const authorizingInput = transaction.inputs[binding.authorizingInput];
+    if (
+      !authorizingInput ||
+      restInputCovenantId(authorizingInput) !== undefined
+    ) {
+      return null;
+    }
+    const authorizingOutpoint = restInputOutpoint(authorizingInput);
+    if (!authorizingOutpoint) return null;
+    const authorizedOutputs = transaction.outputs
+      .map((output, position) => ({
+        index: restOutputIndex(output, position),
+        output,
+        binding: restOutputCovenant(output),
+      }))
+      .filter(
+        (item) =>
+          item.binding?.covenantId === covenantId &&
+          item.binding.authorizingInput === binding.authorizingInput,
+      )
+      .sort((left, right) => left.index - right.index);
+    if (
+      authorizedOutputs.length !== 1 ||
+      authorizedOutputs[0]?.index !== request.utxo.outpoint.index
+    ) {
+      return null;
+    }
+    const computed = transactionV1CovenantId(
+      authorizingOutpoint,
+      authorizedOutputs.map(({ index, output }) => ({
+        index,
+        output: {
+          amount: String(output.amount),
+          scriptPublicKey: normalizeRestScript(requiredRestScript(output)),
+          covenant: null,
+        },
+      })),
+    );
+    if (computed !== covenantId) return null;
+    void request.payment;
+    return {
+      covenantId,
+      authorizingInput: authorizingOutpoint,
+      genesisOutpoint: structuredClone(request.utxo.outpoint),
+      genesisScriptPublicKey: request.utxo.scriptPublicKey.toLowerCase(),
+      genesisAmount: request.utxo.amount,
+      totalOutputCount: transaction.outputs.length,
+      authorizedOutputCount: authorizedOutputs.length,
+    };
+  }
+
+  async verifyTopUp(
+    request: TopUpVerificationRequest,
+  ): Promise<TopUpVerificationResult | null> {
+    const covenantId = request.utxo.covenantId;
+    if (
+      !isNonzeroHash32(covenantId) ||
+      covenantId !== request.previous.covenantId.toLowerCase() ||
+      covenantId !== request.next.covenantId.toLowerCase()
+    ) {
+      return null;
+    }
+    const transaction = await this.#client.getTransaction(
+      request.next.activeOutpoint.txid,
+    );
+    if (
+      !transaction?.is_accepted ||
+      transaction.version !== 1 ||
+      transaction.transaction_id?.toLowerCase() !==
+        request.next.activeOutpoint.txid.toLowerCase() ||
+      !Array.isArray(transaction.inputs) ||
+      !Array.isArray(transaction.outputs)
+    ) {
+      return null;
+    }
+    const covenantInputs = transaction.inputs
+      .map((input, index) => ({
+        index,
+        input,
+        covenantId: restInputCovenantId(input),
+      }))
+      .filter((item) => item.covenantId === covenantId);
+    if (covenantInputs.length !== 1) return null;
+    const covenantInput = covenantInputs[0]!;
+    const spentOutpoint = restInputOutpoint(covenantInput.input);
+    if (
+      !spentOutpoint ||
+      !sameOutpoint(spentOutpoint, request.previous.activeOutpoint)
+    ) {
+      return null;
+    }
+    const successors = transaction.outputs
+      .map((output, position) => ({
+        index: restOutputIndex(output, position),
+        output,
+        binding: restOutputCovenant(output),
+      }))
+      .filter((item) => item.binding?.covenantId === covenantId);
+    if (successors.length !== 1) return null;
+    const successor = successors[0]!;
+    if (
+      successor.binding?.authorizingInput !== covenantInput.index ||
+      successor.index !== request.next.activeOutpoint.index ||
+      String(successor.output.amount) !== request.next.fundingAmount ||
+      normalizeRestScript(requiredRestScript(successor.output)) !==
+        request.next.activeScriptPublicKey.toLowerCase()
+    ) {
+      return null;
+    }
+    void request.payment;
+    return {
+      covenantId,
+      spentOutpoint,
+      successorOutpoint: structuredClone(request.next.activeOutpoint),
+      successorScriptPublicKey:
+        request.next.activeScriptPublicKey.toLowerCase(),
+      successorAmount: request.next.fundingAmount,
+      authorizedSuccessorCount: successors.length,
+    };
   }
 
   async getVirtualDaaScore(): Promise<SompiString> {
@@ -309,7 +516,9 @@ export class RestExactHeadReconciler implements ExactHeadReconciler {
   }
 }
 
-export class PnnBroadcastChainProvider implements ServerChainProvider {
+export class PnnBroadcastChainProvider
+  implements ServerChainProvider, TopUpVerifier
+{
   readonly #reads: RestKaspaChainProvider;
   readonly #book: ScriptAddressBook;
   readonly #pnn: KaspaPnnClient;
@@ -333,6 +542,18 @@ export class PnnBroadcastChainProvider implements ServerChainProvider {
 
   getVirtualDaaScore(): Promise<SompiString> {
     return this.#reads.getVirtualDaaScore();
+  }
+
+  verifyCovenantGenesis(
+    request: Parameters<ServerChainProvider["verifyCovenantGenesis"]>[0],
+  ): ReturnType<ServerChainProvider["verifyCovenantGenesis"]> {
+    return this.#reads.verifyCovenantGenesis(request);
+  }
+
+  verifyTopUp(
+    request: TopUpVerificationRequest,
+  ): Promise<TopUpVerificationResult | null> {
+    return this.#reads.verifyTopUp(request);
   }
 
   estimateClaimFee(): Promise<SompiString> {
@@ -1223,6 +1444,9 @@ export class KaspaRestClient {
         utxo.utxoEntry.scriptPublicKey.scriptPublicKey,
       ),
       finality: "accepted",
+      ...optionalCovenantId(
+        utxo.utxoEntry.covenantId ?? utxo.utxoEntry.covenant_id,
+      ),
     }));
   }
 
@@ -1395,6 +1619,8 @@ type RestUtxo = {
     scriptPublicKey: {
       scriptPublicKey: string;
     };
+    covenantId?: string | null;
+    covenant_id?: string | null;
   };
 };
 
@@ -1426,13 +1652,21 @@ type RestTransactionInput = {
   signature_script?: string;
   sequence?: string | number | null;
   sig_op_count?: string | number;
-  compute_budget?: number;
+  compute_budget?: string | number | null;
+  covenant_id?: string | null;
+  covenantId?: string | null;
 };
 
 type RestTransactionOutput = {
   index?: number;
   amount?: string | number;
   script_public_key?: string;
+  covenant_authorizing_input?: string | number | null;
+  covenant_id?: string | null;
+  covenant?: {
+    authorizingInput?: string | number;
+    covenantId?: string;
+  } | null;
 };
 
 type SafeTransaction = {
@@ -1560,8 +1794,118 @@ function assertTestnet(network: NetworkId): void {
 }
 
 function normalizeRestScript(script: string): string {
+  if (!/^(?:[0-9a-fA-F]{2})+$/.test(script))
+    throw invalidTransaction("Kaspa REST script public key must be byte hex");
   const lower = script.toLowerCase();
   return lower.startsWith("0000") ? lower : `0000${lower}`;
+}
+
+function transactionOutputAt(
+  transaction: RestTransaction | null,
+  outpoint: FundingOutpoint,
+): RestTransactionOutput | undefined {
+  if (
+    !transaction?.is_accepted ||
+    transaction.transaction_id?.toLowerCase() !== outpoint.txid.toLowerCase() ||
+    !Array.isArray(transaction.outputs)
+  ) {
+    return undefined;
+  }
+  return transaction.outputs.find(
+    (output, position) => restOutputIndex(output, position) === outpoint.index,
+  );
+}
+
+function restOutputIndex(
+  output: RestTransactionOutput,
+  position: number,
+): number {
+  const value = output.index ?? position;
+  const index = Number(value);
+  if (!Number.isSafeInteger(index) || index < 0 || index > 0xffff_ffff)
+    throw invalidTransaction("Kaspa REST output index is invalid");
+  return index;
+}
+
+function requiredRestScript(output: RestTransactionOutput): string {
+  if (typeof output.script_public_key !== "string")
+    throw invalidTransaction("Kaspa REST transaction output script is missing");
+  return output.script_public_key;
+}
+
+function restOutputCovenant(
+  output: RestTransactionOutput,
+): { authorizingInput: number; covenantId: Hash32Hex } | undefined {
+  const flatId = normalizeOptionalCovenantId(output.covenant_id);
+  const nestedId = normalizeOptionalCovenantId(output.covenant?.covenantId);
+  if (flatId && nestedId && flatId !== nestedId)
+    throw invalidTransaction("Kaspa REST output covenant ids conflict");
+  const covenantId = flatId ?? nestedId;
+  if (!covenantId) return undefined;
+  const rawAuthorizingInput =
+    output.covenant_authorizing_input ?? output.covenant?.authorizingInput;
+  const authorizingInput = Number(rawAuthorizingInput);
+  if (
+    !Number.isSafeInteger(authorizingInput) ||
+    authorizingInput < 0 ||
+    authorizingInput > 0xffff
+  ) {
+    throw invalidTransaction(
+      "Kaspa REST output covenant authorizing input is invalid",
+    );
+  }
+  return { authorizingInput, covenantId };
+}
+
+function restInputCovenantId(
+  input: RestTransactionInput,
+): Hash32Hex | undefined {
+  const snake = normalizeOptionalCovenantId(input.covenant_id);
+  const camel = normalizeOptionalCovenantId(input.covenantId);
+  if (snake && camel && snake !== camel)
+    throw invalidTransaction("Kaspa REST input covenant ids conflict");
+  return snake ?? camel;
+}
+
+function restInputOutpoint(
+  input: RestTransactionInput,
+): FundingOutpoint | undefined {
+  if (
+    typeof input.previous_outpoint_hash !== "string" ||
+    !/^[0-9a-fA-F]{64}$/.test(input.previous_outpoint_hash)
+  ) {
+    return undefined;
+  }
+  const index = Number(input.previous_outpoint_index);
+  if (!Number.isSafeInteger(index) || index < 0 || index > 0xffff_ffff)
+    return undefined;
+  return { txid: input.previous_outpoint_hash.toLowerCase(), index };
+}
+
+function optionalCovenantId(
+  value: unknown,
+): { covenantId: Hash32Hex } | Record<string, never> {
+  const covenantId = normalizeOptionalCovenantId(value);
+  return covenantId ? { covenantId } : {};
+}
+
+function normalizeOptionalCovenantId(value: unknown): Hash32Hex | undefined {
+  if (value === undefined || value === null || value === "") return undefined;
+  if (typeof value !== "string" || !isNonzeroHash32(value))
+    throw invalidTransaction("Kaspa covenant id must be non-zero 32-byte hex");
+  return value.toLowerCase();
+}
+
+function isNonzeroHash32(value: unknown): value is Hash32Hex {
+  return (
+    typeof value === "string" &&
+    /^[0-9a-fA-F]{64}$/.test(value) &&
+    !/^0{64}$/i.test(value)
+  );
+}
+
+function outpointKey(outpoint: FundingOutpoint): string {
+  return `${outpoint.txid.toLowerCase()}:${outpoint.index}`;
 }
 
 function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
@@ -1931,6 +2275,7 @@ function exactV1ReferenceTransaction(
           scriptPublicKey: input.utxo.scriptPublicKey,
           blockDaaScore: "0",
           isCoinbase: false,
+          covenantId: null,
         },
       };
     }),
@@ -2203,10 +2548,20 @@ function assertChainTransactionMatchesSafe(
         "accepted transaction sigOpCount does not match exact artifact",
       );
     }
+    const expectedComputeBudget =
+      safe.version === 0
+        ? (expected.computeBudget ?? 0)
+        : expected.computeBudget;
+    const actualComputeBudget =
+      safe.version === 0
+        ? Number(actual.compute_budget ?? 0)
+        : actual.compute_budget == null
+          ? undefined
+          : Number(actual.compute_budget);
     if (
-      expected.computeBudget !== undefined &&
-      actual.compute_budget !== undefined &&
-      actual.compute_budget !== expected.computeBudget
+      expectedComputeBudget === undefined ||
+      actualComputeBudget === undefined ||
+      actualComputeBudget !== expectedComputeBudget
     ) {
       throw invalidTransaction(
         "accepted transaction computeBudget does not match exact artifact",

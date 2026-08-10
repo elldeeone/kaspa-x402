@@ -1,7 +1,10 @@
 import {
   X402_VERSION,
   KASPA_LOCK_TIME_THRESHOLD,
+  applyBatchClaimAccounting,
   assertMainnetAllowed,
+  assertBatchVoucherReserve,
+  batchLaneAccounting,
   batchCommitmentId,
   batchPaymentRequirementsHash,
   channelId,
@@ -16,8 +19,10 @@ import {
   formatSompiString,
   hexToBytes,
   kaspaSettlementExtensions,
+  parseBatchLaneAmount,
   parseSompiString,
   paymentIdentifierExtension,
+  requiredBatchVoucherAmount,
   sha256Hex,
   stableStringify,
   toX402ErrorReason,
@@ -57,6 +62,7 @@ import {
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   type BatchCommitmentRecord,
+  type BatchSettlementAttemptRecord,
   type BuildPaymentRequiredOptions,
   type ChainUtxo,
   type ClaimExecutionResult,
@@ -122,7 +128,7 @@ export class DirectModeServer {
   constructor(config: DirectModeServerConfig) {
     this.#config = {
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v1",
+      templateId: "kaspa-x402-escrow-v2",
       maxTimeoutSeconds: 60,
       acceptedFinality: "accepted",
       exactProfile: "standard-native",
@@ -139,6 +145,8 @@ export class DirectModeServer {
       "DirectModeServer",
     );
     assertRefundPolicyConfig(this.#config);
+    parseBatchLaneAmount(this.#config.minDepositSompi, "minimum deposit");
+    parseBatchLaneAmount(this.#config.claimReserveSompi, "claim reserve");
   }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
@@ -289,19 +297,21 @@ export class DirectModeServer {
         },
       });
     }
-    kinds.push({
-      x402Version: X402_VERSION,
-      scheme: "batch-settlement",
-      network: this.#config.network,
-      extra: {
-        asset: this.#config.asset,
-        binding: "kaspa-escrow-v1",
-        templateId: this.#config.templateId,
-        modes: this.#config.claimBuilder
-          ? ["verify", "settle", "claim"]
-          : ["verify", "settle"],
-      },
-    });
+    if (this.#config.network === "kaspa:testnet-10") {
+      kinds.push({
+        x402Version: X402_VERSION,
+        scheme: "batch-settlement",
+        network: this.#config.network,
+        extra: {
+          asset: this.#config.asset,
+          binding: "kaspa-escrow-v2",
+          templateId: this.#config.templateId,
+          modes: this.#config.claimBuilder
+            ? ["verify", "settle", "claim"]
+            : ["verify", "settle"],
+        },
+      });
+    }
     return kinds;
   }
 
@@ -492,6 +502,36 @@ export class DirectModeServer {
         }
         const runVerified = async () => {
           let recoveredExactHandlerResult: ProtectedHandlerResult | undefined;
+          let recoveredBatchHandlerResult: ProtectedHandlerResult | undefined;
+          let batchAttemptId: Hash32Hex | undefined;
+          if (verified.scheme === "batch-settlement") {
+            try {
+              verified = await this.#preserveLiveDepositTransition(verified);
+              const claim = await this.#claimBatchSettlement(
+                verified,
+                fingerprint,
+              );
+              batchAttemptId = claim.attempt.attemptId;
+              recoveredBatchHandlerResult = claim.attempt.handlerResult;
+              if (
+                claim.attempt.status !== "pending" ||
+                (claim.attempt.handlerStartedAt && !recoveredBatchHandlerResult)
+              ) {
+                return batchSettlementRecoveryRequiredResponse();
+              }
+              if (!recoveredBatchHandlerResult) {
+                const handlerStarted =
+                  await this.#config.store.beginBatchHandler(
+                    batchAttemptId,
+                    new Date().toISOString(),
+                  );
+                if (!handlerStarted)
+                  return batchSettlementRecoveryRequiredResponse();
+              }
+            } catch {
+              return batchSettlementRecoveryRequiredResponse();
+            }
+          }
           if (verified.scheme === "exact") {
             const replay = await this.#checkExactReplay(verified, fingerprint);
             if (replay) return replay;
@@ -552,8 +592,9 @@ export class DirectModeServer {
             }
           }
           let handlerResult: ProtectedHandlerResult;
-          if (recoveredExactHandlerResult) {
-            handlerResult = recoveredExactHandlerResult;
+          if (recoveredExactHandlerResult || recoveredBatchHandlerResult) {
+            handlerResult =
+              recoveredExactHandlerResult ?? recoveredBatchHandlerResult!;
           } else {
             try {
               handlerResult = await handler({
@@ -568,6 +609,12 @@ export class DirectModeServer {
                   verified.transactionId,
                   "protected handler threw after exact settlement acceptance",
                   new Date().toISOString(),
+                );
+              } else if (batchAttemptId) {
+                await markBatchHandlerRecoveryRequiredSafely(
+                  this.#config.store,
+                  batchAttemptId,
+                  "protected handler threw after batch payment verification",
                 );
               }
               await this.#preserveLiveDepositTransition(verified);
@@ -615,6 +662,16 @@ export class DirectModeServer {
                 body: { error: "exact_settlement_recovery_required" },
               };
             }
+            if (batchAttemptId) {
+              await markBatchHandlerRecoveryRequiredSafely(
+                this.#config.store,
+                batchAttemptId,
+                error instanceof Error
+                  ? error.message
+                  : "protected handler result is invalid",
+              );
+              return batchSettlementRecoveryRequiredResponse(500);
+            }
             await this.#preserveLiveDepositTransition(verified);
             return this.#correctiveResponse(
               resource,
@@ -660,11 +717,32 @@ export class DirectModeServer {
               paymentIdentifier,
             );
           }
+          if (!batchAttemptId)
+            return batchSettlementRecoveryRequiredResponse(500);
+          if (!recoveredBatchHandlerResult) {
+            try {
+              await this.#config.store.recordBatchHandlerResult(
+                batchAttemptId,
+                handlerResult,
+                new Date().toISOString(),
+              );
+            } catch (error) {
+              await markBatchHandlerRecoveryRequiredSafely(
+                this.#config.store,
+                batchAttemptId,
+                error instanceof Error
+                  ? error.message
+                  : "batch handler result persistence failed",
+              );
+              return batchSettlementRecoveryRequiredResponse(500);
+            }
+          }
           return this.#commitBatchResponse(
             verified,
             handlerResult,
             chargedAmount,
             fingerprint,
+            batchAttemptId,
             paymentIdentifier,
           );
         };
@@ -907,7 +985,10 @@ export class DirectModeServer {
     );
   }
 
-  async previewClaim(channelId: Hash32Hex): Promise<ClaimPreview> {
+  async previewClaim(
+    channelId: Hash32Hex,
+    requestedClaimAmount?: SompiString,
+  ): Promise<ClaimPreview> {
     const channel = await this.#requireChannel(channelId);
     if (channel.status !== "active") {
       throw new KaspaX402Error(
@@ -915,22 +996,30 @@ export class DirectModeServer {
         "channel is not active",
       );
     }
-    const claimAmount = formatSompiString(activeChargedAmount(channel));
+    const activeAmount = activeChargedAmount(channel);
+    const claimAmount = requestedClaimAmount ?? formatSompiString(activeAmount);
     const estimatedFee =
       await this.#config.chainProvider.estimateClaimFee(channel);
     const claim = parseSompiString(claimAmount);
-    const signed = parseSompiString(channel.signedMaxClaimable);
     const fee = parseSompiString(estimatedFee);
-    const reason =
-      claim === 0n
-        ? "channel has no active charge"
-        : !channel.voucherSignature
-          ? "channel has no signed voucher"
-          : signed < claim
-            ? "signed ceiling cannot cover active charge"
-            : claim <= fee
-              ? "claim amount does not exceed estimated fee"
-              : undefined;
+    let reason: string | undefined;
+    if (claim === 0n) {
+      reason = requestedClaimAmount
+        ? "claim amount must be positive"
+        : "channel has no active charge";
+    } else {
+      try {
+        applyBatchClaimAccounting(channel, claimAmount);
+      } catch (error) {
+        reason =
+          error instanceof Error ? error.message : "claim amount is invalid";
+      }
+    }
+    reason ??= !channel.voucherSignature
+      ? "channel has no signed voucher"
+      : claim <= fee
+        ? "claim amount does not exceed estimated fee"
+        : undefined;
     return {
       channel,
       claimAmount,
@@ -940,7 +1029,10 @@ export class DirectModeServer {
     };
   }
 
-  async executeClaim(channelId: Hash32Hex): Promise<ClaimExecutionResult> {
+  async executeClaim(
+    channelId: Hash32Hex,
+    claimAmount?: SompiString,
+  ): Promise<ClaimExecutionResult> {
     return this.#config.lockManager.runExclusive(channelId, async () => {
       if (!this.#config.claimBuilder) {
         throw new KaspaX402Error(
@@ -948,7 +1040,7 @@ export class DirectModeServer {
           "claim transaction builder is required",
         );
       }
-      const preview = await this.previewClaim(channelId);
+      const preview = await this.previewClaim(channelId, claimAmount);
       const openAttempt =
         await this.#config.store.loadOpenClaimAttempt(channelId);
       if (openAttempt) {
@@ -973,6 +1065,12 @@ export class DirectModeServer {
           "claim transaction amount does not match preview",
         );
       }
+      if (!/^[0-9a-f]{64}$/.test(claim.transactionId)) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim transaction id must be canonical lowercase hash hex",
+        );
+      }
       if (
         !claim.continuationOutpoint ||
         !claim.continuationScriptPublicKey ||
@@ -983,16 +1081,27 @@ export class DirectModeServer {
           "claim transaction must provide continuation channel state",
         );
       }
-      const expectedContinuationFunding = formatSompiString(
-        parseSompiString(preview.channel.fundingAmount) -
-          parseSompiString(claim.claimAmount),
+      if (claim.continuationOutpoint.txid !== claim.transactionId) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_outpoint",
+          "claim continuation outpoint must belong to the prepared claim transaction",
+        );
+      }
+      const claimedAccounting = applyBatchClaimAccounting(
+        preview.channel,
+        claim.claimAmount,
       );
-      if (claim.continuationFundingAmount !== expectedContinuationFunding) {
+      if (claim.continuationFundingAmount !== claimedAccounting.fundingAmount) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "claim continuation amount must equal funding minus the authorized claim",
         );
       }
+      const continuationEscrow = deriveServerEscrow(
+        this.#config,
+        preview.channel.channelConfig,
+        claimedAccounting.claimedCumulativeAmount,
+      );
       const attempt: ClaimAttemptRecord = {
         attemptId: claimAttemptId(
           preview.channel,
@@ -1000,6 +1109,7 @@ export class DirectModeServer {
           claim.claimAmount,
         ),
         channelId: preview.channel.channelId,
+        covenantId: preview.channel.covenantId,
         activeOutpoint: preview.channel.activeOutpoint,
         activeScriptPublicKey: preview.channel.activeScriptPublicKey,
         fundingAmount: preview.channel.fundingAmount,
@@ -1012,6 +1122,8 @@ export class DirectModeServer {
           : {}),
         channelStatus: preview.channel.status,
         transaction: claim.transaction,
+        transactionId: claim.transactionId,
+        requiredFinality: this.#config.acceptedFinality,
         continuationOutpoint: claim.continuationOutpoint,
         continuationScriptPublicKey: claim.continuationScriptPublicKey,
         continuationFundingAmount: claim.continuationFundingAmount,
@@ -1021,23 +1133,28 @@ export class DirectModeServer {
       const broadcast = await this.#config.chainProvider.sendTransaction(
         claim.transaction,
       );
+      if (
+        !/^[0-9a-fA-F]{64}$/.test(broadcast.transactionId) ||
+        broadcast.transactionId.toLowerCase() !== attempt.transactionId
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "broadcast claim transaction id does not match the persisted signed transaction",
+        );
+      }
       const accepted = isAcceptedFinality(
         broadcast.finality,
-        this.#config.acceptedFinality,
+        attempt.requiredFinality,
       );
       const broadcastAttempt: ClaimAttemptRecord = {
         ...attempt,
-        transactionId: broadcast.transactionId,
         finality: broadcast.finality,
         status: "broadcast",
       };
       await this.#config.store.saveClaimAttempt(broadcastAttempt);
       let resultFinality = broadcast.finality;
       if (accepted) {
-        if (
-          claim.continuationOutpoint.txid.toLowerCase() !==
-          broadcast.transactionId.toLowerCase()
-        ) {
+        if (claim.continuationOutpoint.txid !== attempt.transactionId) {
           throw new KaspaX402Error(
             "invalid_kaspa_outpoint",
             "continuation outpoint must belong to the accepted claim transaction",
@@ -1047,18 +1164,18 @@ export class DirectModeServer {
           claim.continuationOutpoint,
           claim.continuationScriptPublicKey,
           claim.continuationFundingAmount,
+          preview.channel.covenantId,
+          attempt.requiredFinality,
         );
         resultFinality = continuation.finality;
       }
       const updated = accepted
         ? {
             ...preview.channel,
+            escrowAddress: continuationEscrow.escrowAddress,
             activeOutpoint: claim.continuationOutpoint,
             activeScriptPublicKey: claim.continuationScriptPublicKey,
-            fundingAmount: claim.continuationFundingAmount,
-            claimedCumulativeAmount: preview.channel.chargedCumulativeAmount,
-            signedMaxClaimable: "0",
-            voucherSignature: undefined,
+            ...claimedAccounting,
           }
         : preview.channel;
       if (accepted) {
@@ -1075,17 +1192,14 @@ export class DirectModeServer {
       }
       return {
         channel: updated,
-        transactionId: broadcast.transactionId,
+        transactionId: attempt.transactionId,
         finality: resultFinality,
         accepted,
       };
     });
   }
 
-  async abandonClaimAttempt(
-    channelId: Hash32Hex,
-    reason?: string,
-  ): Promise<void> {
+  async abandonClaimAttempt(channelId: Hash32Hex): Promise<void> {
     await this.#config.lockManager.runExclusive(channelId, async () => {
       const attempt = await this.#config.store.loadOpenClaimAttempt(channelId);
       if (!attempt) return;
@@ -1095,7 +1209,45 @@ export class DirectModeServer {
           "accepted claim attempts must be recovered, not abandoned",
         );
       }
-      await this.#config.store.abandonClaimAttempt(attempt.attemptId, reason);
+      if (!this.#config.claimReconciler) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "trusted claim reconciler is required before abandonment",
+        );
+      }
+      const reconciliation =
+        await this.#config.claimReconciler.reconcileClaim(attempt);
+      if (
+        !/^[0-9a-f]{64}$/.test(reconciliation.transactionId) ||
+        reconciliation.transactionId !== attempt.transactionId
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim reconciliation transaction id does not match the persisted signed transaction",
+        );
+      }
+      if (reconciliation.status === "unknown") {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim reconciliation remains unknown",
+        );
+      }
+      if (reconciliation.status === "accepted") {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "accepted claim attempts must be recovered, not abandoned",
+        );
+      }
+      if (reconciliation.status !== "rejected") {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim reconciler returned an unsupported status",
+        );
+      }
+      await this.#config.store.abandonClaimAttempt(
+        attempt.attemptId,
+        reconciliation.reason,
+      );
     });
   }
 
@@ -1109,8 +1261,7 @@ export class DirectModeServer {
         !attempt ||
         (attempt.status !== "accepted" &&
           attempt.status !== "broadcast" &&
-          attempt.status !== "pending") ||
-        (!attempt.transactionId && !input.transactionId)
+          attempt.status !== "pending")
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
@@ -1128,7 +1279,7 @@ export class DirectModeServer {
           "claim recovery transaction id does not match recorded broadcast",
         );
       }
-      const transactionId = attempt.transactionId ?? input.transactionId;
+      const transactionId = attempt.transactionId;
       const inputFinality = (input as { finality?: SettlementFinality })
         .finality;
       if (inputFinality === "broadcast") {
@@ -1140,7 +1291,7 @@ export class DirectModeServer {
       const evidenceFinality =
         inputFinality ??
         (attempt.finality === "broadcast" ? undefined : attempt.finality);
-      if (!transactionId || !evidenceFinality) {
+      if (!evidenceFinality) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "accepted claim recovery needs accepted transaction evidence",
@@ -1179,38 +1330,71 @@ export class DirectModeServer {
         );
       }
       if (
+        channel.covenantId.toLowerCase() !== attempt.covenantId.toLowerCase() ||
         channel.chargedCumulativeAmount !== attempt.chargedCumulativeAmount ||
-        channel.claimedCumulativeAmount !== attempt.claimedCumulativeAmount
+        channel.claimedCumulativeAmount !== attempt.claimedCumulativeAmount ||
+        channel.signedMaxClaimable !== attempt.signedMaxClaimable ||
+        channel.voucherSignature !== attempt.voucherSignature
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_settlement_response",
           "channel state changed after claim attempt",
         );
       }
+      const requiredFinality = strongerExactFinality(
+        attempt.requiredFinality,
+        this.#config.acceptedFinality,
+      );
+      const claimedAccounting = applyBatchClaimAccounting(
+        channel,
+        attempt.claimAmount,
+      );
+      if (
+        claimedAccounting.fundingAmount !== attempt.continuationFundingAmount
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_transaction",
+          "claim continuation amount does not match recovered accounting",
+        );
+      }
+      const continuationEscrow = deriveServerEscrow(
+        this.#config,
+        channel.channelConfig,
+        claimedAccounting.claimedCumulativeAmount,
+      );
       const continuation = await this.#verifiedFundingUtxo(
         attempt.continuationOutpoint,
         attempt.continuationScriptPublicKey,
         attempt.continuationFundingAmount,
+        attempt.covenantId,
+        requiredFinality,
       );
       const updated = {
         ...channel,
+        escrowAddress: continuationEscrow.escrowAddress,
         activeOutpoint: attempt.continuationOutpoint,
         activeScriptPublicKey: attempt.continuationScriptPublicKey,
-        fundingAmount: attempt.continuationFundingAmount,
-        claimedCumulativeAmount: formatSompiString(
-          parseSompiString(attempt.claimedCumulativeAmount) +
-            parseSompiString(attempt.claimAmount),
-        ),
-        signedMaxClaimable: "0",
-        voucherSignature: undefined,
+        ...claimedAccounting,
       };
       validateChannelAccounting(updated);
-      await this.#config.store.applyClaimAttempt(updated, {
-        ...attempt,
-        transactionId,
-        finality: continuation.finality,
-        status: "accepted",
-      });
+      let recoveredAttempt = attempt;
+      if (recoveredAttempt.status === "pending") {
+        recoveredAttempt = {
+          ...recoveredAttempt,
+          finality: evidenceFinality,
+          status: "broadcast",
+        };
+        await this.#config.store.saveClaimAttempt(recoveredAttempt);
+      }
+      if (recoveredAttempt.status === "broadcast") {
+        recoveredAttempt = {
+          ...recoveredAttempt,
+          finality: continuation.finality,
+          status: "accepted",
+        };
+        await this.#config.store.saveClaimAttempt(recoveredAttempt);
+      }
+      await this.#config.store.applyClaimAttempt(updated, recoveredAttempt);
       return {
         channel: updated,
         transactionId,
@@ -1577,7 +1761,19 @@ export class DirectModeServer {
         "channel id does not match channel config",
       );
     }
-    const derived = deriveServerEscrow(this.#config, payload.channelConfig);
+    const existing = await this.#config.store.loadChannel(payload.channelId);
+    if (existing && existing.status !== "active") {
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "existing channel is not active",
+      );
+    }
+    if (existing) await this.#rejectOpenClaimAttempt(existing.channelId);
+    const derived = deriveServerEscrow(
+      this.#config,
+      payload.channelConfig,
+      existing?.claimedCumulativeAmount ?? "0",
+    );
     if (derived.escrowAddress !== payload.escrowAddress) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_binding",
@@ -1608,16 +1804,35 @@ export class DirectModeServer {
       payload.activeScriptPublicKey,
       payload.fundingAmountSompi,
     );
-    const existing = await this.#config.store.loadChannel(payload.channelId);
-    if (existing && existing.status !== "active") {
-      throw new KaspaX402Error(
-        "invalid_kaspa_channel_id",
-        "existing channel is not active",
-      );
+    let genesisEvidence = existing?.genesisEvidence;
+    if (!existing) {
+      const genesis = await this.#config.chainProvider.verifyCovenantGenesis({
+        utxo,
+        payment: paymentPayload,
+      });
+      if (
+        !genesis ||
+        genesis.totalOutputCount !== 1 ||
+        genesis.authorizedOutputCount !== 1 ||
+        genesis.covenantId.toLowerCase() !== utxo.covenantId.toLowerCase() ||
+        genesis.genesisOutpoint.txid.toLowerCase() !==
+          payload.fundingOutpoint.txid.toLowerCase() ||
+        genesis.genesisOutpoint.index !== payload.fundingOutpoint.index ||
+        genesis.genesisScriptPublicKey.toLowerCase() !==
+          payload.activeScriptPublicKey.toLowerCase() ||
+        genesis.genesisAmount !== utxo.amount
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_x402_binding",
+          "escrow genesis is not a verified singleton KIP-20 covenant",
+        );
+      }
+      genesisEvidence = genesis;
     }
-    if (existing) await this.#rejectOpenClaimAttempt(existing.channelId);
     const initial: ServerChannelRecord = {
       channelId: payload.channelId,
+      covenantId: utxo.covenantId,
+      genesisEvidence: genesisEvidence!,
       channelConfig: payload.channelConfig,
       escrowAddress: payload.escrowAddress,
       activeOutpoint: payload.fundingOutpoint,
@@ -1625,27 +1840,21 @@ export class DirectModeServer {
       fundingAmount: utxo.amount,
       chargedCumulativeAmount: existing?.chargedCumulativeAmount ?? "0",
       claimedCumulativeAmount: existing?.claimedCumulativeAmount ?? "0",
-      signedMaxClaimable:
-        existing &&
-        sameActiveOutpoint(
-          existing,
-          payload.fundingOutpoint,
-          payload.activeScriptPublicKey,
-        )
-          ? existing.signedMaxClaimable
-          : "0",
-      voucherSignature:
-        existing &&
-        sameActiveOutpoint(
-          existing,
-          payload.fundingOutpoint,
-          payload.activeScriptPublicKey,
-        )
-          ? existing.voucherSignature
-          : undefined,
+      signedMaxClaimable: existing?.signedMaxClaimable ?? "0",
+      voucherSignature: existing?.voucherSignature,
       lastCommitmentId: existing?.lastCommitmentId,
       status: "active",
     };
+
+    if (
+      existing &&
+      existing.covenantId.toLowerCase() !== utxo.covenantId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "top-up covenant id does not match the existing channel lineage",
+      );
+    }
 
     if (
       existing &&
@@ -1661,13 +1870,35 @@ export class DirectModeServer {
           "top-up transition verifier is required",
         );
       }
-      const verified = await this.#config.topUpVerifier.verifyTopUp({
+      const transition = await this.#config.topUpVerifier.verifyTopUp({
         previous: existing,
         next: initial,
         utxo,
         payment: paymentPayload,
       });
-      if (!verified)
+      if (
+        !transition ||
+        parseBatchLaneAmount(
+          initial.fundingAmount,
+          "top-up successor funding amount",
+        ) <=
+          parseBatchLaneAmount(
+            existing.fundingAmount,
+            "top-up predecessor funding amount",
+          ) ||
+        transition.authorizedSuccessorCount !== 1 ||
+        transition.covenantId.toLowerCase() !==
+          existing.covenantId.toLowerCase() ||
+        transition.spentOutpoint.txid.toLowerCase() !==
+          existing.activeOutpoint.txid.toLowerCase() ||
+        transition.spentOutpoint.index !== existing.activeOutpoint.index ||
+        transition.successorOutpoint.txid.toLowerCase() !==
+          initial.activeOutpoint.txid.toLowerCase() ||
+        transition.successorOutpoint.index !== initial.activeOutpoint.index ||
+        transition.successorScriptPublicKey.toLowerCase() !==
+          initial.activeScriptPublicKey.toLowerCase() ||
+        transition.successorAmount !== initial.fundingAmount
+      )
         throw new KaspaX402Error(
           "invalid_kaspa_outpoint",
           "top-up transition was rejected",
@@ -1729,6 +1960,7 @@ export class DirectModeServer {
       payload.fundingOutpoint,
       payload.activeScriptPublicKey,
       channel.fundingAmount,
+      channel.covenantId,
     );
     await this.#verifyVoucherAmountAndSignature(
       channel,
@@ -1753,11 +1985,15 @@ export class DirectModeServer {
     voucher: Voucher,
   ): Promise<void> {
     validateChannelPreVoucherAccounting(channel);
-    const requiredVoucherAmount = maxAmount(
-      channel.signedMaxClaimable,
-      formatSompiString(
-        activeChargedAmount(channel) + parseSompiString(accepted.amount),
-      ),
+    if (voucher.covenantId.toLowerCase() !== channel.covenantId.toLowerCase()) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "voucher covenant id does not match the channel lineage",
+      );
+    }
+    const requiredVoucherAmount = requiredBatchVoucherAmount(
+      channel,
+      accepted.amount,
     );
     if (voucher.amount !== requiredVoucherAmount) {
       throw new KaspaX402Error(
@@ -1765,33 +2001,16 @@ export class DirectModeServer {
         "voucher amount does not match required cumulative amount",
       );
     }
-    if (
-      parseSompiString(voucher.amount) > parseSompiString(channel.fundingAmount)
-    ) {
-      throw new KaspaX402Error(
-        "invalid_kaspa_x402_amount",
-        "voucher amount exceeds active funding amount",
-      );
-    }
-    const reserve = await this.#minimumActiveReserve(channel);
-    if (
-      parseSompiString(voucher.amount) + reserve >
-      parseSompiString(channel.fundingAmount)
-    ) {
-      throw new KaspaX402Error(
-        "invalid_kaspa_x402_amount",
-        "voucher amount does not leave required claim reserve",
-      );
-    }
-    validateChannelAccounting({
+    const authorized = {
       ...channel,
       signedMaxClaimable: voucher.amount,
       voucherSignature: voucher.signature,
-    });
+    };
+    validateChannelAccounting(authorized);
+    assertBatchVoucherReserve(authorized, accepted.extra.claimReserveSompi);
     const input = {
       network: channel.channelConfig.network,
-      activeScriptPublicKey: channel.activeScriptPublicKey,
-      outpoint: channel.activeOutpoint,
+      covenantId: channel.covenantId,
       amount: voucher.amount,
     };
     const verified = await this.#config.voucherVerifier.verifyVoucher({
@@ -1806,12 +2025,6 @@ export class DirectModeServer {
         "invalid_kaspa_signature",
         "voucher signature was rejected",
       );
-  }
-
-  async #minimumActiveReserve(channel: ServerChannelRecord): Promise<bigint> {
-    return parseSompiString(
-      await this.#config.chainProvider.estimateClaimFee(channel),
-    );
   }
 
   async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
@@ -1858,7 +2071,9 @@ export class DirectModeServer {
     outpoint: FundingOutpoint,
     activeScriptPublicKey: string,
     fundingAmount: SompiString,
-  ): Promise<ChainUtxo> {
+    covenantId?: Hash32Hex,
+    requiredFinality: "accepted" | "confirmed" = this.#config.acceptedFinality,
+  ): Promise<ChainUtxo & { covenantId: Hash32Hex }> {
     const utxo = await this.#config.chainProvider.getUtxo(
       outpoint,
       this.#config.network,
@@ -1868,7 +2083,13 @@ export class DirectModeServer {
         "invalid_kaspa_outpoint",
         "funding outpoint was not found",
       );
-    if (!isAcceptedFinality(utxo.finality, this.#config.acceptedFinality)) {
+    if (!utxo.covenantId || /^0{64}$/i.test(utxo.covenantId)) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "funding outpoint is missing a non-zero covenant id",
+      );
+    }
+    if (!isAcceptedFinality(utxo.finality, requiredFinality)) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "funding outpoint has not reached required finality",
@@ -1888,7 +2109,16 @@ export class DirectModeServer {
         "funding amount does not match payment payload",
       );
     }
-    return utxo;
+    if (
+      covenantId !== undefined &&
+      utxo.covenantId.toLowerCase() !== covenantId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "funding covenant id does not match the channel lineage",
+      );
+    }
+    return utxo as ChainUtxo & { covenantId: Hash32Hex };
   }
 
   async #commitBatchResponse(
@@ -1896,6 +2126,7 @@ export class DirectModeServer {
     handlerResult: ProtectedHandlerResult,
     chargedAmount: SompiString,
     fingerprint: Hash32Hex,
+    batchAttemptId: Hash32Hex,
     paymentIdentifier?: string,
   ): Promise<ServerResponse> {
     let pending: PendingSettlement;
@@ -1908,13 +2139,8 @@ export class DirectModeServer {
       );
     } catch (error) {
       await this.#preserveLiveDepositTransition(verified);
-      return this.#correctiveResponse(
-        verified.paymentRequired.resource,
-        verified.paymentPayload,
-        error,
-        verified.accepted.amount,
-        "batch-settlement",
-      );
+      void error;
+      return batchSettlementRecoveryRequiredResponse(500);
     }
     const { channel, settlement } = pending;
     const response: ServerResponse = {
@@ -1927,6 +2153,7 @@ export class DirectModeServer {
     };
     try {
       await this.#config.store.commitSettlement({
+        batchAttemptId,
         channel,
         commitment: { ...pending.commitment, response },
         ...(paymentIdentifier
@@ -2006,14 +2233,14 @@ export class DirectModeServer {
     return response;
   }
 
-  async #preserveLiveDepositTransition(
-    verified: VerifiedPayment,
-  ): Promise<void> {
+  async #preserveLiveDepositTransition<T extends VerifiedPayment>(
+    verified: T,
+  ): Promise<T> {
     if (
       verified.scheme !== "batch-settlement" ||
       verified.paymentPayload.payload.type !== "deposit-voucher"
     )
-      return;
+      return verified;
     const channel: ServerChannelRecord = {
       ...verified.channel,
       signedMaxClaimable: verified.voucher.amount,
@@ -2022,6 +2249,45 @@ export class DirectModeServer {
     };
     validateChannelAccounting(channel);
     await this.#config.store.saveChannel(channel);
+    return {
+      ...verified,
+      channel,
+      commitExpectedChannel: channel,
+    } as T;
+  }
+
+  async #claimBatchSettlement(
+    verified: VerifiedBatchPayment,
+    fingerprint: Hash32Hex,
+  ) {
+    const now = new Date().toISOString();
+    const paymentRequirementsHash = batchPaymentRequirementsHash(
+      verified.accepted,
+    );
+    const payloadHash = paymentPayloadHash(verified.paymentPayload);
+    const expected = expectedSettlementChannelState(
+      verified.commitExpectedChannel,
+    );
+    const attempt: BatchSettlementAttemptRecord = {
+      attemptId: batchSettlementAttemptId({
+        channelId: verified.channel.channelId,
+        covenantId: verified.channel.covenantId,
+        requestFingerprint: fingerprint,
+        paymentRequirementsHash,
+        paymentPayloadHash: payloadHash,
+      }),
+      channelId: verified.channel.channelId,
+      covenantId: verified.channel.covenantId,
+      requestFingerprint: fingerprint,
+      paymentRequirementsHash,
+      paymentPayloadHash: payloadHash,
+      maximumCharge: verified.accepted.amount,
+      expected,
+      status: "pending",
+      createdAt: now,
+      updatedAt: now,
+    };
+    return this.#config.store.claimBatchSettlement(attempt);
   }
 
   async #claimExactSettlement(
@@ -2251,6 +2517,7 @@ export class DirectModeServer {
       amount: chargedAmount,
       extensions: kaspaSettlementExtensions({
         commitmentId,
+        covenantId: channel.covenantId,
         ...(verified.paymentPayload.payload.type === "deposit-voucher"
           ? { fundingAmount: channel.fundingAmount }
           : {}),
@@ -2264,10 +2531,12 @@ export class DirectModeServer {
       commitment: {
         commitmentId,
         channelId: channel.channelId,
+        covenantId: channel.covenantId,
         requestFingerprint: fingerprint,
         paymentRequirementsHash: batchPaymentRequirementsHash(
           verified.accepted,
         ),
+        paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
         activeOutpoint: channel.activeOutpoint,
         activeScriptPublicKey: channel.activeScriptPublicKey,
         voucher: verified.voucher,
@@ -2398,6 +2667,8 @@ export class DirectModeServer {
       record.paymentRequirementsHash !==
       batchPaymentRequirementsHash(paymentPayload.accepted)
     )
+      return undefined;
+    if (record.paymentPayloadHash !== paymentPayloadHash(paymentPayload))
       return undefined;
     if (
       !sameActiveOutpoint(
@@ -2776,18 +3047,26 @@ function makeAcceptedRequirement(
     };
   }
 
+  if (config.network !== "kaspa:testnet-10") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "batch settlement is restricted to kaspa:testnet-10 in Alpha.10",
+    );
+  }
+  const amount = options.amount ?? config.amount;
   return {
     scheme: "batch-settlement",
     network: config.network,
-    amount: options.amount ?? config.amount,
+    amount,
     asset: "KAS",
     payTo: config.payTo,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     extra: {
-      binding: "kaspa-escrow-v1",
+      binding: "kaspa-escrow-v2",
       templateId: config.templateId,
       serverPublicKey: config.serverPublicKey,
-      minDepositSompi: config.minDepositSompi,
+      minDepositSompi: advertisedBatchMinimumDeposit(config, amount),
+      claimReserveSompi: config.claimReserveSompi,
       refundTimeoutDaa:
         options.channel?.channelConfig.refundTimeoutDaa ??
         config.refundTimeoutDaa,
@@ -3211,6 +3490,12 @@ function validateChannelTerms(
   accepted: BatchPaymentRequirements,
   channelConfig: ChannelConfig,
 ): void {
+  if (config.network !== "kaspa:testnet-10") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "batch settlement is restricted to kaspa:testnet-10 in Alpha.10",
+    );
+  }
   if (
     accepted.network !== config.network ||
     channelConfig.network !== config.network
@@ -3256,6 +3541,12 @@ function validateChannelTerms(
       "refund timeout does not match channel config",
     );
   }
+  if (accepted.extra.claimReserveSompi !== config.claimReserveSompi) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "claim reserve does not match server config",
+    );
+  }
   if (
     !config.allowRollingRefundTimeoutDaa &&
     accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa
@@ -3272,16 +3563,19 @@ function batchRequirementMatchesRoute(
   accepted: BatchPaymentRequirements,
   paymentAmount?: SompiString,
 ): boolean {
+  const amount = paymentAmount ?? config.amount;
   return (
     accepted.network === config.network &&
-    accepted.amount === (paymentAmount ?? config.amount) &&
+    accepted.amount === amount &&
     accepted.asset === "KAS" &&
     accepted.payTo === config.payTo &&
     accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
-    accepted.extra.binding === "kaspa-escrow-v1" &&
+    accepted.extra.binding === "kaspa-escrow-v2" &&
     accepted.extra.templateId === config.templateId &&
     accepted.extra.serverPublicKey === config.serverPublicKey &&
-    accepted.extra.minDepositSompi === config.minDepositSompi &&
+    accepted.extra.minDepositSompi ===
+      advertisedBatchMinimumDeposit(config, amount) &&
+    accepted.extra.claimReserveSompi === config.claimReserveSompi &&
     ((accepted.extra.claimPolicy === undefined &&
       config.claimPolicy === undefined) ||
       (accepted.extra.claimPolicy !== undefined &&
@@ -3289,6 +3583,26 @@ function batchRequirementMatchesRoute(
         stableStringify(accepted.extra.claimPolicy) ===
           stableStringify(config.claimPolicy)))
   );
+}
+
+function advertisedBatchMinimumDeposit(
+  config: Pick<ResolvedServerConfig, "minDepositSompi" | "claimReserveSompi">,
+  amount: SompiString,
+): SompiString {
+  const configuredMinimum = parseBatchLaneAmount(
+    config.minDepositSompi,
+    "minimum deposit",
+  );
+  const firstVoucherCapacity =
+    parseBatchLaneAmount(amount, "batch payment amount") +
+    parseBatchLaneAmount(config.claimReserveSompi, "claim reserve");
+  const advertised = formatSompiString(
+    configuredMinimum > firstVoucherCapacity
+      ? configuredMinimum
+      : firstVoucherCapacity,
+  );
+  parseBatchLaneAmount(advertised, "advertised minimum deposit");
+  return advertised;
 }
 
 function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
@@ -3320,6 +3634,7 @@ function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
 function deriveServerEscrow(
   config: ResolvedServerConfig,
   channelConfig: ChannelConfig,
+  settledTotal: SompiString = "0",
 ): { escrowAddress: string; activeScriptPublicKey: string } {
   const payoutScriptPublicKeyHash = scriptPublicKeyHash(
     config.addressCodec.scriptPublicKeyForAddress(
@@ -3340,6 +3655,7 @@ function deriveServerEscrow(
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
+    settledTotal,
   };
   const scriptPublicKey = escrowScriptPublicKey(params);
   return {
@@ -3353,6 +3669,7 @@ function deriveServerEscrow(
 function channelState(channel: ServerChannelRecord) {
   return {
     channelId: channel.channelId,
+    covenantId: channel.covenantId,
     activeOutpoint: channel.activeOutpoint,
     activeScriptPublicKey: channel.activeScriptPublicKey,
     fundingAmount: channel.fundingAmount,
@@ -3365,9 +3682,14 @@ function channelState(channel: ServerChannelRecord) {
 function expectedSettlementChannelState(channel: ServerChannelRecord) {
   return {
     channelId: channel.channelId,
+    covenantId: channel.covenantId,
+    fundingAmount: channel.fundingAmount,
     chargedCumulativeAmount: channel.chargedCumulativeAmount,
     claimedCumulativeAmount: channel.claimedCumulativeAmount,
     signedMaxClaimable: channel.signedMaxClaimable,
+    ...(channel.voucherSignature
+      ? { voucherSignature: channel.voucherSignature }
+      : {}),
     activeOutpoint: channel.activeOutpoint,
     activeScriptPublicKey: channel.activeScriptPublicKey,
     status: channel.status,
@@ -3375,41 +3697,13 @@ function expectedSettlementChannelState(channel: ServerChannelRecord) {
 }
 
 function validateChannelAccounting(channel: ServerChannelRecord): void {
-  validateChannelPreVoucherAccounting(channel);
-  const active =
-    parseSompiString(channel.chargedCumulativeAmount) -
-    parseSompiString(channel.claimedCumulativeAmount);
-  const funding = parseSompiString(channel.fundingAmount);
-  const signed = parseSompiString(channel.signedMaxClaimable);
-  if (active > signed)
-    throw new KaspaX402Error(
-      "invalid_kaspa_settlement_response",
-      "active charged amount cannot exceed signed ceiling",
-    );
-  if (signed > funding)
-    throw new KaspaX402Error(
-      "invalid_kaspa_settlement_response",
-      "signed ceiling cannot exceed funding amount",
-    );
+  batchLaneAccounting(channel);
 }
 
 function validateChannelPreVoucherAccounting(
   channel: ServerChannelRecord,
 ): void {
-  const charged = parseSompiString(channel.chargedCumulativeAmount);
-  const claimed = parseSompiString(channel.claimedCumulativeAmount);
-  const active = charged - claimed;
-  const funding = parseSompiString(channel.fundingAmount);
-  if (claimed > charged)
-    throw new KaspaX402Error(
-      "invalid_kaspa_settlement_response",
-      "claimed amount cannot exceed charged amount",
-    );
-  if (active > funding)
-    throw new KaspaX402Error(
-      "invalid_kaspa_settlement_response",
-      "active charged amount cannot exceed funding amount",
-    );
+  batchLaneAccounting(channel);
 }
 
 function safePaymentChannelId(
@@ -3561,9 +3855,49 @@ function idempotencyLockKey(paymentIdentifier: string): Hash32Hex {
   return sha256Hex(`kaspa:x402:payment-identifier-lock:${paymentIdentifier}`);
 }
 
+function batchSettlementAttemptId(input: {
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  requestFingerprint: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
+}): Hash32Hex {
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:batch-settlement-attempt:v2",
+      ...input,
+    }),
+  );
+}
+
+function batchSettlementRecoveryRequiredResponse(status = 503): ServerResponse {
+  return {
+    status,
+    headers: {},
+    body: { error: "batch_settlement_recovery_required" },
+  };
+}
+
+async function markBatchHandlerRecoveryRequiredSafely(
+  store: DirectModeServerConfig["store"],
+  attemptId: Hash32Hex,
+  reason: string,
+): Promise<void> {
+  try {
+    await store.markBatchHandlerRecoveryRequired(
+      attemptId,
+      reason,
+      new Date().toISOString(),
+    );
+  } catch {
+    // A post-write transport error may mean the recovery marker is durable.
+  }
+}
+
 function latestVoucher(channel: ServerChannelRecord): Voucher | undefined {
   return channel.voucherSignature
     ? {
+        covenantId: channel.covenantId,
         amount: channel.signedMaxClaimable,
         signature: channel.voucherSignature,
       }
@@ -3584,10 +3918,6 @@ function claimAttemptId(
       transaction,
     }),
   );
-}
-
-function maxAmount(a: SompiString, b: SompiString): SompiString {
-  return parseSompiString(a) >= parseSompiString(b) ? a : b;
 }
 
 function sameActiveOutpoint(

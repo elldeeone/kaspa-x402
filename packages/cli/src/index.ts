@@ -5,6 +5,9 @@ import { fileURLToPath, pathToFileURL } from "node:url";
 
 import {
   X402_VERSION,
+  applyBatchClaimAccounting,
+  assertBatchVoucherReserve,
+  batchLaneAccounting,
   decodePaymentRequiredEnvelopeHeader,
   decodePaymentSignatureHeader,
   narrowPaymentRequiredEnvelope,
@@ -13,6 +16,7 @@ import {
   validatePaymentPayload,
   validatePaymentRequired,
   validatePaymentRetry,
+  type BatchLaneState,
   type PaymentPayload,
   type PaymentRequired,
   type PaymentRequirements,
@@ -31,7 +35,10 @@ type ParsedArgs = {
   positionals: string[];
 };
 
-type CommandHandler = (parsed: ParsedArgs, io: CliIo) => Promise<unknown> | unknown;
+type CommandHandler = (
+  parsed: ParsedArgs,
+  io: CliIo,
+) => Promise<unknown> | unknown;
 
 type CommandDefinition = {
   path: string[];
@@ -52,14 +59,17 @@ class CliError extends Error {
 const COMMANDS: CommandDefinition[] = [
   {
     path: ["vectors", "verify"],
-    summary: "Verify schemas, vectors, x402 headers, digests, tx-v1 fixtures, and negative vectors.",
+    summary:
+      "Verify schemas, vectors, x402 headers, digests, tx-v1 fixtures, and negative vectors.",
     usage: "kaspa-x402 vectors verify [--root <repo>] [--json]",
     handler: verifyVectors,
   },
   {
     path: ["exact", "verify"],
-    summary: "Validate an exact payment payload against offered payment requirements.",
-    usage: "kaspa-x402 exact verify --payment <payload.json> --requirements <requirements.json> [--json]",
+    summary:
+      "Validate an exact payment payload against offered payment requirements.",
+    usage:
+      "kaspa-x402 exact verify --payment <payload.json> --requirements <requirements.json> [--json]",
     handler: verifyExact,
   },
   {
@@ -70,37 +80,49 @@ const COMMANDS: CommandDefinition[] = [
   },
   {
     path: ["channel", "inspect"],
-    summary: "Inspect client channel state, server channel state, or wire channel state JSON.",
-    usage: "kaspa-x402 channel inspect --channel <channel.json> [--json]",
+    summary:
+      "Inspect client channel state, server channel state, or wire channel state JSON.",
+    usage:
+      "kaspa-x402 channel inspect --channel <channel.json> [--reserve <amount>] [--json]",
     handler: inspectChannel,
   },
   {
     path: ["claim", "preview"],
-    summary: "Preview the currently claimable channel amount before building a claim transaction.",
-    usage: "kaspa-x402 claim preview --channel <channel.json> [--fee <amount>] [--json]",
+    summary:
+      "Preview the currently claimable channel amount before building a claim transaction.",
+    usage:
+      "kaspa-x402 claim preview --channel <channel.json> [--amount <gross-claim>] [--fee <amount>] [--json]",
     handler: previewClaim,
   },
   {
     path: ["claim", "submit"],
-    summary: "Validate a prepared claim transaction submission request in dry-run mode.",
-    usage: "kaspa-x402 claim submit --channel <channel.json> --transaction <hex> --dry-run [--json]",
+    summary:
+      "Validate a prepared claim transaction submission request in dry-run mode.",
+    usage:
+      "kaspa-x402 claim submit --channel <channel.json> --transaction <hex> --dry-run [--json]",
     handler: submitClaim,
   },
   {
     path: ["refund", "preview"],
     summary: "Preview refund eligibility and refund amount for a channel.",
-    usage: "kaspa-x402 refund preview --channel <channel.json> [--now-daa <daa>] [--json]",
+    usage:
+      "kaspa-x402 refund preview --channel <channel.json> [--now-daa <daa>] [--json]",
     handler: previewRefund,
   },
   {
     path: ["refund", "submit"],
-    summary: "Validate a prepared refund transaction submission request in dry-run mode.",
-    usage: "kaspa-x402 refund submit --channel <channel.json> --transaction <hex> --dry-run [--json]",
+    summary:
+      "Validate a prepared refund transaction submission request in dry-run mode.",
+    usage:
+      "kaspa-x402 refund submit --channel <channel.json> --transaction <hex> --dry-run [--json]",
     handler: submitRefund,
   },
 ];
 
-export async function runCli(argv = process.argv.slice(2), io: CliIo = defaultIo()): Promise<number> {
+export async function runCli(
+  argv = process.argv.slice(2),
+  io: CliIo = defaultIo(),
+): Promise<number> {
   try {
     const parsed = parseArgs(argv);
     if (parsed.command.length === 0 || hasHelp(parsed)) {
@@ -110,7 +132,9 @@ export async function runCli(argv = process.argv.slice(2), io: CliIo = defaultIo
 
     const command = findCommand(parsed.command);
     if (!command) {
-      throw new CliError(`Unknown command: ${parsed.command.join(" ")}\n\n${commandHelp([])}`);
+      throw new CliError(
+        `Unknown command: ${parsed.command.join(" ")}\n\n${commandHelp([])}`,
+      );
     }
 
     const result = await command.handler(parsed, io);
@@ -118,12 +142,19 @@ export async function runCli(argv = process.argv.slice(2), io: CliIo = defaultIo
     return 0;
   } catch (error) {
     const exitCode = error instanceof CliError ? error.exitCode : 1;
-    writeText(io, `${error instanceof Error ? error.message : String(error)}\n`, "stderr");
+    writeText(
+      io,
+      `${error instanceof Error ? error.message : String(error)}\n`,
+      "stderr",
+    );
     return exitCode;
   }
 }
 
-async function verifyVectors(parsed: ParsedArgs, io: CliIo): Promise<Record<string, unknown>> {
+async function verifyVectors(
+  parsed: ParsedArgs,
+  io: CliIo,
+): Promise<Record<string, unknown>> {
   const root = optionString(parsed, "root") ?? findRepoRoot(io.cwd);
   const validatorPath = path.join(root, "scripts", "validate-schemas.mjs");
   if (!fs.existsSync(validatorPath)) {
@@ -131,7 +162,10 @@ async function verifyVectors(parsed: ParsedArgs, io: CliIo): Promise<Record<stri
   }
 
   const module = (await import(pathToFileURL(validatorPath).href)) as {
-    validateSchemasAndVectors(options?: { root?: string }): { schemaCount: number; vectorCount: number };
+    validateSchemasAndVectors(options?: { root?: string }): {
+      schemaCount: number;
+      vectorCount: number;
+    };
   };
   const report = module.validateSchemasAndVectors({ root });
   const fixtureReport = await verifyCovenantFixture(root);
@@ -146,7 +180,10 @@ async function verifyVectors(parsed: ParsedArgs, io: CliIo): Promise<Record<stri
 
 function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
   const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transaction") {
+  if (
+    paymentPayload.accepted.scheme !== "exact" ||
+    paymentPayload.payload.type !== "exact-transaction"
+  ) {
     throw new CliError("payment payload is not an exact-transaction");
   }
   const paymentRequired = readPaymentRequiredForRetry(parsed, paymentPayload);
@@ -166,7 +203,10 @@ function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
 
 function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
   const paymentPayload = readPaymentPayload(parsed);
-  if (paymentPayload.accepted.scheme !== "exact" || paymentPayload.payload.type !== "exact-transaction") {
+  if (
+    paymentPayload.accepted.scheme !== "exact" ||
+    paymentPayload.payload.type !== "exact-transaction"
+  ) {
     throw new CliError("payment payload is not an exact-transaction");
   }
   return {
@@ -184,33 +224,50 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
 
 function inspectChannel(parsed: ParsedArgs): Record<string, unknown> {
   const channel = readChannel(parsed);
-  return channelSummary(channel);
+  return channelSummary(channel, optionAmount(parsed, "reserve"));
 }
 
 function previewClaim(parsed: ParsedArgs): Record<string, unknown> {
   const channel = readChannel(parsed);
-  const charged = amountFromChannel(channel, "chargedCumulativeAmount");
-  const claimed = amountFromChannel(channel, "claimedCumulativeAmount");
   const fee = optionAmount(parsed, "fee") ?? "0";
-  const active = charged - claimed;
   const feeValue = parseSompiString(fee);
-  const funding = amountFromChannel(channel, "fundingAmount");
   const reasons: string[] = [];
   const status = stringField(channel, "status");
-  const signedMaxClaimable = stringField(channel, "signedMaxClaimable") ?? stringField(channel, "signedCumulativeAmount");
-  const signedMax = signedMaxClaimable === undefined ? undefined : parseSompiString(signedMaxClaimable);
-  const hasVoucher = typeof channel.voucherSignature === "string" || isRecord(channel.latestVoucher);
+  const hasVoucher =
+    typeof channel.voucherSignature === "string" ||
+    isRecord(channel.latestVoucher);
+  const covenantId = stringField(channel, "covenantId");
+  let previewClaimAmount = "0";
+  let continuationState: BatchLaneState | null = null;
+  let accountingError: string | null = null;
+
   if (status !== "active") reasons.push("channel_status_is_not_active");
-  if (active < 0n) reasons.push("claimed_amount_exceeds_charged_amount");
-  if (active > funding) reasons.push("active_claim_exceeds_funding_amount");
-  if (active <= 0n) reasons.push("no_unclaimed_amount");
-  if (signedMax === undefined) reasons.push("missing_signed_claim_ceiling");
-  if (signedMax !== undefined && active > signedMax) reasons.push("signed_claim_ceiling_below_active_claim");
-  if (signedMax !== undefined && signedMax > funding) reasons.push("signed_claim_ceiling_exceeds_funding_amount");
+  if (!isNonZeroHash32(covenantId))
+    reasons.push("missing_or_invalid_covenant_id");
   if (!hasVoucher) reasons.push("missing_latest_voucher_or_signature");
-  if (feeValue >= active) reasons.push("fee_is_not_below_claim_amount");
+
+  try {
+    const state = batchLaneState(channel);
+    const accounting = batchLaneAccounting(state);
+    const requestedClaim = optionAmount(parsed, "amount");
+    previewClaimAmount =
+      requestedClaim ?? accounting.activeChargedAmount.toString();
+    const claimValue = parseSompiString(previewClaimAmount);
+    if (claimValue === 0n) reasons.push("no_unclaimed_amount");
+    else {
+      continuationState = applyBatchClaimAccounting(state, previewClaimAmount);
+    }
+    if (feeValue >= claimValue) reasons.push("fee_is_not_below_claim_amount");
+  } catch (error) {
+    reasons.push("invalid_batch_lane_accounting");
+    accountingError = errorMessage(error);
+  }
+
   const localChecksPassed = reasons.length === 0;
-  const continuationAmount = localChecksPassed ? (funding - active).toString() : null;
+  const continuationAccounting = continuationState
+    ? batchLaneAccounting(continuationState)
+    : null;
+  const claimValue = parseSompiString(previewClaimAmount);
   return {
     ok: true,
     action: "claim-preview",
@@ -218,10 +275,28 @@ function previewClaim(parsed: ParsedArgs): Record<string, unknown> {
     claimable: localChecksPassed ? "unknown" : false,
     localChecksPassed,
     reasons,
-    previewClaimAmount: active > 0n ? active.toString() : "0",
+    ...(accountingError ? { accountingError } : {}),
+    previewClaimAmount,
     fee,
-    continuationAmount,
-    requiredEvidence: ["active server channel state", "latest voucher signature", "claim transaction builder", "claim fee estimate"],
+    providerPayoutAmount:
+      localChecksPassed && claimValue > feeValue
+        ? (claimValue - feeValue).toString()
+        : null,
+    continuationAmount: localChecksPassed
+      ? (continuationState?.fundingAmount ?? null)
+      : null,
+    continuationClaimedCumulativeAmount: localChecksPassed
+      ? (continuationState?.claimedCumulativeAmount ?? null)
+      : null,
+    remainingVoucherAuthorization: localChecksPassed
+      ? (continuationAccounting?.remainingAuthorizedAmount.toString() ?? null)
+      : null,
+    requiredEvidence: [
+      "current outpoint and covenant id",
+      "latest voucher signature",
+      "claim transaction builder",
+      "claim fee estimate",
+    ],
   };
 }
 
@@ -241,13 +316,31 @@ function submitClaim(parsed: ParsedArgs): Record<string, unknown> {
 function previewRefund(parsed: ParsedArgs): Record<string, unknown> {
   const channel = readChannel(parsed);
   const nowDaa = optionAmount(parsed, "now-daa");
-  const refundTimeoutDaa = amountFromChannel(channel, "refundTimeoutDaa", ["channelConfig", "refundTimeoutDaa"]);
+  const refundTimeoutDaa = amountFromChannel(channel, "refundTimeoutDaa", [
+    "channelConfig",
+    "refundTimeoutDaa",
+  ]);
   const reasons: string[] = [];
   const status = stringField(channel, "status");
+  const covenantId = stringField(channel, "covenantId");
   if (status === undefined) reasons.push("missing_channel_status");
-  if (status !== undefined && !["active", "retired", "refundable"].includes(status)) reasons.push("channel_status_is_not_refundable");
+  if (
+    status !== undefined &&
+    !["active", "retired", "refundable"].includes(status)
+  )
+    reasons.push("channel_status_is_not_refundable");
+  if (!isNonZeroHash32(covenantId))
+    reasons.push("missing_or_invalid_covenant_id");
   if (nowDaa === undefined) reasons.push("now_daa_required");
-  if (nowDaa !== undefined && parseSompiString(nowDaa) < refundTimeoutDaa) reasons.push("refund_timeout_not_reached");
+  if (nowDaa !== undefined && parseSompiString(nowDaa) <= refundTimeoutDaa)
+    reasons.push("refund_timeout_not_elapsed");
+  let accountingError: string | null = null;
+  try {
+    batchLaneAccounting(batchLaneState(channel));
+  } catch (error) {
+    reasons.push("invalid_batch_lane_accounting");
+    accountingError = errorMessage(error);
+  }
   const localChecksPassed = reasons.length === 0;
   return {
     ok: true,
@@ -259,7 +352,14 @@ function previewRefund(parsed: ParsedArgs): Record<string, unknown> {
     refundTimeoutDaa: refundTimeoutDaa.toString(),
     nowDaa: nowDaa ?? null,
     reasons,
-    requiredEvidence: ["active funding UTXO", "matching covenant script", "refund transaction builder", "broadcast result"],
+    ...(accountingError ? { accountingError } : {}),
+    terminatesCovenantLineage: localChecksPassed,
+    requiredEvidence: [
+      "current outpoint and covenant id",
+      "matching covenant script",
+      "refund transaction builder",
+      "broadcast result",
+    ],
   };
 }
 
@@ -286,9 +386,14 @@ function readPaymentPayload(parsed: ParsedArgs): PaymentPayload {
   return validation.value;
 }
 
-function readPaymentRequiredForRetry(parsed: ParsedArgs, paymentPayload: PaymentPayload): PaymentRequired {
+function readPaymentRequiredForRetry(
+  parsed: ParsedArgs,
+  paymentPayload: PaymentPayload,
+): PaymentRequired {
   if (typeof parsed.options["payment-required-header"] === "string") {
-    const envelope = decodePaymentRequiredEnvelopeHeader(parsed.options["payment-required-header"]);
+    const envelope = decodePaymentRequiredEnvelopeHeader(
+      parsed.options["payment-required-header"],
+    );
     const narrowed = narrowPaymentRequiredEnvelope(envelope);
     if (!narrowed.ok) throw narrowed.error;
     return narrowed.value.paymentRequired;
@@ -307,8 +412,12 @@ function readPaymentRequiredForRetry(parsed: ParsedArgs, paymentPayload: Payment
   };
   const wrapped = validatePaymentRequired(paymentRequired);
   if (!wrapped.ok) throw required.error;
-  if (stableStringify(requirements) !== stableStringify(paymentPayload.accepted)) {
-    throw new CliError("payment requirements do not match payload accepted requirements");
+  if (
+    stableStringify(requirements) !== stableStringify(paymentPayload.accepted)
+  ) {
+    throw new CliError(
+      "payment requirements do not match payload accepted requirements",
+    );
   }
   return wrapped.value;
 }
@@ -319,23 +428,86 @@ function readChannel(parsed: ParsedArgs): Record<string, unknown> {
   return raw;
 }
 
-function channelSummary(channel: Record<string, unknown>): Record<string, unknown> {
-  const config = isRecord(channel.config) ? channel.config : isRecord(channel.channelConfig) ? channel.channelConfig : undefined;
-  const activeOutpoint = isRecord(channel.activeOutpoint) ? channel.activeOutpoint : undefined;
+function channelSummary(
+  channel: Record<string, unknown>,
+  reserve?: SompiString,
+): Record<string, unknown> {
+  const config = isRecord(channel.config)
+    ? channel.config
+    : isRecord(channel.channelConfig)
+      ? channel.channelConfig
+      : undefined;
+  const activeOutpoint = isRecord(channel.activeOutpoint)
+    ? channel.activeOutpoint
+    : undefined;
+  let accounting: Record<string, unknown> | null = null;
+  let accountingError: string | null = null;
+  try {
+    const lane = batchLaneAccounting(batchLaneState(channel));
+    const authorizationHeadroom =
+      lane.fundingAmount - lane.remainingAuthorizedAmount;
+    const reserveValue =
+      reserve === undefined ? undefined : parseSompiString(reserve);
+    if (reserve !== undefined)
+      assertBatchVoucherReserve(batchLaneState(channel), reserve);
+    accounting = {
+      A: lane.chargedCumulativeAmount.toString(),
+      S: lane.claimedCumulativeAmount.toString(),
+      T: lane.signedMaxClaimable.toString(),
+      V: lane.fundingAmount.toString(),
+      R: reserve ?? null,
+      outstandingActualCharge: lane.activeChargedAmount.toString(),
+      remainingVoucherAuthorization: lane.remainingAuthorizedAmount.toString(),
+      authorizationHeadroom: authorizationHeadroom.toString(),
+      reserveHeadroom:
+        reserveValue === undefined
+          ? null
+          : (authorizationHeadroom - reserveValue).toString(),
+    };
+  } catch (error) {
+    accountingError = errorMessage(error);
+  }
   return {
     channelId: stringField(channel, "id") ?? stringField(channel, "channelId"),
+    covenantId: stringField(channel, "covenantId"),
     network: stringField(config, "network"),
+    templateId:
+      stringField(channel, "templateId") ?? stringField(config, "templateId"),
     status: stringField(channel, "status"),
     activeOutpoint,
+    activeScriptPublicKey: stringField(channel, "activeScriptPublicKey"),
     fundingAmount: stringField(channel, "fundingAmount"),
     chargedCumulativeAmount: stringField(channel, "chargedCumulativeAmount"),
     claimedCumulativeAmount: stringField(channel, "claimedCumulativeAmount"),
-    signedMaxClaimable: stringField(channel, "signedMaxClaimable") ?? stringField(channel, "signedCumulativeAmount"),
-    refundTimeoutDaa: stringField(channel, "refundTimeoutDaa") ?? stringField(config, "refundTimeoutDaa"),
+    signedMaxClaimable: stringField(channel, "signedMaxClaimable"),
+    refundTimeoutDaa:
+      stringField(channel, "refundTimeoutDaa") ??
+      stringField(config, "refundTimeoutDaa"),
+    accounting,
+    ...(accountingError ? { accountingError } : {}),
   };
 }
 
-function amountFromChannel(channel: Record<string, unknown>, field: string, fallbackPath?: [string, string]): bigint {
+function batchLaneState(channel: Record<string, unknown>): BatchLaneState {
+  return {
+    fundingAmount: requiredStringField(channel, "fundingAmount"),
+    chargedCumulativeAmount: requiredStringField(
+      channel,
+      "chargedCumulativeAmount",
+    ),
+    claimedCumulativeAmount: requiredStringField(
+      channel,
+      "claimedCumulativeAmount",
+    ),
+    signedMaxClaimable: requiredStringField(channel, "signedMaxClaimable"),
+  };
+}
+
+function amountFromChannel(
+  channel: Record<string, unknown>,
+  field: string,
+  fallbackPath?: [string, string],
+): bigint {
   const direct = stringField(channel, field);
   if (direct !== undefined) return parseSompiString(direct);
   if (fallbackPath) {
@@ -350,11 +522,15 @@ function amountFromChannel(channel: Record<string, unknown>, field: string, fall
 function readJsonInput(parsed: ParsedArgs, optionName: string): unknown {
   const file = optionString(parsed, optionName) ?? parsed.positionals[0];
   if (file) return JSON.parse(fs.readFileSync(file, "utf8"));
-  if (parsed.options.stdin === true) return JSON.parse(fs.readFileSync(0, "utf8"));
+  if (parsed.options.stdin === true)
+    return JSON.parse(fs.readFileSync(0, "utf8"));
   throw new CliError(`missing --${optionName}`);
 }
 
-function optionAmount(parsed: ParsedArgs, name: string): SompiString | undefined {
+function optionAmount(
+  parsed: ParsedArgs,
+  name: string,
+): SompiString | undefined {
   const value = optionString(parsed, name);
   if (value === undefined) return undefined;
   parseSompiString(value);
@@ -364,29 +540,44 @@ function optionAmount(parsed: ParsedArgs, name: string): SompiString | undefined
 function requiredHexOption(parsed: ParsedArgs, name: string): string {
   const value = optionString(parsed, name);
   if (!value) throw new CliError(`missing --${name}`);
-  if (!/^(?:[0-9a-fA-F]{2})*$/.test(value)) throw new CliError(`--${name} must be an even-length hex string`);
+  if (!/^(?:[0-9a-fA-F]{2})*$/.test(value))
+    throw new CliError(`--${name} must be an even-length hex string`);
   return value;
 }
 
 function assertDryRun(parsed: ParsedArgs, command: string): void {
   if (parsed.options["dry-run"] !== true) {
-    throw new CliError(`${command} requires --dry-run until a broadcast adapter is configured`);
+    throw new CliError(
+      `${command} requires --dry-run until a broadcast adapter is configured`,
+    );
   }
 }
 
-async function verifyCovenantFixture(root: string): Promise<{ checks: number }> {
-  const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v1.json");
+async function verifyCovenantFixture(
+  root: string,
+): Promise<{ checks: number }> {
+  const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v2.json");
   const module = (await import("@kaspa-x402/covenant")) as {
-    checkEscrowFixtureReproducibility: (fixture: unknown, source: Uint8Array) => { checks: readonly unknown[] };
+    checkEscrowV2FixtureReproducibility: (
+      fixture: unknown,
+      source: Uint8Array,
+    ) => { checks: readonly unknown[] };
   };
-  const escrowReport = module.checkEscrowFixtureReproducibility(escrowFixture.fixture, escrowFixture.source);
+  const escrowReport = module.checkEscrowV2FixtureReproducibility(
+    escrowFixture.fixture,
+    escrowFixture.source,
+  );
   return { checks: escrowReport.checks.length };
 }
 
-function readCovenantFixture(root: string, name: string): { fixture: unknown; source: Uint8Array } {
+function readCovenantFixture(
+  root: string,
+  name: string,
+): { fixture: unknown; source: Uint8Array } {
   const fixturePath = path.join(root, "contracts", "fixtures", name);
   const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
-  if (!isRecord(fixture) || typeof fixture.source !== "string") throw new CliError(`${name} covenant fixture is missing source`);
+  if (!isRecord(fixture) || typeof fixture.source !== "string")
+    throw new CliError(`${name} covenant fixture is missing source`);
   return {
     fixture,
     source: fs.readFileSync(path.join(root, fixture.source)),
@@ -429,7 +620,11 @@ function parseArgs(argv: string[]): ParsedArgs {
   }
 
   if (command[0] === "help") {
-    return { command: command.slice(1).concat(positionals), options: { help: true }, positionals: [] };
+    return {
+      command: command.slice(1).concat(positionals),
+      options: { help: true },
+      positionals: [],
+    };
   }
   return { command, options, positionals };
 }
@@ -439,7 +634,11 @@ function hasHelp(parsed: ParsedArgs): boolean {
 }
 
 function findCommand(pathParts: string[]): CommandDefinition | undefined {
-  return COMMANDS.find((command) => command.path.length === pathParts.length && command.path.every((part, index) => part === pathParts[index]));
+  return COMMANDS.find(
+    (command) =>
+      command.path.length === pathParts.length &&
+      command.path.every((part, index) => part === pathParts[index]),
+  );
 }
 
 function commandHelp(pathParts: string[]): string {
@@ -454,7 +653,9 @@ function commandHelp(pathParts: string[]): string {
     "  kaspa-x402 <command> [options]",
     "",
     "Commands:",
-    ...COMMANDS.map((item) => `  ${item.path.join(" ").padEnd(18)} ${item.summary}`),
+    ...COMMANDS.map(
+      (item) => `  ${item.path.join(" ").padEnd(18)} ${item.summary}`,
+    ),
     "",
     "Use `kaspa-x402 <command> --help` for command-specific options.",
     "",
@@ -482,7 +683,11 @@ function formatHumanValue(value: unknown): string {
   return String(value);
 }
 
-function writeText(io: CliIo, text: string, stream: "stdout" | "stderr" = "stdout"): void {
+function writeText(
+  io: CliIo,
+  text: string,
+  stream: "stdout" | "stderr" = "stdout",
+): void {
   io[stream].write(text);
 }
 
@@ -497,8 +702,14 @@ function findRepoRoot(cwd: string): string {
     const packagePath = path.join(current, "package.json");
     if (fs.existsSync(packagePath)) {
       try {
-        const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8")) as { name?: string };
-        if (pkg.name === "kaspa-x402" && fs.existsSync(path.join(current, "vectors"))) return current;
+        const pkg = JSON.parse(fs.readFileSync(packagePath, "utf8")) as {
+          name?: string;
+        };
+        if (
+          pkg.name === "kaspa-x402" &&
+          fs.existsSync(path.join(current, "vectors"))
+        )
+          return current;
       } catch {
         // Keep walking.
       }
@@ -510,9 +721,31 @@ function findRepoRoot(cwd: string): string {
   throw new CliError("could not find kaspa-x402 repo root; pass --root");
 }
 
-function stringField(record: Record<string, unknown> | undefined, field: string): string | undefined {
+function stringField(
+  record: Record<string, unknown> | undefined,
+  field: string,
+): string | undefined {
   const value = record?.[field];
   return typeof value === "string" ? value : undefined;
+}
+
+function requiredStringField(
+  record: Record<string, unknown>,
+  field: string,
+): string {
+  const value = stringField(record, field);
+  if (value === undefined) throw new CliError(`channel is missing ${field}`);
+  return value;
+}
+
+function isNonZeroHash32(value: string | undefined): boolean {
+  return (
+    value !== undefined && /^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])/.test(value)
+  );
+}
+
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -527,6 +760,9 @@ function defaultIo(): CliIo {
   };
 }
 
-if (process.argv[1] && fileURLToPath(import.meta.url) === path.resolve(process.argv[1])) {
+if (
+  process.argv[1] &&
+  fileURLToPath(import.meta.url) === path.resolve(process.argv[1])
+) {
   process.exitCode = await runCli();
 }

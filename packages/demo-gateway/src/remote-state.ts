@@ -1,5 +1,7 @@
 import type {
   BatchCommitmentRecord,
+  BatchSettlementAttemptRecord,
+  BatchSettlementClaimResult,
   ClaimAttemptRecord,
   ExactPaymentRecord,
   ExactSettlementCommit,
@@ -23,12 +25,16 @@ import type {
   GatewayStateRequest,
 } from "./state.js";
 
-export type GatewayStateNamespace = DurableObjectNamespace;
+export type GatewayStateNamespace = Env["GATEWAY_STATE"];
+export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-alpha.10";
 
 export class RemoteGatewayState implements GatewayStateClient {
   readonly #stub: DurableObjectStub;
 
-  constructor(namespace: GatewayStateNamespace, name = "demo-gateway") {
+  constructor(
+    namespace: GatewayStateNamespace,
+    name = GATEWAY_STATE_OBJECT_NAME,
+  ) {
     this.#stub = namespace.get(namespace.idFromName(name));
   }
 
@@ -52,6 +58,46 @@ export class RemoteGatewayState implements GatewayStateClient {
     commitmentId: string,
   ): Promise<BatchCommitmentRecord | undefined> {
     return this.#call("loadCommitment", { commitmentId });
+  }
+
+  claimBatchSettlement(
+    record: BatchSettlementAttemptRecord,
+  ): Promise<BatchSettlementClaimResult> {
+    return this.#call("claimBatchSettlement", { record });
+  }
+
+  loadBatchSettlementAttempt(
+    attemptId: string,
+  ): Promise<BatchSettlementAttemptRecord | undefined> {
+    return this.#call("loadBatchSettlementAttempt", { attemptId });
+  }
+
+  beginBatchHandler(attemptId: string, startedAt: string): Promise<boolean> {
+    return this.#call("beginBatchHandler", { attemptId, startedAt });
+  }
+
+  recordBatchHandlerResult(
+    attemptId: string,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    return this.#call("recordBatchHandlerResult", {
+      attemptId,
+      result,
+      completedAt,
+    });
+  }
+
+  markBatchHandlerRecoveryRequired(
+    attemptId: string,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    return this.#call("markBatchHandlerRecoveryRequired", {
+      attemptId,
+      reason,
+      observedAt,
+    });
   }
 
   loadPaymentIdentifier(

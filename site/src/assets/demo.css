@@ -56,6 +56,14 @@ textarea {
   margin: 0.75rem 0;
 }
 
+.demo-inline-actions {
+  display: contents;
+}
+
+.demo-inline-actions[hidden] {
+  display: none;
+}
+
 .demo-grid {
   display: grid;
   grid-template-columns: repeat(auto-fit, minmax(11rem, 1fr));

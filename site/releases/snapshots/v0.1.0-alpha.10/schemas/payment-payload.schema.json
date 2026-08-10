@@ -1,0 +1,141 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+  "title": "Kaspa x402 PaymentPayload",
+  "type": "object",
+  "required": ["x402Version", "accepted", "payload"],
+  "properties": {
+    "x402Version": {
+      "const": 2
+    },
+    "accepted": {
+      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentRequirements"
+    },
+    "payload": {
+      "$ref": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
+    },
+    "extensions": {
+      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentExtensions"
+    }
+  },
+  "allOf": [
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "exact"
+              }
+            },
+            "required": ["scheme"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "type": {
+                "const": "exact-transaction"
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": { "const": "exact" },
+              "extra": {
+                "properties": {
+                  "binding": { "const": "kaspa-exact-v2" },
+                  "profile": { "const": "standard-native" }
+                },
+                "required": ["binding", "profile"]
+              }
+            },
+            "required": ["scheme", "extra"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "profile": { "const": "standard-native" }
+            },
+            "required": ["profile"],
+            "not": {
+              "required": ["challengeId"]
+            }
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": { "const": "exact" },
+              "extra": {
+                "properties": {
+                  "binding": { "const": "kaspa-exact-v2" },
+                  "profile": { "const": "additive" }
+                },
+                "required": ["binding", "profile"]
+              }
+            },
+            "required": ["scheme", "extra"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "profile": { "const": "additive" }
+            },
+            "required": ["profile", "challengeId"]
+          }
+        }
+      }
+    },
+    {
+      "if": {
+        "properties": {
+          "accepted": {
+            "properties": {
+              "scheme": {
+                "const": "batch-settlement"
+              }
+            },
+            "required": ["scheme"]
+          }
+        },
+        "required": ["accepted"]
+      },
+      "then": {
+        "properties": {
+          "payload": {
+            "properties": {
+              "type": {
+                "enum": ["deposit-voucher", "voucher", "claim", "refund"]
+              }
+            },
+            "required": ["type"]
+          }
+        }
+      }
+    }
+  ],
+  "additionalProperties": true
+}

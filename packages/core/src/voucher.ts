@@ -1,13 +1,13 @@
 import { VOUCHER_DOMAIN_TAG } from "./constants.js";
-import { bytesToHex, concatBytes, hexToBytes, le32, le64, sha256 } from "./binary.js";
+import { bytesToHex, concatBytes, hexToBytes, le64, sha256 } from "./binary.js";
+import { parseBatchLaneAmount } from "./batch-lane.js";
 import { KaspaX402Error } from "./errors.js";
 import { parseKaspaNetwork } from "./network.js";
-import type { FundingOutpoint, NetworkId, SompiString } from "./types.js";
+import type { Hash32Hex, NetworkId, SompiString } from "./types.js";
 
 export type VoucherDigestInput = {
   network: NetworkId | string;
-  activeScriptPublicKey: string;
-  outpoint: FundingOutpoint;
+  covenantId: Hash32Hex;
   amount: SompiString;
 };
 
@@ -21,14 +21,22 @@ export function networkHash(network: NetworkId | string): Uint8Array {
 
 export function voucherPreimage(input: VoucherDigestInput): Uint8Array {
   const network = parseKaspaNetwork(input.network);
-  const activeScriptPublicKey = serializedScriptPublicKeyBytes(input.activeScriptPublicKey);
+  const covenantId = hexToBytes(input.covenantId, {
+    expectedLength: 32,
+    errorCode: "invalid_kaspa_x402_binding",
+    label: "covenantId",
+  });
+  if (covenantId.every((byte) => byte === 0)) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "covenantId must identify a bound KIP-20 lineage",
+    );
+  }
   return concatBytes([
     sha256(VOUCHER_DOMAIN_TAG),
     sha256(network),
-    sha256(activeScriptPublicKey),
-    hexToBytes(input.outpoint.txid, { expectedLength: 32, errorCode: "invalid_kaspa_outpoint", label: "outpoint.txid" }),
-    le32(input.outpoint.index),
-    le64(input.amount),
+    covenantId,
+    le64(parseBatchLaneAmount(input.amount, "voucher amount")),
   ]);
 }
 
@@ -38,20 +46,4 @@ export function voucherPreimageHex(input: VoucherDigestInput): string {
 
 export function voucherDigest(input: VoucherDigestInput): string {
   return bytesToHex(sha256(voucherPreimage(input)));
-}
-
-function serializedScriptPublicKeyBytes(value: string): Uint8Array {
-  const bytes = hexToBytes(value, { errorCode: "invalid_kaspa_x402_binding", label: "activeScriptPublicKey" });
-  if (bytes.byteLength < 3) {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_binding",
-      "activeScriptPublicKey must be serialized as uint16_be version followed by script bytes",
-    );
-  }
-
-  const version = (bytes[0] << 8) | bytes[1];
-  if (version !== 0) {
-    throw new KaspaX402Error("invalid_kaspa_x402_binding", "activeScriptPublicKey version must be 0 for kaspa-x402 v1");
-  }
-  return bytes;
 }

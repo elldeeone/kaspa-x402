@@ -1,6 +1,8 @@
 import {
   decodePaymentRequiredHeader,
   decodePaymentSignatureHeader,
+  ESCROW_BINDING_ID,
+  ESCROW_TEMPLATE_ID,
   KaspaX402Error,
   KASPA_LOCK_TIME_THRESHOLD,
   toX402ErrorReason,
@@ -407,8 +409,8 @@ function gatewaySupportedKinds(
     network: config.network,
     extra: {
       asset: "KAS",
-      binding: "kaspa-escrow-v1",
-      templateId: "kaspa-x402-escrow-v1",
+      binding: ESCROW_BINDING_ID,
+      templateId: ESCROW_TEMPLATE_ID,
       modes: ["verify", "settle"],
     },
   });
@@ -453,7 +455,9 @@ async function createGateway(
     network: config.network,
     payTo: config.payTo,
     serverPublicKey: config.serverPublicKey,
+    templateId: ESCROW_TEMPLATE_ID,
     minDepositSompi: config.minDepositSompi,
+    claimReserveSompi: config.claimReserveSompi,
     amount: config.batchAmount,
     exactProfile: config.exactProfile,
     refundTimeoutDaa: refundTimeoutDaa.toString(),
@@ -478,6 +482,7 @@ async function createGateway(
     voucherVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
     exactHeadReconciler: new RestExactHeadReconciler(rest),
+    topUpVerifier: restChainProvider,
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
@@ -497,20 +502,18 @@ class AddressRecordingStore implements ServerStateStore {
 
   async loadChannel(channelId: string) {
     const channel = await this.#inner.loadChannel(channelId);
-    if (channel)
-      this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
+    if (channel) this.#recordChannel(channel);
     return channel;
   }
 
   async saveChannel(channel: Parameters<ServerStateStore["saveChannel"]>[0]) {
-    this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
+    this.#recordChannel(channel);
     return this.#inner.saveChannel(channel);
   }
 
   async listChannels() {
     const channels = await this.#inner.listChannels();
-    for (const channel of channels)
-      this.#book.record(channel.activeScriptPublicKey, channel.escrowAddress);
+    for (const channel of channels) this.#recordChannel(channel);
     return channels;
   }
 
@@ -520,6 +523,44 @@ class AddressRecordingStore implements ServerStateStore {
 
   loadCommitment(commitmentId: string) {
     return this.#inner.loadCommitment(commitmentId);
+  }
+
+  claimBatchSettlement(
+    record: Parameters<ServerStateStore["claimBatchSettlement"]>[0],
+  ) {
+    return this.#inner.claimBatchSettlement(record);
+  }
+
+  loadBatchSettlementAttempt(attemptId: string) {
+    return this.#inner.loadBatchSettlementAttempt(attemptId);
+  }
+
+  beginBatchHandler(attemptId: string, startedAt: string) {
+    return this.#inner.beginBatchHandler(attemptId, startedAt);
+  }
+
+  recordBatchHandlerResult(
+    attemptId: string,
+    result: Parameters<ServerStateStore["recordBatchHandlerResult"]>[1],
+    completedAt: string,
+  ) {
+    return this.#inner.recordBatchHandlerResult(
+      attemptId,
+      result,
+      completedAt,
+    );
+  }
+
+  markBatchHandlerRecoveryRequired(
+    attemptId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.markBatchHandlerRecoveryRequired(
+      attemptId,
+      reason,
+      observedAt,
+    );
   }
 
   loadPaymentIdentifier(id: string) {
@@ -669,6 +710,14 @@ class AddressRecordingStore implements ServerStateStore {
 
   abandonClaimAttempt(attemptId: string, reason?: string) {
     return this.#inner.abandonClaimAttempt(attemptId, reason);
+  }
+
+  #recordChannel(channel: Parameters<ServerStateStore["saveChannel"]>[0]) {
+    this.#book.recordOutpoint(
+      channel.activeOutpoint,
+      channel.activeScriptPublicKey,
+      channel.escrowAddress,
+    );
   }
 }
 
@@ -844,6 +893,11 @@ async function offerCheck(
       accepted.extra.minDepositSompi !== config.minDepositSompi
     )
       throw new Error("batch deposit mismatch");
+    if (
+      profile === "batch-settlement" &&
+      accepted.extra.claimReserveSompi !== config.claimReserveSompi
+    )
+      throw new Error("batch claim reserve mismatch");
     return {
       detail: `${profile} unpaid request returned a valid offer`,
       evidence: {

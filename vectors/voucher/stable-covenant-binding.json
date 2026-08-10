@@ -1,0 +1,66 @@
+{
+  "kind": "voucher-digest",
+  "description": "Alpha.10 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+  "context": {
+    "domain": "kaspa:x402:escrow-voucher:v2",
+    "signedFields": [
+      "network",
+      "covenantId",
+      "amount"
+    ],
+    "notSigned": [
+      "activeOutpoint",
+      "activeScriptPublicKey"
+    ]
+  },
+  "cases": [
+    {
+      "name": "base",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "amount": "30000000"
+      },
+      "expected": {
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493608ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef080c3c90100000000",
+        "digest": "76923df63dd59f09f742726d52502737aa9aa5eed09f68973404900d157a4164"
+      }
+    },
+    {
+      "name": "different-network",
+      "input": {
+        "network": "kaspa:mainnet",
+        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "amount": "30000000"
+      },
+      "expected": {
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b6ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef080c3c90100000000",
+        "digest": "88a07d88698e56c3581782922bdb041a0d71157d8a4b515c4cff0e623420a4b6"
+      }
+    },
+    {
+      "name": "different-covenant-id",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "covenantId": "6767676767676767676767676767676767676767676767676767676767676767",
+        "amount": "30000000"
+      },
+      "expected": {
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd64936676767676767676767676767676767676767676767676767676767676767676780c3c90100000000",
+        "digest": "d9ca0780042292d582a4e8a4c027ff1c31e18b2b0d33b3416cb2a585e942ff9e"
+      }
+    },
+    {
+      "name": "amount-plus-one",
+      "input": {
+        "network": "kaspa:testnet-10",
+        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "amount": "30000001"
+      },
+      "expected": {
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493608ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef081c3c90100000000",
+        "digest": "9b3165e82eff67fcdb8543d68d13f1f9d3130e6b81257227e6b1d5dc1bd58e73"
+      }
+    }
+  ]
+}

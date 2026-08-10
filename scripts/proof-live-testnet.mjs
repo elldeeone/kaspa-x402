@@ -30,11 +30,15 @@ const requiredFlows = [
   "expired exact authorization rejected before protected work",
   "post-broadcast exact restart and trusted settlement reconciliation",
   "external additive head advancement and trusted reconciliation",
-  "batch deposit-voucher settlement",
+  "verified singleton KIP-20 batch genesis and deposit-voucher settlement",
   "batch voucher-only settlement",
-  "batch claim transaction construction and broadcast",
+  "partial batch claim preserving voucher ceiling and lineage",
+  "second accepted partial batch claim using the same voucher",
+  "bounded batch channel, artifact, and pre-broadcast attempt restart reload",
+  "batch client-authorized top-up preserving KIP-20 lineage and lifetime voucher state",
+  "batch stale-head rejection after a same-voucher partial claim",
   "replay rejection across exact and batch-settlement",
-  "batch refund transaction construction and broadcast after timeout",
+  "terminal batch refund after timeout",
 ];
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
 const ADAPTER_SUBMITTED_TX_VERSION_SOURCE =
@@ -149,6 +153,8 @@ function validateLiveProofResult(result, flows) {
     value !== null && typeof value === "object" && !Array.isArray(value);
   const isHash32 = (value) =>
     typeof value === "string" && /^[0-9a-fA-F]{64}$/.test(value);
+  const isNonzeroHash32 = (value) =>
+    isHash32(value) && !/^0{64}$/i.test(value);
   const isNonEmptyString = (value) =>
     typeof value === "string" && value.length > 0;
   const isSompi = (value) =>
@@ -174,6 +180,14 @@ function validateLiveProofResult(result, flows) {
     left.index === right.index;
   const sameAmount = (left, right) =>
     isSompi(left) && isSompi(right) && BigInt(left) === BigInt(right);
+  const sameHash = (left, right) =>
+    isHash32(left) &&
+    isHash32(right) &&
+    left.toLowerCase() === right.toLowerCase();
+  const sameHex = (left, right) =>
+    isHexBytes(left) &&
+    isHexBytes(right) &&
+    left.toLowerCase() === right.toLowerCase();
 
   require(isObject(result), "result", "must be an object");
   if (!isObject(result))
@@ -370,380 +384,1094 @@ function validateLiveProofResult(result, flows) {
       BigInt(result.exact?.externalAdvance?.beforeVersion ?? "0") +
         1n, "exact.externalAdvance", "must prove one trusted externally observed head advancement");
 
-  require(isHash32(
-    result.batch?.deposit?.txid,
-  ), "batch.deposit.txid", "must be a transaction id");
-  require(isTxVersion(
-    result.batch?.deposit?.txVersion,
-  ), "batch.deposit.txVersion", "must state the transaction version");
-  require(isTxVersionSource(
-    result.batch?.deposit?.txVersionSource,
-  ), "batch.deposit.txVersionSource", "must state an allowed version evidence source");
-  require(result.batch?.deposit?.txVersionSource ===
-    SDK_GENERATED_TX_VERSION_SOURCE, "batch.deposit.txVersionSource", "must be sdk-generated-transaction");
-  require(validOutpoint(
-    result.batch?.deposit?.outpoint,
-  ), "batch.deposit.outpoint", "must be an outpoint");
+  const batchClaimReserve = result.batch?.claimReserveSompi;
+  require(
+    isSompi(batchClaimReserve),
+    "batch.claimReserveSompi",
+    "must carry the advertised deterministic claim reserve",
+  );
+  const restartReload = result.batch?.restartReload;
+  require(
+    restartReload?.snapshotFormat ===
+      "kaspa-x402-alpha10-batch-recovery-v1",
+    "batch.restartReload.snapshotFormat",
+    "must use the Alpha.10 recovery snapshot",
+  );
+  require(
+    restartReload?.preBroadcastSnapshotFormat ===
+      "kaspa-x402-alpha10-claim-before-broadcast-v1",
+    "batch.restartReload.preBroadcastSnapshotFormat",
+    "must reload the exact pre-broadcast Alpha.10 claim snapshot",
+  );
+  require(
+    restartReload?.preBroadcastClaimAttemptStatus === "pending",
+    "batch.restartReload.preBroadcastClaimAttemptStatus",
+    "must reload the claim reservation captured before broadcast",
+  );
+  for (const field of [
+    "preBroadcastArtifactMatched",
+    "acceptedTopUpHasNoOpenClaimAttempt",
+    "clientChannelReloaded",
+    "serverChannelReloaded",
+    "genesisEvidenceReloaded",
+    "topUpEvidenceReloaded",
+    "interruptedArtifactTempIgnored",
+  ]) {
+    require(
+      restartReload?.[field] === true,
+      `batch.restartReload.${field}`,
+      "must be true",
+    );
+  }
+  require(
+    Number.isInteger(restartReload?.artifactCount) &&
+      restartReload.artifactCount >= 3,
+    "batch.restartReload.artifactCount",
+    "must reload genesis, claim, and top-up artifacts",
+  );
+
+  function validateBatchHead(head, basePath) {
+    require(isObject(head), basePath, "must be an object");
+    require(
+      validOutpoint(head?.outpoint),
+      `${basePath}.outpoint`,
+      "must be an outpoint",
+    );
+    require(
+      isHexBytes(head?.scriptPublicKey),
+      `${basePath}.scriptPublicKey`,
+      "must be serialized script-public-key hex",
+    );
+    require(
+      isPositiveSompi(head?.fundingAmount),
+      `${basePath}.fundingAmount`,
+      "must be a positive sompi string",
+    );
+    require(
+      isSompi(head?.claimedCumulativeAmount),
+      `${basePath}.claimedCumulativeAmount`,
+      "must be a sompi string",
+    );
+  }
+
+  function validateVoucherProof(proof, covenantId, ceiling, basePath) {
+    require(isObject(proof), basePath, "must be an object");
+    require(
+      sameHash(proof?.covenantId, covenantId),
+      `${basePath}.covenantId`,
+      "must match the stable covenant id",
+    );
+    require(
+      sameAmount(proof?.amount, ceiling),
+      `${basePath}.amount`,
+      "must match signedMaxClaimable",
+    );
+    require(
+      typeof proof?.signature === "string" &&
+        /^[0-9a-fA-F]{128}$/.test(proof.signature),
+      `${basePath}.signature`,
+      "must be a raw 64-byte Schnorr signature",
+    );
+    require(
+      isHash32(proof?.digest),
+      `${basePath}.digest`,
+      "must be the v2 voucher digest",
+    );
+  }
+
+  function validateBatchState(state, basePath) {
+    require(isObject(state), basePath, "must be an object");
+    require(
+      isNonzeroHash32(state?.covenantId),
+      `${basePath}.covenantId`,
+      "must be a non-zero KIP-20 covenant id",
+    );
+    validateBatchHead(
+      {
+        outpoint: state?.activeOutpoint,
+        scriptPublicKey: state?.activeScriptPublicKey,
+        fundingAmount: state?.fundingAmount,
+        claimedCumulativeAmount: state?.claimedCumulativeAmount,
+      },
+      basePath,
+    );
+    require(
+      isSompi(state?.chargedCumulativeAmount),
+      `${basePath}.chargedCumulativeAmount`,
+      "must be a sompi string",
+    );
+    require(
+      isPositiveSompi(state?.signedMaxClaimable),
+      `${basePath}.signedMaxClaimable`,
+      "must be a positive sompi string",
+    );
+    if (
+      isSompi(state?.claimedCumulativeAmount) &&
+      isSompi(state?.chargedCumulativeAmount) &&
+      isSompi(state?.signedMaxClaimable)
+    ) {
+      const settled = BigInt(state.claimedCumulativeAmount);
+      const charged = BigInt(state.chargedCumulativeAmount);
+      const ceiling = BigInt(state.signedMaxClaimable);
+      require(
+        settled <= charged && charged <= ceiling,
+        basePath,
+        "must satisfy 0 <= S <= A <= T",
+      );
+      if (isSompi(state?.fundingAmount) && isSompi(batchClaimReserve)) {
+        require(
+          ceiling - settled + BigInt(batchClaimReserve) <=
+            BigInt(state.fundingAmount),
+          `${basePath}.fundingAmount`,
+          "must cover remaining voucher authorization plus claim reserve",
+        );
+      }
+    }
+  }
+
+  function validateCompute(compute, basePath) {
+    require(isObject(compute), basePath, "must be an object");
+    require(
+      Number.isInteger(compute?.computeBudget) &&
+        compute.computeBudget >= 0 &&
+        compute.computeBudget <= 0xffff,
+      `${basePath}.computeBudget`,
+      "must fit in uint16",
+    );
+    require(
+      Number.isSafeInteger(compute?.scriptUnitsEstimate) &&
+        compute.scriptUnitsEstimate >= 0,
+      `${basePath}.scriptUnitsEstimate`,
+      "must be a non-negative safe integer",
+    );
+    require(
+      Number.isSafeInteger(compute?.scriptUnitAllowance) &&
+        compute.scriptUnitAllowance >= 0,
+      `${basePath}.scriptUnitAllowance`,
+      "must be a non-negative safe integer",
+    );
+    if (
+      Number.isInteger(compute?.computeBudget) &&
+      Number.isSafeInteger(compute?.scriptUnitAllowance)
+    ) {
+      require(
+        compute.scriptUnitAllowance === compute.computeBudget * 10_000 + 9_999,
+        `${basePath}.scriptUnitAllowance`,
+        "must equal computeBudget * 10000 + 9999",
+      );
+    }
+    if (
+      Number.isSafeInteger(compute?.scriptUnitsEstimate) &&
+      Number.isSafeInteger(compute?.scriptUnitAllowance)
+    ) {
+      require(
+        compute.scriptUnitsEstimate <= compute.scriptUnitAllowance,
+        basePath,
+        "script units must fit the declared allowance",
+      );
+    }
+  }
+
+  function validateBatchSpend(spend, operation, basePath) {
+    require(
+      spend?.operation === operation,
+      `${basePath}.operation`,
+      `must be ${operation}`,
+    );
+    require(
+      isNonzeroHash32(spend?.covenantId),
+      `${basePath}.covenantId`,
+      "must be a non-zero KIP-20 covenant id",
+    );
+    require(isHash32(spend?.txid), `${basePath}.txid`, "must be a transaction id");
+    require(
+      spend?.txVersion === 1,
+      `${basePath}.txVersion`,
+      "must be transaction v1",
+    );
+    require(
+      spend?.txVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE,
+      `${basePath}.txVersionSource`,
+      "must be adapter-submitted-transaction-shape",
+    );
+    require(
+      isFinal(spend?.finality),
+      `${basePath}.finality`,
+      "must be accepted or confirmed",
+    );
+    validateBatchHead(spend?.headBefore, `${basePath}.headBefore`);
+    validateCompute(spend?.compute, `${basePath}.compute`);
+  }
+
+  function sameBatchHead(left, right) {
+    return (
+      sameOutpoint(left?.outpoint, right?.outpoint) &&
+      sameHex(left?.scriptPublicKey, right?.scriptPublicKey) &&
+      sameAmount(left?.fundingAmount, right?.fundingAmount) &&
+      sameAmount(left?.claimedCumulativeAmount, right?.claimedCumulativeAmount)
+    );
+  }
+
+  function sameVoucherProof(left, right) {
+    return (
+      sameHash(left?.covenantId, right?.covenantId) &&
+      sameAmount(left?.amount, right?.amount) &&
+      typeof left?.signature === "string" &&
+      typeof right?.signature === "string" &&
+      left.signature.toLowerCase() === right.signature.toLowerCase() &&
+      sameHash(left?.digest, right?.digest)
+    );
+  }
+
+  const deposit = result.batch?.deposit;
+  const depositState = deposit?.state;
+  const genesis = deposit?.genesis;
+  require(isHash32(deposit?.txid), "batch.deposit.txid", "must be a transaction id");
+  require(deposit?.txVersion === 1, "batch.deposit.txVersion", "must be transaction v1");
+  require(
+    isTxVersionSource(deposit?.txVersionSource),
+    "batch.deposit.txVersionSource",
+    "must state an allowed version evidence source",
+  );
+  require(isFinal(deposit?.finality), "batch.deposit.finality", "must be accepted or confirmed");
+  require(isHash32(deposit?.channelId), "batch.deposit.channelId", "must be a channel id");
+  require(
+    isHash32(deposit?.settlementCommitment),
+    "batch.deposit.settlementCommitment",
+    "must be a commitment id",
+  );
+  validateBatchState(depositState, "batch.deposit.state");
+  validateVoucherProof(
+    deposit?.voucherProof,
+    depositState?.covenantId,
+    depositState?.signedMaxClaimable,
+    "batch.deposit.voucherProof",
+  );
+  require(isObject(genesis), "batch.deposit.genesis", "must be an object");
+  require(
+    genesis?.verifiedSingletonGenesis === true,
+    "batch.deposit.genesis.verifiedSingletonGenesis",
+    "must be true",
+  );
+  require(
+    sameHash(genesis?.covenantId, depositState?.covenantId),
+    "batch.deposit.genesis.covenantId",
+    "must match the accepted stable covenant id",
+  );
+  require(
+    validOutpoint(genesis?.authorizingInputOutpoint),
+    "batch.deposit.genesis.authorizingInputOutpoint",
+    "must identify the KIP-20 authorizing input",
+  );
+  require(
+    genesis?.authorizedOutputCount === 1,
+    "batch.deposit.genesis.authorizedOutputCount",
+    "must prove exactly one covenant-bound genesis output",
+  );
+  require(
+    genesis?.totalOutputCount === 1,
+    "batch.deposit.genesis.totalOutputCount",
+    "must prove the genesis transaction has exactly one total output",
+  );
+  require(
+    isPositiveSompi(genesis?.fundingInputTotalSompi),
+    "batch.deposit.genesis.fundingInputTotalSompi",
+    "must record the total ordinary funding input value",
+  );
+  require(
+    isSompi(genesis?.feeSompi),
+    "batch.deposit.genesis.feeSompi",
+    "must record the genesis transaction fee",
+  );
   if (
-    validOutpoint(result.batch?.deposit?.outpoint) &&
-    isHash32(result.batch?.deposit?.txid)
+    isPositiveSompi(genesis?.fundingInputTotalSompi) &&
+    isPositiveSompi(genesis?.fundingAmount) &&
+    isSompi(genesis?.feeSompi)
   ) {
-    require(result.batch.deposit.outpoint.txid.toLowerCase() ===
-      result.batch.deposit.txid.toLowerCase(), "batch.deposit.outpoint", "must belong to deposit txid");
+    require(
+      BigInt(genesis.fundingInputTotalSompi) ===
+        BigInt(genesis.fundingAmount) + BigInt(genesis.feeSompi),
+      "batch.deposit.genesis.fundingAmount",
+      "must use all selected input value as escrow V plus fee without change",
+    );
   }
-  require(isNonEmptyString(
-    result.batch?.deposit?.escrowAddress,
-  ), "batch.deposit.escrowAddress", "must be present");
-  require(isPositiveSompi(
-    result.batch?.deposit?.fundingAmountSompi,
-  ), "batch.deposit.fundingAmountSompi", "must be a positive sompi string");
-  require(isHash32(
-    result.batch?.deposit?.channelId,
-  ), "batch.deposit.channelId", "must be a channel id");
-  require(isHash32(
-    result.batch?.deposit?.settlementCommitment,
-  ), "batch.deposit.settlementCommitment", "must be a commitment id");
-  require(isFinal(
-    result.batch?.deposit?.finality,
-  ), "batch.deposit.finality", "must be accepted or confirmed");
-  require(isSompi(
-    result.batch?.deposit?.chargedAmount,
-  ), "batch.deposit.chargedAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.deposit?.settlementAmount,
-  ), "batch.deposit.settlementAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.deposit?.extensionChargedAmount,
-  ), "batch.deposit.extensionChargedAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.deposit?.chargedCumulativeBefore,
-  ), "batch.deposit.chargedCumulativeBefore", "must be a sompi string");
-  require(isSompi(
-    result.batch?.deposit?.chargedCumulativeAmount,
-  ), "batch.deposit.chargedCumulativeAmount", "must be a sompi string");
-  if (
-    isSompi(result.batch?.deposit?.chargedCumulativeBefore) &&
-    isSompi(result.batch?.deposit?.chargedAmount) &&
-    isSompi(result.batch?.deposit?.chargedCumulativeAmount)
-  ) {
-    require(BigInt(result.batch.deposit.chargedCumulativeBefore) +
-      BigInt(result.batch.deposit.chargedAmount) ===
-      BigInt(
-        result.batch.deposit.chargedCumulativeAmount,
-      ), "batch.deposit.chargedCumulativeAmount", "must equal chargedCumulativeBefore plus chargedAmount");
+  require(
+    isIndex(genesis?.authorizedOutputIndex),
+    "batch.deposit.genesis.authorizedOutputIndex",
+    "must be a non-negative integer",
+  );
+  require(
+    sameOutpoint(genesis?.outpoint, depositState?.activeOutpoint),
+    "batch.deposit.genesis.outpoint",
+    "must be the persisted current outpoint",
+  );
+  if (validOutpoint(genesis?.outpoint) && isIndex(genesis?.authorizedOutputIndex)) {
+    require(
+      genesis.outpoint.index === genesis.authorizedOutputIndex,
+      "batch.deposit.genesis.authorizedOutputIndex",
+      "must identify the genesis head output",
+    );
   }
-  if (isSompi(result.batch?.deposit?.chargedAmount)) {
-    require(sameAmount(
-      result.batch.deposit.chargedAmount,
-      result.batch.deposit.settlementAmount,
-    ), "batch.deposit.settlementAmount", "must equal chargedAmount");
-    require(sameAmount(
-      result.batch.deposit.chargedAmount,
-      result.batch.deposit.extensionChargedAmount,
-    ), "batch.deposit.extensionChargedAmount", "must equal chargedAmount");
+  if (validOutpoint(genesis?.outpoint) && isHash32(deposit?.txid)) {
+    require(
+      genesis.outpoint.txid.toLowerCase() === deposit.txid.toLowerCase(),
+      "batch.deposit.genesis.outpoint",
+      "must belong to the genesis transaction",
+    );
   }
-  require(result.batch?.voucherOnly?.openedChannel ===
-    false, "batch.voucherOnly.openedChannel", "must be false");
-  require(isHash32(
-    result.batch?.voucherOnly?.channelId,
-  ), "batch.voucherOnly.channelId", "must be a channel id");
-  require(validOutpoint(
-    result.batch?.voucherOnly?.activeOutpoint,
-  ), "batch.voucherOnly.activeOutpoint", "must be an active outpoint");
-  if (
-    isHash32(result.batch?.voucherOnly?.channelId) &&
-    isHash32(result.batch?.deposit?.channelId)
-  ) {
-    require(result.batch.voucherOnly.channelId.toLowerCase() ===
-      result.batch.deposit.channelId.toLowerCase(), "batch.voucherOnly.channelId", "must match deposit channelId");
+  require(
+    sameHex(genesis?.scriptPublicKey, depositState?.activeScriptPublicKey),
+    "batch.deposit.genesis.scriptPublicKey",
+    "must be the persisted current script",
+  );
+  require(
+    sameAmount(genesis?.fundingAmount, depositState?.fundingAmount),
+    "batch.deposit.genesis.fundingAmount",
+    "must be the persisted current value",
+  );
+  require(
+    genesis?.initialClaimedCumulativeAmount === "0" &&
+      depositState?.claimedCumulativeAmount === "0",
+    "batch.deposit.genesis.initialClaimedCumulativeAmount",
+    "must prove genesis state S = 0",
+  );
+  require(
+    Array.isArray(genesis?.inputComputeBudgets) &&
+      genesis.inputComputeBudgets.length > 0 &&
+      genesis.inputComputeBudgets.every(
+        (value) => Number.isInteger(value) && value >= 0 && value <= 0xffff,
+      ),
+    "batch.deposit.genesis.inputComputeBudgets",
+    "must explicitly record every transaction-v1 input compute budget",
+  );
+
+  for (const field of [
+    "chargedAmount",
+    "settlementAmount",
+    "extensionChargedAmount",
+    "chargedCumulativeBefore",
+  ]) {
+    require(isSompi(deposit?.[field]), `batch.deposit.${field}`, "must be a sompi string");
   }
   if (
-    validOutpoint(result.batch?.voucherOnly?.activeOutpoint) &&
-    validOutpoint(result.batch?.deposit?.outpoint)
+    isSompi(deposit?.chargedCumulativeBefore) &&
+    isSompi(deposit?.chargedAmount) &&
+    isSompi(depositState?.chargedCumulativeAmount)
   ) {
-    require(sameOutpoint(
-      result.batch.voucherOnly.activeOutpoint,
-      result.batch.deposit.outpoint,
-    ), "batch.voucherOnly.activeOutpoint", "must match deposit outpoint");
+    require(
+      BigInt(deposit.chargedCumulativeBefore) + BigInt(deposit.chargedAmount) ===
+        BigInt(depositState.chargedCumulativeAmount),
+      "batch.deposit.state.chargedCumulativeAmount",
+      "must equal chargedCumulativeBefore plus chargedAmount",
+    );
   }
-  require(isHash32(
-    result.batch?.voucherOnly?.settlementCommitment,
-  ), "batch.voucherOnly.settlementCommitment", "must be a commitment id");
-  require(isSompi(
-    result.batch?.voucherOnly?.chargedAmount,
-  ), "batch.voucherOnly.chargedAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.voucherOnly?.settlementAmount,
-  ), "batch.voucherOnly.settlementAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.voucherOnly?.extensionChargedAmount,
-  ), "batch.voucherOnly.extensionChargedAmount", "must be a sompi string");
-  require(isSompi(
-    result.batch?.voucherOnly?.chargedCumulativeBefore,
-  ), "batch.voucherOnly.chargedCumulativeBefore", "must be a sompi string");
-  require(isPositiveSompi(
-    result.batch?.voucherOnly?.chargedCumulativeAmount,
-  ), "batch.voucherOnly.chargedCumulativeAmount", "must be a positive sompi string");
-  require(isPositiveSompi(
-    result.batch?.voucherOnly?.signedMaxClaimable,
-  ), "batch.voucherOnly.signedMaxClaimable", "must be a positive sompi string");
+  require(
+    sameAmount(deposit?.chargedAmount, deposit?.settlementAmount) &&
+      sameAmount(deposit?.chargedAmount, deposit?.extensionChargedAmount),
+    "batch.deposit.chargedAmount",
+    "must match settlement and extension charges",
+  );
+
+  const voucherOnly = result.batch?.voucherOnly;
+  const voucherState = voucherOnly?.state;
+  require(voucherOnly?.openedChannel === false, "batch.voucherOnly.openedChannel", "must be false");
+  require(
+    sameHash(voucherOnly?.channelId, deposit?.channelId),
+    "batch.voucherOnly.channelId",
+    "must match the deposit channel",
+  );
+  require(
+    isHash32(voucherOnly?.settlementCommitment),
+    "batch.voucherOnly.settlementCommitment",
+    "must be a commitment id",
+  );
+  validateBatchState(voucherState, "batch.voucherOnly.state");
+  validateVoucherProof(
+    voucherOnly?.voucherProof,
+    voucherState?.covenantId,
+    voucherState?.signedMaxClaimable,
+    "batch.voucherOnly.voucherProof",
+  );
+  require(
+    sameHash(voucherState?.covenantId, depositState?.covenantId),
+    "batch.voucherOnly.state.covenantId",
+    "must preserve the stable covenant id",
+  );
+  require(
+    sameOutpoint(voucherState?.activeOutpoint, depositState?.activeOutpoint) &&
+      sameHex(voucherState?.activeScriptPublicKey, depositState?.activeScriptPublicKey),
+    "batch.voucherOnly.state.activeOutpoint",
+    "must retain the persisted genesis head before an on-chain transition",
+  );
+  require(
+    sameAmount(voucherState?.fundingAmount, depositState?.fundingAmount) &&
+      sameAmount(
+        voucherState?.claimedCumulativeAmount,
+        depositState?.claimedCumulativeAmount,
+      ),
+    "batch.voucherOnly.state",
+    "must preserve V and S before an on-chain transition",
+  );
+  for (const field of [
+    "chargedAmount",
+    "settlementAmount",
+    "extensionChargedAmount",
+    "chargedCumulativeBefore",
+  ]) {
+    require(isSompi(voucherOnly?.[field]), `batch.voucherOnly.${field}`, "must be a sompi string");
+  }
+  require(
+    sameAmount(voucherOnly?.chargedCumulativeBefore, depositState?.chargedCumulativeAmount),
+    "batch.voucherOnly.chargedCumulativeBefore",
+    "must equal the first paid response A",
+  );
   if (
-    isSompi(result.batch?.voucherOnly?.chargedCumulativeBefore) &&
-    isSompi(result.batch?.deposit?.chargedCumulativeAmount)
+    isSompi(voucherOnly?.chargedCumulativeBefore) &&
+    isSompi(voucherOnly?.chargedAmount) &&
+    isSompi(voucherState?.chargedCumulativeAmount)
   ) {
-    require(sameAmount(
-      result.batch.voucherOnly.chargedCumulativeBefore,
-      result.batch.deposit.chargedCumulativeAmount,
-    ), "batch.voucherOnly.chargedCumulativeBefore", "must equal deposit chargedCumulativeAmount");
+    require(
+      BigInt(voucherOnly.chargedCumulativeBefore) + BigInt(voucherOnly.chargedAmount) ===
+        BigInt(voucherState.chargedCumulativeAmount),
+      "batch.voucherOnly.state.chargedCumulativeAmount",
+      "must equal chargedCumulativeBefore plus chargedAmount",
+    );
   }
+  require(
+    sameAmount(voucherOnly?.chargedAmount, voucherOnly?.settlementAmount) &&
+      sameAmount(voucherOnly?.chargedAmount, voucherOnly?.extensionChargedAmount),
+    "batch.voucherOnly.chargedAmount",
+    "must match settlement and extension charges",
+  );
+
+  const claim = result.batch?.claim;
+  validateBatchSpend(claim, "claim", "batch.claim");
+  validateBatchHead(claim?.headAfter, "batch.claim.headAfter");
+  validateVoucherProof(
+    claim?.voucherProof,
+    claim?.covenantId,
+    claim?.signedMaxClaimable,
+    "batch.claim.voucherProof",
+  );
+  require(
+    sameHash(claim?.covenantId, voucherState?.covenantId),
+    "batch.claim.covenantId",
+    "must preserve the stable covenant id",
+  );
+  require(
+    sameBatchHead(claim?.headBefore, {
+      outpoint: voucherState?.activeOutpoint,
+      scriptPublicKey: voucherState?.activeScriptPublicKey,
+      fundingAmount: voucherState?.fundingAmount,
+      claimedCumulativeAmount: voucherState?.claimedCumulativeAmount,
+    }),
+    "batch.claim.headBefore",
+    "must consume the persisted voucher head",
+  );
+  require(
+    claim?.successorCovenantOutputCount === 1,
+    "batch.claim.successorCovenantOutputCount",
+    "must prove one same-id successor",
+  );
+  if (validOutpoint(claim?.headAfter?.outpoint) && isHash32(claim?.txid)) {
+    require(
+      claim.headAfter.outpoint.txid.toLowerCase() === claim.txid.toLowerCase() &&
+        claim.headAfter.outpoint.index === 1,
+      "batch.claim.headAfter.outpoint",
+      "must be canonical claim successor output 1",
+    );
+    require(
+      !sameOutpoint(claim.headBefore?.outpoint, claim.headAfter.outpoint),
+      "batch.claim.headAfter.outpoint",
+      "must rotate the persisted current outpoint",
+    );
+  }
+  require(
+    isHexBytes(claim?.headBefore?.scriptPublicKey) &&
+      isHexBytes(claim?.headAfter?.scriptPublicKey) &&
+      !sameHex(claim.headBefore.scriptPublicKey, claim.headAfter.scriptPublicKey),
+    "batch.claim.headAfter.scriptPublicKey",
+    "must rotate the stateful covenant script after S advances",
+  );
+  for (const field of [
+    "claimAmountSompi",
+    "serverOutputAmountSompi",
+    "feeSompi",
+    "chargedCumulativeAmount",
+    "signedMaxClaimable",
+  ]) {
+    require(isSompi(claim?.[field]), `batch.claim.${field}`, "must be a sompi string");
+  }
+  require(isPositiveSompi(claim?.claimAmountSompi), "batch.claim.claimAmountSompi", "must be positive");
+  require(
+    sameAmount(claim?.chargedCumulativeAmount, voucherState?.chargedCumulativeAmount) &&
+      sameAmount(claim?.signedMaxClaimable, voucherState?.signedMaxClaimable),
+    "batch.claim",
+    "must preserve lifetime A and T",
+  );
+  require(
+    sameVoucherProof(claim?.voucherProof, voucherOnly?.voucherProof),
+    "batch.claim.voucherProof",
+    "must preserve the latest voucher proof",
+  );
   if (
-    isSompi(result.batch?.voucherOnly?.chargedCumulativeBefore) &&
-    isSompi(result.batch?.voucherOnly?.chargedAmount) &&
-    isSompi(result.batch?.voucherOnly?.chargedCumulativeAmount)
+    isSompi(claim?.headBefore?.claimedCumulativeAmount) &&
+    isSompi(claim?.headAfter?.claimedCumulativeAmount) &&
+    isSompi(claim?.claimAmountSompi)
   ) {
-    require(BigInt(result.batch.voucherOnly.chargedCumulativeBefore) +
-      BigInt(result.batch.voucherOnly.chargedAmount) ===
-      BigInt(
-        result.batch.voucherOnly.chargedCumulativeAmount,
-      ), "batch.voucherOnly.chargedCumulativeAmount", "must equal chargedCumulativeBefore plus chargedAmount");
-  }
-  if (isSompi(result.batch?.voucherOnly?.chargedAmount)) {
-    require(sameAmount(
-      result.batch.voucherOnly.chargedAmount,
-      result.batch.voucherOnly.settlementAmount,
-    ), "batch.voucherOnly.settlementAmount", "must equal chargedAmount");
-    require(sameAmount(
-      result.batch.voucherOnly.chargedAmount,
-      result.batch.voucherOnly.extensionChargedAmount,
-    ), "batch.voucherOnly.extensionChargedAmount", "must equal chargedAmount");
-  }
-  require(isHash32(
-    result.batch?.claim?.txid,
-  ), "batch.claim.txid", "must be a transaction id");
-  require(result.batch?.claim?.txVersion ===
-    1, "batch.claim.txVersion", "must be transaction v1");
-  require(isTxVersionSource(
-    result.batch?.claim?.txVersionSource,
-  ), "batch.claim.txVersionSource", "must state an allowed version evidence source");
-  require(result.batch?.claim?.txVersionSource ===
-    ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.claim.txVersionSource", "must be adapter-submitted-transaction-shape");
-  require(isFinal(
-    result.batch?.claim?.finality,
-  ), "batch.claim.finality", "must be accepted or confirmed");
-  require(validOutpoint(
-    result.batch?.claim?.originalOutpoint,
-  ), "batch.claim.originalOutpoint", "must be an outpoint");
-  require(validOutpoint(
-    result.batch?.claim?.continuationOutpoint,
-  ), "batch.claim.continuationOutpoint", "must be an outpoint");
-  if (
-    validOutpoint(result.batch?.claim?.originalOutpoint) &&
-    validOutpoint(result.batch?.deposit?.outpoint)
-  ) {
-    require(sameOutpoint(
-      result.batch.claim.originalOutpoint,
-      result.batch.deposit.outpoint,
-    ), "batch.claim.originalOutpoint", "must match deposit outpoint");
-  }
-  if (
-    validOutpoint(result.batch?.claim?.continuationOutpoint) &&
-    isHash32(result.batch?.claim?.txid)
-  ) {
-    require(result.batch.claim.continuationOutpoint.txid.toLowerCase() ===
-      result.batch.claim.txid.toLowerCase(), "batch.claim.continuationOutpoint", "must belong to claim txid");
-  }
-  require(isPositiveSompi(
-    result.batch?.claim?.inputAmountSompi,
-  ), "batch.claim.inputAmountSompi", "must be a positive sompi string");
-  require(isSompi(
-    result.batch?.claim?.claimedCumulativeAmount,
-  ), "batch.claim.claimedCumulativeAmount", "must be a sompi string");
-  require(isPositiveSompi(
-    result.batch?.claim?.activeChargedAmountSompi,
-  ), "batch.claim.activeChargedAmountSompi", "must be a positive sompi string");
-  require(isPositiveSompi(
-    result.batch?.claim?.claimAmountSompi,
-  ), "batch.claim.claimAmountSompi", "must be a positive sompi string");
-  require(isPositiveSompi(
-    result.batch?.claim?.serverOutputAmountSompi,
-  ), "batch.claim.serverOutputAmountSompi", "must be a positive sompi string");
-  require(isSompi(
-    result.batch?.claim?.feeSompi,
-  ), "batch.claim.feeSompi", "must be a sompi string");
-  require(isPositiveSompi(
-    result.batch?.claim?.continuationFundingAmountSompi,
-  ), "batch.claim.continuationFundingAmountSompi", "must be a positive sompi string");
-  if (
-    isSompi(result.batch?.claim?.inputAmountSompi) &&
-    isSompi(result.batch?.deposit?.fundingAmountSompi)
-  ) {
-    require(sameAmount(
-      result.batch.claim.inputAmountSompi,
-      result.batch.deposit.fundingAmountSompi,
-    ), "batch.claim.inputAmountSompi", "must equal deposit fundingAmountSompi");
-  }
-  if (
-    isSompi(result.batch?.claim?.claimedCumulativeAmount) &&
-    isSompi(result.batch?.deposit?.chargedCumulativeBefore)
-  ) {
-    require(sameAmount(
-      result.batch.claim.claimedCumulativeAmount,
-      result.batch.deposit.chargedCumulativeBefore,
-    ), "batch.claim.claimedCumulativeAmount", "must match the pre-claim cumulative amount");
-  }
-  if (
-    isSompi(result.batch?.voucherOnly?.chargedCumulativeAmount) &&
-    isSompi(result.batch?.claim?.claimedCumulativeAmount) &&
-    isSompi(result.batch?.claim?.activeChargedAmountSompi)
-  ) {
-    require(BigInt(result.batch.voucherOnly.chargedCumulativeAmount) -
-      BigInt(result.batch.claim.claimedCumulativeAmount) ===
-      BigInt(
-        result.batch.claim.activeChargedAmountSompi,
-      ), "batch.claim.activeChargedAmountSompi", "must equal voucherOnly chargedCumulativeAmount minus claimedCumulativeAmount");
-  }
-  if (
-    isSompi(result.batch?.claim?.claimAmountSompi) &&
-    isSompi(result.batch?.claim?.activeChargedAmountSompi)
-  ) {
-    require(sameAmount(
-      result.batch.claim.claimAmountSompi,
-      result.batch.claim.activeChargedAmountSompi,
-    ), "batch.claim.claimAmountSompi", "must equal activeChargedAmountSompi");
-  }
-  if (
-    isSompi(result.batch?.claim?.claimAmountSompi) &&
-    isSompi(result.batch?.voucherOnly?.signedMaxClaimable)
-  ) {
-    require(BigInt(result.batch.claim.claimAmountSompi) <=
-      BigInt(
-        result.batch.voucherOnly.signedMaxClaimable,
-      ), "batch.claim.claimAmountSompi", "must not exceed signedMaxClaimable");
-  }
-  if (
-    isSompi(result.batch?.claim?.inputAmountSompi) &&
-    isSompi(result.batch?.claim?.claimAmountSompi) &&
-    isSompi(result.batch?.claim?.continuationFundingAmountSompi)
-  ) {
-    require(BigInt(result.batch.claim.inputAmountSompi) ===
-      BigInt(result.batch.claim.claimAmountSompi) +
-        BigInt(
-          result.batch.claim.continuationFundingAmountSompi,
-        ), "batch.claim.continuationFundingAmountSompi", "must reconcile inputAmountSompi minus claimAmountSompi");
-  }
-  if (
-    isSompi(result.batch?.claim?.claimAmountSompi) &&
-    isSompi(result.batch?.claim?.serverOutputAmountSompi) &&
-    isSompi(result.batch?.claim?.feeSompi)
-  ) {
-    require(BigInt(result.batch.claim.claimAmountSompi) ===
-      BigInt(result.batch.claim.serverOutputAmountSompi) +
-        BigInt(
-          result.batch.claim.feeSompi,
-        ), "batch.claim.serverOutputAmountSompi", "must reconcile claimAmountSompi minus feeSompi");
-  }
-  require(result.batch?.replay?.rejected ===
-    true, "batch.replay.rejected", "must be true");
-  require(validOutpoint(
-    result.batch?.replay?.oldOutpoint,
-  ), "batch.replay.oldOutpoint", "must be an outpoint");
-  if (
-    validOutpoint(result.batch?.replay?.oldOutpoint) &&
-    validOutpoint(result.batch?.claim?.originalOutpoint)
-  ) {
-    require(sameOutpoint(
-      result.batch.replay.oldOutpoint,
-      result.batch.claim.originalOutpoint,
-    ), "batch.replay.oldOutpoint", "must match original claimed outpoint");
-  }
-  require(isHexBytes(
-    result.batch?.replay?.oldScriptPublicKey,
-  ), "batch.replay.oldScriptPublicKey", "must be hex bytes");
-  require(validOutpoint(
-    result.batch?.replay?.attemptedInputOutpoint,
-  ), "batch.replay.attemptedInputOutpoint", "must be an outpoint");
-  require(result.batch?.replay?.attemptedTxVersion ===
-    1, "batch.replay.attemptedTxVersion", "must be transaction v1");
-  require(isTxVersionSource(
-    result.batch?.replay?.attemptedTxVersionSource,
-  ), "batch.replay.attemptedTxVersionSource", "must state an allowed version evidence source");
-  require(result.batch?.replay?.attemptedTxVersionSource ===
-    ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.replay.attemptedTxVersionSource", "must be adapter-submitted-transaction-shape");
-  require(result.batch?.replay?.finality ===
-    "rejected", "batch.replay.finality", "must be rejected");
-  if (
-    validOutpoint(result.batch?.replay?.attemptedInputOutpoint) &&
-    validOutpoint(result.batch?.claim?.continuationOutpoint)
-  ) {
-    require(sameOutpoint(
-      result.batch.replay.attemptedInputOutpoint,
-      result.batch.claim.continuationOutpoint,
-    ), "batch.replay.attemptedInputOutpoint", "must match continuation outpoint");
-  }
-  require(isPositiveSompi(
-    result.batch?.replay?.serverOutputAmountSompi,
-  ), "batch.replay.serverOutputAmountSompi", "must be a positive sompi string");
-  require(isPositiveSompi(
-    result.batch?.replay?.continuationOutputAmountSompi,
-  ), "batch.replay.continuationOutputAmountSompi", "must be a positive sompi string");
-  require(isNonEmptyString(
-    result.batch?.replay?.reason,
-  ), "batch.replay.reason", "must include node or verifier rejection reason");
-  if (isNonEmptyString(result.batch?.replay?.reason)) {
-    require(/script|signature|verificat/i.test(
-      result.batch.replay.reason,
-    ), "batch.replay.reason", "must indicate script or signature verification failure");
-    require(!/zero value|malformed|invalid output/i.test(
-      result.batch.replay.reason,
-    ), "batch.replay.reason", "must not be a malformed transaction rejection");
-  }
-  require(isHash32(
-    result.batch?.refund?.txid,
-  ), "batch.refund.txid", "must be a transaction id");
-  require(result.batch?.refund?.txVersion ===
-    1, "batch.refund.txVersion", "must be transaction v1");
-  require(isTxVersionSource(
-    result.batch?.refund?.txVersionSource,
-  ), "batch.refund.txVersionSource", "must state an allowed version evidence source");
-  require(result.batch?.refund?.txVersionSource ===
-    ADAPTER_SUBMITTED_TX_VERSION_SOURCE, "batch.refund.txVersionSource", "must be adapter-submitted-transaction-shape");
-  require(isFinal(
-    result.batch?.refund?.finality,
-  ), "batch.refund.finality", "must be accepted or confirmed");
-  require(isNonEmptyString(
-    result.batch?.refund?.refundAddress,
-  ), "batch.refund.refundAddress", "must be present");
-  require(isPositiveSompi(
-    result.batch?.refund?.inputAmountSompi,
-  ), "batch.refund.inputAmountSompi", "must be a positive sompi string");
-  require(isPositiveSompi(
-    result.batch?.refund?.refundAmountSompi,
-  ), "batch.refund.refundAmountSompi", "must be a positive sompi string");
-  require(isSompi(
-    result.batch?.refund?.feeSompi,
-  ), "batch.refund.feeSompi", "must be a sompi string");
-  require(isIndex(
-    result.batch?.refund?.outputIndex,
-  ), "batch.refund.outputIndex", "must be a non-negative integer");
-  if (
-    isSompi(result.batch?.refund?.inputAmountSompi) &&
-    isSompi(result.batch?.claim?.continuationFundingAmountSompi)
-  ) {
-    require(sameAmount(
-      result.batch.refund.inputAmountSompi,
-      result.batch.claim.continuationFundingAmountSompi,
-    ), "batch.refund.inputAmountSompi", "must equal claim continuationFundingAmountSompi");
+    require(
+      BigInt(claim.headAfter.claimedCumulativeAmount) ===
+        BigInt(claim.headBefore.claimedCumulativeAmount) +
+          BigInt(claim.claimAmountSompi),
+      "batch.claim.headAfter.claimedCumulativeAmount",
+      "must advance S by gross claim D",
+    );
   }
   if (
-    isSompi(result.batch?.refund?.inputAmountSompi) &&
-    isSompi(result.batch?.refund?.refundAmountSompi) &&
-    isSompi(result.batch?.refund?.feeSompi)
+    isSompi(claim?.headBefore?.fundingAmount) &&
+    isSompi(claim?.headAfter?.fundingAmount) &&
+    isSompi(claim?.claimAmountSompi)
   ) {
-    require(BigInt(result.batch.refund.inputAmountSompi) ===
-      BigInt(result.batch.refund.refundAmountSompi) +
-        BigInt(
-          result.batch.refund.feeSompi,
-        ), "batch.refund.refundAmountSompi", "must reconcile inputAmountSompi minus feeSompi");
+    require(
+      BigInt(claim.headAfter.fundingAmount) ===
+        BigInt(claim.headBefore.fundingAmount) - BigInt(claim.claimAmountSompi),
+      "batch.claim.headAfter.fundingAmount",
+      "must reduce V by gross claim D",
+    );
+  }
+  if (
+    isSompi(claim?.chargedCumulativeAmount) &&
+    isSompi(claim?.headBefore?.claimedCumulativeAmount) &&
+    isSompi(claim?.claimAmountSompi)
+  ) {
+    require(
+      BigInt(claim.claimAmountSompi) <
+        BigInt(claim.chargedCumulativeAmount) -
+          BigInt(claim.headBefore.claimedCumulativeAmount),
+      "batch.claim.claimAmountSompi",
+      "must be a partial claim below outstanding actual charge",
+    );
+  }
+  if (
+    isSompi(claim?.claimAmountSompi) &&
+    isSompi(claim?.serverOutputAmountSompi) &&
+    isSompi(claim?.feeSompi)
+  ) {
+    require(
+      BigInt(claim.claimAmountSompi) ===
+        BigInt(claim.serverOutputAmountSompi) + BigInt(claim.feeSompi),
+      "batch.claim.serverOutputAmountSompi",
+      "must take the fee from provider payout",
+    );
+  }
+
+  const secondAcceptedClaim = result.batch?.secondAcceptedClaim;
+  validateBatchSpend(
+    secondAcceptedClaim,
+    "claim",
+    "batch.secondAcceptedClaim",
+  );
+  validateBatchHead(
+    secondAcceptedClaim?.headAfter,
+    "batch.secondAcceptedClaim.headAfter",
+  );
+  validateVoucherProof(
+    secondAcceptedClaim?.voucherProof,
+    secondAcceptedClaim?.covenantId,
+    secondAcceptedClaim?.signedMaxClaimable,
+    "batch.secondAcceptedClaim.voucherProof",
+  );
+  require(
+    sameHash(secondAcceptedClaim?.covenantId, claim?.covenantId) &&
+      sameBatchHead(secondAcceptedClaim?.headBefore, claim?.headAfter),
+    "batch.secondAcceptedClaim.headBefore",
+    "must consume the first accepted claim successor in the same lineage",
+  );
+  require(
+    secondAcceptedClaim?.successorCovenantOutputCount === 1,
+    "batch.secondAcceptedClaim.successorCovenantOutputCount",
+    "must prove one same-id successor",
+  );
+  for (const field of [
+    "claimAmountSompi",
+    "serverOutputAmountSompi",
+    "feeSompi",
+    "chargedCumulativeAmount",
+    "signedMaxClaimable",
+  ]) {
+    require(
+      isSompi(secondAcceptedClaim?.[field]),
+      `batch.secondAcceptedClaim.${field}`,
+      "must be a sompi string",
+    );
+  }
+  require(
+    isPositiveSompi(secondAcceptedClaim?.claimAmountSompi),
+    "batch.secondAcceptedClaim.claimAmountSompi",
+    "must be positive",
+  );
+  require(
+    sameAmount(
+      secondAcceptedClaim?.chargedCumulativeAmount,
+      claim?.chargedCumulativeAmount,
+    ) &&
+      sameAmount(
+        secondAcceptedClaim?.signedMaxClaimable,
+        claim?.signedMaxClaimable,
+      ) &&
+      sameVoucherProof(
+        secondAcceptedClaim?.voucherProof,
+        claim?.voucherProof,
+      ),
+    "batch.secondAcceptedClaim.voucherProof",
+    "must reuse the same voucher and preserve lifetime A and T",
+  );
+  if (
+    validOutpoint(secondAcceptedClaim?.headAfter?.outpoint) &&
+    isHash32(secondAcceptedClaim?.txid)
+  ) {
+    require(
+      secondAcceptedClaim.headAfter.outpoint.txid.toLowerCase() ===
+          secondAcceptedClaim.txid.toLowerCase() &&
+        secondAcceptedClaim.headAfter.outpoint.index === 1 &&
+        !sameOutpoint(
+          secondAcceptedClaim.headBefore?.outpoint,
+          secondAcceptedClaim.headAfter.outpoint,
+        ),
+      "batch.secondAcceptedClaim.headAfter.outpoint",
+      "must rotate to canonical claim successor output 1",
+    );
+  }
+  require(
+    isHexBytes(secondAcceptedClaim?.headBefore?.scriptPublicKey) &&
+      isHexBytes(secondAcceptedClaim?.headAfter?.scriptPublicKey) &&
+      !sameHex(
+        secondAcceptedClaim.headBefore.scriptPublicKey,
+        secondAcceptedClaim.headAfter.scriptPublicKey,
+      ),
+    "batch.secondAcceptedClaim.headAfter.scriptPublicKey",
+    "must rotate the script as S advances again",
+  );
+  if (
+    isSompi(secondAcceptedClaim?.headBefore?.claimedCumulativeAmount) &&
+    isSompi(secondAcceptedClaim?.headAfter?.claimedCumulativeAmount) &&
+    isSompi(secondAcceptedClaim?.claimAmountSompi)
+  ) {
+    require(
+      BigInt(secondAcceptedClaim.headAfter.claimedCumulativeAmount) ===
+        BigInt(secondAcceptedClaim.headBefore.claimedCumulativeAmount) +
+          BigInt(secondAcceptedClaim.claimAmountSompi),
+      "batch.secondAcceptedClaim.headAfter.claimedCumulativeAmount",
+      "must advance S by the second gross claim D",
+    );
+  }
+  if (
+    isSompi(secondAcceptedClaim?.headBefore?.fundingAmount) &&
+    isSompi(secondAcceptedClaim?.headAfter?.fundingAmount) &&
+    isSompi(secondAcceptedClaim?.claimAmountSompi)
+  ) {
+    require(
+      BigInt(secondAcceptedClaim.headAfter.fundingAmount) ===
+        BigInt(secondAcceptedClaim.headBefore.fundingAmount) -
+          BigInt(secondAcceptedClaim.claimAmountSompi),
+      "batch.secondAcceptedClaim.headAfter.fundingAmount",
+      "must reduce V by the second gross claim D",
+    );
+  }
+  if (
+    isSompi(secondAcceptedClaim?.chargedCumulativeAmount) &&
+    isSompi(secondAcceptedClaim?.headBefore?.claimedCumulativeAmount) &&
+    isSompi(secondAcceptedClaim?.claimAmountSompi)
+  ) {
+    require(
+      BigInt(secondAcceptedClaim.claimAmountSompi) <
+        BigInt(secondAcceptedClaim.chargedCumulativeAmount) -
+          BigInt(secondAcceptedClaim.headBefore.claimedCumulativeAmount),
+      "batch.secondAcceptedClaim.claimAmountSompi",
+      "must remain partial against the same voucher authorization",
+    );
+  }
+  if (
+    isSompi(secondAcceptedClaim?.claimAmountSompi) &&
+    isSompi(secondAcceptedClaim?.serverOutputAmountSompi) &&
+    isSompi(secondAcceptedClaim?.feeSompi)
+  ) {
+    require(
+      BigInt(secondAcceptedClaim.claimAmountSompi) ===
+        BigInt(secondAcceptedClaim.serverOutputAmountSompi) +
+          BigInt(secondAcceptedClaim.feeSompi),
+      "batch.secondAcceptedClaim.serverOutputAmountSompi",
+      "must take the fee from the second provider payout",
+    );
+  }
+
+  const topUp = result.batch?.topUp;
+  validateBatchSpend(topUp, "top-up", "batch.topUp");
+  validateBatchHead(topUp?.headAfter, "batch.topUp.headAfter");
+  validateVoucherProof(
+    topUp?.voucherProof,
+    topUp?.covenantId,
+    topUp?.signedMaxClaimable,
+    "batch.topUp.voucherProof",
+  );
+  require(
+    sameHash(topUp?.covenantId, secondAcceptedClaim?.covenantId),
+    "batch.topUp.covenantId",
+    "must preserve the stable covenant id",
+  );
+  require(
+    sameBatchHead(topUp?.headBefore, secondAcceptedClaim?.headAfter),
+    "batch.topUp.headBefore",
+    "must consume the persisted claim successor",
+  );
+  require(
+    topUp?.successorCovenantOutputCount === 1,
+    "batch.topUp.successorCovenantOutputCount",
+    "must prove one same-id successor",
+  );
+  require(
+    isPositiveSompi(topUp?.addedAmountSompi),
+    "batch.topUp.addedAmountSompi",
+    "must be a positive sompi string",
+  );
+  for (const field of ["chargedCumulativeAmount", "signedMaxClaimable"]) {
+    require(isSompi(topUp?.[field]), `batch.topUp.${field}`, "must be a sompi string");
+  }
+  require(
+    sameAmount(
+      topUp?.chargedCumulativeAmount,
+      secondAcceptedClaim?.chargedCumulativeAmount,
+    ) &&
+      sameAmount(
+        topUp?.signedMaxClaimable,
+        secondAcceptedClaim?.signedMaxClaimable,
+      ),
+    "batch.topUp",
+    "must preserve lifetime A and T",
+  );
+  require(
+    sameVoucherProof(topUp?.voucherProof, secondAcceptedClaim?.voucherProof),
+    "batch.topUp.voucherProof",
+    "must preserve the latest voucher proof",
+  );
+  if (validOutpoint(topUp?.headAfter?.outpoint) && isHash32(topUp?.txid)) {
+    require(
+      topUp.headAfter.outpoint.txid.toLowerCase() === topUp.txid.toLowerCase() &&
+        topUp.headAfter.outpoint.index === 0,
+      "batch.topUp.headAfter.outpoint",
+      "must be canonical top-up successor output 0",
+    );
+    require(
+      !sameOutpoint(topUp.headBefore?.outpoint, topUp.headAfter.outpoint),
+      "batch.topUp.headAfter.outpoint",
+      "must rotate the persisted current outpoint",
+    );
+  }
+  require(
+    sameHex(topUp?.headBefore?.scriptPublicKey, topUp?.headAfter?.scriptPublicKey),
+    "batch.topUp.headAfter.scriptPublicKey",
+    "must preserve the script because S is unchanged",
+  );
+  require(
+    sameAmount(
+      topUp?.headBefore?.claimedCumulativeAmount,
+      topUp?.headAfter?.claimedCumulativeAmount,
+    ),
+    "batch.topUp.headAfter.claimedCumulativeAmount",
+    "must preserve S",
+  );
+  require(
+    sameHash(restartReload?.covenantId, topUp?.covenantId) &&
+      sameOutpoint(restartReload?.activeOutpoint, topUp?.headAfter?.outpoint),
+    "batch.restartReload.activeOutpoint",
+    "must reload the accepted top-up head for the same lineage",
+  );
+  if (
+    isSompi(topUp?.headBefore?.fundingAmount) &&
+    isSompi(topUp?.headAfter?.fundingAmount) &&
+    isSompi(topUp?.addedAmountSompi)
+  ) {
+    require(
+      BigInt(topUp.headAfter.fundingAmount) ===
+        BigInt(topUp.headBefore.fundingAmount) + BigInt(topUp.addedAmountSompi),
+      "batch.topUp.headAfter.fundingAmount",
+      "must increase V by addedAmountSompi",
+    );
+  }
+  const topUpAdmission = topUp?.admission;
+  const topUpAdmissionState = topUpAdmission?.state;
+  require(
+    topUpAdmission?.openedChannel === false,
+    "batch.topUp.admission.openedChannel",
+    "must admit the successor into the existing channel",
+  );
+  require(
+    isHash32(topUpAdmission?.settlementCommitment),
+    "batch.topUp.admission.settlementCommitment",
+    "must prove server admission of the successor",
+  );
+  validateBatchState(topUpAdmissionState, "batch.topUp.admission.state");
+  validateVoucherProof(
+    topUpAdmission?.voucherProof,
+    topUpAdmissionState?.covenantId,
+    topUpAdmissionState?.signedMaxClaimable,
+    "batch.topUp.admission.voucherProof",
+  );
+  require(
+    sameHash(topUpAdmissionState?.covenantId, topUp?.covenantId) &&
+      sameOutpoint(
+        topUpAdmissionState?.activeOutpoint,
+        topUp?.headAfter?.outpoint,
+      ) &&
+      sameHex(
+        topUpAdmissionState?.activeScriptPublicKey,
+        topUp?.headAfter?.scriptPublicKey,
+      ) &&
+      sameAmount(
+        topUpAdmissionState?.fundingAmount,
+        topUp?.headAfter?.fundingAmount,
+      ) &&
+      sameAmount(
+        topUpAdmissionState?.claimedCumulativeAmount,
+        topUp?.headAfter?.claimedCumulativeAmount,
+      ),
+    "batch.topUp.admission.state",
+    "must admit the exact same-id top-up successor without changing S",
+  );
+  for (const field of [
+    "chargedAmount",
+    "settlementAmount",
+    "extensionChargedAmount",
+    "chargedCumulativeBefore",
+  ]) {
+    require(
+      isSompi(topUpAdmission?.[field]),
+      `batch.topUp.admission.${field}`,
+      "must be a sompi string",
+    );
+  }
+  require(
+    isPositiveSompi(topUpAdmission?.chargedAmount) &&
+      sameAmount(
+        topUpAdmission?.chargedAmount,
+        topUpAdmission?.settlementAmount,
+      ) &&
+      sameAmount(
+        topUpAdmission?.chargedAmount,
+        topUpAdmission?.extensionChargedAmount,
+      ),
+    "batch.topUp.admission.chargedAmount",
+    "must be positive and match both settlement charge fields",
+  );
+  require(
+    sameAmount(
+      topUpAdmission?.chargedCumulativeBefore,
+      topUp?.chargedCumulativeAmount,
+    ),
+    "batch.topUp.admission.chargedCumulativeBefore",
+    "must start from the pure transition's preserved A",
+  );
+  if (
+    isSompi(topUp?.chargedCumulativeAmount) &&
+    isSompi(topUpAdmission?.chargedAmount) &&
+    isSompi(topUpAdmissionState?.chargedCumulativeAmount)
+  ) {
+    require(
+      BigInt(topUpAdmissionState.chargedCumulativeAmount) ===
+        BigInt(topUp.chargedCumulativeAmount) +
+          BigInt(topUpAdmission.chargedAmount),
+      "batch.topUp.admission.state.chargedCumulativeAmount",
+      "must advance A only when the admitted protected request commits",
+    );
+  }
+  if (
+    isSompi(topUpAdmissionState?.chargedCumulativeAmount) &&
+    isSompi(topUpAdmissionState?.signedMaxClaimable) &&
+    isSompi(topUp?.chargedCumulativeAmount) &&
+    isSompi(topUp?.signedMaxClaimable)
+  ) {
+    require(
+      BigInt(topUpAdmissionState.signedMaxClaimable) >=
+        BigInt(topUpAdmissionState.chargedCumulativeAmount) &&
+        BigInt(topUpAdmissionState.chargedCumulativeAmount) >
+          BigInt(topUp.chargedCumulativeAmount) &&
+        BigInt(topUpAdmissionState.signedMaxClaimable) >
+          BigInt(topUp.signedMaxClaimable),
+      "batch.topUp.admission.state.signedMaxClaimable",
+      "must prove the forced paid admission advances A and its new voucher T",
+    );
+  }
+
+  const replay = result.batch?.replay;
+  require(replay?.kind === "stale-head", "batch.replay.kind", "must be stale-head");
+  require(
+    sameHash(replay?.covenantId, claim?.covenantId),
+    "batch.replay.covenantId",
+    "must identify the same stable lineage",
+  );
+  require(replay?.rejected === true, "batch.replay.rejected", "must be true");
+  require(
+    replay?.rpcSubmissionAttempted === true,
+    "batch.replay.rpcSubmissionAttempted",
+    "must prove the stale transaction reached RPC submission",
+  );
+  require(
+    replay?.definitiveNodeRejection === true,
+    "batch.replay.definitiveNodeRejection",
+    "must be a transaction-id-bound node rule rejection, not a transport error",
+  );
+  require(
+    isHash32(replay?.attemptedTransactionId) &&
+      replay.attemptedTransactionId.toLowerCase() !== claim?.txid?.toLowerCase(),
+    "batch.replay.attemptedTransactionId",
+    "must identify the distinct stale-head transaction rejected by the node",
+  );
+  require(
+    replay?.spentOutpointAbsent === true &&
+      replay?.currentOutpointPresent === true,
+    "batch.replay.spentOutpointAbsent",
+    "must pair rejection with authoritative spent-old/current-new head evidence",
+  );
+  require(replay?.finality === "rejected", "batch.replay.finality", "must be rejected");
+  require(
+    replay?.attemptedTxVersion === 1,
+    "batch.replay.attemptedTxVersion",
+    "must be transaction v1",
+  );
+  require(
+    replay?.attemptedTxVersionSource === ADAPTER_SUBMITTED_TX_VERSION_SOURCE,
+    "batch.replay.attemptedTxVersionSource",
+    "must be adapter-submitted-transaction-shape",
+  );
+  require(
+    sameOutpoint(replay?.spentOutpoint, claim?.headBefore?.outpoint) &&
+      sameOutpoint(replay?.attemptedInputOutpoint, claim?.headBefore?.outpoint),
+    "batch.replay.attemptedInputOutpoint",
+    "must retry the spent pre-claim head",
+  );
+  require(
+    sameOutpoint(replay?.observedCurrentOutpoint, claim?.headAfter?.outpoint),
+    "batch.replay.observedCurrentOutpoint",
+    "must record the accepted successor at rejection time",
+  );
+  require(
+    sameHex(replay?.spentScriptPublicKey, claim?.headBefore?.scriptPublicKey),
+    "batch.replay.spentScriptPublicKey",
+    "must record the spent head script",
+  );
+  require(
+    sameVoucherProof(replay?.voucherProof, claim?.voucherProof),
+    "batch.replay.voucherProof",
+    "must show that the voucher remains valid while the spent head does not",
+  );
+  require(
+    isNonEmptyString(replay?.reason),
+    "batch.replay.reason",
+    "must include node or verifier rejection reason",
+  );
+
+  const refund = result.batch?.refund;
+  validateBatchSpend(refund, "refund", "batch.refund");
+  require(
+    sameHash(refund?.covenantId, topUp?.covenantId),
+    "batch.refund.covenantId",
+    "must terminate the same stable lineage",
+  );
+  require(
+    sameBatchHead(refund?.headBefore, topUp?.headAfter),
+    "batch.refund.headBefore",
+    "must consume the persisted top-up successor",
+  );
+  require(refund?.terminal === true, "batch.refund.terminal", "must be true");
+  require(
+    refund?.clientState === "refunded",
+    "batch.refund.clientState",
+    "must persist accepted terminal state in the client store",
+  );
+  require(
+    refund?.serverState === "retired",
+    "batch.refund.serverState",
+    "must retire the terminal lineage in the server store",
+  );
+  const refundRecovery = refund?.recovery;
+  require(
+    refundRecovery?.preBroadcastSnapshotFormat ===
+      "kaspa-x402-alpha10-refund-before-broadcast-v1" &&
+      refundRecovery?.appliedSnapshotFormat ===
+        "kaspa-x402-alpha10-refund-applied-v1",
+    "batch.refund.recovery",
+    "must reload both the pre-broadcast and atomically applied refund snapshots",
+  );
+  require(
+    refundRecovery?.preBroadcastAttemptStatus === "pending" &&
+      refundRecovery?.appliedAttemptStatus === "applied",
+    "batch.refund.recovery.appliedAttemptStatus",
+    "must prove pending-before-send and applied-after-acceptance states",
+  );
+  for (const field of [
+    "exactSignedTransactionReloaded",
+    "exactTransactionIdMatched",
+    "capturedHeadReloaded",
+    "noAutomaticRebroadcast",
+  ]) {
+    require(
+      refundRecovery?.[field] === true,
+      `batch.refund.recovery.${field}`,
+      "must be true",
+    );
+  }
+  require(
+    refund?.successorCovenantOutputCount === 0,
+    "batch.refund.successorCovenantOutputCount",
+    "must prove no same-id successor",
+  );
+  require(
+    refund?.headAfter === undefined || refund?.headAfter === null,
+    "batch.refund.headAfter",
+    "must not exist for a terminal refund",
+  );
+  require(isNonEmptyString(refund?.refundAddress), "batch.refund.refundAddress", "must be present");
+  for (const field of [
+    "inputAmountSompi",
+    "refundAmountSompi",
+    "feeSompi",
+    "timeoutDaa",
+    "lockTimeDaa",
+    "observedDaaScore",
+  ]) {
+    require(isSompi(refund?.[field]), `batch.refund.${field}`, "must be a decimal string");
+  }
+  require(refund?.outputIndex === 0, "batch.refund.outputIndex", "must be canonical output 0");
+  require(
+    sameAmount(refund?.inputAmountSompi, refund?.headBefore?.fundingAmount),
+    "batch.refund.inputAmountSompi",
+    "must consume the current head value",
+  );
+  if (
+    isSompi(refund?.inputAmountSompi) &&
+    isSompi(refund?.refundAmountSompi) &&
+    isSompi(refund?.feeSompi)
+  ) {
+    require(
+      BigInt(refund.inputAmountSompi) ===
+        BigInt(refund.refundAmountSompi) + BigInt(refund.feeSompi),
+      "batch.refund.refundAmountSompi",
+      "must reconcile the terminal refund fee",
+    );
+  }
+  if (isSompi(refund?.timeoutDaa) && isSompi(refund?.lockTimeDaa)) {
+    require(
+      BigInt(refund.lockTimeDaa) >= BigInt(refund.timeoutDaa),
+      "batch.refund.lockTimeDaa",
+      "must meet or exceed the refund timeout",
+    );
+  }
+  if (isSompi(refund?.observedDaaScore) && isSompi(refund?.lockTimeDaa)) {
+    require(
+      BigInt(refund.observedDaaScore) > BigInt(refund.lockTimeDaa),
+      "batch.refund.observedDaaScore",
+      "must prove the authoritative DAA score is past the transaction lock time",
+    );
   }
 
   if (errors.length > 0) {

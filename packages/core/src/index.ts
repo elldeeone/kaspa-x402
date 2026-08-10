@@ -1,5 +1,6 @@
 export * from "./amount.js";
 export * from "./batch-commitment.js";
+export * from "./batch-lane.js";
 export * from "./binary.js";
 export * from "./channel.js";
 export * from "./constants.js";

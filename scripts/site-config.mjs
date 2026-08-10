@@ -78,11 +78,16 @@ export const SCHEMA_FILES = [
 export const SPEC_FILES = [
   "spec/kaspa-x402-v1.md",
   "spec/kaspa-exact-v2.md",
-  "spec/kaspa-batch-settlement-v1.md",
+  "spec/kaspa-batch-settlement-v2.md",
   "spec/http-profile.md",
   "spec/mcp-profile.md",
   "spec/facilitator-profile.md",
   "spec/errors.md",
+];
+
+export const CONTRACT_FILES = [
+  "contracts/kaspa-x402-escrow-v2.sil",
+  "contracts/fixtures/kaspa-x402-escrow-v2.json",
 ];
 
 export const RELEASE_DOC_FILES = [
@@ -111,18 +116,13 @@ export const PUBLIC_DOC_FILES = [
 // without presenting historical or internal evidence as current guidance.
 export const ACTIVE_REDIRECTS = [
   {
-    from: "/spec/kaspa-exact-v1/",
-    to: "/v0.1.0-alpha.7/spec/kaspa-exact-v1.md",
-    status: 302,
-  },
-  {
     from: "/spec/live-covenant-proof-harness/",
     to: "/docs/live-testnet-proof/",
     status: 302,
   },
   {
     from: "/spec/transaction-v1-plan/",
-    to: "/spec/kaspa-batch-settlement-v1/",
+    to: "/spec/kaspa-batch-settlement-v2/",
     status: 302,
   },
   { from: "/docs/public-proposal/", to: "/", status: 302 },
@@ -146,19 +146,19 @@ export const ARTIFACT_NOTES = {
   "schemas/kaspa-payment-payload.schema.json":
     "Kaspa payload body: exact transfer, escrow deposit, and voucher shapes.",
   "schemas/kaspa-batch-extra.schema.json":
-    "Escrow parameters for `batch-settlement` offers (`kaspa-escrow-v1`).",
+    "Escrow parameters for `batch-settlement` offers (`kaspa-escrow-v2`).",
   "schemas/payment-identifier.schema.json":
     "Payment identifier binding a payment to transaction id and outpoint material.",
   "schemas/channel-state.schema.json":
-    "Escrow channel state document used by batch-settlement stores.",
+    "Escrow lane state: stable covenant ID, current outpoint, and lifetime A/S/T/V accounting.",
   "spec/kaspa-x402-v1.md":
     "Core binding: common rules for x402 v2 payments on Kaspa — networks, asset, amounts, envelopes.",
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-exact-v1.md":
     "Superseded alpha.7 `exact` profile retained as the KIP-10 reservation record.",
-  "spec/kaspa-batch-settlement-v1.md":
-    "`batch-settlement` profile: escrow funding, cumulative vouchers, claim and refund.",
+  "spec/kaspa-batch-settlement-v2.md":
+    "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
     "HTTP transport: `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE` flow.",
   "spec/mcp-profile.md":
@@ -167,10 +167,14 @@ export const ARTIFACT_NOTES = {
     "Optional self-hosted facilitator: `/supported`, `/verify`, `/settle` compatibility surface.",
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
+  "contracts/kaspa-x402-escrow-v2.sil":
+    "Normative SilverScript source for the Alpha.10 stateful batch escrow covenant.",
+  "contracts/fixtures/kaspa-x402-escrow-v2.json":
+    "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "spec/live-covenant-proof-harness.md":
-    "Opt-in live proof runner that exercises covenant flows on `kaspa:testnet-10`.",
+    "Opt-in Testnet-10 proof for singleton genesis, repeated claims, top-up, refund, and restart recovery.",
   "spec/transaction-v1-plan.md":
-    "Transaction-builder requirements and vector coverage for claim/refund artifacts.",
+    "Transaction-builder requirements and vector coverage for the complete batch lane lifecycle.",
   "docs/public-proposal.md":
     "Ecosystem-facing proposal: what is proposed to the x402 and Kaspa communities, and why.",
   "docs/adoption-examples.md":
@@ -186,7 +190,7 @@ export const ARTIFACT_NOTES = {
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
-    "How live proof artifacts are produced and independently validated.",
+    "How exact and full Alpha.10 batch-lifecycle proof artifacts are produced and independently validated.",
   "docs/review-closure-ledger.md":
     "External review findings and how each one was resolved.",
   "docs/security-threat-model.md":
@@ -241,13 +245,13 @@ export const VECTOR_GROUPS = [
   { dir: "x402-http", note: "End-to-end HTTP envelope fixtures." },
   {
     dir: "settlement-response",
-    note: "Settlement responses for claim, refund, deposit, voucher, and failure cases.",
+    note: "Settlement responses for claim, top-up, refund, deposit, voucher, and failure cases.",
   },
   { dir: "voucher", note: "Voucher digest and signature binding." },
   { dir: "channel-id", note: "Canonical channel id derivation." },
   {
     dir: "tx-v1",
-    note: "Transaction-v1 claim and refund reference artifacts.",
+    note: "Transaction-v1 singleton genesis, repeated partial claims, top-up, and refund reference artifacts.",
   },
   {
     dir: "exact",
@@ -255,7 +259,7 @@ export const VECTOR_GROUPS = [
   },
   {
     dir: "batch",
-    note: "Language-neutral channel, escrow, voucher, commitment, claim, refund, expiry, and finality evidence.",
+    note: "Language-neutral stable lineage, A/S/T/V/R, voucher, commitment, claim, top-up, refund, expiry, and finality evidence.",
   },
   { dir: "negative", note: "Inputs that must fail validation." },
 ];

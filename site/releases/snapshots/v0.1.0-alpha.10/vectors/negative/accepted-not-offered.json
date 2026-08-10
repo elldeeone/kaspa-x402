@@ -1,0 +1,63 @@
+{
+  "kind": "semantic-negative",
+  "name": "accepted-not-offered",
+  "scenario": "accepted-not-offered",
+  "description": "A retry cannot alter the selected PaymentRequirements object from the server's offers.",
+  "expectedError": "invalid_kaspa_x402_accepted",
+  "paymentRequired": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/download.bin"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v2",
+          "profile": "standard-native",
+          "finality": "accepted",
+          "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+          "payToScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"
+        }
+      }
+    ]
+  },
+  "paymentPayload": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "2000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v2",
+        "profile": "standard-native",
+        "finality": "accepted",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "payToScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"
+      }
+    },
+    "payload": {
+      "type": "exact-transaction",
+      "profile": "standard-native",
+      "transaction": "{\"transaction\":\"signed-kip10-exact\"}",
+      "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+      "paymentOutputIndex": 0,
+      "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
+      "authorization": {
+        "version": "kaspa-x402-exact-request-authorization-v1",
+        "inputIndex": 0,
+        "expiresAt": "2099-01-01T00:00:00.000Z",
+        "digest": "8888888888888888888888888888888888888888888888888888888888888888",
+        "signature": "77777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777777"
+      }
+    }
+  }
+}

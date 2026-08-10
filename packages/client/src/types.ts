@@ -37,6 +37,8 @@ export interface PublicIdentity {
 
 export interface FundingProviderUtxo {
   outpoint: FundingOutpoint;
+  /** Stable KIP-20 covenant lineage reported by authoritative chain readback. */
+  covenantId?: Hash32Hex;
   amount: SompiString;
   scriptPublicKey: ByteHex;
   address?: string;
@@ -49,16 +51,62 @@ export interface EscrowDepositRequest {
   escrowAddress: string;
   escrowScriptPublicKey: ByteHex;
   amount: SompiString;
+  settledTotal: SompiString;
   fundingSource?: FundingSourceKind;
 }
 
-export interface EscrowDepositResult {
-  outpoint?: FundingOutpoint;
-  txid?: Hash32Hex;
-  index?: number;
-  amount?: SompiString;
+export interface FundingSuccessorIntent {
+  outpoint: FundingOutpoint;
+  covenantId: Hash32Hex;
+  amount: SompiString;
+  scriptPublicKey: ByteHex;
+}
+
+/** Exact signed genesis artifact prepared without broadcasting it. */
+export interface PreparedEscrowDeposit {
+  transaction: ByteHex;
+  transactionId: Hash32Hex;
+  successor: FundingSuccessorIntent;
   fundingSource?: FundingSourceKind;
-  transaction?: ByteHex;
+}
+
+export interface CovenantGenesisVerificationRequest {
+  prepared: PreparedEscrowDeposit;
+  utxo: FundingProviderUtxo;
+}
+
+export interface CovenantGenesisEvidence {
+  covenantId: Hash32Hex;
+  authorizingInput: FundingOutpoint;
+  genesisOutpoint: FundingOutpoint;
+  genesisScriptPublicKey: ByteHex;
+  genesisAmount: SompiString;
+  totalOutputCount: number;
+  authorizedOutputCount: number;
+}
+
+export interface EscrowTopUpRequest {
+  network: NetworkId;
+  channel: DirectModeChannel;
+  targetFundingAmount: SompiString;
+  fundingSource?: FundingSourceKind;
+}
+
+/** Exact signed top-up artifact prepared without broadcasting it. */
+export interface PreparedEscrowTopUp {
+  transaction: ByteHex;
+  transactionId: Hash32Hex;
+  successor: FundingSuccessorIntent;
+  fundingSource?: FundingSourceKind;
+}
+
+export interface CovenantTopUpEvidence {
+  covenantId: Hash32Hex;
+  spentOutpoint: FundingOutpoint;
+  successorOutpoint: FundingOutpoint;
+  successorScriptPublicKey: ByteHex;
+  successorAmount: SompiString;
+  authorizedSuccessorCount: number;
 }
 
 export interface ExactPaymentRequest {
@@ -125,13 +173,25 @@ export interface FundingProvider {
   getPublicIdentity(): Promise<PublicIdentity>;
   /** Explicit policy boundary invoked before any exact signing operation. */
   authorizeExactPayment(request: ExactTransactionPaymentRequest): Promise<void>;
-  fundEscrowDeposit(
+  prepareEscrowDeposit(
     request: EscrowDepositRequest,
-  ): Promise<EscrowDepositResult>;
+  ): Promise<PreparedEscrowDeposit>;
+  prepareEscrowTopUp(request: EscrowTopUpRequest): Promise<PreparedEscrowTopUp>;
   payExactTransaction?(
     request: ExactTransactionPaymentRequest,
   ): Promise<ExactTransactionPaymentResult>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
+  /** Authoritative active-head lookup; successor covenant scripts may rotate addresses. */
+  getUtxo(outpoint: FundingOutpoint): Promise<FundingProviderUtxo | null>;
+  /** Recomputes and verifies the complete singleton KIP-20 genesis before pruning. */
+  verifyCovenantGenesis(
+    request: CovenantGenesisVerificationRequest,
+  ): Promise<CovenantGenesisEvidence | null>;
+  verifyCovenantTopUp(input: {
+    previous: DirectModeChannel;
+    prepared: PreparedEscrowTopUp;
+    successor: FundingProviderUtxo;
+  }): Promise<CovenantTopUpEvidence | null>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
   estimateFees(request: FeeEstimateRequest): Promise<FeeEstimate>;
@@ -160,6 +220,8 @@ export interface VoucherSignRequest {
 export interface RefundSignRequest {
   channel: DirectModeChannel;
   refundAmount: SompiString;
+  /** Exact transaction-v1 input-0 SIGHASH_ALL digest prepared by the builder. */
+  digest: Hash32Hex;
 }
 
 export interface ChannelSigner {
@@ -177,6 +239,9 @@ export interface AddressCodec {
 
 export interface DirectModeChannel {
   id: Hash32Hex;
+  covenantId: Hash32Hex;
+  genesisEvidence: CovenantGenesisEvidence;
+  lastTopUpEvidence?: CovenantTopUpEvidence;
   origin: string;
   resourceUrl?: string;
   config: ChannelConfig;
@@ -190,11 +255,105 @@ export interface DirectModeChannel {
   fundingAmount: SompiString;
   chargedCumulativeAmount: SompiString;
   claimedCumulativeAmount: SompiString;
-  signedCumulativeAmount: SompiString;
+  signedMaxClaimable: SompiString;
   latestVoucher?: Voucher;
+  /** True until the current genesis/top-up head has been admitted by the server. */
+  requiresDepositVoucher: boolean;
   refundTimeoutDaa: SompiString;
-  templateId: "kaspa-x402-escrow-v1";
+  templateId: "kaspa-x402-escrow-v2";
   status: ChannelStatus;
+}
+
+export interface GenesisChannelIntent {
+  channelId: Hash32Hex;
+  origin: string;
+  resourceUrl?: string;
+  config: ChannelConfig;
+  clientPrivateKey?: string;
+  escrowAddress: string;
+  fundingSource: FundingSourceKind;
+}
+
+export type FundingTransitionAttemptStatus =
+  | "pending"
+  | "broadcast"
+  | "applied";
+
+interface FundingTransitionAttemptBase {
+  channelId: Hash32Hex;
+  transaction: ByteHex;
+  transactionId: Hash32Hex;
+  intendedSuccessor: FundingSuccessorIntent;
+  fundingSource: FundingSourceKind;
+  status: FundingTransitionAttemptStatus;
+  finality?: "broadcast" | "accepted" | "confirmed";
+}
+
+/** Genesis is reserved before a channel or covenant head exists. */
+export interface GenesisFundingTransitionAttempt
+  extends FundingTransitionAttemptBase {
+  kind: "genesis";
+  intent: GenesisChannelIntent;
+}
+
+/** Top-up owns the exact persisted lane head until it is reconciled. */
+export interface TopUpFundingTransitionAttempt
+  extends FundingTransitionAttemptBase {
+  kind: "top-up";
+  expectedChannel: DirectModeChannel;
+}
+
+export type FundingTransitionAttemptRecord =
+  | GenesisFundingTransitionAttempt
+  | TopUpFundingTransitionAttempt;
+
+export type FundingTransitionAttemptApplyRequest =
+  | {
+      kind: "genesis";
+      channelId: Hash32Hex;
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+      evidence: CovenantGenesisEvidence;
+    }
+  | {
+      kind: "top-up";
+      channelId: Hash32Hex;
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+      evidence: CovenantTopUpEvidence;
+    };
+
+export interface FundingTransitionAttemptApplyResult {
+  channel: DirectModeChannel;
+  attempt: FundingTransitionAttemptRecord;
+}
+
+export type RefundAttemptStatus = "pending" | "broadcast" | "applied";
+
+/** Durable, exact refund artifact captured before the first broadcast attempt. */
+export interface RefundAttemptRecord {
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  activeOutpoint: FundingOutpoint;
+  activeScriptPublicKey: ByteHex;
+  fundingAmount: SompiString;
+  channelStatus: ChannelStatus;
+  refundAmount: SompiString;
+  transaction: ByteHex;
+  transactionId: Hash32Hex;
+  status: RefundAttemptStatus;
+  finality?: "broadcast" | "accepted" | "confirmed";
+}
+
+export interface RefundAttemptApplyRequest {
+  channelId: Hash32Hex;
+  transactionId: Hash32Hex;
+  finality: "accepted" | "confirmed";
+}
+
+export interface RefundAttemptApplyResult {
+  channel: DirectModeChannel;
+  attempt: RefundAttemptRecord;
 }
 
 export interface ChannelStore {
@@ -203,6 +362,41 @@ export interface ChannelStore {
   retireChannel(channelId: Hash32Hex, reason?: string): Promise<void>;
   deleteChannel(channelId: Hash32Hex): Promise<void>;
   listRefundableChannels(nowDaa?: SompiString): Promise<DirectModeChannel[]>;
+  loadFundingTransitionAttempt(
+    channelId: Hash32Hex,
+  ): Promise<FundingTransitionAttemptRecord | undefined>;
+  /** Lists unresolved transitions, optionally narrowed to one payment lane scope. */
+  loadOpenFundingTransitionAttempts(
+    scope?: ChannelLookupScope,
+  ): Promise<FundingTransitionAttemptRecord[]>;
+  /** Atomically reserves genesis or the exact current top-up head before broadcast. */
+  claimFundingTransitionAttempt(
+    attempt: FundingTransitionAttemptRecord,
+  ): Promise<void>;
+  /** Persists a broadcast-only observation without replacing the signed artifact. */
+  saveFundingTransitionAttempt(
+    attempt: FundingTransitionAttemptRecord,
+  ): Promise<void>;
+  /** Applies verified singleton successor evidence with an exact-id head CAS. */
+  applyFundingTransitionAttempt(
+    request: FundingTransitionAttemptApplyRequest,
+  ): Promise<FundingTransitionAttemptApplyResult>;
+  /** Releases an open attempt only after trusted evidence proves it safe to rebuild. */
+  releaseFundingTransitionAttempt(
+    channelId: Hash32Hex,
+    transactionId: Hash32Hex,
+  ): Promise<void>;
+  loadRefundAttempt(
+    channelId: Hash32Hex,
+  ): Promise<RefundAttemptRecord | undefined>;
+  /** Atomically reserves the captured channel head before any broadcast. */
+  claimRefundAttempt(attempt: RefundAttemptRecord): Promise<void>;
+  /** Persists a broadcast-only observation without replacing the reserved artifact. */
+  saveRefundAttempt(attempt: RefundAttemptRecord): Promise<void>;
+  /** Atomically compares the captured head, refunds the channel, and applies the attempt. */
+  applyRefundAttempt(
+    request: RefundAttemptApplyRequest,
+  ): Promise<RefundAttemptApplyResult>;
 }
 
 export interface ChannelLookupScope {
@@ -288,12 +482,15 @@ export interface PaidFetchResult {
 export interface RefundTransactionRequest {
   channel: DirectModeChannel;
   refundAmount: SompiString;
-  clientSignature: SignatureHex;
+  /** Signs the exact transaction digest after the builder fixes every field. */
+  signDigest(digest: Hash32Hex): Promise<SignatureHex>;
 }
 
 export interface RefundTransactionResult {
   transaction: ByteHex;
-  refundAmount?: SompiString;
+  /** Deterministic id of the exact signed transaction returned above. */
+  transactionId: Hash32Hex;
+  refundAmount: SompiString;
 }
 
 export interface RefundTransactionBuilder {
@@ -310,6 +507,65 @@ export interface RefundResult {
   accepted: boolean;
 }
 
+export type RefundReconciliation =
+  | {
+      status: "unknown";
+      transactionId: Hash32Hex;
+      reason?: string;
+    }
+  | {
+      status: "accepted";
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+    };
+
+/** Trusted chain lookup for one already-persisted refund transaction. */
+export interface RefundReconciler {
+  reconcileRefund(attempt: RefundAttemptRecord): Promise<RefundReconciliation>;
+}
+
+export interface RefundReconcileResult {
+  channel: DirectModeChannel;
+  refundAmount: SompiString;
+  transactionId: Hash32Hex;
+  finality: "unknown" | "accepted" | "confirmed";
+  accepted: boolean;
+}
+
+export type FundingTransitionReconciliation =
+  | {
+      status: "unknown";
+      transactionId: Hash32Hex;
+      reason?: string;
+    }
+  | {
+      /** Trusted proof that the exact artifact cannot become accepted. */
+      status: "absent";
+      transactionId: Hash32Hex;
+      reason?: string;
+    }
+  | {
+      status: "accepted";
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+    };
+
+/** Trusted chain lookup for one already-persisted genesis or top-up artifact. */
+export interface FundingTransitionReconciler {
+  reconcileFundingTransition(
+    attempt: FundingTransitionAttemptRecord,
+  ): Promise<FundingTransitionReconciliation>;
+}
+
+export interface FundingTransitionReconcileResult {
+  channelId: Hash32Hex;
+  kind: "genesis" | "top-up";
+  transactionId: Hash32Hex;
+  finality: "unknown" | "absent" | "accepted" | "confirmed";
+  accepted: boolean;
+  channel?: DirectModeChannel;
+}
+
 export interface DirectModeClientOptions {
   fundingProvider: FundingProvider;
   signer: ChannelSigner;
@@ -321,6 +577,8 @@ export interface DirectModeClientOptions {
   fundingPolicy?: FundingPolicy;
   fetch?: FetchLike;
   refundBuilder?: RefundTransactionBuilder;
+  refundReconciler?: RefundReconciler;
+  fundingTransitionReconciler?: FundingTransitionReconciler;
   verifyVoucherSignature?: (
     voucher: Voucher,
     channel: DirectModeChannel,

@@ -125,7 +125,13 @@ async function exerciseDemo(port, url) {
     }))
     .filter((event) => event.level === "error" || /Refused to|CSP|Exception/i.test(event.text ?? ""));
   if (errors.length > 0) throw new Error(`browser console errors: ${JSON.stringify(errors)}`);
-  const { paymentRequiredHeader: _paymentRequiredHeader, paymentSignatureHeader: _paymentSignatureHeader, ...summary } = value;
+  const {
+    paymentRequiredHeader: _paymentRequiredHeader,
+    paymentSignatureHeader: _paymentSignatureHeader,
+    batchPaymentRequiredHeader: _batchPaymentRequiredHeader,
+    batchPaymentSignatureHeader: _batchPaymentSignatureHeader,
+    ...summary
+  } = value;
   return summary;
 }
 
@@ -134,7 +140,29 @@ function assertBrowserResult(value) {
   assert(value.acceptedScheme === "exact", `unexpected accepted scheme: ${value.acceptedScheme}`);
   assert(value.requiredBytes > 0, "missing PAYMENT-REQUIRED header");
   assert(value.signatureBytes > 0, "missing PAYMENT-SIGNATURE header");
-  assert(value.narrowedSupported === 1, `expected one supported requirement, got ${value.narrowedSupported}`);
+  assert(value.batchRequiredBytes > 0, "missing batch PAYMENT-REQUIRED header");
+  assert(value.batchSignatureBytes > 0, "missing batch PAYMENT-SIGNATURE header");
+  assert(value.batchBinding === "kaspa-escrow-v2", `unexpected batch binding: ${value.batchBinding}`);
+  assert(value.batchTemplateId === "kaspa-x402-escrow-v2", `unexpected batch template: ${value.batchTemplateId}`);
+  assert(value.batchCovenantId === "7".repeat(64), "batch voucher did not bind the stable covenant id");
+  assert(value.batchVoucherAmount === "30000000", `unexpected batch voucher T: ${value.batchVoucherAmount}`);
+  assert(value.batchCurrentTxid === "8".repeat(64), "batch payload did not carry the current outpoint");
+  assert(value.batchBefore.A === "2500000", `unexpected A before request: ${value.batchBefore.A}`);
+  assert(value.batchBefore.S === "1700000", `unexpected S before request: ${value.batchBefore.S}`);
+  assert(value.batchBefore.T === "30000000", `unexpected T before request: ${value.batchBefore.T}`);
+  assert(value.batchBefore.V === "88300000", `unexpected V before request: ${value.batchBefore.V}`);
+  assert(value.batchBefore.R === "10000000", `unexpected R before request: ${value.batchBefore.R}`);
+  assert(value.batchAfterWork.A === "22500000", `unexpected A after work: ${value.batchAfterWork.A}`);
+  assert(value.batchPartial.D === "800000", `unexpected partial claim D: ${value.batchPartial.D}`);
+  assert(value.batchSuccessor.covenantId === value.batchCovenantId, "partial claim changed covenant id");
+  assert(value.batchSuccessor.A === "22500000", "partial claim reset A");
+  assert(value.batchSuccessor.S === "2500000", "partial claim did not advance S");
+  assert(value.batchSuccessor.T === "30000000", "partial claim reset T");
+  assert(value.batchSuccessor.V === "87500000", "partial claim did not reduce V by D");
+  assert(value.batchSuccessor.voucherSignature === "unchanged", "partial claim did not preserve voucher proof");
+  assert(value.exactPaymentFieldsHiddenForBatch === true, "batch selection did not hide exact transaction controls");
+  assert(value.narrowedBatchCovenantId === value.batchCovenantId, "compatibility narrowing lost corrective batch lane identity");
+  assert(value.narrowedSupported === 2, `expected two supported requirements, got ${value.narrowedSupported}`);
   assert(value.narrowedSkipped === 2, `expected two skipped requirements, got ${value.narrowedSkipped}`);
   assert(value.connectedStatus.startsWith("Connected to testnet-10"), `unexpected connection status: ${value.connectedStatus}`);
   assert(value.rpcNetwork === "testnet-10", `unexpected RPC network: ${value.rpcNetwork}`);
@@ -151,14 +179,27 @@ function assertBrowserResult(value) {
 }
 
 function assertCoreHeaderRoundTrip(value) {
-  const paymentRequired = decodePaymentRequiredHeader(value.paymentRequiredHeader);
-  const paymentPayload = decodePaymentSignatureHeader(value.paymentSignatureHeader);
-  assert(encodePaymentRequiredHeader(paymentRequired) === value.paymentRequiredHeader, "PAYMENT-REQUIRED does not round-trip through core encoder");
-  assert(encodePaymentSignatureHeader(paymentPayload) === value.paymentSignatureHeader, "PAYMENT-SIGNATURE does not round-trip through core encoder");
+  assertHeaderPair(
+    value.paymentRequiredHeader,
+    value.paymentSignatureHeader,
+    "exact",
+  );
+  assertHeaderPair(
+    value.batchPaymentRequiredHeader,
+    value.batchPaymentSignatureHeader,
+    "batch",
+  );
+}
+
+function assertHeaderPair(requiredHeader, signatureHeader, label) {
+  const paymentRequired = decodePaymentRequiredHeader(requiredHeader);
+  const paymentPayload = decodePaymentSignatureHeader(signatureHeader);
+  assert(encodePaymentRequiredHeader(paymentRequired) === requiredHeader, `${label} PAYMENT-REQUIRED does not round-trip through core encoder`);
+  assert(encodePaymentSignatureHeader(paymentPayload) === signatureHeader, `${label} PAYMENT-SIGNATURE does not round-trip through core encoder`);
   const retry = validatePaymentRetry({ paymentRequired, paymentPayload });
-  assert(retry.ok, `PaymentRequired/PaymentPayload pair failed core validation: ${retry.error?.message}`);
-  assert(paymentRequired.accepts[0]?.maxTimeoutSeconds > 0, "offer timeout must be positive");
-  assert(paymentRequired.accepts[0]?.payTo?.trim(), "offer payTo must be non-empty");
+  assert(retry.ok, `${label} PaymentRequired/PaymentPayload pair failed core validation: ${retry.error?.message}`);
+  assert(paymentRequired.accepts[0]?.maxTimeoutSeconds > 0, `${label} offer timeout must be positive`);
+  assert(paymentRequired.accepts[0]?.payTo?.trim(), `${label} offer payTo must be non-empty`);
 }
 
 function demoExerciseExpression() {
@@ -191,13 +232,45 @@ function demoExerciseExpression() {
   await click('demo-build-payment', 250);
   const signature = await waitFor(() => byId('demo-payment-signature').value, 'payment signature');
   const exact = JSON.parse(atob(required));
+  byId('demo-profile').value = 'batch-settlement';
+  byId('demo-profile').dispatchEvent(new Event('change'));
+  await click('demo-build-offer', 250);
+  const batchRequired = await waitFor(
+    () => {
+      const header = byId('demo-payment-required').value;
+      return header && header !== required ? header : undefined;
+    },
+    'batch payment required'
+  );
+  await click('demo-build-payment', 250);
+  const batchSignature = await waitFor(
+    () => {
+      const header = byId('demo-payment-signature').value;
+      return header && header !== signature ? header : undefined;
+    },
+    'batch payment signature'
+  );
+  const batch = JSON.parse(atob(batchRequired));
+  const batchPayment = JSON.parse(atob(batchSignature));
+  const batchOutput = JSON.parse(byId('demo-payment-output').textContent);
+  const lanePreview = batchOutput.lanePreview;
+  const exactPaymentFieldsHiddenForBatch = byId('demo-exact-payment-fields').hidden;
+  const batchCorrective = {
+    ...batch.accepts[0],
+    extra: {
+      ...batch.accepts[0].extra,
+      channelState: batchOutput.mockSettlementResponse.extensions.kaspa.channelState,
+      voucherState: batchPayment.payload.voucher
+    }
+  };
   byId('demo-narrow-input').value = JSON.stringify({
     x402Version: 2,
     resource: { url: 'https://example.test/mixed' },
     accepts: [
       { scheme: 'foreign', network: 'eip155:1', asset: 'USDC', amount: '1000', payTo: '0x0', maxTimeoutSeconds: 60, extra: {} },
       exact.accepts[0],
-      { scheme: 'batch-settlement', network: 'kaspa:testnet-10', asset: 'KAS', amount: '1000', payTo: exact.accepts[0].payTo, maxTimeoutSeconds: 60, extra: { binding: 'kaspa-escrow-v1' } }
+      { scheme: 'batch-settlement', network: 'kaspa:testnet-10', asset: 'KAS', amount: '1000', payTo: exact.accepts[0].payTo, maxTimeoutSeconds: 60, extra: { binding: 'unsupported-escrow-binding' } },
+      batchCorrective
     ]
   });
   await click('demo-narrow-offer', 250);
@@ -223,6 +296,21 @@ function demoExerciseExpression() {
     signatureBytes: signature.length,
     paymentRequiredHeader: required,
     paymentSignatureHeader: signature,
+    batchRequiredBytes: batchRequired.length,
+    batchSignatureBytes: batchSignature.length,
+    batchPaymentRequiredHeader: batchRequired,
+    batchPaymentSignatureHeader: batchSignature,
+    batchBinding: batch.accepts[0].extra.binding,
+    batchTemplateId: batch.accepts[0].extra.templateId,
+    batchCovenantId: batchPayment.payload.voucher.covenantId,
+    batchVoucherAmount: batchPayment.payload.voucher.amount,
+    batchCurrentTxid: batchPayment.payload.fundingOutpoint.txid,
+    batchBefore: lanePreview.beforeRequest,
+    batchAfterWork: lanePreview.afterSuccessfulWork,
+    batchPartial: lanePreview.partialClaim,
+    batchSuccessor: lanePreview.partialClaim.successor,
+    exactPaymentFieldsHiddenForBatch,
+    narrowedBatchCovenantId: narrowed.narrowed.accepts.find((entry) => entry.scheme === 'batch-settlement').extra.channelState.covenantId,
     acceptedScheme: exact.accepts[0].scheme,
     narrowedSupported: narrowed.supportedCount,
     narrowedSkipped: narrowed.skippedCount,

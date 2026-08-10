@@ -46,8 +46,10 @@ import {
   PAYMENT_SIGNATURE_HEADER,
   handlePaidMcpToolCall,
   type AddressCodec,
+  type BatchSettlementAttemptRecord,
   type ChainUtxo,
   type ClaimAttemptRecord,
+  type ClaimReconciliation,
   type DirectModeServerConfig,
   type ExactHeadChallenge,
   type ExactHeadRecord,
@@ -63,6 +65,7 @@ const SERVER_KEY = "11".repeat(32);
 const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
+const COVENANT_ID = "4a".repeat(32);
 const TOP_UP_TX = "99".repeat(32);
 const CLAIM_TX = "55".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
@@ -99,7 +102,7 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.amount).toBe("75");
   });
 
-  it("rejects mainnet server configs unless explicitly enabled", () => {
+  it("keeps opted-in exact mainnet support while rejecting Alpha.10 batch", async () => {
     expect(() => makeServer({ network: "kaspa:mainnet" })).toThrow(
       "allowMainnet",
     );
@@ -108,9 +111,46 @@ describe("direct-mode server", () => {
       network: "kaspa:mainnet",
       allowMainnet: true,
     });
+    expect(server.supportedKinds().map((kind) => kind.scheme)).toEqual([
+      "exact",
+    ]);
     expect(
-      server.supportedKinds().every((kind) => kind.network === "kaspa:mainnet"),
-    ).toBe(true);
+      server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" })
+        .accepts[0],
+    ).toMatchObject({ scheme: "exact", network: "kaspa:mainnet" });
+    expect(() =>
+      server.buildPaymentRequired({
+        resource: RESOURCE,
+        scheme: "batch-settlement",
+      }),
+    ).toThrow("restricted to kaspa:testnet-10");
+
+    const testnet = makeServer();
+    const source = makeDepositPayment(testnet).payload;
+    if (source.payload.type !== "deposit-voucher")
+      throw new Error("expected deposit payload");
+    const accepted = {
+      ...source.accepted,
+      network: "kaspa:mainnet",
+    } as BatchPaymentRequirements;
+    const mainnetBatch: PaymentPayload = {
+      ...source,
+      accepted,
+      payload: {
+        ...source.payload,
+        channelConfig: {
+          ...source.payload.channelConfig,
+          network: "kaspa:mainnet",
+        },
+      },
+    };
+    await expect(
+      server.verifyPayment({
+        paymentPayload: mainnetBatch,
+        paymentRequirements: accepted,
+        resource: RESOURCE,
+      }),
+    ).rejects.toThrow();
   });
 
   it("rejects refund locks that cross Kaspa's lock-time timestamp boundary", () => {
@@ -279,7 +319,7 @@ describe("direct-mode server", () => {
       "75",
     ]);
     expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v2");
-    expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v1");
+    expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v2");
   });
 
   it("preserves batch fallback when an additive exact head is unavailable", async () => {
@@ -312,7 +352,7 @@ describe("direct-mode server", () => {
     expect(required.accepts.map((requirement) => requirement.scheme)).toEqual([
       "batch-settlement",
     ]);
-    expect(required.accepts[0]?.extra.binding).toBe("kaspa-escrow-v1");
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-escrow-v2");
   });
 
   it("returns MCP payment requirements for unpaid tool calls", async () => {
@@ -2392,10 +2432,19 @@ describe("direct-mode server", () => {
     const setup = makeServer({
       topUpVerifier: {
         async verifyTopUp({ previous, next }) {
-          return (
-            previous.channelId === next.channelId &&
-            next.activeOutpoint.txid === TOP_UP_TX
-          );
+          if (
+            previous.channelId !== next.channelId ||
+            next.activeOutpoint.txid !== TOP_UP_TX
+          )
+            return null;
+          return {
+            covenantId: previous.covenantId,
+            spentOutpoint: previous.activeOutpoint,
+            successorOutpoint: next.activeOutpoint,
+            successorScriptPublicKey: next.activeScriptPublicKey,
+            successorAmount: next.fundingAmount,
+            authorizedSuccessorCount: 1,
+          };
         },
       },
     });
@@ -2423,6 +2472,52 @@ describe("direct-mode server", () => {
     expect(stored.chargedCumulativeAmount).toBe("180");
     expect(stored.signedMaxClaimable).toBe("200");
   });
+
+  it.each(["1000", "900"])(
+    "rejects a top-up successor funding value of %s without changing the durable head",
+    async (fundingAmount) => {
+      const setup = makeServer({
+        topUpVerifier: {
+          async verifyTopUp({ previous, next }) {
+            return {
+              covenantId: previous.covenantId,
+              spentOutpoint: previous.activeOutpoint,
+              successorOutpoint: next.activeOutpoint,
+              successorScriptPublicKey: next.activeScriptPublicKey,
+              successorAmount: next.fundingAmount,
+              authorizedSuccessorCount: 1,
+            };
+          },
+        },
+      });
+      const deposit = makeDepositPayment(setup);
+      await setup.server.handlePaidRequest(
+        requestWithPayment(deposit.payload),
+        async () => ({ chargedAmount: "100" }),
+      );
+      const prior = await requireChannel(setup.store, deposit.channelId);
+      const topUp = makeDepositPayment(setup, {
+        fundingTx: TOP_UP_TX,
+        fundingAmount,
+        voucherAmount: "200",
+      });
+      let executed = false;
+
+      const response = await setup.server.handlePaidRequest(
+        requestWithPayment(topUp.payload),
+        async () => {
+          executed = true;
+          return { chargedAmount: "100" };
+        },
+      );
+
+      expect(response.status).toBe(402);
+      expect(executed).toBe(false);
+      await expect(setup.store.loadChannel(deposit.channelId)).resolves.toEqual(
+        prior,
+      );
+    },
+  );
 
   it("rejects underpaid vouchers without executing the handler", async () => {
     const setup = makeServer();
@@ -2520,7 +2615,10 @@ describe("direct-mode server", () => {
       async () => ({ chargedAmount: "1.5" }),
     );
 
-    expect(response.status).toBe(402);
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: "batch_settlement_recovery_required",
+    });
     const stored = await requireChannel(setup.store, payment.channelId);
     expect(stored.chargedCumulativeAmount).toBe("0");
     expect(stored.signedMaxClaimable).toBe("100");
@@ -2680,7 +2778,7 @@ describe("direct-mode server", () => {
     expect(executed).toBe(false);
   });
 
-  it("does not commit charge or idempotency when atomic settlement persistence fails", async () => {
+  it("preserves the verified head without committing charge or idempotency when settlement persistence fails", async () => {
     const store = new FailingCommitStore();
     const setup = makeServer({ requirePaymentIdentifier: true, store });
     const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
@@ -2697,9 +2795,91 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(500);
     await expect(
       setup.store.loadChannel(payment.channelId),
-    ).resolves.toBeUndefined();
+    ).resolves.toMatchObject({
+      covenantId: COVENANT_ID,
+      chargedCumulativeAmount: "0",
+      signedMaxClaimable: "100",
+    });
     await expect(
       setup.store.loadPaymentIdentifier(paymentIdentifier),
+    ).resolves.toBeUndefined();
+  });
+
+  it("resumes a durable batch handler result without rerunning protected work after commit failure", async () => {
+    const store = new FailingBatchCommitStore(1);
+    const setup = makeServer({ store });
+    const payment = makeDepositPayment(setup);
+    let executions = 0;
+    const run = () =>
+      setup.server.handlePaidRequest(
+        requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+        async () => {
+          executions += 1;
+          return { body: "durable", chargedAmount: "50" };
+        },
+      );
+
+    await expect(run()).resolves.toMatchObject({ status: 500 });
+    const recovered = await run();
+
+    expect(recovered.status).toBe(200);
+    expect(recovered.body).toBe("durable");
+    expect(executions).toBe(1);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
+    ).resolves.toMatchObject({
+      chargedCumulativeAmount: "50",
+    });
+  });
+
+  it("retries from persisted genesis evidence after admission evidence is pruned", async () => {
+    const store = new FailingBatchClaimStore();
+    const setup = makeServer({ store });
+    const payment = makeDepositPayment(setup);
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => {
+        executions += 1;
+        return { chargedAmount: "100" };
+      },
+    );
+    expect(first.status).toBe(503);
+    expect(executions).toBe(0);
+    setup.chain.genesisAvailable = false;
+
+    const retried = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => {
+        executions += 1;
+        return { chargedAmount: "100" };
+      },
+    );
+
+    expect(retried.status).toBe(200);
+    expect(executions).toBe(1);
+    expect(setup.chain.genesisVerificationCount).toBe(1);
+  });
+
+  it("rejects covenant genesis evidence with an extra unauthorized output", async () => {
+    const setup = makeServer();
+    setup.chain.genesisTotalOutputCount = 2;
+    const payment = makeDepositPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => {
+        executed = true;
+        return { chargedAmount: "100" };
+      },
+    );
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
     ).resolves.toBeUndefined();
   });
 
@@ -3061,7 +3241,10 @@ describe("direct-mode server", () => {
       async () => ({ chargedAmount: "101" }),
     );
 
-    expect(response.status).toBe(402);
+    expect(response.status).toBe(500);
+    expect(response.body).toEqual({
+      error: "batch_settlement_recovery_required",
+    });
     const stored = await requireChannel(setup.store, payment.channelId);
     expect(stored.chargedCumulativeAmount).toBe("0");
     expect(stored.signedMaxClaimable).toBe("100");
@@ -3120,6 +3303,18 @@ describe("direct-mode server", () => {
     const preview = await setup.server.previewClaim(payment.channelId);
     expect(preview.claimable).toBe(true);
     expect(preview.claimAmount).toBe("100");
+    await expect(
+      setup.server.previewClaim(payment.channelId, "0"),
+    ).resolves.toMatchObject({
+      claimable: false,
+      reason: "claim amount must be positive",
+    });
+    await expect(
+      setup.server.previewClaim(payment.channelId, "101"),
+    ).resolves.toMatchObject({
+      claimable: false,
+      reason: "claim amount cannot exceed unsettled actual charges",
+    });
 
     setup.chain.claimFee = "100";
     const dust = await setup.server.previewClaim(payment.channelId);
@@ -3129,7 +3324,13 @@ describe("direct-mode server", () => {
   it("rejects vouchers that consume the required claim reserve", async () => {
     const setup = makeServer({ minDepositSompi: "1000", amount: "995" });
     setup.chain.claimFee = "10";
-    const payment = makeDepositPayment(setup, { voucherAmount: "995" });
+    const advertised = setup.server.buildPaymentRequired({ resource: RESOURCE })
+      .accepts[0] as BatchPaymentRequirements;
+    expect(advertised.extra.minDepositSompi).toBe("1005");
+    const payment = makeDepositPayment(setup, {
+      fundingAmount: "1000",
+      voucherAmount: "995",
+    });
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
@@ -3166,6 +3367,26 @@ describe("direct-mode server", () => {
     expect(stored.chargedCumulativeAmount).toBe("990");
   });
 
+  it("uses the advertised reserve rather than a hidden live fee for voucher acceptance", async () => {
+    const setup = makeServer({
+      minDepositSompi: "1000",
+      claimReserveSompi: "10",
+      amount: "990",
+    });
+    setup.chain.claimFee = "500";
+    const payment = makeDepositPayment(setup, { voucherAmount: "990" });
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "990" }),
+    );
+
+    expect(response.status).toBe(200);
+    await expect(
+      setup.server.previewClaim(payment.channelId),
+    ).resolves.toMatchObject({ claimable: true, estimatedFee: "500" });
+  });
+
   it("rejects claim previews for non-active channels", async () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
@@ -3187,6 +3408,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3213,10 +3435,90 @@ describe("direct-mode server", () => {
     expect(claim.transactionId).toBe(CLAIM_TX);
     expect(claim.finality).toBe("confirmed");
     expect(claim.channel.claimedCumulativeAmount).toBe("100");
-    expect(claim.channel.signedMaxClaimable).toBe("0");
+    expect(claim.channel.signedMaxClaimable).toBe("100");
+    expect(claim.channel.voucherSignature).toBeTruthy();
+    expect(claim.channel.escrowAddress).toBe(
+      deriveEscrow(claim.channel.channelConfig, "100").escrowAddress,
+    );
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
+  });
+
+  it("executes consecutive partial claims without resetting lifetime authorization", async () => {
+    const secondClaimTx = "66".repeat(32);
+    const claimTransactionIds = [CLAIM_TX, secondClaimTx];
+    let claimIndex = 0;
+    const setup = makeServer({
+      amount: "300",
+      claimBuilder: {
+        async buildClaimTransaction({ channel, claimAmount }) {
+          const transactionId = claimTransactionIds[claimIndex++]!;
+          const settledTotal = (
+            BigInt(channel.claimedCumulativeAmount) + BigInt(claimAmount)
+          ).toString();
+          return {
+            transaction: transactionId,
+            transactionId,
+            claimAmount,
+            continuationOutpoint: { txid: transactionId, index: 1 },
+            continuationScriptPublicKey: deriveEscrow(
+              channel.channelConfig,
+              settledTotal,
+            ).activeScriptPublicKey,
+            continuationFundingAmount: (
+              BigInt(channel.fundingAmount) - BigInt(claimAmount)
+            ).toString(),
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup, { voucherAmount: "300" });
+    await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "300" }),
+    );
+    const opened = await requireChannel(setup.store, payment.channelId);
+
+    const firstScript = deriveEscrow(
+      opened.channelConfig,
+      "100",
+    ).activeScriptPublicKey;
+    setup.chain.sendTransactionId = CLAIM_TX;
+    setup.chain.setUtxo({
+      outpoint: { txid: CLAIM_TX, index: 1 },
+      amount: "900",
+      scriptPublicKey: firstScript,
+      finality: "accepted",
+    });
+    const first = await setup.server.executeClaim(payment.channelId, "100");
+
+    const secondScript = deriveEscrow(
+      opened.channelConfig,
+      "200",
+    ).activeScriptPublicKey;
+    setup.chain.sendTransactionId = secondClaimTx;
+    setup.chain.setUtxo({
+      outpoint: { txid: secondClaimTx, index: 1 },
+      amount: "800",
+      scriptPublicKey: secondScript,
+      finality: "accepted",
+    });
+    const second = await setup.server.executeClaim(payment.channelId, "100");
+
+    expect(first.channel.claimedCumulativeAmount).toBe("100");
+    expect(second.channel.claimedCumulativeAmount).toBe("200");
+    expect(second.channel.chargedCumulativeAmount).toBe("300");
+    expect(second.channel.signedMaxClaimable).toBe(opened.signedMaxClaimable);
+    expect(second.channel.voucherSignature).toBe(opened.voucherSignature);
+    expect(second.channel.covenantId).toBe(opened.covenantId);
+    expect(second.channel.fundingAmount).toBe("800");
+    expect(first.channel.escrowAddress).toBe(
+      deriveEscrow(opened.channelConfig, "100").escrowAddress,
+    );
+    expect(second.channel.escrowAddress).toBe(
+      deriveEscrow(opened.channelConfig, "200").escrowAddress,
+    );
   });
 
   it("rejects a claim builder that deducts fees from the covenant continuation", async () => {
@@ -3225,6 +3527,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3258,6 +3561,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3293,6 +3597,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3333,6 +3638,9 @@ describe("direct-mode server", () => {
 
     expect(recovered.accepted).toBe(true);
     expect(recovered.channel.claimedCumulativeAmount).toBe("100");
+    expect(recovered.channel.escrowAddress).toBe(
+      deriveEscrow(recovered.channel.channelConfig, "100").escrowAddress,
+    );
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
@@ -3344,6 +3652,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3379,6 +3688,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3419,6 +3729,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3446,7 +3757,7 @@ describe("direct-mode server", () => {
 
     await expect(
       setup.server.recoverAcceptedClaim(payment.channelId),
-    ).rejects.toThrow("channel state changed before claim apply");
+    ).rejects.toThrow("channel state changed after claim attempt");
   });
 
   it("records a pending claim attempt before broadcast errors", async () => {
@@ -3455,6 +3766,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3475,6 +3787,7 @@ describe("direct-mode server", () => {
     );
     const attempt = await setup.store.loadOpenClaimAttempt(payment.channelId);
     expect(attempt?.status).toBe("pending");
+    expect(attempt?.transactionId).toBe(CLAIM_TX);
     expect(attempt?.continuationOutpoint).toEqual({ txid: CLAIM_TX, index: 1 });
     expect(setup.chain.sendCount).toBe(1);
     const channel = await requireChannel(setup.store, payment.channelId);
@@ -3497,6 +3810,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3543,6 +3857,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3587,12 +3902,154 @@ describe("direct-mode server", () => {
     expect(recovered.channel.claimedCumulativeAmount).toBe("100");
   });
 
-  it("allows operators to abandon a reconciled open claim attempt before retrying", async () => {
-    const setup = makeServer({
+  it("keeps a persisted confirmed claim threshold after restart under accepted policy", async () => {
+    const store = new MemoryServerChannelStore();
+    const initial = makeServer({
+      store,
+      acceptedFinality: "confirmed",
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
+            claimAmount,
+            continuationOutpoint: { txid: CLAIM_TX, index: 1 },
+            continuationScriptPublicKey: "0000" + "77".repeat(34),
+            continuationFundingAmount: "900",
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(initial);
+    const deposit = payment.payload.payload;
+    if (deposit.type !== "deposit-voucher")
+      throw new Error("expected deposit payload");
+    initial.chain.setUtxo({
+      outpoint: deposit.fundingOutpoint,
+      amount: deposit.fundingAmountSompi,
+      scriptPublicKey: deposit.activeScriptPublicKey,
+      finality: "confirmed",
+    });
+    await initial.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "100" }),
+    );
+
+    const broadcast = await initial.server.executeClaim(payment.channelId);
+    expect(broadcast.accepted).toBe(false);
+    await expect(
+      store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({
+      requiredFinality: "confirmed",
+      status: "broadcast",
+      finality: "accepted",
+    });
+
+    const restarted = makeServer({ store, acceptedFinality: "accepted" });
+    restarted.chain.setUtxo({
+      outpoint: { txid: CLAIM_TX, index: 1 },
+      amount: "900",
+      scriptPublicKey: "0000" + "77".repeat(34),
+      finality: "accepted",
+    });
+    await expect(
+      restarted.server.recoverAcceptedClaim(payment.channelId),
+    ).rejects.toThrow("has not reached required finality");
+    await expect(
+      store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({ status: "broadcast" });
+
+    restarted.chain.setUtxo({
+      outpoint: { txid: CLAIM_TX, index: 1 },
+      amount: "900",
+      scriptPublicKey: "0000" + "77".repeat(34),
+      finality: "confirmed",
+    });
+    const recovered = await restarted.server.recoverAcceptedClaim(
+      payment.channelId,
+    );
+    expect(recovered.finality).toBe("confirmed");
+    expect(recovered.channel.claimedCumulativeAmount).toBe("100");
+  });
+
+  it("tightens a persisted accepted claim threshold after restart under confirmed policy", async () => {
+    const store = new MemoryServerChannelStore();
+    const initial = makeServer({
+      store,
+      acceptedFinality: "accepted",
+      claimBuilder: {
+        async buildClaimTransaction({ claimAmount }) {
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
+            claimAmount,
+            continuationOutpoint: { txid: CLAIM_TX, index: 1 },
+            continuationScriptPublicKey: "0000" + "77".repeat(34),
+            continuationFundingAmount: "900",
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(initial);
+    await initial.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "100" }),
+    );
+    await expect(
+      initial.server.executeClaim(payment.channelId),
+    ).rejects.toThrow("funding outpoint");
+    await expect(
+      store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({
+      requiredFinality: "accepted",
+      status: "broadcast",
+      finality: "accepted",
+    });
+
+    const restarted = makeServer({ store, acceptedFinality: "confirmed" });
+    restarted.chain.setUtxo({
+      outpoint: { txid: CLAIM_TX, index: 1 },
+      amount: "900",
+      scriptPublicKey: "0000" + "77".repeat(34),
+      finality: "accepted",
+    });
+    await expect(
+      restarted.server.recoverAcceptedClaim(payment.channelId),
+    ).rejects.toThrow("has not reached required finality");
+    await expect(
+      store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({ status: "broadcast" });
+
+    restarted.chain.setUtxo({
+      outpoint: { txid: CLAIM_TX, index: 1 },
+      amount: "900",
+      scriptPublicKey: "0000" + "77".repeat(34),
+      finality: "confirmed",
+    });
+    const recovered = await restarted.server.recoverAcceptedClaim(
+      payment.channelId,
+    );
+    expect(recovered.finality).toBe("confirmed");
+    expect(recovered.channel.claimedCumulativeAmount).toBe("100");
+  });
+
+  it("requires trusted exact-txid rejection before abandoning an open claim", async () => {
+    let reconciliation: ClaimReconciliation = {
+      status: "unknown",
+      transactionId: CLAIM_TX,
+      reason: "indexing lag",
+    };
+    const setup = makeServer({
+      claimReconciler: {
+        async reconcileClaim() {
+          return reconciliation;
+        },
+      },
+      claimBuilder: {
+        async buildClaimTransaction({ claimAmount }) {
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3611,10 +4068,31 @@ describe("direct-mode server", () => {
     await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
       "node unavailable",
     );
-    await setup.server.abandonClaimAttempt(
-      payment.channelId,
-      "operator reconciled no broadcast",
-    );
+    await expect(
+      setup.server.abandonClaimAttempt(payment.channelId),
+    ).rejects.toThrow("remains unknown");
+    reconciliation = {
+      status: "rejected",
+      transactionId: "66".repeat(32),
+      reason: "not accepted",
+    };
+    await expect(
+      setup.server.abandonClaimAttempt(payment.channelId),
+    ).rejects.toThrow("does not match the persisted signed transaction");
+    reconciliation = {
+      status: "accepted",
+      transactionId: CLAIM_TX,
+      finality: "accepted",
+    };
+    await expect(
+      setup.server.abandonClaimAttempt(payment.channelId),
+    ).rejects.toThrow("must be recovered");
+    reconciliation = {
+      status: "rejected",
+      transactionId: CLAIM_TX,
+      reason: "authoritative node rejection",
+    };
+    await setup.server.abandonClaimAttempt(payment.channelId);
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
@@ -3632,12 +4110,76 @@ describe("direct-mode server", () => {
     expect(setup.chain.sendCount).toBe(2);
   });
 
+  it("forbids blind claim abandonment without a trusted reconciler", async () => {
+    const setup = makeServer({
+      claimBuilder: {
+        async buildClaimTransaction({ claimAmount }) {
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
+            claimAmount,
+            continuationOutpoint: { txid: CLAIM_TX, index: 1 },
+            continuationScriptPublicKey: "0000" + "77".repeat(34),
+            continuationFundingAmount: "900",
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "100" }),
+    );
+    setup.chain.sendFailure = new Error("node unavailable");
+    await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
+      "node unavailable",
+    );
+
+    await expect(
+      setup.server.abandonClaimAttempt(payment.channelId),
+    ).rejects.toThrow("trusted claim reconciler is required");
+    await expect(
+      setup.store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({ transactionId: CLAIM_TX, status: "pending" });
+  });
+
+  it("keeps the persisted deterministic claim when the broadcaster returns another id", async () => {
+    const setup = makeServer({
+      claimBuilder: {
+        async buildClaimTransaction({ claimAmount }) {
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
+            claimAmount,
+            continuationOutpoint: { txid: CLAIM_TX, index: 1 },
+            continuationScriptPublicKey: "0000" + "77".repeat(34),
+            continuationFundingAmount: "900",
+          };
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => ({ chargedAmount: "100" }),
+    );
+    setup.chain.sendTransactionId = "66".repeat(32);
+
+    await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
+      "does not match the persisted signed transaction",
+    );
+    await expect(
+      setup.store.loadOpenClaimAttempt(payment.channelId),
+    ).resolves.toMatchObject({ transactionId: CLAIM_TX, status: "pending" });
+  });
+
   it("recovers a broadcast claim after external acceptance evidence", async () => {
     const setup = makeServer({
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3691,6 +4233,7 @@ describe("direct-mode server", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: CLAIM_TX, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3722,13 +4265,14 @@ describe("direct-mode server", () => {
     ).rejects.toThrow("does not match recorded broadcast");
   });
 
-  it("requires continuation outpoint txid to match the accepted claim transaction", async () => {
+  it("requires continuation outpoint txid to match the prepared claim transaction", async () => {
     const otherTx = "66".repeat(32);
     const setup = makeServer({
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: CLAIM_TX,
             claimAmount,
             continuationOutpoint: { txid: otherTx, index: 1 },
             continuationScriptPublicKey: "0000" + "77".repeat(34),
@@ -3750,27 +4294,14 @@ describe("direct-mode server", () => {
     });
 
     await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
-      "accepted claim transaction",
+      "prepared claim transaction",
     );
     const stored = await requireChannel(setup.store, payment.channelId);
     expect(stored.claimedCumulativeAmount).toBe("0");
-    const attempt = await setup.store.loadOpenClaimAttempt(payment.channelId);
-    expect(attempt?.status).toBe("broadcast");
-    expect(attempt?.transactionId).toBe(CLAIM_TX);
-    expect(attempt?.continuationOutpoint).toEqual({ txid: otherTx, index: 1 });
-    await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
-      "claim attempt is already pending",
-    );
-    await expect(
-      setup.server.recoverAcceptedClaim(payment.channelId),
-    ).rejects.toThrow("continuation outpoint");
-    await setup.server.abandonClaimAttempt(
-      payment.channelId,
-      "operator rejected invalid continuation",
-    );
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
+    expect(setup.chain.sendCount).toBe(0);
   });
 });
 
@@ -3808,6 +4339,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
     payTo: "kaspatest:payout",
     serverPublicKey: SERVER_KEY,
     minDepositSompi: "1000",
+    claimReserveSompi: "10",
     amount: "100",
     refundTimeoutDaa: "1000",
     minimumRefundLeadDaa: "0",
@@ -4159,7 +4691,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v1",
+    templateId: "kaspa-x402-escrow-v2",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,
@@ -4173,14 +4705,14 @@ function makeDepositPayment(
   const fundingAmount = options.fundingAmount ?? accepted.extra.minDepositSompi;
   setup.chain.setUtxo({
     outpoint: fundingOutpoint,
+    covenantId: COVENANT_ID,
     amount: fundingAmount,
     scriptPublicKey: derived.activeScriptPublicKey,
     finality: "accepted",
   });
   const voucher = signVoucher({
     network: accepted.network,
-    activeScriptPublicKey: derived.activeScriptPublicKey,
-    outpoint: fundingOutpoint,
+    covenantId: COVENANT_ID,
     amount: options.voucherAmount ?? accepted.amount,
     badSignature: options.badSignature,
   });
@@ -4218,13 +4750,14 @@ function makeVoucherPayment(
   const required = setup.server.buildPaymentRequired({ resource: RESOURCE });
   const accepted =
     options.accepted ?? (required.accepts[0] as BatchPaymentRequirements);
+  const requiredAmount = (
+    BigInt(channel.chargedCumulativeAmount) + BigInt(accepted.amount)
+  ).toString();
   const amount =
     options.voucherAmount ??
-    (
-      BigInt(channel.chargedCumulativeAmount) -
-      BigInt(channel.claimedCumulativeAmount) +
-      BigInt(accepted.amount)
-    ).toString();
+    (BigInt(channel.signedMaxClaimable) > BigInt(requiredAmount)
+      ? channel.signedMaxClaimable
+      : requiredAmount);
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -4236,8 +4769,7 @@ function makeVoucherPayment(
       activeScriptPublicKey: channel.activeScriptPublicKey,
       voucher: signVoucher({
         network: accepted.network,
-        activeScriptPublicKey: channel.activeScriptPublicKey,
-        outpoint: channel.activeOutpoint,
+        covenantId: channel.covenantId,
         amount,
       }),
     },
@@ -4318,7 +4850,10 @@ function paymentIdentifierExtension(id: string) {
   };
 }
 
-function deriveEscrow(channelConfig: ChannelConfig): {
+function deriveEscrow(
+  channelConfig: ChannelConfig,
+  settledTotal = "0",
+): {
   escrowAddress: string;
   activeScriptPublicKey: string;
 } {
@@ -4346,6 +4881,7 @@ function deriveEscrow(channelConfig: ChannelConfig): {
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
+    settledTotal,
   };
   const script = escrowScriptPublicKey(params);
   return {
@@ -4358,13 +4894,13 @@ function deriveEscrow(channelConfig: ChannelConfig): {
 
 function signVoucher(input: {
   network: NetworkId;
-  activeScriptPublicKey: string;
-  outpoint: FundingOutpoint;
+  covenantId: Hash32Hex;
   amount: string;
   badSignature?: boolean;
 }) {
   const digest = voucherDigest(input);
   return {
+    covenantId: input.covenantId,
     amount: input.amount,
     signature: input.badSignature ? "ff".repeat(64) : `${digest}${digest}`,
   };
@@ -4393,9 +4929,15 @@ class FakeChainProvider implements ServerChainProvider {
   sendTransactionId = CLAIM_TX;
   readonly sentTransactions: string[] = [];
   sendFailure?: Error;
+  genesisAvailable = true;
+  genesisVerificationCount = 0;
+  genesisTotalOutputCount = 1;
 
   setUtxo(utxo: ChainUtxo): void {
-    this.utxos.set(outpointKey(utxo.outpoint), structuredClone(utxo));
+    this.utxos.set(
+      outpointKey(utxo.outpoint),
+      structuredClone({ covenantId: COVENANT_ID, ...utxo }),
+    );
   }
 
   async getUtxo(outpoint: FundingOutpoint): Promise<ChainUtxo | null> {
@@ -4404,6 +4946,23 @@ class FakeChainProvider implements ServerChainProvider {
 
   async getVirtualDaaScore(): Promise<string> {
     return this.daa;
+  }
+
+  async verifyCovenantGenesis(request: {
+    utxo: ChainUtxo;
+    payment: PaymentPayload;
+  }) {
+    this.genesisVerificationCount += 1;
+    if (!this.genesisAvailable) return null;
+    return {
+      covenantId: request.utxo.covenantId!,
+      authorizingInput: { txid: "4b".repeat(32), index: 0 },
+      genesisOutpoint: request.utxo.outpoint,
+      genesisScriptPublicKey: request.utxo.scriptPublicKey,
+      genesisAmount: request.utxo.amount,
+      totalOutputCount: this.genesisTotalOutputCount,
+      authorizedOutputCount: 1,
+    };
   }
 
   async estimateClaimFee(): Promise<string> {
@@ -4423,6 +4982,35 @@ class FakeChainProvider implements ServerChainProvider {
 class FailingCommitStore extends MemoryServerChannelStore {
   async commitSettlement(_record: SettlementCommit): Promise<void> {
     throw new Error("settlement store unavailable");
+  }
+}
+
+class FailingBatchCommitStore extends MemoryServerChannelStore {
+  #remainingFailures: number;
+
+  constructor(remainingFailures: number) {
+    super();
+    this.#remainingFailures = remainingFailures;
+  }
+
+  async commitSettlement(record: SettlementCommit): Promise<void> {
+    if (this.#remainingFailures > 0) {
+      this.#remainingFailures -= 1;
+      throw new Error("batch store unavailable");
+    }
+    await super.commitSettlement(record);
+  }
+}
+
+class FailingBatchClaimStore extends MemoryServerChannelStore {
+  #fail = true;
+
+  async claimBatchSettlement(record: BatchSettlementAttemptRecord) {
+    if (this.#fail) {
+      this.#fail = false;
+      throw new Error("batch claim store unavailable");
+    }
+    return super.claimBatchSettlement(record);
   }
 }
 

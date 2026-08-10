@@ -1,18 +1,19 @@
 {
   "name": "@kaspa-x402/demo-gateway",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "private": true,
   "description": "Private Cloudflare Worker for the Kaspa x402 testnet gateway.",
   "license": "MIT",
   "type": "module",
   "scripts": {
     "build": "npm --workspace @kaspa-x402/server run build && tsc -p tsconfig.json --noEmit && wrangler deploy --dry-run --outdir dist --config wrangler.jsonc",
-    "test": "npm --workspace @kaspa-x402/server run build && vitest run"
+    "test": "npm --workspace @kaspa-x402/server run build && vitest run",
+    "types:check": "wrangler types --config wrangler.jsonc --check"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.1.0-alpha.9",
-    "@kaspa-x402/covenant": "0.1.0-alpha.9",
-    "@kaspa-x402/server": "0.1.0-alpha.9",
+    "@kaspa-x402/core": "0.1.0-alpha.10",
+    "@kaspa-x402/covenant": "0.1.0-alpha.10",
+    "@kaspa-x402/server": "0.1.0-alpha.10",
     "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0"
   }

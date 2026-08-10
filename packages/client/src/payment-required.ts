@@ -3,6 +3,7 @@ import {
   KASPA_LOCK_TIME_THRESHOLD,
   decodePaymentRequiredEnvelopeHeader,
   narrowPaymentRequiredEnvelope,
+  parseBatchLaneAmount,
   parseSompiString,
   type FundingOutpoint,
   type BatchPaymentRequirements,
@@ -96,8 +97,8 @@ export function selectBatchPaymentRequired(
         requirement.scheme === "batch-settlement" &&
         supportedNetworks.includes(requirement.network) &&
         requirement.asset === "KAS" &&
-        requirement.extra.binding === "kaspa-escrow-v1" &&
-        requirement.extra.templateId === "kaspa-x402-escrow-v1"
+        requirement.extra.binding === "kaspa-escrow-v2" &&
+        requirement.extra.templateId === "kaspa-x402-escrow-v2"
       );
     },
   );
@@ -109,9 +110,7 @@ export function selectBatchPaymentRequired(
     );
   }
 
-  parseSompiString(accepted.amount);
-  parseSompiString(accepted.extra.minDepositSompi);
-  assertDaaLockTime(accepted.extra.refundTimeoutDaa);
+  validateBatchTerms(accepted);
 
   return {
     paymentRequired: narrowed,
@@ -143,8 +142,8 @@ function isSupportedKaspaRequirement(
   }
   return (
     requirement.scheme === "batch-settlement" &&
-    requirement.extra.binding === "kaspa-escrow-v1" &&
-    requirement.extra.templateId === "kaspa-x402-escrow-v1"
+    requirement.extra.binding === "kaspa-escrow-v2" &&
+    requirement.extra.templateId === "kaspa-x402-escrow-v2"
   );
 }
 
@@ -156,9 +155,32 @@ function validateSupportedRequirement(
     validateExactTerms(accepted);
   }
   if (accepted.scheme === "batch-settlement") {
-    parseSompiString(accepted.extra.minDepositSompi);
-    assertDaaLockTime(accepted.extra.refundTimeoutDaa);
+    validateBatchTerms(accepted);
   }
+}
+
+function validateBatchTerms(accepted: BatchPaymentRequirements): void {
+  const amount = parseBatchLaneAmount(accepted.amount, "batch payment amount");
+  const minimumDeposit = parseBatchLaneAmount(
+    accepted.extra.minDepositSompi,
+    "minimum deposit",
+  );
+  const reserve = parseBatchLaneAmount(
+    accepted.extra.claimReserveSompi,
+    "claim reserve",
+  );
+  const requiredInitialCapacity = amount + reserve;
+  parseBatchLaneAmount(
+    requiredInitialCapacity.toString(),
+    "initial batch capacity",
+  );
+  if (minimumDeposit < requiredInitialCapacity) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "minimum deposit does not cover the first batch charge and claim reserve",
+    );
+  }
+  assertDaaLockTime(accepted.extra.refundTimeoutDaa);
 }
 
 function validateExactTerms(accepted: ExactPaymentRequirements): void {

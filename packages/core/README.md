@@ -17,8 +17,9 @@ Implemented:
   server audience;
 - x402 v2 facilitator request, response, and supported-kind TypeScript types,
   including mandatory independent `requestHash` binding for exact requests;
-- voucher preimage and digest helpers;
+- stable-covenant-ID voucher preimage and digest helpers;
 - channel ID preimage and digest helpers;
+- signed-int64 A/S/T/V/R accounting and partial-claim transition helpers;
 - schema validation via pregenerated standalone validators (Ajv at build time only, safe for runtimes that forbid dynamic code generation);
 - semantic retry validation for accepted-offer matching and `payment-identifier`;
 - vector-driven tests against the repository conformance fixtures.

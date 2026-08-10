@@ -7,31 +7,31 @@
   "routes": [
     {
       "pattern": "demo.kaspa-x402.org",
-      "custom_domain": true
-    }
+      "custom_domain": true,
+    },
   ],
   "observability": {
-    "enabled": true
+    "enabled": true,
   },
   "triggers": {
-    "crons": ["*/15 * * * *"]
+    "crons": ["*/15 * * * *"],
   },
   "durable_objects": {
     "bindings": [
       {
         "name": "GATEWAY_STATE",
-        "class_name": "GatewayState"
-      }
-    ]
+        "class_name": "GatewayState",
+      },
+    ],
   },
   "migrations": [
     {
       "tag": "v1",
-      "new_sqlite_classes": ["GatewayState"]
-    }
+      "new_sqlite_classes": ["GatewayState"],
+    },
   ],
   "vars": {
-    "KASPA_X402_GATEWAY_ENABLED": "true",
+    "KASPA_X402_GATEWAY_ENABLED": "false",
     "KASPA_X402_NETWORK": "kaspa:testnet-10",
     "KASPA_X402_CHAIN_API_BASE": "https://api-tn10.kaspa.org",
     "KASPA_X402_PAY_TO": "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
@@ -40,6 +40,7 @@
     "KASPA_X402_EXACT_PROFILE": "standard-native",
     "KASPA_X402_BATCH_AMOUNT": "500",
     "KASPA_X402_MIN_DEPOSIT_SOMPI": "20000000",
+    "KASPA_X402_CLAIM_RESERVE_SOMPI": "10000000",
     "KASPA_X402_REFUND_TIMEOUT_DAA_DELTA": "36000",
     "KASPA_X402_MINIMUM_REFUND_LEAD_DAA": "1000",
     "KASPA_X402_MAX_TIMEOUT_SECONDS": "60",
@@ -47,12 +48,12 @@
     "KASPA_X402_RATE_LIMIT_PER_MINUTE": "60",
     "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org",
     "KASPA_X402_SITE_BASE_URL": "https://kaspa-x402.org",
-    "KASPA_X402_RELEASE_VERSION": "0.1.0-alpha.9",
+    "KASPA_X402_RELEASE_VERSION": "0.1.0-alpha.10",
     "KASPA_X402_GATEWAY_BASE_URL": "https://demo.kaspa-x402.org",
     "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED": "true",
     "KASPA_X402_CHAIN_BROADCAST_MODE": "pnn",
     "KASPA_X402_PNN_ENDPOINTS": "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json,wss://electron-10.kaspa.stream/kaspa/testnet-10/wrpc/json,wss://electron-10.kaspa.blue/kaspa/testnet-10/wrpc/json,wss://muon-10.kaspa.blue/kaspa/testnet-10/wrpc/json",
     "KASPA_X402_PNN_TIMEOUT_MS": "15000",
-    "KASPA_X402_PNN_ATTEMPTS": "2"
-  }
+    "KASPA_X402_PNN_ATTEMPTS": "2",
+  },
 }

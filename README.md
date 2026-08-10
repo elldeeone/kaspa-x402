@@ -6,7 +6,7 @@ against the Kaspa network.
 
 - Canonical reference (specs, schemas, vectors, docs, releases):
   https://kaspa-x402.org
-- Live testnet integration gateway (paid-canary-proven alpha.9):
+- Testnet-10 integration gateway:
   https://demo.kaspa-x402.org
 - Browser test client: https://kaspa-x402.org/demo/
 
@@ -14,6 +14,9 @@ Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
 by the gates in [docs/mainnet-readiness.md](docs/mainnet-readiness.md), and
 reference runtimes require explicit `allowMainnet` opt-in. Package names,
 schemas, and field names may change until the first tagged spec release.
+Alpha.10 is a clean replacement of the earlier batch binding: active runtimes
+do not read or migrate older-alpha channel state. Tagged alpha releases remain
+immutable historical snapshots.
 
 The binding ships two x402 schemes:
 
@@ -37,7 +40,7 @@ The binding ships two x402 schemes:
   "asset": "KAS",
   "amount": "<max per-request sompi>",
   "extra": {
-    "binding": "kaspa-escrow-v1"
+    "binding": "kaspa-escrow-v2"
   }
 }
 ```
@@ -47,15 +50,22 @@ default ordinary KAS payment. Optional `additive` spends and recreates a
 merchant-owned KIP-10 head; the successor increase equals the advertised exact
 amount and is the only merchant payment. Unpaid offers do not reserve or retire
 heads.
-`batch-settlement` funds a covenant-backed escrow once and meters repeated or
-variable-cost requests with off-chain vouchers. KIP-9 storage mass makes very
-small on-chain outputs uneconomic or non-constructible depending on the full
-transaction shape; the reference gateway therefore applies a conservative
-`10000000` sompi output policy. This is not a universal consensus dust constant.
-Batch-settlement vouchers can price below the on-chain policy.
-Server claims preserve the covenant continuation at exactly active funding
-minus the voucher-authorized claim; transaction fees reduce the server payout
-or come from a separate server input.
+`batch-settlement` funds a `kaspa-x402-escrow-v2` covenant and meters repeated
+or variable-cost requests with buyer-signed lifetime cumulative vouchers. A
+KIP-20 `covenantId` gives the channel stable identity and enforceable lineage
+across successors; the runtime still persists the current outpoint because the
+ID is not a reverse lookup for its live UTXO. The provider can make partial
+claims against the latest signed ceiling, top-ups preserve the settled lifetime
+total, and the buyer retains the timed refund path. The runtime persists and
+recovers the rotating current outpoint plus A (charged), S (claimed), T
+(signed ceiling), V (current value), and advertised reserve R across restart.
+KIP-9 storage mass makes very small on-chain outputs uneconomic or
+non-constructible depending on the full transaction shape; the reference
+gateway therefore applies a conservative `10000000` sompi output policy. This
+includes the advertised batch successor reserve and is not a universal
+consensus dust constant. Batch-settlement vouchers can price below the on-chain
+policy. Claim transaction fees reduce the server payout; they do not consume
+additional buyer covenant value.
 Batch refund locks are absolute DAA scores below the consensus timestamp
 boundary, and become eligible only after the chain DAA strictly exceeds the
 advertised score.
@@ -100,8 +110,8 @@ node examples/recovery/index.mjs
 
 `npm run proof:offline` exercises both exact profiles, exact replay rejection,
 KIP-10 exact-delta settlement, batch settlement idempotency, corrective
-stale-voucher handling, and tx-v1 claim/refund artifacts against mock
-adapters. Live testnet proof is fail-closed and adapter-driven; see
+stale-voucher handling, and tx-v1 claim/top-up/refund artifacts against mock
+adapters. Live Testnet-10 proof is fail-closed and adapter-driven; see
 [docs/live-testnet-proof.md](docs/live-testnet-proof.md).
 
 ## Packages

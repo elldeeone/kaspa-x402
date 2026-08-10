@@ -1,0 +1,30 @@
+{
+  "kind": "negative",
+  "name": "exact additive partial head terms",
+  "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
+  "value": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.test/file"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "20000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-exact-v2",
+          "profile": "additive",
+          "finality": "accepted",
+          "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+          "payToScriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
+          "templateId": "kaspa-x402-kip10-additive-v1"
+        }
+      }
+    ]
+  },
+  "expectedError": "invalid_kaspa_x402_payload"
+}

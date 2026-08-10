@@ -13,7 +13,8 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - verifies exact transaction output amount, pay-to script, transaction id, and finality through an injected verifier;
 - defaults exact offers to `standard-native` and can optionally select, claim,
   and atomically advance reusable KIP-10 additive heads;
-- verifies funding outpoints, escrow scripts, and cumulative vouchers through injected adapters;
+- verifies singleton KIP-20 genesis, the stable covenant ID, current outpoint,
+  escrow script, and lifetime cumulative vouchers through injected adapters;
 - serializes per-transaction or per-channel verification, handler execution, and state commit;
 - stores exact transaction replay records before returning protected content;
 - stores per-request settlement commitments before advancing channel charge state;
@@ -25,7 +26,9 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
   without exposing protected content on settlement failure;
 - exposes direct verifier and settlement helpers used by optional self-hosted facilitator endpoints;
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
-- exposes claim preview and claim execution hooks with pending-claim tracking and explicit abandon-after-reconciliation support.
+- persists A/S/T/V lane state, enforces advertised reserve R, accepts same-ID
+  top-ups, and exposes partial-claim execution and restart-recovery hooks with
+  durable pending-attempt reconciliation.
 
 Mainnet runtime use fails closed unless `allowMainnet: true` is set.
 

@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/client",
-  "version": "0.1.0-alpha.9",
+  "version": "0.1.0-alpha.10",
   "description": "Alpha client SDK for Kaspa x402.",
   "license": "MIT",
   "type": "module",
@@ -25,7 +25,7 @@
     "test": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && vitest run"
   },
   "dependencies": {
-    "@kaspa-x402/core": "0.1.0-alpha.9",
-    "@kaspa-x402/covenant": "0.1.0-alpha.9"
+    "@kaspa-x402/core": "0.1.0-alpha.10",
+    "@kaspa-x402/covenant": "0.1.0-alpha.10"
   }
 }
