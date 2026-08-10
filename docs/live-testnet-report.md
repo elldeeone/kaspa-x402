@@ -1,28 +1,25 @@
 # Live Testnet Report
 
-Status: current `0.1.0-alpha.9` funded live harness run.
+Status: current `0.1.0-alpha.10` funded live harness run.
 
-Generated: `2026-07-19T13:29:40.149Z`
+Generated: `2026-08-10T06:40:53.040Z`
 
 Network: `kaspa:testnet-10`
 
-Node: private TN10 node, Rusty Kaspa `2.0.0`, synced with UTXO index enabled.
+Node: operator-controlled private TN10 node, synced with UTXO index enabled.
 
-Virtual DAA score at run start: `521091878`
+Virtual DAA score at run start: `539852105`
 
 The proof used the NodeJS SDK built from reviewed `rusty-kaspa` commit
-`78257f273a26c4be085bab0f79437dee99ca8835`. It executed both alpha.9 exact
-profiles, two additive head shards, conflict/retry, replay, recovery, external
-head reconciliation, explicit expired-authorization rejection, and the full
-batch lifecycle. The raw report and signing
-material remain in an ignored owner-only local directory; this file contains
-only sanitized public evidence. Hosted-gateway evidence is tracked separately
-in `docs/testnet-gateway.md`.
+`78257f273a26c4be085bab0f79437dee99ca8835`. It executed all 18 required
+Alpha.10 flows. The raw report and signing material remain in an ignored
+owner-only local directory; this file contains only sanitized public evidence.
+Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 
 ## Controlled Funding Split
 
 - Transaction id:
-  `d6fde51748de5aecdc084ea0b7af79aade7a11f1ec09e5cf8651a08306fefa3d`
+  `6c2cabaa5390c08ada7db41dec9c04bfce2c5953412dee9d31704c1e5b7913b1`
 - Transaction version: `0` (`sdk-generated-transaction`)
 - Requested controlled outputs: `16` at `500000000` sompi each
 
@@ -34,7 +31,7 @@ It did not disclose or copy wallet key material.
 ### Tiny payment
 
 - Transaction id:
-  `e366df34ef29fa1538b42e934cfc79c1bb0e92c8930bdcfcd94038bdaccc59ec`
+  `3662cfaa56388a5d69c0cb6af9632ec4ed45a6b91d7b1903de28c49dfc917366`
 - Transaction version: `0`
 - Advertised amount and merchant gain: `10000000` sompi
 - Paid fee: `2000000` sompi
@@ -50,7 +47,7 @@ It did not disclose or copy wallet key material.
 ### Normal payment
 
 - Transaction id:
-  `e69837b86eac42d5eb72790d319df40d7973ee11e401c9c6d362bad42e87ec43`
+  `5628ad52f8489279dbadf94d5f6cce60e8c34c4199210b947f25dcce9025d97e`
 - Transaction version: `0`
 - Advertised amount and merchant gain: `100000000` sompi
 - Paid fee: `2000000` sompi
@@ -63,15 +60,15 @@ It did not disclose or copy wallet key material.
   `invalid_transaction_state`
 
 In both cases the merchant output equalled the advertised amount exactly. The
-tiny run records the actual accepted TN10 result and the SDK policy calculation
+tiny run records the accepted TN10 result and SDK policy calculation
 separately; it does not claim a universal Kaspa minimum payment or fee.
 
-## Corrected KIP-10 Additive Exact
+## KIP-10 Additive Exact
 
 Two independent head UTXOs were funded:
 
-- `a5039d62b7bc3a608eee5552c3a9f9c102374eda47957e61faa58ec1bd836028:0`
-- `18b4984ce0406d86deb90cd9d9aa61a935ea382cfe77c1149f36fbe4ee058738:0`
+- `397be8b71dee6e7622a49460deed265b034bc3a1cf07b33891293131bfba4d63:0`
+- `ad5f70975b88da73f90776c763241fbf7967a4b60c56bd63cdbfa7cf1dbd2790:0`
 
 Each started at `100000000` sompi with a `10000000` sompi application
 anti-churn threshold.
@@ -79,7 +76,7 @@ anti-churn threshold.
 The primary additive payment proved:
 
 - Transaction id:
-  `e518f0465d24c3b2b15e21fa88db3b91c306d6ee780d354a2e021f99139175f2`
+  `1a7f19ce3a8063a7dade02026b120a0a2e2d07e0dd508f6acca7d01d3f470ad9`
 - Transaction version: `1`
 - Prior head amount: `100000000` sompi
 - Successor amount: `200000000` sompi
@@ -101,101 +98,126 @@ the payment.
 Two different signed transactions raced the same version-0 head:
 
 - Winner:
-  `721e38b35d47871464be6b435737f08af06c5a322d4d7ad27a090fa7b306521c`
+  `5f741e04445522ed4d5ce5c1e3c924213fe9ef375fec0ea5a5fdcde07eeeefad`
 - Losing candidate:
-  `9af250b482978a04b54231d839b2ef4549ff471f551f1b38e65a468a23648844`
+  `17bb994eac2c9c0c7d0f85ce8a11ede6acfe71e201a2d99587a9ec838b76edb3`
 - Refreshed retry:
-  `9f4c42a81f89a3387cfd6800b75069c821642ef551d6326e6e90aca17a9a56aa`
+  `8de9465702d3629af86a589c930916e08e915e0f1836ae2a77ef2d2c63f132fc`
 
 Exactly one initial request returned `200`; the loser received a fresh `402`
 and then settled successfully against refreshed head state. Protected work ran
-twice total: once for the winner and once for the retry. Both registered head
-chains were used during the complete run.
+twice total: once for the winner and once for the retry.
 
 ## Verification And Recovery
 
-- A mutated request-authorization signature returned a corrective `402`
-  `invalid_payload`; the protected handler ran zero times and no transaction
-  was broadcast.
-- A correctly signed request authorization with an expired `expiresAt` returned
-  a corrective `402` `invalid_payload`; the protected handler ran zero times
-  and no transaction was broadcast.
-- Public verify-only calls rejected otherwise valid but unobserved exact
-  transactions at the authenticated finality gate before direct settlement.
+- Mutated and expired request authorizations each returned a corrective `402`
+  `invalid_payload`; protected work ran zero times and no transaction was
+  broadcast.
+- Public verify-only calls rejected valid but unobserved exact transactions at
+  the authenticated finality gate before direct settlement.
 - Transaction
-  `cc20fe70cad230db5cf56da73cd2d8bfd53cc02bfd8799524b9661319a13ecbf`
+  `d3d39c239f87a6fd309fbce3ba9d2c2ac2ae0e104ec8a1bdd59cfb7e086e9e6a`
   was accepted by TN10 and then subjected to an injected post-broadcast runtime
-  failure. A new server instance over the preserved state store reconciled the
-  accepted output and executed the protected handler exactly once on retry.
+  failure. A new server instance over preserved state reconciled it and ran the
+  protected handler exactly once on retry.
 - Transaction
-  `7071c42a0045212e64a699e11bd160dd8f6ac234f41604c79fd53b0237104651`
-  advanced a head outside the server state transition. Explicit trusted
-  candidate evidence reconciled the durable head from version `2` to `3`; no
-  address-only inference was used.
+  `81a3319e5aa4c422f99066462e5ff908f274238a9fda21d5bfe9a5ea692911af`
+  externally advanced a head. Trusted candidate evidence reconciled the
+  durable head from version `2` to `3`; no address-only inference was used.
 
-## Batch Deposit, Claim, Replay, And Refund
+## KIP-20 Batch Lifecycle
+
+Stable covenant ID:
+`adf6416e8308ae10b854f4ff1eb04f27139c50aafe98cb20a9e50b28c88eb8db`
+
+### Singleton genesis and vouchers
 
 - Deposit transaction:
-  `d46bfd1b61821dcb3405b58b77c63d513f6aa5dcb7e5907ea6990ee39b794da3`
-- Deposit amount: `400000000` sompi
-- First charge: `100000000` sompi
-- Voucher-only second charge: `100000000` sompi
-- Cumulative authorized charge: `200000000` sompi
-- Claim transaction:
-  `5f55b481ae540b282594b9e6dd59cc900d860a8135c46d94399422c5f3c653bb`
-- Claim server output: `198000000` sompi
-- Claim fee: `2000000` sompi
-- Continuation amount: `200000000` sompi
-- Absolute refund DAA: `521093678`
-- Refund transaction:
-  `b54110d380b63d90771c060b2a55b585d2f5e1b290ba6131bba11813dd1109e7`
-- Refund amount: `198000000` sompi
-- Refund fee: `2000000` sompi
+  `4faa3fc2f90cc09e07aa03d112e089558c63fb28b2bb7c16d64ab8c52ce45668`
+- Transaction version: `1`
+- Singleton KIP-20 genesis independently verified: yes
+- Funded covenant value after fee: `498000000` sompi
+- Initial charge and signed lifetime ceiling: `100000000` sompi
+- Voucher-only second charge and new lifetime ceiling: `200000000` sompi
+- Finality: `accepted`
 
-The old voucher/script epoch was rejected by TN10. The claim continuation
-equalled deposit funding minus the authorized cumulative claim, and the
-server-paid fee reduced the payout rather than the continuation. The harness
-waited until contextual DAA was strictly greater than the absolute timeout
-before submitting the refund.
+### Two partial claims against one voucher
+
+- First claim transaction:
+  `7037c2cea156cbe4947c716f6bd29ccf14a892d9214cf728f05ab597244bb317`
+- First gross claim: `100000000` sompi
+- First server output: `98000000` sompi
+- First continuation value: `398000000` sompi
+- Second claim transaction:
+  `450a67b25e61bc3009e01723fa4a28352f076642eef940038fe35292a58f987e`
+- Second gross claim: `50000000` sompi
+- Second server output: `48000000` sompi
+- Second continuation value: `348000000` sompi
+- Lifetime gross claimed after both claims: `150000000` sompi
+- Buyer-signed lifetime ceiling used for both claims: `200000000` sompi
+- Claim fee per transaction: `2000000` sompi
+- Finality: `accepted` for both claims
+
+Both claims preserved the covenant ID while advancing the active outpoint and
+state script. The second claim reused the same cumulative voucher without
+exceeding its ceiling.
+
+### Same-lineage top-up and restart reload
+
+- Top-up transaction:
+  `1c78135a1de56eb8d76304e01f7b22eab6760c737b9d72d2a344155fc460d4c3`
+- Added value: `402000000` sompi
+- Successor covenant value: `750000000` sompi
+- Lifetime actual charge and new signed ceiling: `600000000` sompi
+- Lifetime gross claimed remained: `150000000` sompi
+- Finality: `accepted`
+
+The top-up retained the same covenant ID and strictly increased the covenant
+value. A fresh client/server runtime reloaded the genesis evidence, top-up
+evidence, active outpoint, channel state, and the exact pre-broadcast claim
+artifact. No open claim attempt survived the accepted top-up.
+
+### Stale-head rejection and terminal refund
+
+- A stale claim transaction against the spent genesis outpoint was submitted
+  to TN10 and definitively rejected while the current continuation remained
+  present.
+- Absolute refund DAA: `539853905`
+- Refund lock time: `539853906`
+- Observed DAA at submission: `539853936`
+- Refund transaction:
+  `9557bf79fa621524db03d01bcc0f4f545ec9b4b9857642e2ba707d12cdae484f`
+- Refund input: `750000000` sompi
+- Refund output: `748000000` sompi
+- Refund fee: `2000000` sompi
+- Finality: `accepted`
+
+The refund builder, persisted artifact, and broadcast transaction IDs matched.
+Restart reconciliation reloaded the exact signed bytes and captured head,
+applied the accepted attempt atomically, and did not rebroadcast.
+
+Public TN10 REST independently returned all five batch transactions as accepted
+version-1 native-subnetwork transactions with accepting block hashes.
 
 ## Required Flow Status
 
-- tiny and normal standard-native exact settlement: passed
-- corrected KIP-10 additive exact-delta settlement: passed
-- multiple additive head shards: passed
-- concurrent additive conflict and loser refresh: passed
-- duplicate exact settlement idempotency: passed
-- invalid exact signature rejected before protected work: passed
-- expired exact authorization rejected before protected work: passed
-- post-broadcast runtime restart and trusted settlement reconciliation: passed
-- external additive head advancement and trusted reconciliation: passed
-- batch deposit and voucher-only settlement: passed
-- batch claim, old-voucher rejection, and post-timeout refund: passed
+All 18 required flows passed:
+
+- exact settlement, additive-head conflict/retry, idempotency, invalid and
+  expired authorization rejection, restart recovery, and external advancement;
+- verified singleton KIP-20 genesis, deposit-voucher, and voucher-only reuse;
+- two partial claims using one cumulative voucher, same-lineage top-up, and
+  durable restart reload;
+- stale-head and cross-scheme replay rejection;
+- terminal post-timeout refund with deterministic artifact recovery.
 
 ## Mainnet Read-Only And Offline Check
 
-The supplied mainnet node was queried over gRPC without any transaction method.
-At the check it reported:
+The latest separate mainnet read-only check reported a synced Rusty Kaspa
+`2.0.1` node with UTXO index enabled beyond the recorded Toccata activation
+score. `npm run proof:mainnet:offline` constructs and signs deterministic
+synthetic standard-native v0 and additive v1 shapes without real UTXOs, funds,
+transaction submission, spend, or broadcast.
 
-- network: `mainnet`
-- Rusty Kaspa version: `2.0.1`
-- synced: `true`
-- UTXO index: `true`
-- virtual DAA score: `486826858`
-- priority and normal fee estimates: `100` sompi/gram
-
-The DAA score is beyond the recorded Toccata activation score `474165565`.
-
-`npm run proof:mainnet:offline` then constructed and signed deterministic
-synthetic shapes with no real UTXOs or funds and no broadcast path:
-
-- standard-native v0 synthetic id:
-  `b0e2802776efb3a67a278d302321fdcc2c1df853416bfd2ae67b7b9276df234c`,
-  mass `11717`, exact merchant gain `100000000`, payer cost `102000000`;
-- additive v1 synthetic id:
-  `1fde93aa9831030efca60a1e3db4b900b8f0f41f42f40e83f9285dbc4ad1d6c9`,
-  mass `1286`, exact successor delta `100000000`, payer cost `102000000`.
-
-No mainnet wallet, real signature authority, UTXO, transaction submission,
-spend, or broadcast was used. This is compatibility evidence, not a mainnet
-readiness claim. Mainnet remains blocked by `docs/mainnet-readiness.md`.
+This is compatibility evidence, not a mainnet readiness claim. Mainnet remains
+blocked by `docs/mainnet-readiness.md`.

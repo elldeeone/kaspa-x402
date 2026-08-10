@@ -290,11 +290,27 @@ The expected current live proof must include:
   successful retry;
 - duplicate idempotency and invalid-signature rejection before protected work;
 - post-broadcast runtime recovery and trusted external head reconciliation;
-- batch deposit-voucher settlement;
-- batch voucher-only settlement;
-- batch claim transaction construction and broadcast;
+- verified singleton KIP-20 batch genesis and deposit-voucher settlement;
+- batch voucher-only settlement and two partial claims against one cumulative
+  voucher;
+- same-covenant-ID top-up with lifetime accounting and restart reload;
 - replay rejection across exact and batch-settlement;
-- batch refund transaction construction and broadcast after timeout.
+- batch refund transaction construction, deterministic artifact recovery, and
+  broadcast after timeout.
+
+Checked for alpha.10 on 2026-08-10:
+
+- the funded TN10 live proof completed with status `complete` across all 18
+  required flows;
+- singleton KIP-20 genesis, two partial claims, same-lineage top-up, restart
+  reload, stale-head rejection, and terminal refund retained one stable
+  covenant ID;
+- exact standard-native and additive settlement, conflict/retry, replay,
+  authorization rejection, and recovery all passed;
+- public TN10 REST independently returned all five batch lifecycle
+  transactions as accepted version-1 transactions;
+- the sanitized evidence and transaction ids are recorded in
+  `docs/live-testnet-report.md`.
 
 Checked for alpha.8 on 2026-07-15:
 
