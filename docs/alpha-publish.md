@@ -4,9 +4,9 @@ Status: `0.1.0-alpha.10` is published to npm, tagged, released, and deployed on
 `kaspa:testnet-10`. Publishes require npm authorization and must not happen
 accidentally from CI or an unauthenticated shell.
 
-Registry note: the `alpha` dist-tag is the supported prerelease install path.
-The `latest` dist-tag is not advertised for alpha releases and may lag until a
-stable version can own `latest`.
+Registry note: the `latest` and `alpha` dist-tags both resolve to the current
+published prerelease. Exact prerelease versions remain the reproducible install
+path.
 
 Registry workflow note: npm's current release flow stages packages before a
 human proof-of-presence approval. Use npm 11.15 or later to run
@@ -136,8 +136,8 @@ Completed on 2026-08-10:
   `3cf53546844965e7a3f2f5d4bf90a563b869dcfc`, client
   `901c9b386cbdf01663e8aa57d69ab8321991b9d2`, and server
   `6a78bf8d66c64a53901bbe32c7f198b69e93344d`;
-- the npm `alpha` dist-tag resolves to `0.1.0-alpha.10` for all four packages,
-  while `latest` remains on `0.1.0-alpha.4`;
+- the npm `latest` and `alpha` dist-tags both resolve to `0.1.0-alpha.10` for
+  all four packages;
 - Pages deployment `8db44e87-c332-42cc-b956-f5748c67fb41` serves the locked
   snapshot from both `kaspa-x402.org` and `www.kaspa-x402.org`;
 - the gateway first deployed fail-closed as Worker

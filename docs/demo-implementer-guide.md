@@ -33,8 +33,8 @@ Install the exact prerelease explicitly:
 npm install @kaspa-x402/core@0.1.0-alpha.10 @kaspa-x402/client@0.1.0-alpha.10
 ```
 
-The registry `alpha` tag resolves to the same Alpha.10 package set. The hosted
-gateway package is not published.
+The registry `latest` and `alpha` tags both resolve to the same Alpha.10 package
+set. The hosted gateway package is not published.
 
 ## Validate Schemas And Vectors
 
