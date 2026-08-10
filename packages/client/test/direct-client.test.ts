@@ -7,6 +7,7 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
   exactRequestAuthorizationDigest,
+  hexToBytes,
   kaspaSettlementExtensions,
   mcpPaymentRequiredResult,
   mcpToolCallFingerprint,
@@ -27,6 +28,7 @@ import type {
 } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
+  escrowScriptPublicKey,
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
@@ -49,8 +51,11 @@ import {
   type FundingPolicy,
   type FundingProviderUtxo,
   type FundingSourceKind,
+  type FundingTransitionReconciler,
   type HeaderBag,
   type HttpResponseLike,
+  type RefundAttemptRecord,
+  type RefundReconciler,
   type RefundTransactionBuilder,
   type SendTransactionResult,
   type VoucherSignRequest,
@@ -61,6 +66,7 @@ const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const COMMITMENT = "44".repeat(32);
 const FUNDING_TX = "55".repeat(32);
+const COVENANT_ID = "5a".repeat(32);
 const REFUND_TX = "66".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_HEAD_ID = "89".repeat(32);
@@ -103,8 +109,29 @@ describe("direct-mode client", () => {
 
     const channels = await store.loadChannels({});
     expect(channels).toHaveLength(1);
-    expect(channels[0]?.signedCumulativeAmount).toBe("100");
+    expect(channels[0]?.signedMaxClaimable).toBe("100");
     expect(channels[0]?.chargedCumulativeAmount).toBe("100");
+  });
+
+  it("rejects a batch offer whose minimum deposit omits the claim reserve", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(
+          makeRequired({
+            amount: "995",
+            minDepositSompi: "1000",
+            claimReserveSompi: "10",
+          }),
+        ),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow(
+      "minimum deposit does not cover the first batch charge and claim reserve",
+    );
+    expect(provider.deposits).toHaveLength(0);
   });
 
   it("reuses an active channel and signs a monotonic cumulative voucher", async () => {
@@ -137,6 +164,49 @@ describe("direct-mode client", () => {
     expect(
       voucherBearingPayload(secondPayment.paymentPayload).voucher.amount,
     ).toBe("175");
+  });
+
+  it("tops up an under-capacity lane as a same-covenant deposit transition", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+
+    const topped = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "950" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    expect(topped.openedChannel).toBe(false);
+    expect(topped.paymentPayload.payload.type).toBe("deposit-voucher");
+    expect(provider.topUps).toEqual([{ targetFundingAmount: "2000" }]);
+    expect(topped.channel?.covenantId).toBe(first.channel?.covenantId);
+    expect(voucherBearingPayload(topped.paymentPayload).voucher.amount).toBe(
+      "1050",
+    );
+  });
+
+  it("tops up a lane before a voucher would consume its advertised claim reserve", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "900" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "900"));
+
+    const topped = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "95" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    expect(topped.paymentPayload.payload.type).toBe("deposit-voucher");
+    expect(provider.topUps).toEqual([{ targetFundingAmount: "2000" }]);
   });
 
   it("rejects the wrong funding source before funding an escrow deposit", async () => {
@@ -729,7 +799,7 @@ describe("direct-mode client", () => {
     ).rejects.toThrow("request hash");
   });
 
-  it("rejects ambiguous txid-only deposit results", async () => {
+  it("rejects prepared genesis whose successor is outside its transaction", async () => {
     const provider = new FakeFundingProvider();
     provider.depositMode = "txid-only-ambiguous";
     const client = makeClient({ provider, store: new MemoryChannelStore() });
@@ -741,10 +811,10 @@ describe("direct-mode client", () => {
           url: "https://api.example.test/data",
         },
       ),
-    ).rejects.toThrow("resolvable escrow outpoint");
+    ).rejects.toThrow("successor must belong to the signed transaction");
   });
 
-  it("rejects deposit results whose resolved UTXO is below the minimum deposit", async () => {
+  it("rejects deposit results whose resolved UTXO is below the funding target", async () => {
     const provider = new FakeFundingProvider();
     provider.depositMode = "outpoint-underfunded";
     const client = makeClient({ provider, store: new MemoryChannelStore() });
@@ -756,22 +826,275 @@ describe("direct-mode client", () => {
           url: "https://api.example.test/data",
         },
       ),
-    ).rejects.toThrow("below the required minimum deposit");
+    ).rejects.toThrow("below the required funding target");
   });
 
-  it("rejects underfunded offers before funding escrow", async () => {
+  it("recovers a prepared genesis after transport uncertainty without rebuilding it", async () => {
     const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    provider.fundingSendError = new Error("transport lost after submission");
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const required = encodePaymentRequiredHeader(
+      makeRequired({ amount: "100" }),
+    );
+
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow("transport lost after submission");
+    const channelId = provider.deposits[0]!.channelId;
+    const attempt = await store.loadFundingTransitionAttempt(channelId);
+    expect(attempt).toMatchObject({
+      kind: "genesis",
+      channelId,
+      transaction: "ad".repeat(32),
+      transactionId: FUNDING_TX,
+      status: "pending",
+    });
+    await expect(store.loadChannels({})).resolves.toHaveLength(0);
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow("reconcile it before reopening");
+    expect(provider.deposits).toHaveLength(1);
+
+    const restartedStore = new MemoryChannelStore([], [], [attempt!]);
+    provider.utxos.push(
+      provider.pendingFunding.get(attempt!.transaction)!.successor,
+    );
+    const recoveringClient = makeClient({
+      provider,
+      store: restartedStore,
+      fundingTransitionReconciler: {
+        async reconcileFundingTransition(persisted) {
+          return {
+            status: "accepted",
+            transactionId: persisted.transactionId,
+            finality: "accepted",
+          };
+        },
+      },
+    });
+    const recovered = await recoveringClient.reconcileFundingTransition(
+      channelId.toUpperCase(),
+    );
+    expect(recovered).toMatchObject({
+      channelId,
+      kind: "genesis",
+      transactionId: FUNDING_TX,
+      finality: "accepted",
+      accepted: true,
+      channel: {
+        id: channelId,
+        activeOutpoint: attempt!.intendedSuccessor.outpoint,
+        requiresDepositVoucher: true,
+      },
+    });
+    await expect(
+      recoveringClient.reconcileFundingTransition(channelId),
+    ).resolves.toEqual(recovered);
+    const resumed = await recoveringClient.createPayment(required, {
+      url: "https://api.example.test/data",
+    });
+    expect(resumed.openedChannel).toBe(false);
+    expect(resumed.paymentPayload.payload.type).toBe("deposit-voucher");
+    expect(provider.deposits).toHaveLength(1);
+  });
+
+  it("keeps a broadcast-only top-up on its exact captured head until reconciliation", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+    const [captured] = await store.loadChannels({});
+    provider.fundingSendFinality = "broadcast";
 
     await expect(
       client.createPayment(
-        encodePaymentRequiredHeader(makeRequired({ amount: "1001" })),
-        {
-          url: "https://api.example.test/data",
-        },
+        encodePaymentRequiredHeader(makeRequired({ amount: "950" })),
+        { url: "https://api.example.test/data" },
       ),
-    ).rejects.toThrow("minimum deposit cannot cover");
-    expect(provider.deposits).toHaveLength(0);
+    ).rejects.toThrow("reconcile the persisted transaction");
+    const attempt = await store.loadFundingTransitionAttempt(captured!.id);
+    expect(attempt).toMatchObject({
+      kind: "top-up",
+      expectedChannel: {
+        activeOutpoint: captured!.activeOutpoint,
+        chargedCumulativeAmount: "100",
+        claimedCumulativeAmount: "0",
+        signedMaxClaimable: "100",
+      },
+      intendedSuccessor: {
+        amount: "2000",
+      },
+      status: "broadcast",
+      finality: "broadcast",
+    });
+    await expect(
+      store.applyFundingTransitionAttempt({
+        kind: "top-up",
+        channelId: captured!.id,
+        transactionId: "ff".repeat(32),
+        finality: "accepted",
+        evidence: {
+          covenantId: captured!.covenantId,
+          spentOutpoint: captured!.activeOutpoint,
+          successorOutpoint: attempt!.intendedSuccessor.outpoint,
+          successorScriptPublicKey:
+            attempt!.intendedSuccessor.scriptPublicKey,
+          successorAmount: attempt!.intendedSuccessor.amount,
+          authorizedSuccessorCount: 1,
+        },
+      }),
+    ).rejects.toThrow("transaction id does not match");
+    await expect(
+      store.saveChannel({ ...captured!, status: "suspicious" }),
+    ).rejects.toThrow("open funding transition");
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "50" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("unresolved");
+    expect(provider.topUps).toHaveLength(1);
+
+    const restartedStore = new MemoryChannelStore(
+      await store.loadChannels({}),
+      [],
+      [attempt!],
+    );
+    provider.utxos.push(
+      provider.pendingFunding.get(attempt!.transaction)!.successor,
+    );
+    const recoveringClient = makeClient({
+      provider,
+      store: restartedStore,
+      fundingTransitionReconciler: {
+        async reconcileFundingTransition(persisted) {
+          return {
+            status: "accepted",
+            transactionId: persisted.transactionId.toUpperCase(),
+            finality: "confirmed",
+          };
+        },
+      },
+    });
+    const recovered = await recoveringClient.reconcileFundingTransition(
+      captured!.id.toUpperCase(),
+    );
+    expect(recovered).toMatchObject({
+      kind: "top-up",
+      accepted: true,
+      finality: "confirmed",
+      channel: {
+        activeOutpoint: attempt!.intendedSuccessor.outpoint,
+        fundingAmount: "2000",
+        chargedCumulativeAmount: "100",
+        claimedCumulativeAmount: "0",
+        signedMaxClaimable: "100",
+        requiresDepositVoucher: true,
+      },
+    });
+    const appliedAttempt = await restartedStore.loadFundingTransitionAttempt(
+      captured!.id,
+    );
+    expect(
+      () =>
+        new MemoryChannelStore(
+          [recovered.channel!],
+          [],
+          [appliedAttempt!],
+        ),
+    ).not.toThrow();
+  });
+
+  it("requires trusted absence before releasing a broadcast genesis for retry", async () => {
+    const provider = new FakeFundingProvider();
+    provider.fundingSendFinality = "broadcast";
+    const store = new MemoryChannelStore();
+    const required = encodePaymentRequiredHeader(
+      makeRequired({ amount: "100" }),
+    );
+    const client = makeClient({
+      provider,
+      store,
+      fundingTransitionReconciler: {
+        async reconcileFundingTransition(attempt) {
+          return {
+            status: "absent",
+            transactionId: attempt.transactionId,
+            reason: "authoritative rejection",
+          };
+        },
+      },
+    });
+
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow("not accepted");
+    const channelId = provider.deposits[0]!.channelId;
+    await expect(
+      client.reconcileFundingTransition(channelId),
+    ).resolves.toMatchObject({ accepted: false, finality: "absent" });
+    await expect(
+      store.loadFundingTransitionAttempt(channelId),
+    ).resolves.toBeUndefined();
+
+    provider.fundingSendFinality = "accepted";
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).resolves.toMatchObject({ openedChannel: true });
+    expect(provider.deposits).toHaveLength(2);
+  });
+
+  it("rejects accepted genesis evidence when the funding transaction has another output", async () => {
+    const provider = new FakeFundingProvider();
+    provider.genesisTotalOutputCount = 2;
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("single-output KIP-20 covenant");
+    const attempt = await store.loadFundingTransitionAttempt(
+      provider.deposits[0]!.channelId,
+    );
+    expect(attempt).toMatchObject({
+      status: "broadcast",
+      transactionId: FUNDING_TX,
+    });
+    await expect(store.loadChannels({})).resolves.toHaveLength(0);
+  });
+
+  it("funds the advertised minimum that includes the first charge and reserve", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await client.createPayment(
+      encodePaymentRequiredHeader(
+        makeRequired({ amount: "1001", minDepositSompi: "1011" }),
+      ),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+
+    expect(provider.deposits).toEqual([
+      { amount: "1011", channelId: expect.any(String) },
+    ]);
   });
 
   it("marks a channel suspicious when settlement state identifies another channel", async () => {
@@ -866,7 +1189,7 @@ describe("direct-mode client", () => {
         channelState: channelState(
           payment.channel!,
           "100",
-          payment.channel!.signedCumulativeAmount,
+          payment.channel!.signedMaxClaimable,
         ),
       }),
     };
@@ -966,22 +1289,28 @@ describe("direct-mode client", () => {
       firstPayment,
       makeSettlement(firstPayment.channel!, "100"),
     );
+    const successorScriptPublicKey = v2EscrowScriptPublicKey(
+      firstPayment.channel!,
+      "100",
+    );
     provider.utxos.push({
       outpoint: replacementOutpoint,
+      covenantId: firstPayment.channel!.covenantId,
       amount: "900",
       address: firstPayment.channel!.escrowAddress,
-      scriptPublicKey: firstPayment.channel!.activeScriptPublicKey,
+      scriptPublicKey: successorScriptPublicKey,
     });
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: {
-        ...channelState(firstPayment.channel!, "100", "0"),
+        ...channelState(firstPayment.channel!, "100", "100"),
         activeOutpoint: replacementOutpoint,
+        activeScriptPublicKey: successorScriptPublicKey,
         fundingAmount: "900",
         claimedCumulativeAmount: "100",
       },
       voucherState: {
-        amount: "0",
+        amount: "100",
         signature: "aa".repeat(64),
       },
     });
@@ -999,8 +1328,63 @@ describe("direct-mode client", () => {
       voucherBearingPayload(payment.paymentPayload).fundingOutpoint,
     ).toEqual(replacementOutpoint);
     expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
-      "50",
+      "150",
     );
+  });
+
+  it("rejects corrective state whose script does not encode its claimed amount", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      verifyVoucherSignature: () => true,
+    });
+    const firstPayment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    await client.applySettlement(
+      firstPayment,
+      makeSettlement(firstPayment.channel!, "100"),
+    );
+    const [original] = await store.loadChannels({});
+    if (!original) throw new Error("missing stored channel");
+    const replacementOutpoint = { txid: "78".repeat(32), index: 0 };
+    provider.utxos.push({
+      outpoint: replacementOutpoint,
+      covenantId: original.covenantId,
+      amount: "900",
+      address: original.escrowAddress,
+      scriptPublicKey: original.activeScriptPublicKey,
+    });
+    const correctiveRequired = makeRequired({
+      amount: "50",
+      channelState: {
+        ...channelState(original, "100", "100"),
+        activeOutpoint: replacementOutpoint,
+        fundingAmount: "900",
+        claimedCumulativeAmount: "100",
+      },
+      voucherState: {
+        amount: "100",
+        signature: "aa".repeat(64),
+      },
+    });
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(correctiveRequired), {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow(
+      "corrective active script does not match lifetime settled accounting",
+    );
+
+    const [afterRejection] = await store.loadChannels({});
+    expect(afterRejection).toEqual(original);
+    expect(afterRejection?.status).toBe("active");
   });
 
   it("rejects corrective channel state without voucher proof", async () => {
@@ -1053,9 +1437,10 @@ describe("direct-mode client", () => {
       ...stored,
       chargedCumulativeAmount: "300",
       claimedCumulativeAmount: "250",
-      signedCumulativeAmount: "50",
+      signedMaxClaimable: "300",
       latestVoucher: {
-        amount: "50",
+        covenantId: stored.covenantId,
+        amount: "300",
         signature: "dd".repeat(64),
       },
     });
@@ -1069,7 +1454,7 @@ describe("direct-mode client", () => {
 
     expect(payment.openedChannel).toBe(false);
     expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
-      "125",
+      "375",
     );
   });
 
@@ -1607,13 +1992,21 @@ describe("direct-mode client", () => {
     provider.daa = "999";
     provider.sendFinality = "accepted";
     const store = new MemoryChannelStore();
+    const refundDigest = "dd".repeat(32);
+    const signedDigests: string[] = [];
     const client = makeClient({
       provider,
       store,
       refundBuilder: {
         async buildRefundTransaction(request) {
           expect(request.refundAmount).toBe("1000");
-          return { transaction: "ab".repeat(32) };
+          expect(await request.signDigest(refundDigest)).toBe("cc".repeat(64));
+          signedDigests.push(refundDigest);
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
         },
       },
     });
@@ -1634,10 +2027,13 @@ describe("direct-mode client", () => {
     provider.daa = "1001";
     await expect(client.listRefundableChannels()).resolves.toHaveLength(1);
 
-    const refund = await client.refundChannel(payment.channel!.id);
+    const refund = await client.refundChannel(
+      payment.channel!.id.toUpperCase(),
+    );
     expect(refund.transactionId).toBe(REFUND_TX);
     expect(refund.accepted).toBe(true);
     expect(refund.channel.status).toBe("refunded");
+    expect(signedDigests).toEqual([refundDigest]);
   });
 
   it("does not mark a channel refunded for broadcast-only refund submission", async () => {
@@ -1648,9 +2044,23 @@ describe("direct-mode client", () => {
     const client = makeClient({
       provider,
       store,
+      refundReconciler: {
+        async reconcileRefund(attempt) {
+          return {
+            status: "unknown",
+            transactionId: attempt.transactionId,
+            reason: "not yet indexed",
+          };
+        },
+      },
       refundBuilder: {
-        async buildRefundTransaction() {
-          return { transaction: "ab".repeat(32) };
+        async buildRefundTransaction(request) {
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
         },
       },
     });
@@ -1665,6 +2075,31 @@ describe("direct-mode client", () => {
 
     expect(refund.accepted).toBe(false);
     expect(refund.finality).toBe("broadcast");
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({
+      transaction: "ab".repeat(32),
+      transactionId: REFUND_TX,
+      status: "broadcast",
+      finality: "broadcast",
+    });
+    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "refund attempt is unresolved",
+    );
+    const sendsBeforeReconcile = provider.sendCount;
+    provider.utxos.length = 0;
+    await expect(
+      client.reconcileRefund(payment.channel!.id),
+    ).resolves.toMatchObject({
+      accepted: false,
+      finality: "unknown",
+      transactionId: REFUND_TX,
+    });
+    expect(provider.sendCount).toBe(sendsBeforeReconcile);
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({ status: "broadcast", finality: "broadcast" });
+    await expect(client.listRefundableChannels()).resolves.toHaveLength(0);
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("active");
   });
@@ -1678,8 +2113,13 @@ describe("direct-mode client", () => {
       provider,
       store,
       refundBuilder: {
-        async buildRefundTransaction() {
-          return { transaction: "ab".repeat(32), refundAmount: "999" };
+        async buildRefundTransaction(request) {
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: "999",
+          };
         },
       },
     });
@@ -1696,6 +2136,221 @@ describe("direct-mode client", () => {
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("active");
   });
+
+  it("atomically applies a durable refund attempt only against its captured head", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const channel = payment.channel!;
+    const attempt: RefundAttemptRecord = {
+      channelId: channel.id,
+      covenantId: channel.covenantId,
+      activeOutpoint: channel.activeOutpoint,
+      activeScriptPublicKey: channel.activeScriptPublicKey,
+      fundingAmount: channel.fundingAmount,
+      channelStatus: channel.status,
+      refundAmount: channel.fundingAmount,
+      transaction: "ab".repeat(32),
+      transactionId: REFUND_TX,
+      status: "pending",
+    };
+
+    await store.claimRefundAttempt(attempt);
+    await expect(store.claimRefundAttempt(attempt)).rejects.toThrow(
+      "already pending",
+    );
+    const changed = {
+      ...channel,
+      activeOutpoint: { txid: "67".repeat(32), index: 0 },
+    };
+    await expect(store.saveChannel(changed)).rejects.toThrow("open refund");
+    await expect(
+      store.saveChannel({ ...channel, id: channel.id.toUpperCase() }),
+    ).rejects.toThrow("open refund");
+    await expect(store.retireChannel(channel.id)).rejects.toThrow(
+      "open refund",
+    );
+    await expect(store.deleteChannel(channel.id)).rejects.toThrow(
+      "open refund",
+    );
+    expect(() => new MemoryChannelStore([changed], [attempt])).toThrow(
+      "does not match channel state",
+    );
+    expect(
+      () =>
+        new MemoryChannelStore(
+          [channel],
+          [{ ...attempt, status: "corrupt" as never }],
+        ),
+    ).toThrow("does not match channel state");
+    await expect(
+      store.applyRefundAttempt({
+        channelId: channel.id,
+        transactionId: REFUND_TX,
+        finality: "broadcast" as never,
+      }),
+    ).rejects.toThrow("accepted finality");
+    const applied = await store.applyRefundAttempt({
+      channelId: channel.id,
+      transactionId: REFUND_TX,
+      finality: "accepted",
+    });
+    expect(applied.channel.status).toBe("refunded");
+    expect(applied.attempt.status).toBe("applied");
+    await expect(store.saveChannel(applied.channel)).rejects.toThrow(
+      "terminal refund",
+    );
+    await expect(store.retireChannel(channel.id)).rejects.toThrow(
+      "terminal refund",
+    );
+    await expect(store.deleteChannel(channel.id)).rejects.toThrow(
+      "terminal refund",
+    );
+    await expect(
+      store.applyRefundAttempt({
+        channelId: channel.id,
+        transactionId: "67".repeat(32),
+        finality: "accepted",
+      }),
+    ).rejects.toThrow("transaction id does not match");
+    await expect(store.loadRefundAttempt(channel.id)).resolves.toMatchObject({
+      status: "applied",
+    });
+  });
+
+  it("recovers a pending refund after a send exception and is idempotent", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    provider.sendError = new Error("transport lost after submission");
+    const store = new MemoryChannelStore();
+    const refundBuilder: RefundTransactionBuilder = {
+      async buildRefundTransaction(request) {
+        await request.signDigest("dd".repeat(32));
+        return {
+          transaction: "ab".repeat(32),
+          transactionId: REFUND_TX,
+          refundAmount: request.refundAmount,
+        };
+      },
+    };
+    const client = makeClient({ provider, store, refundBuilder });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "transport lost",
+    );
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({
+      transaction: "ab".repeat(32),
+      transactionId: REFUND_TX,
+      activeOutpoint: payment.channel!.activeOutpoint,
+      activeScriptPublicKey: payment.channel!.activeScriptPublicKey,
+      covenantId: payment.channel!.covenantId,
+      refundAmount: payment.channel!.fundingAmount,
+      status: "pending",
+    });
+
+    const persistedChannels = await store.loadChannels({});
+    const persistedAttempt = await store.loadRefundAttempt(payment.channel!.id);
+    const restartedStore = new MemoryChannelStore(persistedChannels, [
+      persistedAttempt!,
+    ]);
+    const restarted = makeClient({
+      provider,
+      store: restartedStore,
+      refundBuilder,
+    });
+    await expect(restarted.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "refund attempt is unresolved",
+    );
+    const reconciler: RefundReconciler = {
+      async reconcileRefund(attempt) {
+        expect(attempt.transactionId).toBe(REFUND_TX);
+        expect(attempt.transaction).toBe("ab".repeat(32));
+        return {
+          status: "accepted",
+          transactionId: attempt.transactionId,
+          finality: "accepted",
+        };
+      },
+    };
+    const recoveringClient = makeClient({
+      provider,
+      store: restartedStore,
+      refundBuilder,
+      refundReconciler: reconciler,
+    });
+    const recovered = await recoveringClient.reconcileRefund(
+      payment.channel!.id.toUpperCase(),
+    );
+    expect(recovered.channel.status).toBe("refunded");
+    expect(recovered.accepted).toBe(true);
+    await expect(
+      recoveringClient.reconcileRefund(payment.channel!.id),
+    ).resolves.toEqual(recovered);
+    await expect(
+      restartedStore.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({
+      status: "applied",
+      finality: "accepted",
+    });
+  });
+
+  it("fails closed when the refund transaction id does not match", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      refundBuilder: {
+        async buildRefundTransaction(request) {
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: "68".repeat(32),
+            refundAmount: request.refundAmount,
+          };
+        },
+      },
+      refundReconciler: {
+        async reconcileRefund() {
+          return {
+            status: "accepted",
+            transactionId: "69".repeat(32),
+            finality: "confirmed",
+          };
+        },
+      },
+    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "transaction id does not match",
+    );
+    await expect(client.reconcileRefund(payment.channel!.id)).rejects.toThrow(
+      "transaction id does not match",
+    );
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({
+      transactionId: "68".repeat(32),
+      status: "pending",
+    });
+    const [stored] = await store.loadChannels({});
+    expect(stored?.status).toBe("active");
+  });
 });
 
 function makeClient(options: {
@@ -1704,10 +2359,12 @@ function makeClient(options: {
   fundingSource?: FundingSourceKind;
   fetch?: FetchLike;
   verifyVoucherSignature?: (
-    voucher: { amount: string; signature: string },
+    voucher: { covenantId: string; amount: string; signature: string },
     channel: DirectModeChannel,
   ) => boolean;
   refundBuilder?: RefundTransactionBuilder;
+  refundReconciler?: RefundReconciler;
+  fundingTransitionReconciler?: FundingTransitionReconciler;
   allowMainnet?: boolean;
   supportedNetworks?: readonly NetworkId[];
   supportedSchemes?: readonly PaymentScheme[];
@@ -1727,6 +2384,8 @@ function makeClient(options: {
     fetch: options.fetch as never,
     verifyVoucherSignature: options.verifyVoucherSignature,
     refundBuilder: options.refundBuilder,
+    refundReconciler: options.refundReconciler,
+    fundingTransitionReconciler: options.fundingTransitionReconciler,
     allowMainnet: options.allowMainnet,
     supportedNetworks: options.supportedNetworks,
     supportedSchemes: options.supportedSchemes,
@@ -1735,8 +2394,10 @@ function makeClient(options: {
 
 function makeRequired(input: {
   amount: string;
+  minDepositSompi?: string;
+  claimReserveSompi?: string;
   channelState?: ChannelState;
-  voucherState?: { amount: string; signature: string };
+  voucherState?: { covenantId?: string; amount: string; signature: string };
   extensions?: PaymentRequired["extensions"];
 }): PaymentRequired {
   return {
@@ -1753,13 +2414,25 @@ function makeRequired(input: {
         payTo: "kaspatest:payout",
         maxTimeoutSeconds: 60,
         extra: {
-          binding: "kaspa-escrow-v1",
-          templateId: "kaspa-x402-escrow-v1",
+          binding: "kaspa-escrow-v2",
+          templateId: "kaspa-x402-escrow-v2",
           serverPublicKey: SERVER_KEY,
-          minDepositSompi: "1000",
+          minDepositSompi: input.minDepositSompi ?? "1000",
+          claimReserveSompi: input.claimReserveSompi ?? "10",
           refundTimeoutDaa: "1000",
           ...(input.channelState ? { channelState: input.channelState } : {}),
-          ...(input.voucherState ? { voucherState: input.voucherState } : {}),
+          ...(input.voucherState
+            ? {
+                voucherState: {
+                  covenantId:
+                    input.voucherState.covenantId ??
+                    input.channelState?.covenantId ??
+                    COVENANT_ID,
+                  amount: input.voucherState.amount,
+                  signature: input.voucherState.signature,
+                },
+              }
+            : {}),
         },
       } satisfies BatchPaymentRequirements,
     ],
@@ -1921,7 +2594,7 @@ function makeSettlement(
         ...channelState(
           channel,
           addAmounts(channel.chargedCumulativeAmount, chargedAmount),
-          channel.signedCumulativeAmount,
+          channel.signedMaxClaimable,
         ),
         ...stateOverrides,
       },
@@ -1971,13 +2644,38 @@ function channelState(
 ): ChannelState {
   return {
     channelId: channel.id,
+    covenantId: channel.covenantId,
     activeOutpoint: channel.activeOutpoint,
     activeScriptPublicKey: channel.activeScriptPublicKey,
     fundingAmount: channel.fundingAmount,
     chargedCumulativeAmount,
-    claimedCumulativeAmount: "0",
+    claimedCumulativeAmount: channel.claimedCumulativeAmount,
     signedMaxClaimable,
   };
+}
+
+function v2EscrowScriptPublicKey(
+  channel: DirectModeChannel,
+  settledTotal: string,
+): string {
+  const codec = new FakeAddressCodec();
+  return serializedScriptPublicKey(
+    escrowScriptPublicKey({
+      clientPublicKey: channel.config.clientPublicKey,
+      serverPublicKey: channel.config.serverPublicKey,
+      network: channel.config.network,
+      payoutScriptPublicKeyHash: sha256Hex(
+        hexToBytes(codec.scriptPublicKeyForAddress(channel.config.payTo)),
+      ),
+      refundScriptPublicKeyHash: sha256Hex(
+        hexToBytes(
+          codec.scriptPublicKeyForAddress(channel.config.refundAddress),
+        ),
+      ),
+      timeoutDaa: channel.config.refundTimeoutDaa,
+      settledTotal,
+    }),
+  );
 }
 
 function response(
@@ -2012,6 +2710,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
+  readonly topUps: Array<{ targetFundingAmount: string }> = [];
   readonly exactPayments: Array<{
     profile: ExactPaymentRequest["profile"];
     amount: string;
@@ -2022,9 +2721,19 @@ class FakeFundingProvider implements FundingProvider {
     head?: ExactPaymentRequest["head"];
   }> = [];
   readonly utxos: FundingProviderUtxo[] = [];
+  readonly pendingFunding = new Map<
+    string,
+    { transactionId: string; successor: FundingProviderUtxo }
+  >();
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" =
     "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
+  sendError?: Error;
+  fundingSendFinality: SendTransactionResult["finality"] = "accepted";
+  fundingSendError?: Error;
+  genesisTotalOutputCount = 1;
+  genesisAuthorizedOutputCount = 1;
+  sendCount = 0;
   exactMode: "transaction" | "artifactless" = "transaction";
   omitExactTransactionId = false;
   exactTransactionOutputIndex?: number;
@@ -2044,7 +2753,7 @@ class FakeFundingProvider implements FundingProvider {
 
   async authorizeExactPayment(_request: ExactTransactionPaymentRequest) {}
 
-  async fundEscrowDeposit(request: EscrowDepositRequest) {
+  async prepareEscrowDeposit(request: EscrowDepositRequest) {
     this.deposits.push({
       amount: request.amount,
       channelId: request.channelId,
@@ -2052,27 +2761,32 @@ class FakeFundingProvider implements FundingProvider {
     const outpoint = { txid: FUNDING_TX, index: this.deposits.length - 1 };
     const amount =
       this.depositMode === "outpoint-underfunded" ? "50" : request.amount;
-    this.utxos.push({
+    const successor = {
       outpoint,
+      covenantId: COVENANT_ID,
       amount,
       address: request.escrowAddress,
       scriptPublicKey: request.escrowScriptPublicKey,
-    });
+    };
     if (this.depositMode === "txid-only-ambiguous") {
-      this.utxos.push({
-        outpoint: { txid: FUNDING_TX, index: 10 },
-        amount: request.amount,
-        address: request.escrowAddress,
-        scriptPublicKey: request.escrowScriptPublicKey,
-      });
       return {
-        txid: FUNDING_TX,
-        amount: request.amount,
+        transaction: "ad".repeat(32),
+        transactionId: FUNDING_TX,
+        successor: {
+          ...successor,
+          outpoint: { txid: "56".repeat(32), index: 10 },
+        },
         fundingSource: this.sourceKind,
       };
     }
+    this.pendingFunding.set("ad".repeat(32), {
+      transactionId: FUNDING_TX,
+      successor,
+    });
     return {
-      outpoint,
+      transaction: "ad".repeat(32),
+      transactionId: FUNDING_TX,
+      successor,
       fundingSource: this.sourceKind,
     };
   }
@@ -2130,17 +2844,93 @@ class FakeFundingProvider implements FundingProvider {
     } as ExactTransactionPaymentResult;
   }
 
+  async prepareEscrowTopUp(request: {
+    channel: DirectModeChannel;
+    targetFundingAmount: string;
+  }) {
+    this.topUps.push({ targetFundingAmount: request.targetFundingAmount });
+    const outpoint = { txid: "5c".repeat(32), index: this.topUps.length - 1 };
+    const successor = {
+      outpoint,
+      covenantId: request.channel.covenantId,
+      amount: request.targetFundingAmount,
+      scriptPublicKey: request.channel.activeScriptPublicKey,
+      address: request.channel.escrowAddress,
+    };
+    this.pendingFunding.set("ae".repeat(32), {
+      transactionId: outpoint.txid,
+      successor,
+    });
+    return {
+      transaction: "ae".repeat(32),
+      transactionId: outpoint.txid,
+      successor,
+      fundingSource: this.sourceKind,
+    };
+  }
+
   async getUtxos(addresses: readonly string[]) {
     return this.utxos.filter(
       (utxo) => utxo.address && addresses.includes(utxo.address),
     );
   }
 
+  async getUtxo(outpoint: { txid: string; index: number }) {
+    return (
+      this.utxos.find(
+        (utxo) =>
+          utxo.outpoint.txid.toLowerCase() === outpoint.txid.toLowerCase() &&
+          utxo.outpoint.index === outpoint.index,
+      ) ?? null
+    );
+  }
+
+  async verifyCovenantGenesis(request: {
+    prepared: { successor: FundingProviderUtxo };
+    utxo: FundingProviderUtxo;
+  }) {
+    return {
+      covenantId: request.utxo.covenantId!,
+      authorizingInput: { txid: "5b".repeat(32), index: 0 },
+      genesisOutpoint: request.utxo.outpoint,
+      genesisScriptPublicKey: request.utxo.scriptPublicKey,
+      genesisAmount: request.utxo.amount,
+      totalOutputCount: this.genesisTotalOutputCount,
+      authorizedOutputCount: this.genesisAuthorizedOutputCount,
+    };
+  }
+
+  async verifyCovenantTopUp(request: {
+    previous: DirectModeChannel;
+    prepared: { successor: FundingProviderUtxo };
+    successor: FundingProviderUtxo;
+  }) {
+    return {
+      covenantId: request.previous.covenantId,
+      spentOutpoint: request.previous.activeOutpoint,
+      successorOutpoint: request.successor.outpoint,
+      successorScriptPublicKey: request.successor.scriptPublicKey,
+      successorAmount: request.successor.amount,
+      authorizedSuccessorCount: 1,
+    };
+  }
+
   async getVirtualDaaScore() {
     return this.daa;
   }
 
-  async sendTransaction(_transaction: string) {
+  async sendTransaction(transaction: string) {
+    this.sendCount += 1;
+    const funding = this.pendingFunding.get(transaction.toLowerCase());
+    if (funding) {
+      if (this.fundingSendError) throw this.fundingSendError;
+      const finality = this.fundingSendFinality;
+      if (finality === "accepted" || finality === "confirmed") {
+        this.utxos.push(funding.successor);
+      }
+      return { transactionId: funding.transactionId, finality };
+    }
+    if (this.sendError) throw this.sendError;
     return { transactionId: REFUND_TX, finality: this.sendFinality };
   }
 

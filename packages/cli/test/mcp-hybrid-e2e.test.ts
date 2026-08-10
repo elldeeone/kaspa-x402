@@ -159,7 +159,10 @@ function exactFundingProvider(): FundingProvider {
       return { address: "kaspatest:refund" };
     },
     async authorizeExactPayment() {},
-    async fundEscrowDeposit() {
+    async prepareEscrowDeposit() {
+      throw new Error("not used");
+    },
+    async prepareEscrowTopUp() {
       throw new Error("not used");
     },
     async payExactTransaction(request) {
@@ -195,6 +198,15 @@ function exactFundingProvider(): FundingProvider {
     },
     async getUtxos() {
       return [];
+    },
+    async getUtxo() {
+      return null;
+    },
+    async verifyCovenantGenesis() {
+      return null;
+    },
+    async verifyCovenantTopUp() {
+      return null;
     },
     async getVirtualDaaScore() {
       return "0";

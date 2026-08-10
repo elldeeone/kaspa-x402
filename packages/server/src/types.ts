@@ -39,6 +39,8 @@ export interface AddressCodec {
 
 export interface ChainUtxo {
   outpoint: FundingOutpoint;
+  /** Stable KIP-20 covenant lineage reported by authoritative chain readback. */
+  covenantId?: Hash32Hex;
   amount: SompiString;
   scriptPublicKey: ByteHex;
   finality: SettlementFinality;
@@ -57,10 +59,35 @@ export interface ServerChainProvider {
     network: NetworkId,
   ): Promise<ChainUtxo | null>;
   getVirtualDaaScore(): Promise<SompiString>;
+  /**
+   * Verifies the complete, unpruned KIP-20 genesis transaction at admission.
+   * The adapter must recompute the id from its authorizing input and ordered
+   * authorized outputs; returning null means the evidence is unavailable or invalid.
+   */
+  verifyCovenantGenesis(
+    request: CovenantGenesisVerificationRequest,
+  ): Promise<CovenantGenesisVerification | null>;
   estimateClaimFee(channel: ServerChannelRecord): Promise<SompiString>;
   sendTransaction(
     transaction: PreparedTransaction,
   ): Promise<TransactionBroadcast>;
+}
+
+export interface CovenantGenesisVerificationRequest {
+  utxo: ChainUtxo;
+  payment: PaymentPayload;
+}
+
+export interface CovenantGenesisVerification {
+  covenantId: Hash32Hex;
+  authorizingInput: FundingOutpoint;
+  genesisOutpoint: FundingOutpoint;
+  genesisScriptPublicKey: ByteHex;
+  genesisAmount: SompiString;
+  /** Singleton escrow genesis intentionally permits exactly one total output. */
+  totalOutputCount: number;
+  /** Batch escrow admission intentionally permits exactly one authorized output. */
+  authorizedOutputCount: number;
 }
 
 export interface VoucherVerificationRequest {
@@ -256,12 +283,26 @@ export interface TopUpVerificationRequest {
   payment: PaymentPayload;
 }
 
+export interface TopUpVerificationResult {
+  covenantId: Hash32Hex;
+  spentOutpoint: FundingOutpoint;
+  successorOutpoint: FundingOutpoint;
+  successorScriptPublicKey: ByteHex;
+  successorAmount: SompiString;
+  /** The transition must create one and only one successor for this covenant. */
+  authorizedSuccessorCount: number;
+}
+
 export interface TopUpVerifier {
-  verifyTopUp(request: TopUpVerificationRequest): Promise<boolean> | boolean;
+  verifyTopUp(
+    request: TopUpVerificationRequest,
+  ): Promise<TopUpVerificationResult | null> | TopUpVerificationResult | null;
 }
 
 export interface ServerChannelRecord {
   channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  genesisEvidence: CovenantGenesisVerification;
   channelConfig: ChannelConfig;
   escrowAddress: string;
   activeOutpoint: FundingOutpoint;
@@ -297,8 +338,10 @@ export interface PaymentIdentifierRecord {
 export interface BatchCommitmentRecord {
   commitmentId: Hash32Hex;
   channelId: Hash32Hex;
+  covenantId: Hash32Hex;
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
   activeOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
@@ -401,18 +444,72 @@ export interface ExactSettlementReconciler {
 }
 
 export interface SettlementCommit {
+  batchAttemptId: Hash32Hex;
   channel: ServerChannelRecord;
   commitment: BatchCommitmentRecord;
   paymentIdentifier?: PaymentIdentifierRecord;
   expected: {
     channelId: Hash32Hex;
+    covenantId: Hash32Hex;
+    fundingAmount: SompiString;
     chargedCumulativeAmount: SompiString;
     claimedCumulativeAmount: SompiString;
     signedMaxClaimable: SompiString;
+    voucherSignature?: SignatureHex;
     activeOutpoint: FundingOutpoint;
     activeScriptPublicKey: ByteHex;
     status: ChannelStatus;
   };
+}
+
+export type BatchSettlementAttemptStatus = "pending" | "applied";
+
+/** Durable evidence written before protected batch work can begin. */
+export interface BatchSettlementAttemptRecord {
+  attemptId: Hash32Hex;
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  requestFingerprint: Hash32Hex;
+  paymentRequirementsHash: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
+  maximumCharge: SompiString;
+  expected: SettlementCommit["expected"];
+  status: BatchSettlementAttemptStatus;
+  createdAt: string;
+  updatedAt: string;
+  handlerStartedAt?: string;
+  handlerResult?: ProtectedHandlerResult;
+  handlerCompletedAt?: string;
+  recoveryReason?: string;
+}
+
+export interface BatchSettlementClaimResult {
+  attempt: BatchSettlementAttemptRecord;
+  created: boolean;
+}
+
+export interface BatchSettlementAttemptStore {
+  /** Atomically claims one verified payment attempt against its channel snapshot. */
+  claimBatchSettlement(
+    attempt: BatchSettlementAttemptRecord,
+  ): Promise<BatchSettlementClaimResult>;
+  loadBatchSettlementAttempt(
+    attemptId: Hash32Hex,
+  ): Promise<BatchSettlementAttemptRecord | undefined>;
+  /** Returns true exactly once, preventing protected-handler replay. */
+  beginBatchHandler(attemptId: Hash32Hex, startedAt: string): Promise<boolean>;
+  /** Persists protected work before settlement commit so retries can resume safely. */
+  recordBatchHandlerResult(
+    attemptId: Hash32Hex,
+    result: ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void>;
+  /** Records an uncertain handler outcome that requires explicit operator recovery. */
+  markBatchHandlerRecoveryRequired(
+    attemptId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
 }
 
 export interface SettlementCommitStore {
@@ -508,6 +605,7 @@ export type ClaimAttemptStatus =
 export interface ClaimAttemptRecord {
   attemptId: Hash32Hex;
   channelId: Hash32Hex;
+  covenantId: Hash32Hex;
   activeOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   fundingAmount: SompiString;
@@ -518,8 +616,11 @@ export interface ClaimAttemptRecord {
   voucherSignature?: SignatureHex;
   channelStatus: ChannelStatus;
   transaction: PreparedTransaction;
+  /** Deterministic id of the exact signed transaction captured before broadcast. */
+  transactionId: Hash32Hex;
+  /** Immutable finality threshold captured before the first broadcast. */
+  requiredFinality: "accepted" | "confirmed";
   status: ClaimAttemptStatus;
-  transactionId?: Hash32Hex;
   finality?: SettlementFinality;
   continuationOutpoint?: FundingOutpoint;
   continuationScriptPublicKey?: ByteHex;
@@ -546,6 +647,7 @@ export interface ServerStateStore
     CommitmentStore,
     IdempotencyStore,
     SettlementCommitStore,
+    BatchSettlementAttemptStore,
     ExactPaymentStore,
     ExactHeadStore,
     ClaimAttemptStore {}
@@ -569,6 +671,8 @@ export interface ClaimTransactionRequest {
 
 export interface ClaimTransactionResult {
   transaction: PreparedTransaction;
+  /** Deterministic id of the exact signed transaction returned above. */
+  transactionId: Hash32Hex;
   claimAmount: SompiString;
   continuationOutpoint?: FundingOutpoint;
   continuationScriptPublicKey?: ByteHex;
@@ -579,6 +683,22 @@ export interface ClaimTransactionBuilder {
   buildClaimTransaction(
     request: ClaimTransactionRequest,
   ): Promise<ClaimTransactionResult>;
+}
+
+export type ClaimReconciliation =
+  | {
+      status: "accepted";
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+    }
+  | { status: "rejected"; transactionId: Hash32Hex; reason: string }
+  | { status: "unknown"; transactionId: Hash32Hex; reason?: string };
+
+/** Trusted chain lookup for one already-persisted claim transaction. */
+export interface ClaimReconciler {
+  reconcileClaim(
+    attempt: ClaimAttemptRecord,
+  ): Promise<ClaimReconciliation> | ClaimReconciliation;
 }
 
 export interface ClaimExecutionResult {
@@ -599,8 +719,10 @@ export interface DirectModeServerConfig {
   payTo: string;
   serverPublicKey: PublicKeyHex;
   serverPrivateKey?: string;
-  templateId?: "kaspa-x402-escrow-v1";
+  templateId?: "kaspa-x402-escrow-v2";
   minDepositSompi: SompiString;
+  /** Deterministic reserve the client must leave beyond its signed claim ceiling. */
+  claimReserveSompi: SompiString;
   amount: SompiString;
   refundTimeoutDaa: SompiString;
   /** Minimum remaining DAA-score distance before accepting a voucher. */
@@ -625,6 +747,7 @@ export interface DirectModeServerConfig {
   lockManager?: ChannelLockManager;
   claimPolicy?: ClaimPolicy;
   claimBuilder?: ClaimTransactionBuilder;
+  claimReconciler?: ClaimReconciler;
   requirePaymentIdentifier?: boolean;
   allowMainnet?: boolean;
   acceptedFinality?: Exclude<SettlementFinality, "broadcast">;

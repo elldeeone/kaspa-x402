@@ -1,4 +1,14 @@
-import { parseSompiString, type Hash32Hex } from "@kaspa-x402/core";
+import {
+  batchLaneAccounting,
+  parseBatchLaneAmount,
+  type Hash32Hex,
+} from "@kaspa-x402/core";
+import {
+  assertBatchHandlerResultTransition,
+  batchSettlementAttemptIsReadyToCommit,
+  batchSettlementAttemptsMatch,
+  normalizeBatchSettlementAttempt,
+} from "./batch-settlement-attempts.js";
 import {
   acceptExactHead,
   applyExactHeadLineage as applyExactHeadLineageRecord,
@@ -11,6 +21,8 @@ import {
 } from "./exact-heads.js";
 import type {
   BatchCommitmentRecord,
+  BatchSettlementAttemptRecord,
+  BatchSettlementClaimResult,
   ChannelLockManager,
   ClaimAttemptRecord,
   ExactPaymentRecord,
@@ -31,6 +43,7 @@ import type {
 export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
+  readonly #batchAttempts = new Map<Hash32Hex, BatchSettlementAttemptRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
   readonly #exactHeads = new Map<Hash32Hex, ExactHeadRecord>();
   readonly #exactAttempts = new Map<Hash32Hex, ExactSettlementAttemptRecord>();
@@ -89,6 +102,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     if (!matchesExpectedChannel(current, record.expected)) {
       throw new Error("channel state changed before settlement commit");
     }
+    const attempt = this.#batchAttempts.get(record.batchAttemptId);
+    if (!batchSettlementAttemptIsReadyToCommit(attempt, record)) {
+      throw new Error("batch settlement attempt is not ready to apply");
+    }
     const paymentIdentifier = record.paymentIdentifier
       ? clone(record.paymentIdentifier)
       : undefined;
@@ -100,6 +117,103 @@ export class MemoryServerChannelStore implements ServerStateStore {
     if (paymentIdentifier)
       this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
     this.#channels.set(channel.channelId, channel);
+    this.#batchAttempts.set(attempt.attemptId, {
+      ...attempt,
+      status: "applied",
+      updatedAt: new Date().toISOString(),
+    });
+  }
+
+  async claimBatchSettlement(
+    input: BatchSettlementAttemptRecord,
+  ): Promise<BatchSettlementClaimResult> {
+    const attempt = normalizeBatchSettlementAttempt(input);
+    const existing = this.#batchAttempts.get(attempt.attemptId);
+    if (existing) {
+      if (!batchSettlementAttemptsMatch(existing, attempt))
+        throw new Error(
+          "batch payment is already claimed for a different request",
+        );
+      return { attempt: clone(existing), created: false };
+    }
+    if (
+      !matchesExpectedChannel(
+        this.#channels.get(attempt.channelId),
+        attempt.expected,
+      )
+    ) {
+      throw new Error("channel state changed before batch settlement claim");
+    }
+    for (const current of this.#batchAttempts.values()) {
+      if (
+        current.channelId === attempt.channelId &&
+        current.status === "pending"
+      ) {
+        throw new Error("channel already has a pending batch settlement");
+      }
+    }
+    this.#batchAttempts.set(attempt.attemptId, clone(attempt));
+    return { attempt: clone(attempt), created: true };
+  }
+
+  async loadBatchSettlementAttempt(
+    attemptId: Hash32Hex,
+  ): Promise<BatchSettlementAttemptRecord | undefined> {
+    const attempt = this.#batchAttempts.get(attemptId.toLowerCase());
+    return attempt ? clone(attempt) : undefined;
+  }
+
+  async beginBatchHandler(
+    attemptId: Hash32Hex,
+    startedAt: string,
+  ): Promise<boolean> {
+    const attempt = this.#requireBatchAttempt(attemptId);
+    if (attempt.status !== "pending" || attempt.handlerStartedAt) return false;
+    assertIsoDate(startedAt, "batch handler start time");
+    this.#batchAttempts.set(attempt.attemptId, {
+      ...attempt,
+      handlerStartedAt: startedAt,
+      updatedAt: startedAt,
+    });
+    return true;
+  }
+
+  async recordBatchHandlerResult(
+    attemptId: Hash32Hex,
+    result: import("./types.js").ProtectedHandlerResult,
+    completedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireBatchAttempt(attemptId);
+    assertBatchHandlerResultTransition(attempt, result, completedAt);
+    if (attempt.handlerResult) return;
+    this.#batchAttempts.set(attempt.attemptId, {
+      ...attempt,
+      handlerResult: clone(result),
+      handlerCompletedAt: completedAt,
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
+  }
+
+  async markBatchHandlerRecoveryRequired(
+    attemptId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireBatchAttempt(attemptId);
+    if (
+      attempt.status !== "pending" ||
+      !attempt.handlerStartedAt ||
+      attempt.handlerResult
+    ) {
+      throw new Error("batch handler is not awaiting recovery");
+    }
+    assertIsoDate(observedAt, "batch handler recovery time");
+    this.#batchAttempts.set(attempt.attemptId, {
+      ...attempt,
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
   }
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
@@ -387,6 +501,12 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return attempt;
   }
 
+  #requireBatchAttempt(attemptId: Hash32Hex): BatchSettlementAttemptRecord {
+    const attempt = this.#batchAttempts.get(attemptId.toLowerCase());
+    if (!attempt) throw new Error("batch settlement attempt was not found");
+    return attempt;
+  }
+
   #assertPaymentIdentifierAvailable(
     paymentIdentifier: PaymentIdentifierRecord,
   ): void {
@@ -417,16 +537,18 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
+    const existing = this.#claimAttempts.get(record.attemptId);
+    const attempt = normalizeClaimAttempt(record, existing);
     for (const existing of this.#claimAttempts.values()) {
       if (
-        existing.channelId === record.channelId &&
+        existing.channelId === attempt.channelId &&
         existing.status !== "applied" &&
-        existing.attemptId !== record.attemptId
+        existing.attemptId !== attempt.attemptId
       ) {
         throw new Error("claim attempt is already pending");
       }
     }
-    this.#claimAttempts.set(record.attemptId, clone(record));
+    this.#claimAttempts.set(attempt.attemptId, attempt);
   }
 
   async applyClaimAttempt(
@@ -434,31 +556,40 @@ export class MemoryServerChannelStore implements ServerStateStore {
     attempt: ClaimAttemptRecord,
   ): Promise<void> {
     const currentAttempt = this.#claimAttempts.get(attempt.attemptId);
-    if (!currentAttempt || currentAttempt.status === "applied") {
-      throw new Error("claim attempt is not open");
+    if (
+      !currentAttempt ||
+      currentAttempt.status !== "accepted" ||
+      attempt.status !== "accepted" ||
+      !claimAttemptsMatch(currentAttempt, attempt)
+    ) {
+      throw new Error("claim apply must match the persisted accepted attempt");
     }
     const currentChannel = this.#channels.get(channel.channelId);
     if (
       !currentChannel ||
+      currentChannel.channelId !== currentAttempt.channelId ||
+      currentChannel.covenantId.toLowerCase() !==
+        currentAttempt.covenantId.toLowerCase() ||
       currentChannel.activeOutpoint.txid.toLowerCase() !==
-        attempt.activeOutpoint.txid.toLowerCase() ||
-      currentChannel.activeOutpoint.index !== attempt.activeOutpoint.index ||
+        currentAttempt.activeOutpoint.txid.toLowerCase() ||
+      currentChannel.activeOutpoint.index !==
+        currentAttempt.activeOutpoint.index ||
       currentChannel.activeScriptPublicKey.toLowerCase() !==
-        attempt.activeScriptPublicKey.toLowerCase() ||
-      currentChannel.fundingAmount !== attempt.fundingAmount ||
+        currentAttempt.activeScriptPublicKey.toLowerCase() ||
+      currentChannel.fundingAmount !== currentAttempt.fundingAmount ||
       currentChannel.chargedCumulativeAmount !==
-        attempt.chargedCumulativeAmount ||
+        currentAttempt.chargedCumulativeAmount ||
       currentChannel.claimedCumulativeAmount !==
-        attempt.claimedCumulativeAmount ||
-      currentChannel.signedMaxClaimable !== attempt.signedMaxClaimable ||
-      currentChannel.voucherSignature !== attempt.voucherSignature ||
-      currentChannel.status !== attempt.channelStatus
+        currentAttempt.claimedCumulativeAmount ||
+      currentChannel.signedMaxClaimable !== currentAttempt.signedMaxClaimable ||
+      currentChannel.voucherSignature !== currentAttempt.voucherSignature ||
+      currentChannel.status !== currentAttempt.channelStatus
     ) {
       throw new Error("channel state changed before claim apply");
     }
     this.#channels.set(channel.channelId, clone(channel));
-    this.#claimAttempts.set(attempt.attemptId, {
-      ...clone(attempt),
+    this.#claimAttempts.set(currentAttempt.attemptId, {
+      ...clone(currentAttempt),
       status: "applied",
     });
   }
@@ -495,11 +626,7 @@ export class MemoryChannelLockManager implements ChannelLockManager {
 }
 
 export function activeChargedAmount(channel: ServerChannelRecord): bigint {
-  const charged = parseSompiString(channel.chargedCumulativeAmount);
-  const claimed = parseSompiString(channel.claimedCumulativeAmount);
-  if (claimed > charged)
-    throw new Error("claimed amount cannot exceed charged amount");
-  return charged - claimed;
+  return batchLaneAccounting(channel).activeChargedAmount;
 }
 
 function clone<T>(value: T): T {
@@ -583,6 +710,169 @@ function assertExactHandlerResultTransition(
   }
 }
 
+/** Validates one durable claim record and, when present, its legal next state. */
+export function normalizeClaimAttempt(
+  input: ClaimAttemptRecord,
+  existing?: ClaimAttemptRecord,
+): ClaimAttemptRecord {
+  assertClaimAttemptShape(input);
+  if (input.status === "applied")
+    throw new Error("claim attempts can only be applied atomically");
+  if (!existing) {
+    if (input.status !== "pending")
+      throw new Error("new claim attempt must be pending");
+    return clone(input);
+  }
+  assertClaimAttemptShape(existing);
+  if (!claimAttemptArtifactsMatch(existing, input)) {
+    throw new Error(
+      "claim attempt immutable artifact conflicts with durable state",
+    );
+  }
+  if (existing.status === input.status) {
+    if (!claimAttemptsMatch(existing, input))
+      throw new Error(
+        "claim attempt same-state update conflicts with durable state",
+      );
+    return clone(input);
+  }
+  if (!(
+    (existing.status === "pending" && input.status === "broadcast") ||
+    (existing.status === "broadcast" && input.status === "accepted")
+  )) {
+    throw new Error("invalid claim attempt status transition");
+  }
+  return clone(input);
+}
+
+/** Exact equality used before atomically applying a persisted accepted claim. */
+export function claimAttemptsMatch(
+  left: ClaimAttemptRecord,
+  right: ClaimAttemptRecord,
+): boolean {
+  return stableJson(left) === stableJson(right);
+}
+
+function claimAttemptArtifactsMatch(
+  left: ClaimAttemptRecord,
+  right: ClaimAttemptRecord,
+): boolean {
+  const {
+    status: _leftStatus,
+    finality: _leftFinality,
+    ...leftArtifact
+  } = left;
+  const {
+    status: _rightStatus,
+    finality: _rightFinality,
+    ...rightArtifact
+  } = right;
+  return stableJson(leftArtifact) === stableJson(rightArtifact);
+}
+
+function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
+  if (
+    attempt.requiredFinality !== "accepted" &&
+    attempt.requiredFinality !== "confirmed"
+  ) {
+    throw new Error("claim attempt required finality is invalid");
+  }
+  if (
+    !isLowerHash32(attempt.attemptId) ||
+    !isLowerHash32(attempt.channelId) ||
+    !isNonzeroLowerHash32(attempt.covenantId) ||
+    !isLowerHash32(attempt.activeOutpoint.txid) ||
+    !isLowerHash32(attempt.transactionId)
+  ) {
+    throw new Error("claim attempt identifiers must be canonical lowercase");
+  }
+  if (
+    !Number.isInteger(attempt.activeOutpoint.index) ||
+    attempt.activeOutpoint.index < 0 ||
+    attempt.activeOutpoint.index > 0xffff_ffff
+  ) {
+    throw new Error("claim attempt active outpoint index is invalid");
+  }
+  if (
+    typeof attempt.transaction !== "string" ||
+    attempt.transaction.length === 0
+  ) {
+    throw new Error("claim attempt transaction artifact is required");
+  }
+  const claim = parseBatchLaneAmount(attempt.claimAmount, "claim amount");
+  if (claim === 0n) throw new Error("claim amount must be positive");
+  batchLaneAccounting({
+    fundingAmount: attempt.fundingAmount,
+    chargedCumulativeAmount: attempt.chargedCumulativeAmount,
+    claimedCumulativeAmount: attempt.claimedCumulativeAmount,
+    signedMaxClaimable: attempt.signedMaxClaimable,
+  });
+  const continuationFields = [
+    attempt.continuationOutpoint,
+    attempt.continuationScriptPublicKey,
+    attempt.continuationFundingAmount,
+  ].filter((value) => value !== undefined).length;
+  if (continuationFields !== 0 && continuationFields !== 3)
+    throw new Error("claim continuation state must be complete");
+  if (attempt.continuationOutpoint) {
+    if (
+      !isLowerHash32(attempt.continuationOutpoint.txid) ||
+      attempt.continuationOutpoint.txid !== attempt.transactionId ||
+      !Number.isInteger(attempt.continuationOutpoint.index) ||
+      attempt.continuationOutpoint.index < 0 ||
+      attempt.continuationOutpoint.index > 0xffff_ffff
+    ) {
+      throw new Error("claim continuation outpoint is invalid");
+    }
+    parseBatchLaneAmount(
+      attempt.continuationFundingAmount,
+      "claim continuation funding amount",
+    );
+  }
+  if (attempt.status === "pending") {
+    if (attempt.finality !== undefined)
+      throw new Error("pending claim attempt cannot have finality");
+    return;
+  }
+  if (attempt.status === "broadcast") {
+    if (
+      attempt.finality !== "broadcast" &&
+      attempt.finality !== "accepted" &&
+      attempt.finality !== "confirmed"
+    ) {
+      throw new Error("broadcast claim attempt requires observed finality");
+    }
+    return;
+  }
+  if (attempt.status === "accepted" || attempt.status === "applied") {
+    if (attempt.finality !== "accepted" && attempt.finality !== "confirmed")
+      throw new Error("accepted claim attempt requires accepted finality");
+    if (
+      attempt.requiredFinality === "confirmed" &&
+      attempt.finality !== "confirmed"
+    ) {
+      throw new Error(
+        "accepted claim attempt has not reached required finality",
+      );
+    }
+    return;
+  }
+  throw new Error("claim attempt status is invalid");
+}
+
+function assertIsoDate(value: string, label: string): void {
+  if (Number.isNaN(Date.parse(value)))
+    throw new Error(`${label} must be an ISO date string`);
+}
+
+function isLowerHash32(value: string): value is Hash32Hex {
+  return /^[0-9a-f]{64}$/.test(value);
+}
+
+function isNonzeroLowerHash32(value: string): value is Hash32Hex {
+  return isLowerHash32(value) && !/^0{64}$/.test(value);
+}
+
 function matchesExpectedChannel(
   current: ServerChannelRecord | undefined,
   expected: SettlementCommit["expected"],
@@ -596,9 +886,12 @@ function matchesExpectedChannel(
   }
   return (
     current.channelId === expected.channelId &&
+    current.covenantId === expected.covenantId &&
+    current.fundingAmount === expected.fundingAmount &&
     current.chargedCumulativeAmount === expected.chargedCumulativeAmount &&
     current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
     current.signedMaxClaimable === expected.signedMaxClaimable &&
+    current.voucherSignature === expected.voucherSignature &&
     current.status === expected.status &&
     current.activeOutpoint.txid.toLowerCase() ===
       expected.activeOutpoint.txid.toLowerCase() &&

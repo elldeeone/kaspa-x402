@@ -21,8 +21,8 @@ import {
   type PaymentPayload,
 } from "@kaspa-x402/core";
 import {
-  deriveEscrowAddress,
-  escrowScriptPublicKey,
+  deriveEscrowV2Address,
+  escrowV2ScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
 import {
@@ -30,6 +30,7 @@ import {
   MemoryServerChannelStore,
   type AddressCodec,
   type ChainUtxo,
+  type CovenantGenesisVerificationRequest,
   type DirectModeServerConfig,
   type ServerChainProvider,
   type ServerChannelRecord,
@@ -44,6 +45,7 @@ const SERVER_KEY = "11".repeat(32);
 const CLIENT_KEY = "22".repeat(32);
 const SALT = "33".repeat(32);
 const FUNDING_TX = "44".repeat(32);
+const COVENANT_ID = "45".repeat(32);
 const EXACT_TX_ID = "77".repeat(32);
 const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 const RESOURCE = { url: "https://api.example.test/data" };
@@ -84,6 +86,7 @@ describe("direct-mode facilitator", () => {
         async buildClaimTransaction({ claimAmount }) {
           return {
             transaction: "ab".repeat(32),
+            transactionId: EXACT_TX_ID,
             claimAmount,
           };
         },
@@ -396,7 +399,9 @@ describe("direct-mode facilitator", () => {
       requestHash: REQUEST_HASH,
     });
 
-    expect(settlement.success).toBe(true);
+    expect(settlement, JSON.stringify(settlement)).toMatchObject({
+      success: true,
+    });
     const settlementExtra = readKaspaSettlementExtension(settlement);
     expect(settlement.transaction).toBe(settlementExtra?.commitmentId);
     expect(settlement.amount).toBe("70");
@@ -572,7 +577,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v1",
+            binding: "kaspa-escrow-v2",
             modes: ["verify", "settle"],
           },
         },
@@ -652,7 +657,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v1",
+            binding: "kaspa-escrow-v2",
             modes: ["claim", "refund"],
           },
         },
@@ -696,7 +701,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v1",
+            binding: "kaspa-escrow-v2",
             modes: ["claim"],
           },
         },
@@ -742,7 +747,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v1",
+            binding: "kaspa-escrow-v2",
             modes: ["claim"],
           },
         },
@@ -791,7 +796,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v1",
+            binding: "kaspa-escrow-v2",
             modes: ["refund"],
           },
         },
@@ -807,6 +812,7 @@ describe("direct-mode facilitator", () => {
         payload: {
           type: "refund",
           channelId: depositPayload.channelId,
+          covenantId: depositPayload.voucher.covenantId,
           fundingOutpoint: depositPayload.fundingOutpoint,
           activeScriptPublicKey: depositPayload.activeScriptPublicKey,
           refundAddress: depositPayload.channelConfig.refundAddress,
@@ -1058,6 +1064,7 @@ function makeFacilitator(
     payTo: "kaspatest:payout",
     serverPublicKey: SERVER_KEY,
     minDepositSompi: "1000",
+    claimReserveSompi: "10",
     amount: "100",
     refundTimeoutDaa: "1000",
     minimumRefundLeadDaa: "0",
@@ -1181,7 +1188,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v1",
+    templateId: "kaspa-x402-escrow-v2",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,
@@ -1193,6 +1200,7 @@ function makeDepositPayment(
   const fundingOutpoint = { txid: FUNDING_TX, index: 0 };
   chain.setUtxo({
     outpoint: fundingOutpoint,
+    covenantId: COVENANT_ID,
     amount: accepted.extra.minDepositSompi,
     scriptPublicKey: derived.activeScriptPublicKey,
     finality: "accepted",
@@ -1210,8 +1218,7 @@ function makeDepositPayment(
       activeScriptPublicKey: derived.activeScriptPublicKey,
       voucher: signVoucher({
         network: accepted.network,
-        activeScriptPublicKey: derived.activeScriptPublicKey,
-        outpoint: fundingOutpoint,
+        covenantId: COVENANT_ID,
         amount: accepted.amount,
       }),
     },
@@ -1246,10 +1253,11 @@ function deriveEscrow(channelConfig: ChannelConfig): {
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
+    settledTotal: "0",
   };
-  const script = escrowScriptPublicKey(params);
+  const script = escrowV2ScriptPublicKey(params);
   return {
-    escrowAddress: deriveEscrowAddress(params, (input) =>
+    escrowAddress: deriveEscrowV2Address(params, (input) =>
       addressCodec.encodeScriptAddress(input),
     ),
     activeScriptPublicKey: serializedScriptPublicKey(script),
@@ -1258,12 +1266,12 @@ function deriveEscrow(channelConfig: ChannelConfig): {
 
 function signVoucher(input: {
   network: NetworkId;
-  activeScriptPublicKey: string;
-  outpoint: FundingOutpoint;
+  covenantId: Hash32Hex;
   amount: string;
 }) {
   const digest = voucherDigest(input);
   return {
+    covenantId: input.covenantId,
     amount: input.amount,
     signature: `${digest}${digest}`,
   };
@@ -1293,6 +1301,18 @@ class FakeChainProvider implements ServerChainProvider {
 
   async getVirtualDaaScore() {
     return this.daa;
+  }
+
+  async verifyCovenantGenesis(request: CovenantGenesisVerificationRequest) {
+    return {
+      covenantId: request.utxo.covenantId!,
+      authorizingInput: { txid: "46".repeat(32), index: 0 },
+      genesisOutpoint: request.utxo.outpoint,
+      genesisScriptPublicKey: request.utxo.scriptPublicKey,
+      genesisAmount: request.utxo.amount,
+      totalOutputCount: 1,
+      authorizedOutputCount: 1,
+    };
   }
 
   async estimateClaimFee(_channel: ServerChannelRecord) {

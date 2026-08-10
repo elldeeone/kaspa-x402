@@ -9,6 +9,11 @@ import {
 } from "@kaspa-x402/core";
 import { DirectModeFacilitator } from "@kaspa-x402/facilitator";
 import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
+import {
+  escrowScriptPublicKey,
+  serializedScriptPublicKey,
+  transactionV1CovenantId,
+} from "@kaspa-x402/covenant";
 
 export const NETWORK = "kaspa:testnet-10";
 export const SERVER_PUBLIC_KEY = "11".repeat(32);
@@ -27,7 +32,8 @@ export function createMockDirectModeEnvironment() {
     payTo: PAYOUT_ADDRESS,
     serverPublicKey: SERVER_PUBLIC_KEY,
     amount: "100000",
-    minDepositSompi: "1000000",
+    minDepositSompi: "4000000",
+    claimReserveSompi: "2000000",
     refundTimeoutDaa: "1000",
     minimumRefundLeadDaa: "0",
     store: serverStore,
@@ -60,6 +66,66 @@ export function createMockDirectModeEnvironment() {
         };
       },
     },
+    topUpVerifier: {
+      verifyTopUp({ previous, next }) {
+        return chainProvider.verifyCovenantTopUp({ previous, next });
+      },
+    },
+    claimBuilder: {
+      async buildClaimTransaction({ channel, claimAmount }) {
+        const claimedCumulativeAmount = (
+          BigInt(channel.claimedCumulativeAmount) + BigInt(claimAmount)
+        ).toString();
+        const payoutScriptPublicKey = addressCodec.scriptPublicKeyForAddress(
+          channel.channelConfig.payTo,
+          channel.channelConfig.network,
+        );
+        const refundScriptPublicKey = addressCodec.scriptPublicKeyForAddress(
+          channel.channelConfig.refundAddress,
+          channel.channelConfig.network,
+        );
+        const continuationScriptPublicKey = serializedScriptPublicKey(
+          escrowScriptPublicKey({
+            clientPublicKey: channel.channelConfig.clientPublicKey,
+            serverPublicKey: channel.channelConfig.serverPublicKey,
+            network: channel.channelConfig.network,
+            payoutScriptPublicKeyHash: sha256Hex(
+              Buffer.from(payoutScriptPublicKey, "hex"),
+            ),
+            refundScriptPublicKeyHash: sha256Hex(
+              Buffer.from(refundScriptPublicKey, "hex"),
+            ),
+            timeoutDaa: channel.channelConfig.refundTimeoutDaa,
+            settledTotal: claimedCumulativeAmount,
+          }),
+        );
+        const transaction = mockHash(
+          `claim:${channel.covenantId}:${claimedCumulativeAmount}`,
+        );
+        const continuationOutpoint = { txid: transaction, index: 1 };
+        const continuationFundingAmount = (
+          BigInt(channel.fundingAmount) - BigInt(claimAmount)
+        ).toString();
+        chainProvider.prepareTransaction(transaction, () => {
+          chainProvider.deleteUtxo(channel.activeOutpoint);
+          chainProvider.setUtxo({
+            outpoint: continuationOutpoint,
+            covenantId: channel.covenantId,
+            amount: continuationFundingAmount,
+            scriptPublicKey: continuationScriptPublicKey,
+            finality: "accepted",
+          });
+        });
+        return {
+          transaction,
+          transactionId: transaction,
+          claimAmount,
+          continuationOutpoint,
+          continuationScriptPublicKey,
+          continuationFundingAmount,
+        };
+      },
+    },
     exactProfile: "standard-native",
   });
   const client = new DirectModeClient({
@@ -69,9 +135,12 @@ export function createMockDirectModeEnvironment() {
     addressCodec,
     fetch: createMockPaidFetch(server),
     refundBuilder: {
-      async buildRefundTransaction({ refundAmount }) {
+      async buildRefundTransaction({ refundAmount, signDigest }) {
+        await signDigest(mockHash(`refund-digest:${refundAmount}`));
+        const transaction = mockTransaction(`refund:${refundAmount}`);
         return {
-          transaction: mockTransaction(`refund:${refundAmount}`),
+          transaction,
+          transactionId: mockHash(`broadcast:${transaction}`),
           refundAmount,
         };
       },
@@ -112,7 +181,12 @@ export function createMockPaidFetch(server) {
         chargedAmount: route.chargedAmount,
       }),
     );
-    return new MockResponse(response.status, response.headers, response.body, url);
+    return new MockResponse(
+      response.status,
+      response.headers,
+      response.body,
+      url,
+    );
   };
 }
 
@@ -180,6 +254,7 @@ class MockFundingProvider {
   sourceKind = "hot-wallet";
   nextIndex = 0;
   utxosByAddress = new Map();
+  preparedTransitions = new Map();
 
   constructor(chainProvider) {
     this.chainProvider = chainProvider;
@@ -194,24 +269,100 @@ class MockFundingProvider {
 
   async authorizeExactPayment() {}
 
-  async fundEscrowDeposit(request) {
-    const outpoint = this.nextOutpoint("deposit");
+  async prepareEscrowDeposit(request) {
+    const authorizingInput = this.nextOutpoint("genesis-authorizer");
+    const transaction = mockTransaction(`deposit:${authorizingInput.txid}`);
+    const transactionId = mockHash(`broadcast:${transaction}`);
+    const outpoint = { txid: transactionId, index: 0 };
+    const covenantId = transactionV1CovenantId(authorizingInput, [
+      {
+        index: outpoint.index,
+        output: {
+          amount: request.amount,
+          scriptPublicKey: request.escrowScriptPublicKey,
+          covenant: null,
+        },
+      },
+    ]);
     const utxo = {
       outpoint,
+      covenantId,
       amount: request.amount,
       scriptPublicKey: request.escrowScriptPublicKey,
       finality: "accepted",
     };
-    this.addAddressUtxo(request.escrowAddress, {
-      ...utxo,
-      address: request.escrowAddress,
+    const genesisEvidence = {
+      covenantId,
+      authorizingInput,
+      genesisOutpoint: outpoint,
+      genesisScriptPublicKey: request.escrowScriptPublicKey,
+      genesisAmount: request.amount,
+      totalOutputCount: 1,
+      authorizedOutputCount: 1,
+    };
+    this.preparedTransitions.set(transaction, () => {
+      this.addAddressUtxo(request.escrowAddress, {
+        ...utxo,
+        address: request.escrowAddress,
+      });
+      this.chainProvider.setUtxo(utxo);
+      this.chainProvider.setGenesisEvidence(outpoint, genesisEvidence);
     });
-    this.chainProvider.setUtxo(utxo);
     return {
-      outpoint,
-      amount: request.amount,
+      transaction,
+      transactionId,
+      successor: {
+        outpoint,
+        covenantId,
+        amount: request.amount,
+        scriptPublicKey: request.escrowScriptPublicKey,
+      },
       fundingSource: this.sourceKind,
-      transaction: mockTransaction(`deposit:${outpoint.txid}`),
+    };
+  }
+
+  async prepareEscrowTopUp(request) {
+    const previous = request.channel;
+    const transaction = mockTransaction(
+      `top-up:${previous.covenantId}:${this.nextIndex}`,
+    );
+    this.nextIndex += 1;
+    const transactionId = mockHash(`broadcast:${transaction}`);
+    const outpoint = { txid: transactionId, index: 0 };
+    const utxo = {
+      outpoint,
+      covenantId: previous.covenantId,
+      amount: request.targetFundingAmount,
+      scriptPublicKey: previous.activeScriptPublicKey,
+      finality: "accepted",
+    };
+    this.preparedTransitions.set(transaction, () => {
+      this.removeAddressUtxo(previous.escrowAddress, previous.activeOutpoint);
+      this.chainProvider.deleteUtxo(previous.activeOutpoint);
+      this.addAddressUtxo(previous.escrowAddress, {
+        ...utxo,
+        address: previous.escrowAddress,
+      });
+      this.chainProvider.setUtxo(utxo);
+      this.chainProvider.setTopUpEvidence(outpoint, {
+        covenantId: previous.covenantId,
+        spentOutpoint: previous.activeOutpoint,
+        successorOutpoint: outpoint,
+        successorScriptPublicKey: previous.activeScriptPublicKey,
+        successorAmount: request.targetFundingAmount,
+        authorizedSuccessorCount: 1,
+      });
+    });
+    return {
+      transaction,
+      transactionId,
+      successor: {
+        outpoint,
+        covenantId: previous.covenantId,
+        amount: request.targetFundingAmount,
+        scriptPublicKey: previous.activeScriptPublicKey,
+      },
+      fundingSource: this.sourceKind,
     };
   }
 
@@ -264,11 +415,36 @@ class MockFundingProvider {
     );
   }
 
+  async getUtxo(outpoint) {
+    return this.chainProvider.getUtxo(outpoint);
+  }
+
+  async verifyCovenantGenesis({ utxo }) {
+    return this.chainProvider.verifyCovenantGenesis({ utxo });
+  }
+
+  async verifyCovenantTopUp({ previous, successor }) {
+    return this.chainProvider.verifyCovenantTopUp({
+      previous,
+      next: {
+        ...previous,
+        activeOutpoint: successor.outpoint,
+        activeScriptPublicKey: successor.scriptPublicKey,
+        fundingAmount: successor.amount,
+      },
+    });
+  }
+
   async getVirtualDaaScore() {
     return "100";
   }
 
   async sendTransaction(transaction) {
+    const apply = this.preparedTransitions.get(transaction);
+    if (apply) {
+      apply();
+      this.preparedTransitions.delete(transaction);
+    }
     return {
       transactionId:
         transaction.length === 64
@@ -295,18 +471,76 @@ class MockFundingProvider {
     next.push(utxo);
     this.utxosByAddress.set(address, next);
   }
+
+  removeAddressUtxo(address, outpoint) {
+    const current = this.utxosByAddress.get(address) ?? [];
+    this.utxosByAddress.set(
+      address,
+      current.filter(
+        (utxo) => outpointKey(utxo.outpoint) !== outpointKey(outpoint),
+      ),
+    );
+  }
 }
 
 class MockChainProvider {
   utxos = new Map();
+  genesisEvidence = new Map();
+  topUpEvidence = new Map();
+  preparedTransactions = new Map();
+
+  prepareTransaction(transaction, apply) {
+    this.preparedTransactions.set(transaction, apply);
+  }
 
   setUtxo(utxo) {
     this.utxos.set(outpointKey(utxo.outpoint), structuredClone(utxo));
   }
 
+  deleteUtxo(outpoint) {
+    this.utxos.delete(outpointKey(outpoint));
+  }
+
+  setGenesisEvidence(outpoint, evidence) {
+    this.genesisEvidence.set(outpointKey(outpoint), structuredClone(evidence));
+  }
+
+  setTopUpEvidence(outpoint, evidence) {
+    this.topUpEvidence.set(outpointKey(outpoint), structuredClone(evidence));
+  }
+
   async getUtxo(outpoint) {
     const utxo = this.utxos.get(outpointKey(outpoint));
     return utxo ? structuredClone(utxo) : null;
+  }
+
+  async verifyCovenantGenesis({ utxo }) {
+    const evidence = this.genesisEvidence.get(outpointKey(utxo.outpoint));
+    if (!evidence || evidence.covenantId !== utxo.covenantId) return null;
+    const derived = transactionV1CovenantId(evidence.authorizingInput, [
+      {
+        index: evidence.genesisOutpoint.index,
+        output: {
+          amount: evidence.genesisAmount,
+          scriptPublicKey: evidence.genesisScriptPublicKey,
+          covenant: null,
+        },
+      },
+    ]);
+    return derived === evidence.covenantId ? structuredClone(evidence) : null;
+  }
+
+  async verifyCovenantTopUp({ previous, next }) {
+    const evidence = this.topUpEvidence.get(outpointKey(next.activeOutpoint));
+    if (
+      !evidence ||
+      evidence.covenantId !== previous.covenantId ||
+      outpointKey(evidence.spentOutpoint) !==
+        outpointKey(previous.activeOutpoint)
+    ) {
+      return null;
+    }
+    return structuredClone(evidence);
   }
 
   async getVirtualDaaScore() {
@@ -318,6 +552,11 @@ class MockChainProvider {
   }
 
   async sendTransaction(transaction) {
+    const apply = this.preparedTransactions.get(transaction);
+    if (apply) {
+      apply();
+      this.preparedTransactions.delete(transaction);
+    }
     return {
       transactionId:
         transaction.length === 64
