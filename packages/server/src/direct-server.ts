@@ -1097,6 +1097,11 @@ export class DirectModeServer {
           "claim continuation amount must equal funding minus the authorized claim",
         );
       }
+      const continuationEscrow = deriveServerEscrow(
+        this.#config,
+        preview.channel.channelConfig,
+        claimedAccounting.claimedCumulativeAmount,
+      );
       const attempt: ClaimAttemptRecord = {
         attemptId: claimAttemptId(
           preview.channel,
@@ -1167,6 +1172,7 @@ export class DirectModeServer {
       const updated = accepted
         ? {
             ...preview.channel,
+            escrowAddress: continuationEscrow.escrowAddress,
             activeOutpoint: claim.continuationOutpoint,
             activeScriptPublicKey: claim.continuationScriptPublicKey,
             ...claimedAccounting,
@@ -1339,13 +1345,6 @@ export class DirectModeServer {
         attempt.requiredFinality,
         this.#config.acceptedFinality,
       );
-      const continuation = await this.#verifiedFundingUtxo(
-        attempt.continuationOutpoint,
-        attempt.continuationScriptPublicKey,
-        attempt.continuationFundingAmount,
-        attempt.covenantId,
-        requiredFinality,
-      );
       const claimedAccounting = applyBatchClaimAccounting(
         channel,
         attempt.claimAmount,
@@ -1358,8 +1357,21 @@ export class DirectModeServer {
           "claim continuation amount does not match recovered accounting",
         );
       }
+      const continuationEscrow = deriveServerEscrow(
+        this.#config,
+        channel.channelConfig,
+        claimedAccounting.claimedCumulativeAmount,
+      );
+      const continuation = await this.#verifiedFundingUtxo(
+        attempt.continuationOutpoint,
+        attempt.continuationScriptPublicKey,
+        attempt.continuationFundingAmount,
+        attempt.covenantId,
+        requiredFinality,
+      );
       const updated = {
         ...channel,
+        escrowAddress: continuationEscrow.escrowAddress,
         activeOutpoint: attempt.continuationOutpoint,
         activeScriptPublicKey: attempt.continuationScriptPublicKey,
         ...claimedAccounting,

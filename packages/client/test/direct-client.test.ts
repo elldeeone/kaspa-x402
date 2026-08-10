@@ -1330,6 +1330,10 @@ describe("direct-mode client", () => {
     expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
       "150",
     );
+    const [stored] = await store.loadChannels({});
+    expect(stored?.escrowAddress).toBe(
+      `kaspatest:${sha256Hex(successorScriptPublicKey).slice(0, 32)}`,
+    );
   });
 
   it("rejects corrective state whose script does not encode its claimed amount", async () => {

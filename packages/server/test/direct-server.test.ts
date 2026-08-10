@@ -3437,6 +3437,9 @@ describe("direct-mode server", () => {
     expect(claim.channel.claimedCumulativeAmount).toBe("100");
     expect(claim.channel.signedMaxClaimable).toBe("100");
     expect(claim.channel.voucherSignature).toBeTruthy();
+    expect(claim.channel.escrowAddress).toBe(
+      deriveEscrow(claim.channel.channelConfig, "100").escrowAddress,
+    );
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
@@ -3510,6 +3513,12 @@ describe("direct-mode server", () => {
     expect(second.channel.voucherSignature).toBe(opened.voucherSignature);
     expect(second.channel.covenantId).toBe(opened.covenantId);
     expect(second.channel.fundingAmount).toBe("800");
+    expect(first.channel.escrowAddress).toBe(
+      deriveEscrow(opened.channelConfig, "100").escrowAddress,
+    );
+    expect(second.channel.escrowAddress).toBe(
+      deriveEscrow(opened.channelConfig, "200").escrowAddress,
+    );
   });
 
   it("rejects a claim builder that deducts fees from the covenant continuation", async () => {
@@ -3629,6 +3638,9 @@ describe("direct-mode server", () => {
 
     expect(recovered.accepted).toBe(true);
     expect(recovered.channel.claimedCumulativeAmount).toBe("100");
+    expect(recovered.channel.escrowAddress).toBe(
+      deriveEscrow(recovered.channel.channelConfig, "100").escrowAddress,
+    );
     await expect(
       setup.store.loadOpenClaimAttempt(payment.channelId),
     ).resolves.toBeUndefined();
