@@ -68,7 +68,8 @@ gates.
   facilitator to verify, broadcast if needed, and observe. Amounts are decimal
   sompi strings. KIP-9 storage mass is transaction-shape-dependent and does not
   define a universal dust constant.
-- `batch-settlement` (`extra.binding: "kaspa-escrow-v1"`): the client funds
+- Deployed Alpha.9 `batch-settlement` (`extra.binding: "kaspa-escrow-v1"`):
+  the client funds
   a covenant-backed escrow once, signs a cumulative Schnorr voucher per paid
   request, and the chain is touched again only at claim or refund time. This
   is the same escrow-plus-off-chain-voucher model as the upstream EVM

@@ -1,0 +1,31 @@
+{
+  "kind": "negative",
+  "name": "wrong-binding",
+  "description": "The exact scheme cannot use the escrow binding.",
+  "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
+  "expectedError": "invalid_kaspa_x402_binding",
+  "value": {
+    "x402Version": 2,
+    "resource": {
+      "url": "https://api.example.com/download.bin"
+    },
+    "accepts": [
+      {
+        "scheme": "exact",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v2",
+          "templateId": "kaspa-x402-escrow-v2",
+          "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
+          "minDepositSompi": "90000000",
+          "claimReserveSompi": "2000000",
+          "refundTimeoutDaa": "123456789"
+        }
+      }
+    ]
+  }
+}

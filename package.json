@@ -20,7 +20,7 @@
   "type": "module",
   "scripts": {
     "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && npm --workspace @kaspa-x402/server run build && npm --workspace @kaspa-x402/client run build && npm --workspace @kaspa-x402/facilitator run build && npm --workspace @kaspa-x402/cli run build && npm --workspace @kaspa-x402/demo-gateway run build",
-    "test": "npm --workspace @kaspa-x402/core test && npm --workspace @kaspa-x402/covenant test && npm --workspace @kaspa-x402/server test && npm --workspace @kaspa-x402/client test && npm --workspace @kaspa-x402/facilitator test && npm --workspace @kaspa-x402/cli test && npm --workspace @kaspa-x402/demo-gateway test",
+    "test": "npm --workspace @kaspa-x402/core test && npm --workspace @kaspa-x402/covenant test && npm --workspace @kaspa-x402/server test && npm --workspace @kaspa-x402/client test && npm --workspace @kaspa-x402/facilitator test && npm --workspace @kaspa-x402/cli test && npm --workspace @kaspa-x402/demo-gateway test && node --test scripts/npm-pack-output.test.mjs",
     "site:build": "node scripts/site-build.mjs",
     "site:check": "node scripts/site-check.mjs",
     "site:deploy:check": "node scripts/site-build.mjs --require-clean && node scripts/site-check.mjs --require-clean",
@@ -28,12 +28,13 @@
     "check:browser-demo": "npm --workspace @kaspa-x402/core run build && npm run site:build && node scripts/check-browser-demo.mjs",
     "check:pnn-browser": "node scripts/check-pnn-browser.mjs",
     "check:vendor-wasm": "node scripts/check-vendored-kaspa-wasm.mjs",
+    "check:worker-types": "npm --workspace @kaspa-x402/demo-gateway run types:check",
     "check:demo-gateway": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/demo-gateway run build && node scripts/check-demo-gateway.mjs",
     "check:admin-security": "node scripts/check-admin-cli-security.mjs",
     "check:hosted-offer-pins": "node scripts/check-hosted-offer-pins.mjs",
     "check:site-input-guards": "node --test scripts/site-inputs.test.mjs",
     "demo:exact-heads": "node scripts/demo-exact-heads.mjs",
-    "check:diff": "git diff --check -- . ':(exclude)site/src/vendor/kaspa-wasm/**'",
+    "check:diff": "git diff --check -- . ':(exclude)site/src/vendor/kaspa-wasm/**' ':(exclude)packages/demo-gateway/worker-configuration.d.ts'",
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
     "validate:schemas": "node scripts/validate-schemas.mjs",
     "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
@@ -42,7 +43,7 @@
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
     "proof:hosted-exact": "node scripts/proof-hosted-exact.mjs",
     "pack:public:dry-run": "node scripts/pack-public-workspaces.mjs",
-    "validate:release": "npm run build && npm test && npm run validate:schemas && npm run site:deploy:check && npm run check:site-input-guards && npm run check:browser-demo && npm run check:pnn-browser && npm run check:vendor-wasm && npm run check:demo-gateway && npm run check:admin-security && npm run check:hosted-offer-pins && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus && npm run check:exact-consensus-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run proof:live:check -- --write-report && npm run pack:public:dry-run >/tmp/kaspa-x402-pack.json && npm run check:diff",
+    "validate:release": "npm run build && npm test && npm run validate:schemas && npm run site:deploy:check && npm run check:site-input-guards && npm run check:browser-demo && npm run check:pnn-browser && npm run check:vendor-wasm && npm run check:worker-types && npm run check:demo-gateway && npm run check:admin-security && npm run check:hosted-offer-pins && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus && npm run check:exact-consensus-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run proof:live:check -- --write-report && npm run pack:public:dry-run >/tmp/kaspa-x402-pack.json && npm run check:diff",
     "validate:release:live": "npm run validate:release && npm run proof:live:check -- --live --write-report",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
     "vectors:exact-consensus": "node scripts/generate-exact-consensus-vectors.mjs",
@@ -70,6 +71,6 @@
     "tsup": "^8.3.5",
     "typescript": "^5.8.3",
     "vitest": "^3.2.4",
-    "wrangler": "^4.95.0"
+    "wrangler": "^4.120.0"
   }
 }

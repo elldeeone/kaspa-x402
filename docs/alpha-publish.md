@@ -1,9 +1,9 @@
 # Alpha Publish Checklist
 
 Status: `0.1.0-alpha.9` is published to npm, tagged, released, and deployed on
-`kaspa:testnet-10`. Its funded hosted `standard-native` exact canary passed.
-Publishes require npm authorization and must not happen accidentally from CI
-or an unauthenticated shell.
+`kaspa:testnet-10`. `0.1.0-alpha.10` is an unpublished source candidate and has
+not been tagged or deployed. Publishes require npm authorization and must not
+happen accidentally from CI or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
@@ -48,6 +48,10 @@ is the sole merchant payment. Unanswered 402s no longer consume inventory.
 their wire formats, transaction construction, verification order, expiry
 rules, commitment preimages, and consensus cross-checks independently
 implementable from the specifications and vectors.
+`0.1.0-alpha.10` keeps both exact profiles unchanged and cleanly replaces the
+batch binding with `kaspa-escrow-v2`: stable KIP-20 lineage, lifetime A/S/T
+accounting, partial claims, same-lineage top-ups, an advertised claim reserve,
+and fresh runtime state with no older-alpha reader or migration.
 
 `@kaspa-x402/facilitator` and `@kaspa-x402/cli` remain private for now. They
 are useful in the repository, but they should not be published until the public
@@ -98,6 +102,23 @@ links.
 The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
+
+## Alpha.10 Release Sequence
+
+Use this order; every publish, deployment, tag, and release remains a separate
+explicitly authorized operator action:
+
+1. Freeze the approved source, then create the new immutable Alpha.10 snapshot
+   and content lock. Do not modify an older snapshot.
+2. Put that complete candidate, including its snapshot and lock, in a clean
+   checkout and pass `npm run validate:release` with the v2 covenant consensus
+   sequence and both exact and batch interop drift gates.
+3. Install and import the four real local tarballs in a clean temporary project,
+   record their hashes, then stage, approve, and verify the npm packages.
+4. Deploy and verify the locked static site at the apex and `www` before the
+   Worker, because the Worker canary checks the Alpha.10 snapshot.
+5. Cut over to fresh `demo-gateway-alpha.10` state, run funded batch and exact
+   canaries, then separately record deployment evidence, tag, and release.
 
 ## Alpha.9 Release Recheck
 

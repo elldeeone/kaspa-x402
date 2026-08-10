@@ -1,0 +1,30 @@
+{
+  "kind": "negative",
+  "name": "exact-transfer unsupported",
+  "schema": "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+  "value": {
+    "x402Version": 2,
+    "accepted": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "250",
+      "asset": "KAS",
+      "payTo": "kaspatest:payout",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v2",
+        "profile": "standard-native",
+        "finality": "accepted",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "payToScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"
+      }
+    },
+    "payload": {
+      "type": "exact-transfer",
+      "profile": "standard-native",
+      "transactionId": "7777777777777777777777777777777777777777777777777777777777777777",
+      "paymentOutputIndex": 0
+    }
+  },
+  "expectedError": "invalid_kaspa_payment_payload_type"
+}

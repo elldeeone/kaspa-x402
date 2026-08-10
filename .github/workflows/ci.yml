@@ -39,6 +39,8 @@ jobs:
           npm run validate:tx-v1-consensus
           npm run check:exact-consensus-vector
           npm run check:exact-http-vector
+          npm run check:exact-interop-vector
+          npm run check:batch-interop-vector
       - name: Offline proof
         run: npm run proof:offline
       - name: Covenant fixture checks
@@ -49,6 +51,8 @@ jobs:
         run: npm run site:check
       - name: Gateway Worker dry-run build
         run: npm --workspace @kaspa-x402/demo-gateway run build
+      - name: Generated Worker binding drift
+        run: npm run check:worker-types
       - name: Admin CLI secret and transport checks
         run: npm run check:admin-security
       - name: Hosted proof offer-pin checks

@@ -1,0 +1,301 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
+  "title": "Kaspa x402 PaymentRequirements Extra",
+  "oneOf": [
+    {
+      "type": "object",
+      "required": [
+        "binding",
+        "profile",
+        "finality",
+        "transactionEncoding",
+        "payToScriptPublicKey"
+      ],
+      "properties": {
+        "binding": {
+          "const": "kaspa-exact-v2"
+        },
+        "profile": {
+          "enum": ["standard-native", "additive"]
+        },
+        "finality": {
+          "enum": ["accepted", "confirmed"]
+        },
+        "transactionEncoding": {
+          "const": "kaspa-sdk-safe-json-v2.0.0"
+        },
+        "payToScriptPublicKey": {
+          "type": "string",
+          "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+        },
+        "paymentOutputIndex": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        },
+        "templateId": {
+          "const": "kaspa-x402-kip10-additive-v1"
+        },
+        "headId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "headVersion": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+        },
+        "expectedHeadOutpoint": {
+          "$ref": "#/$defs/outpoint"
+        },
+        "headAmount": {
+          "$ref": "#/$defs/amount"
+        },
+        "headScriptPublicKey": {
+          "type": "string",
+          "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+        },
+        "headRedeemScript": {
+          "type": "string",
+          "pattern": "^(?:[0-9a-fA-F]{2})+$"
+        },
+        "additiveThresholdSompi": {
+          "$ref": "#/$defs/amount"
+        },
+        "challengeId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "challengeExpiresAt": {
+          "type": "string"
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "allOf": [
+        {
+          "if": {
+            "properties": {
+              "profile": {
+                "const": "standard-native"
+              }
+            },
+            "required": ["profile"]
+          },
+          "then": {
+            "not": {
+              "anyOf": [
+                { "required": ["templateId"] },
+                { "required": ["headId"] },
+                { "required": ["headVersion"] },
+                { "required": ["expectedHeadOutpoint"] },
+                { "required": ["headAmount"] },
+                { "required": ["headScriptPublicKey"] },
+                { "required": ["headRedeemScript"] },
+                { "required": ["additiveThresholdSompi"] },
+                { "required": ["challengeId"] },
+                { "required": ["challengeExpiresAt"] }
+              ]
+            }
+          },
+          "else": {
+            "required": [
+              "templateId",
+              "headId",
+              "headVersion",
+              "expectedHeadOutpoint",
+              "headAmount",
+              "headScriptPublicKey",
+              "headRedeemScript",
+              "additiveThresholdSompi",
+              "challengeId",
+              "challengeExpiresAt",
+              "paymentOutputIndex"
+            ],
+            "properties": {
+              "paymentOutputIndex": {
+                "const": 0
+              }
+            }
+          }
+        },
+        {
+          "not": {
+            "anyOf": [
+              { "required": ["borrowOutpoint"] },
+              { "required": ["borrowAmount"] },
+              { "required": ["borrowScriptPublicKey"] },
+              { "required": ["borrowRedeemScript"] },
+              { "required": ["reservationId"] },
+              { "required": ["reservationExpiresAt"] }
+            ]
+          }
+        }
+      ],
+      "additionalProperties": true
+    },
+    {
+      "$ref": "#/$defs/batchExtra"
+    }
+  ],
+  "$defs": {
+    "amount": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$"
+    },
+    "batchAmount": {
+      "type": "string",
+      "description": "Canonical non-negative decimal constrained to the signed 64-bit maximum used by the batch covenant.",
+      "pattern": "^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$"
+    },
+    "outpoint": {
+      "type": "object",
+      "required": ["txid", "index"],
+      "properties": {
+        "txid": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "index": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "additionalProperties": false
+    },
+    "batchExtra": {
+      "type": "object",
+      "required": [
+        "binding",
+        "templateId",
+        "serverPublicKey",
+        "minDepositSompi",
+        "claimReserveSompi",
+        "refundTimeoutDaa"
+      ],
+      "properties": {
+        "binding": {
+          "const": "kaspa-escrow-v2"
+        },
+        "templateId": {
+          "const": "kaspa-x402-escrow-v2"
+        },
+        "serverPublicKey": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "minDepositSompi": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "claimReserveSompi": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "refundTimeoutDaa": {
+          "type": "string",
+          "pattern": "^(?:0|[1-9][0-9]{0,10}|[1-4][0-9]{11})$"
+        },
+        "claimPolicy": {
+          "type": "object",
+          "properties": {
+            "claimWhenUnclaimedAmountExceeds": {
+              "$ref": "#/$defs/batchAmount"
+            },
+            "claimAfterSeconds": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "additionalProperties": true
+        },
+        "channelState": {
+          "type": "object",
+          "required": [
+            "channelId",
+            "covenantId",
+            "activeOutpoint",
+            "activeScriptPublicKey",
+            "fundingAmount",
+            "chargedCumulativeAmount",
+            "claimedCumulativeAmount",
+            "signedMaxClaimable"
+          ],
+          "properties": {
+            "channelId": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "covenantId": {
+              "type": "string",
+              "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$"
+            },
+            "activeOutpoint": {
+              "type": "object",
+              "required": ["txid", "index"],
+              "properties": {
+                "txid": {
+                  "type": "string",
+                  "pattern": "^[0-9a-fA-F]{64}$"
+                },
+                "index": {
+                  "type": "integer",
+                  "minimum": 0,
+                  "maximum": 4294967295
+                }
+              },
+              "additionalProperties": false
+            },
+            "activeScriptPublicKey": {
+              "type": "string",
+              "description": "Serialized Kaspa ScriptPublicKey: uint16_be version followed by script bytes. Kaspa x402 v1 requires version 0.",
+              "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+            },
+            "fundingAmount": {
+              "$ref": "#/$defs/batchAmount"
+            },
+            "chargedCumulativeAmount": {
+              "$ref": "#/$defs/batchAmount"
+            },
+            "claimedCumulativeAmount": {
+              "$ref": "#/$defs/batchAmount"
+            },
+            "signedMaxClaimable": {
+              "$ref": "#/$defs/batchAmount"
+            }
+          },
+          "additionalProperties": true
+        },
+        "voucherState": {
+          "type": "object",
+          "required": ["covenantId", "amount", "signature"],
+          "properties": {
+            "covenantId": {
+              "type": "string",
+              "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$"
+            },
+            "amount": {
+              "$ref": "#/$defs/batchAmount"
+            },
+            "signature": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{128}$"
+            }
+          },
+          "additionalProperties": true
+        },
+        "assetKind": {
+          "const": "native"
+        },
+        "assetDecimals": {
+          "const": 8
+        }
+      },
+      "additionalProperties": true
+    }
+  }
+}
