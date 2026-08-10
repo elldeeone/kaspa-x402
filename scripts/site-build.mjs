@@ -8,6 +8,7 @@ import { fileURLToPath } from "node:url";
 import {
   ACTIVE_REDIRECTS,
   ARTIFACT_NOTES,
+  CONTRACT_FILES,
   DOC_GROUPS,
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
@@ -31,12 +32,20 @@ const requireClean = process.argv.includes("--require-clean");
 
 const schemaFiles = SCHEMA_FILES;
 const specFiles = SPEC_FILES;
+const contractFiles = CONTRACT_FILES;
 const docFiles = PUBLIC_DOC_FILES;
 const releaseDocFiles = RELEASE_DOC_FILES;
 const htmlSourceFiles = new Set([...specFiles, ...docFiles]);
 const vectorFiles = trackedFiles("vectors").filter(
   (file) => file.endsWith(".json") || file.endsWith(".md"),
 );
+const publishedArtifactFiles = new Set([
+  ...schemaFiles,
+  ...specFiles,
+  ...contractFiles,
+  ...docFiles,
+  ...vectorFiles,
+]);
 const siteScriptFiles = [
   "scripts/site-build.mjs",
   "scripts/site-check.mjs",
@@ -60,7 +69,7 @@ const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
 const sourceState = dirtyInputs.length > 0 ? "working-tree-dirty" : "git-head";
 const releaseSnapshotScope =
-  "schemas, specs, selected docs, vectors, package metadata, and release metadata";
+  "schemas, specs, covenant artifacts, selected docs, vectors, package metadata, and release metadata";
 const activeAlphaOnlyRoutes = [
   "/",
   "/demo/",
@@ -88,6 +97,7 @@ writeText("favicon.ico", "");
 const copiedArtifacts = [
   ...copyCollection(schemaFiles, "schemas"),
   ...copyCollection(specFiles, "spec"),
+  ...copyCollection(contractFiles, "contracts"),
   ...copyCollection(docFiles, "docs"),
   ...copyCollection(vectorFiles, "vectors"),
 ];
@@ -705,6 +715,7 @@ function releaseArtifacts(copiedArtifacts) {
   const releaseSources = [
     ...schemaFiles,
     ...specFiles,
+    ...contractFiles,
     ...releaseDocFiles,
     ...vectorFiles,
   ];
@@ -1123,6 +1134,9 @@ function rewriteMarkdownHref(href, sourceDir) {
       return `/${htmlRoute(normalized)}/${suffix}`;
     return `/${normalized}${suffix}`;
   }
+  const normalized = path.posix.normalize(`${sourceDir}/${target}`);
+  if (publishedArtifactFiles.has(normalized))
+    return `/${normalized}${suffix}`;
   return href;
 }
 
@@ -1278,6 +1292,7 @@ function dirtyPublishableInputs() {
     "site/README.md",
     ...schemaFiles,
     ...specFiles,
+    ...contractFiles,
     ...docFiles,
     ...vectorFiles,
     ...sitePackageFiles(),

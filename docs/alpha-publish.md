@@ -305,6 +305,8 @@ Checked for alpha.10 on 2026-08-10:
 - singleton KIP-20 genesis, two partial claims, same-lineage top-up, restart
   reload, stale-head rejection, and terminal refund retained one stable
   covenant ID;
+- each claim rotated the stateful script and derived escrow address, while the
+  top-up preserved both because it preserved the settled lifetime state;
 - exact standard-native and additive settlement, conflict/retry, replay,
   authorization rejection, and recovery all passed;
 - public TN10 REST independently returned all five batch lifecycle

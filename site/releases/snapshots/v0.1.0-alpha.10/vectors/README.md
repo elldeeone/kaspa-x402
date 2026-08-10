@@ -13,6 +13,12 @@ This directory holds implementation-independent vectors for:
 
 Vectors should be consumable without importing the TypeScript SDK.
 
+Alpha.10 also publishes the normative batch covenant source at
+`contracts/kaspa-x402-escrow-v2.sil` and its language-neutral constructor and
+byte fixture at `contracts/fixtures/kaspa-x402-escrow-v2.json`. Together with
+this directory, those artifacts are sufficient to reconstruct and verify the
+batch-v2 contract without importing the TypeScript SDK.
+
 ## Layout
 
 ```text

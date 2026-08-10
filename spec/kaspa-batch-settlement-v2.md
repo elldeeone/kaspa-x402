@@ -368,8 +368,11 @@ with the same script or address but a different id is not the same lane.
 ## Escrow Template
 
 `kaspa-x402-escrow-v2` is the byte-exact stateful KIP-20 contract compiled from
-`contracts/kaspa-x402-escrow-v2.sil`. Constructor material is derived from the
-channel config:
+the normative [SilverScript source](../contracts/kaspa-x402-escrow-v2.sil).
+The accompanying [byte fixture](../contracts/fixtures/kaspa-x402-escrow-v2.json)
+pins the compiler commit, source hash, fixed-width constructor layout, compiled
+genesis and successor bytes, script public keys, covenant arguments, and
+voucher digest. Constructor material is derived from the channel config:
 
 ```text
 clientKey                  = hex_decode(clientPublicKey)
@@ -386,9 +389,25 @@ it to an integer only inside the refund path. Implementations MUST NOT use a
 variable-width script-number constructor encoding: changing constructor length
 would invalidate the compiled successor-script offsets.
 
+An implementation does not need the TypeScript SDK or a SilverScript compiler
+at runtime. It MAY compile the normative source with the pinned compiler, or it
+MAY reproduce arbitrary redeem scripts from the fixture's
+`constructorLayout`: copy `sample.genesis.redeemScript`, replace every listed
+fixed-width slot at every listed byte offset, then derive the version-0 P2SH
+script public key. Integer slots are signed 64-bit little-endian bytes without
+an additional push prefix; `networkHash` is `sha256(utf8(network))`. The fixture
+MUST be rejected if its `sourceSha256` does not match the published source.
+
 The escrow output script is the version-0 pay-to-script-hash script derived
 from the complete redeem script. Implementations MUST reconstruct the script
 and state bytes; a client-provided address, hash, or script is never authority.
+
+`S` is embedded in the redeem script. An accepted claim changes `S`, so it MUST
+derive a new successor redeem script, version-0 P2SH script public key, and
+corresponding address. Any stored or indexed escrow address MUST advance
+atomically with `activeOutpoint`, `activeScriptPublicKey`, `V`, and `S`. A
+top-up preserves `S`, so it MUST preserve the redeem script, script public key,
+and escrow address while advancing the outpoint and `V`.
 
 ## Singleton Genesis
 
@@ -744,9 +763,11 @@ requirements hash, request commitment, singleton genesis, partial claim and
 same-voucher reuse, top-up, refund, signed-int64 boundaries, reserve failures,
 concurrent attempts, and transaction-v1 full-consensus execution.
 
-The SilverScript source, byte fixture, TypeScript builders, and independent
-Rust consensus harness form the reviewable source of truth. Testnet-10 evidence
-is alpha validation only; it is not a mainnet readiness claim.
+The specification, normative SilverScript source, and language-neutral byte
+fixture form the portable source of truth. The TypeScript builders and
+independent Rust consensus harness are tested implementations and review
+evidence; neither is required to implement this profile. Testnet-10 evidence is
+alpha validation only; it is not a mainnet readiness claim.
 
 ## Local Diagnostics
 

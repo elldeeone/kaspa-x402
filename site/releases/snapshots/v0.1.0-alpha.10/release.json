@@ -3,7 +3,7 @@
   "sourceState": "locked",
   "dirtyInputs": [],
   "contentLock": "site/releases/v0.1.0-alpha.10.json",
-  "snapshotScope": "schemas, specs, selected docs, vectors, package metadata, and release metadata",
+  "snapshotScope": "schemas, specs, covenant artifacts, selected docs, vectors, package metadata, and release metadata",
   "activeAlphaOnlyRoutes": [
     "/",
     "/demo/",
@@ -83,8 +83,8 @@
     {
       "source": "spec/kaspa-batch-settlement-v2.md",
       "target": "v0.1.0-alpha.10/spec/kaspa-batch-settlement-v2.md",
-      "bytes": 27254,
-      "sha256": "ad135d3517df55df65aad6373e038f73e24bc62fd6aee0a157b42efec535052a"
+      "bytes": 28733,
+      "sha256": "5a2788c349ccc2c6d0b7b7024dcc42a22d1c4bc492eef651a65b6aad6ef269de"
     },
     {
       "source": "spec/http-profile.md",
@@ -111,6 +111,18 @@
       "sha256": "89527fc4e426b38de3fad3d82192505a3e2e547d91ac1f249652d62361fb3f18"
     },
     {
+      "source": "contracts/kaspa-x402-escrow-v2.sil",
+      "target": "v0.1.0-alpha.10/contracts/kaspa-x402-escrow-v2.sil",
+      "bytes": 6440,
+      "sha256": "0f2090affa8121c4f13cee96d315bb354bdefbe20e2ce94855ec90e86d42c93d"
+    },
+    {
+      "source": "contracts/fixtures/kaspa-x402-escrow-v2.json",
+      "target": "v0.1.0-alpha.10/contracts/fixtures/kaspa-x402-escrow-v2.json",
+      "bytes": 9084,
+      "sha256": "1ef7885833c06cdcebf1f4a507d57700a902aeb690977f953c3d53c92c52a17c"
+    },
+    {
       "source": "docs/public-proposal.md",
       "target": "v0.1.0-alpha.10/docs/public-proposal.md",
       "bytes": 4034,
@@ -125,20 +137,20 @@
     {
       "source": "docs/live-testnet-report.md",
       "target": "v0.1.0-alpha.10/docs/live-testnet-report.md",
-      "bytes": 8737,
-      "sha256": "9b4047505e79973ea74d01a83010dacf4e0a171c821edc74d0b49f6e13ecf3d8"
+      "bytes": 8820,
+      "sha256": "c309133b93dc78e69a1246b5a450ca70e838ef6b169e0b2c25aec126e355ba64"
     },
     {
       "source": "docs/live-testnet-proof.md",
       "target": "v0.1.0-alpha.10/docs/live-testnet-proof.md",
-      "bytes": 4594,
-      "sha256": "62817c5faf0fb8dfecd5933faedb95a9f6d4aee22ed2d1d35846ade875dacc74"
+      "bytes": 4794,
+      "sha256": "68671d2e9334a83b7557a6b2abbaf027da4545199d039f7af26baef5cc4b90bc"
     },
     {
       "source": "docs/review-closure-ledger.md",
       "target": "v0.1.0-alpha.10/docs/review-closure-ledger.md",
-      "bytes": 7164,
-      "sha256": "9bd2c902d6a2cad662ffde05b295ef0e2d6fbe5c746e4d327f96836aaf7c5947"
+      "bytes": 7136,
+      "sha256": "0b30b3e68184954067166cbbd8dd1b953dfac0674c5659166db07273dc8a538a"
     },
     {
       "source": "docs/security-threat-model.md",
@@ -167,8 +179,8 @@
     {
       "source": "docs/server-store-contract.md",
       "target": "v0.1.0-alpha.10/docs/server-store-contract.md",
-      "bytes": 6232,
-      "sha256": "82dc443d417a1164198f41660957d6de1eefab9bbdd09e2f65009c70d21130ee"
+      "bytes": 6452,
+      "sha256": "3d905b41253480a76bc7d3ce377758a42f0ba263f6922714e299be1c38d405eb"
     },
     {
       "source": "docs/server-runtime-lock-contract.md",
@@ -179,8 +191,8 @@
     {
       "source": "vectors/README.md",
       "target": "v0.1.0-alpha.10/vectors/README.md",
-      "bytes": 4266,
-      "sha256": "e5a237fefc4d1cdca17f9499bee50b8a27ed0ea71ac6052a99b4c047b8f585dd"
+      "bytes": 4619,
+      "sha256": "9f098320147baeb9f4e4412be4d3086d93ac03d2081cd32ba9eb1957ef043c98"
     },
     {
       "source": "vectors/batch/interop-v2.json",
@@ -453,5 +465,5 @@
       "sha256": "36564ac622863b7621f3d95fb1fa6c8a126d813d238919c3aa856c4a04cd0508"
     }
   ],
-  "contentSha256": "281137b1d808afcdd57e25f8360ceff3539c30c8997dbc8515369132b5b74c2b"
+  "contentSha256": "cedaf891368bfc8fff6188570abee1b205ab82b32fa4b0c261532dcab0a88a3a"
 }

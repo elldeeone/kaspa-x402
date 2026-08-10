@@ -85,6 +85,11 @@ export const SPEC_FILES = [
   "spec/errors.md",
 ];
 
+export const CONTRACT_FILES = [
+  "contracts/kaspa-x402-escrow-v2.sil",
+  "contracts/fixtures/kaspa-x402-escrow-v2.json",
+];
+
 export const RELEASE_DOC_FILES = [
   "docs/public-proposal.md",
   "docs/adoption-examples.md",
@@ -162,6 +167,10 @@ export const ARTIFACT_NOTES = {
     "Optional self-hosted facilitator: `/supported`, `/verify`, `/settle` compatibility surface.",
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
+  "contracts/kaspa-x402-escrow-v2.sil":
+    "Normative SilverScript source for the Alpha.10 stateful batch escrow covenant.",
+  "contracts/fixtures/kaspa-x402-escrow-v2.json":
+    "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "spec/live-covenant-proof-harness.md":
     "Opt-in Testnet-10 proof for singleton genesis, repeated claims, top-up, refund, and restart recovery.",
   "spec/transaction-v1-plan.md":

@@ -65,6 +65,10 @@ evidence must also show that the builder transaction id, persisted transaction
 id, and broadcast transaction id are identical, and that accepted application
 atomically marks the channel refunded and the attempt applied.
 
+Claim evidence must show that advancing `S` rotates the stateful script and its
+derived P2SH address. Top-up evidence must show that preserving `S` preserves
+both while the outpoint and `V` advance.
+
 ## Safety Gates
 
 The runner must fail closed when:

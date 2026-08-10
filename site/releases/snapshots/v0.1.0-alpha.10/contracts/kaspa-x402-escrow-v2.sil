@@ -1,0 +1,148 @@
+pragma silverscript ^0.1.0;
+
+// Stateful singleton escrow for Kaspa x402 cumulative settlement.
+//
+// `settledTotal` is the lifetime gross amount removed from the lane. The
+// client signs a cumulative ceiling off chain; a claim may advance the state
+// by any positive amount up to the remaining signed headroom. KIP-20 keeps the
+// covenant ID stable across claims and top-ups, so the voucher is not tied to
+// a replaceable outpoint.
+//
+// Voucher message:
+//
+//   sha256(domain32 || network32 || covenant_id32 || total_authorized_le64)
+contract KaspaX402EscrowV2(
+    pubkey client,
+    pubkey server,
+    byte[32] networkHash,
+    byte[32] payoutScriptPublicKeyHash,
+    byte[32] refundScriptPublicKeyHash,
+    // Fixed-width encoding keeps compiler-generated state-transition offsets
+    // invariant for every supported timeout.
+    byte[8] timeoutLe,
+    int initialSettledTotal
+) {
+    int settledTotal = initialSettledTotal;
+
+    // sha256("kaspa:x402:escrow-voucher:v2")
+    byte[32] constant VOUCHER_DOMAIN_TAG = byte[32](0xdd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b);
+    byte[32] constant ZERO_COVENANT_ID = byte[32](0x0000000000000000000000000000000000000000000000000000000000000000);
+
+    // The server settles part or all of the signed cumulative headroom. The
+    // fee is deducted from output 0; output 1 preserves the exact lane value
+    // left after this claim and advances the on-chain cumulative state.
+    #[covenant(binding = auth, from = 1, to = 1, mode = transition, groups = single)]
+    function claim(
+        State previous,
+        sig serverSig,
+        datasig clientVoucher,
+        byte[8] totalAuthorizedLe,
+        byte[8] claimAmountLe
+    ) : State {
+        require(tx.version == 1);
+        require(tx.locktime == 0);
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 2);
+        require(this.activeInputIndex == 0);
+        require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
+
+        require(byte[1](serverSig.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(serverSig, server));
+
+        byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 1);
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        require(OpAuthOutputIdx(this.activeInputIndex, 0) == 1);
+        require(OpOutputCovenantId(0) == ZERO_COVENANT_ID);
+        require(OpOutputCovenantId(1) == covenantId);
+
+        byte[] voucherMessage =
+            byte[](VOUCHER_DOMAIN_TAG) +
+            byte[](networkHash) +
+            byte[](covenantId) +
+            byte[](totalAuthorizedLe);
+        require(checkMsgSig(clientVoucher, sha256(voucherMessage), client));
+
+        int totalAuthorized = int(totalAuthorizedLe);
+        int claimAmount = int(claimAmountLe);
+        require(previous.settledTotal >= 0);
+        require(totalAuthorized > previous.settledTotal);
+        require(claimAmount > 0);
+
+        // Subtract before adding so every intermediate remains within signed
+        // 64-bit script-integer bounds.
+        int available = totalAuthorized - previous.settledTotal;
+        require(claimAmount <= available);
+
+        int inputValue = tx.inputs[this.activeInputIndex].value;
+        require(claimAmount < inputValue);
+        require(tx.outputs[0].value > 0);
+        require(tx.outputs[0].value <= claimAmount);
+        require(sha256(tx.outputs[0].scriptPubKey) == payoutScriptPublicKeyHash);
+        require(tx.outputs[1].value == inputValue - claimAmount);
+
+        return State {
+            settledTotal: previous.settledTotal + claimAmount
+        };
+    }
+
+    // A client-authorized top-up preserves the cumulative state while adding
+    // value to the singleton successor. Additional inputs fund the increase;
+    // the only optional non-successor output is unbound client change.
+    #[covenant(binding = auth, from = 1, to = 1, mode = transition, groups = single)]
+    function topUp(State previous, sig clientSig) : State {
+        require(tx.version == 1);
+        require(tx.locktime == 0);
+        require(tx.inputs.length > 1);
+        require(tx.outputs.length > 0);
+        require(tx.outputs.length <= 2);
+        require(this.activeInputIndex == 0);
+        require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
+
+        require(byte[1](clientSig.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(clientSig, client));
+
+        byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 1);
+        require(OpAuthOutputCount(this.activeInputIndex) == 1);
+        require(OpAuthOutputIdx(this.activeInputIndex, 0) == 0);
+        require(OpOutputCovenantId(0) == covenantId);
+        require(previous.settledTotal >= 0);
+        require(tx.outputs[0].value > tx.inputs[this.activeInputIndex].value);
+
+        if (tx.outputs.length == 2) {
+            require(OpOutputCovenantId(1) == ZERO_COVENANT_ID);
+            require(tx.outputs[1].value > 0);
+            require(sha256(tx.outputs[1].scriptPubKey) == refundScriptPublicKeyHash);
+        }
+
+        return State {
+            settledTotal: previous.settledTotal
+        };
+    }
+
+    // After timeout the client terminates the lane. The fee is deducted from
+    // the sole refund output, which must be explicitly unbound from KIP-20.
+    entry refund(sig clientSig) {
+        require(tx.version == 1);
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+        require(this.activeInputIndex == 0);
+        require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
+        require(tx.time >= int(timeoutLe));
+
+        require(byte[1](clientSig.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(clientSig, client));
+
+        byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 0);
+        require(OpAuthOutputCount(this.activeInputIndex) == 0);
+        require(OpOutputCovenantId(0) == ZERO_COVENANT_ID);
+        require(tx.outputs[0].value > 0);
+        require(tx.outputs[0].value <= tx.inputs[this.activeInputIndex].value);
+        require(sha256(tx.outputs[0].scriptPubKey) == refundScriptPublicKeyHash);
+    }
+}

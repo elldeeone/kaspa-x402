@@ -12,6 +12,7 @@ import {
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
   hexToBytes,
+  networkHash,
   serializedScriptPublicKey,
   voucherDigest,
   voucherPreimage,
@@ -41,6 +42,18 @@ export interface EscrowV2Fixture {
   stateLayout: {
     start: number;
     len: number;
+  };
+  constructorLayout: {
+    format: string;
+    base: string;
+    redeemScriptBytes: number;
+    slots: Array<{
+      name: string;
+      source: string;
+      encoding: string;
+      offsets: number[];
+      bytes: number;
+    }>;
   };
   sample: {
     params: EscrowTemplateParams;
@@ -108,6 +121,7 @@ export function checkEscrowV2FixtureReproducibility(
   check(fixture.compiler.checkedCommit === ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT, "compiler.checkedCommit");
   check(fixture.compiler.command === ESCROW_FIXTURE_COMPILER_COMMAND, "compiler.command");
   check(fixture.stateLayout.start === 1 && fixture.stateLayout.len === 9, "stateLayout");
+  checkEscrowConstructorLayout(fixture, checks);
 
   const genesisRedeemScript = buildEscrowRedeemScript(fixture.sample.params);
   const genesisScriptPublicKey = escrowScriptPublicKey(fixture.sample.params);
@@ -173,6 +187,51 @@ export function checkEscrowV2FixtureReproducibility(
     }
     checks.push(label);
   }
+}
+
+function checkEscrowConstructorLayout(fixture: EscrowV2Fixture, checks: string[]): void {
+  const layout = fixture.constructorLayout;
+  const script = hexToBytes(fixture.sample.genesis.redeemScript);
+  check(layout.format === "fixed-width-byte-patches-v1", "constructorLayout.format");
+  check(layout.base === "sample.genesis.redeemScript", "constructorLayout.base");
+  check(layout.redeemScriptBytes === script.length, "constructorLayout.redeemScriptBytes");
+
+  const expected = new Map<string, { encoding: string; offsets: number[]; bytes: number; value: Uint8Array }>([
+    ["settledTotal", { encoding: "signed-int64-le", offsets: [2], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.settledTotal)) }],
+    ["serverPublicKey", { encoding: "hex", offsets: [85], bytes: 32, value: hexToBytes(fixture.sample.params.serverPublicKey) }],
+    ["networkHash", { encoding: "hex", offsets: [220], bytes: 32, value: networkHash(fixture.sample.params.network) }],
+    ["clientPublicKey", { encoding: "hex", offsets: [261, 522, 800], bytes: 32, value: hexToBytes(fixture.sample.params.clientPublicKey) }],
+    ["payoutScriptPublicKeyHash", { encoding: "hex", offsets: [341], bytes: 32, value: hexToBytes(fixture.sample.params.payoutScriptPublicKeyHash) }],
+    ["refundScriptPublicKeyHash", { encoding: "hex", offsets: [645, 903], bytes: 32, value: hexToBytes(fixture.sample.params.refundScriptPublicKeyHash) }],
+    ["timeoutDaa", { encoding: "signed-int64-le", offsets: [779], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.timeoutDaa)) }],
+  ]);
+  check(layout.slots.length === expected.size, "constructorLayout.slots.length");
+  for (const slot of layout.slots) {
+    const item = expected.get(slot.name);
+    check(item !== undefined, `constructorLayout.${slot.name}.known`);
+    if (item === undefined) continue;
+    check(slot.encoding === item.encoding, `constructorLayout.${slot.name}.encoding`);
+    check(slot.bytes === item.bytes, `constructorLayout.${slot.name}.bytes`);
+    check(JSON.stringify(slot.offsets) === JSON.stringify(item.offsets), `constructorLayout.${slot.name}.offsets`);
+    for (const offset of slot.offsets) {
+      check(bytesToHex(script.slice(offset, offset + slot.bytes)) === bytesToHex(item.value), `constructorLayout.${slot.name}.value@${offset}`);
+    }
+  }
+
+  function check(value: boolean, label: string): void {
+    if (!value) throw new Error(`escrow-v2 fixture reproducibility check failed: ${label}`);
+    checks.push(label);
+  }
+}
+
+function signedInt64Le(value: bigint): Uint8Array {
+  const bytes = new Uint8Array(8);
+  let remaining = value;
+  for (let index = 0; index < bytes.length; index += 1) {
+    bytes[index] = Number(remaining & 0xffn);
+    remaining >>= 8n;
+  }
+  return bytes;
 }
 
 export function checkEscrowFixtureReproducibility(

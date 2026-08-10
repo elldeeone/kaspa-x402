@@ -7,6 +7,7 @@ import { fileURLToPath } from "node:url";
 
 import {
   ACTIVE_REDIRECTS,
+  CONTRACT_FILES,
   PRIVATE_SITE_PATTERNS,
   PUBLIC_DOC_FILES,
   PUBLISHABLE_PACKAGES,
@@ -33,7 +34,7 @@ const siteScriptFiles = [
   "scripts/site-serve.mjs",
 ];
 const releaseSnapshotScope =
-  "schemas, specs, selected docs, vectors, package metadata, and release metadata";
+  "schemas, specs, covenant artifacts, selected docs, vectors, package metadata, and release metadata";
 const activeAlphaOnlyRoutes = [
   "/",
   "/demo/",
@@ -96,12 +97,14 @@ function checkCopiedArtifacts() {
   const activeFiles = [
     ...SCHEMA_FILES,
     ...SPEC_FILES,
+    ...CONTRACT_FILES,
     ...PUBLIC_DOC_FILES,
     ...vectors,
   ];
   const releaseFiles = [
     ...SCHEMA_FILES,
     ...SPEC_FILES,
+    ...CONTRACT_FILES,
     ...RELEASE_DOC_FILES,
     ...vectors,
   ];
@@ -697,6 +700,7 @@ function dirtyPublishableInputs() {
     "site/README.md",
     ...SCHEMA_FILES,
     ...SPEC_FILES,
+    ...CONTRACT_FILES,
     ...PUBLIC_DOC_FILES,
     ...vectors,
     ...sitePackageFiles(),

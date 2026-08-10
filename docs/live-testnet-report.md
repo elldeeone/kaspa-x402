@@ -2,13 +2,13 @@
 
 Status: current `0.1.0-alpha.10` funded live harness run.
 
-Generated: `2026-08-10T06:40:53.040Z`
+Generated: `2026-08-10T07:21:05.896Z`
 
 Network: `kaspa:testnet-10`
 
 Node: operator-controlled private TN10 node, synced with UTXO index enabled.
 
-Virtual DAA score at run start: `539852105`
+Virtual DAA score at run start: `539876359`
 
 The proof used the NodeJS SDK built from reviewed `rusty-kaspa` commit
 `78257f273a26c4be085bab0f79437dee99ca8835`. It executed all 18 required
@@ -19,7 +19,7 @@ Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 ## Controlled Funding Split
 
 - Transaction id:
-  `6c2cabaa5390c08ada7db41dec9c04bfce2c5953412dee9d31704c1e5b7913b1`
+  `6840c8f0a5cb4ee578cd8b0ba25a7185d616bbc8135973f1e7156fed9b3a78d4`
 - Transaction version: `0` (`sdk-generated-transaction`)
 - Requested controlled outputs: `16` at `500000000` sompi each
 
@@ -31,7 +31,7 @@ It did not disclose or copy wallet key material.
 ### Tiny payment
 
 - Transaction id:
-  `3662cfaa56388a5d69c0cb6af9632ec4ed45a6b91d7b1903de28c49dfc917366`
+  `9de41db6e22752777ffec39ae91bcd490e92612a8f605321ed13b388546426b9`
 - Transaction version: `0`
 - Advertised amount and merchant gain: `10000000` sompi
 - Paid fee: `2000000` sompi
@@ -47,7 +47,7 @@ It did not disclose or copy wallet key material.
 ### Normal payment
 
 - Transaction id:
-  `5628ad52f8489279dbadf94d5f6cce60e8c34c4199210b947f25dcce9025d97e`
+  `11a457bcc56d03cdef0e2e223668d621927ca8066dfb8881b57bdcda36e9b461`
 - Transaction version: `0`
 - Advertised amount and merchant gain: `100000000` sompi
 - Paid fee: `2000000` sompi
@@ -67,8 +67,8 @@ separately; it does not claim a universal Kaspa minimum payment or fee.
 
 Two independent head UTXOs were funded:
 
-- `397be8b71dee6e7622a49460deed265b034bc3a1cf07b33891293131bfba4d63:0`
-- `ad5f70975b88da73f90776c763241fbf7967a4b60c56bd63cdbfa7cf1dbd2790:0`
+- `34ea914b619ebca49e729e0de74d9ea4724d4713013ab7e7e40d8e28e086476a:0`
+- `467732e379f1e8f0b55ea155035997551a757b7fa1b1d4711f704ac15eae6307:0`
 
 Each started at `100000000` sompi with a `10000000` sompi application
 anti-churn threshold.
@@ -76,7 +76,7 @@ anti-churn threshold.
 The primary additive payment proved:
 
 - Transaction id:
-  `1a7f19ce3a8063a7dade02026b120a0a2e2d07e0dd508f6acca7d01d3f470ad9`
+  `f37e8b1eb594ced6f9c8260fb8758fec5a4605357a7deb8eafc46d8dd09e62e4`
 - Transaction version: `1`
 - Prior head amount: `100000000` sompi
 - Successor amount: `200000000` sompi
@@ -98,11 +98,11 @@ the payment.
 Two different signed transactions raced the same version-0 head:
 
 - Winner:
-  `5f741e04445522ed4d5ce5c1e3c924213fe9ef375fec0ea5a5fdcde07eeeefad`
+  `916b26cab599e0b358c9f599a0b7e9f6bd073d235b5bef683d8e68e7317d5692`
 - Losing candidate:
-  `17bb994eac2c9c0c7d0f85ce8a11ede6acfe71e201a2d99587a9ec838b76edb3`
+  `f1e721fa37487de66dacd778db42857947bad2ad415544be423e562418f8e18b`
 - Refreshed retry:
-  `8de9465702d3629af86a589c930916e08e915e0f1836ae2a77ef2d2c63f132fc`
+  `2f91763e7f0395aac2022d7a8848386a9eb2bb98cae07a582ede85e90a9eb98a`
 
 Exactly one initial request returned `200`; the loser received a fresh `402`
 and then settled successfully against refreshed head state. Protected work ran
@@ -116,24 +116,24 @@ twice total: once for the winner and once for the retry.
 - Public verify-only calls rejected valid but unobserved exact transactions at
   the authenticated finality gate before direct settlement.
 - Transaction
-  `d3d39c239f87a6fd309fbce3ba9d2c2ac2ae0e104ec8a1bdd59cfb7e086e9e6a`
+  `528db7c4e206932c45a4da922835335fd9c5cabd028bc1b29d084b3439539d05`
   was accepted by TN10 and then subjected to an injected post-broadcast runtime
   failure. A new server instance over preserved state reconciled it and ran the
   protected handler exactly once on retry.
 - Transaction
-  `81a3319e5aa4c422f99066462e5ff908f274238a9fda21d5bfe9a5ea692911af`
+  `fa5b8359e3a62562a35af48addb652d796158ed0f5ca906f2c1ec75247bac9f2`
   externally advanced a head. Trusted candidate evidence reconciled the
   durable head from version `2` to `3`; no address-only inference was used.
 
 ## KIP-20 Batch Lifecycle
 
 Stable covenant ID:
-`adf6416e8308ae10b854f4ff1eb04f27139c50aafe98cb20a9e50b28c88eb8db`
+`dd5abfed8d29acedc3e85b8a1f7da7f481e627927ee1820ac98e5645f9eb6302`
 
 ### Singleton genesis and vouchers
 
 - Deposit transaction:
-  `4faa3fc2f90cc09e07aa03d112e089558c63fb28b2bb7c16d64ab8c52ce45668`
+  `507d27fa5b4da6ed270a2a2e3c079e2efb63a6a72dc4f01c780eccdd516fb463`
 - Transaction version: `1`
 - Singleton KIP-20 genesis independently verified: yes
 - Funded covenant value after fee: `498000000` sompi
@@ -144,12 +144,12 @@ Stable covenant ID:
 ### Two partial claims against one voucher
 
 - First claim transaction:
-  `7037c2cea156cbe4947c716f6bd29ccf14a892d9214cf728f05ab597244bb317`
+  `63cf26a0b7f7709612ea05bc1689107a42a8c3e92cbc6c7a315b51d31dab5c33`
 - First gross claim: `100000000` sompi
 - First server output: `98000000` sompi
 - First continuation value: `398000000` sompi
 - Second claim transaction:
-  `450a67b25e61bc3009e01723fa4a28352f076642eef940038fe35292a58f987e`
+  `036b654b96c7137b948d0d9d8f6c306edc61d5c28cd1aea647096312b36631f9`
 - Second gross claim: `50000000` sompi
 - Second server output: `48000000` sompi
 - Second continuation value: `348000000` sompi
@@ -158,35 +158,36 @@ Stable covenant ID:
 - Claim fee per transaction: `2000000` sompi
 - Finality: `accepted` for both claims
 
-Both claims preserved the covenant ID while advancing the active outpoint and
-state script. The second claim reused the same cumulative voucher without
-exceeding its ceiling.
+Both claims preserved the covenant ID while advancing the active outpoint,
+state script, and derived P2SH address. The second claim reused the same
+cumulative voucher without exceeding its ceiling.
 
 ### Same-lineage top-up and restart reload
 
 - Top-up transaction:
-  `1c78135a1de56eb8d76304e01f7b22eab6760c737b9d72d2a344155fc460d4c3`
+  `90f04eeee0da64af6f555da30e19886bfd81072283827fbe819cdf98bb96ac62`
 - Added value: `402000000` sompi
 - Successor covenant value: `750000000` sompi
 - Lifetime actual charge and new signed ceiling: `600000000` sompi
 - Lifetime gross claimed remained: `150000000` sompi
 - Finality: `accepted`
 
-The top-up retained the same covenant ID and strictly increased the covenant
-value. A fresh client/server runtime reloaded the genesis evidence, top-up
-evidence, active outpoint, channel state, and the exact pre-broadcast claim
-artifact. No open claim attempt survived the accepted top-up.
+The top-up retained the same covenant ID, `S`, state script, and derived P2SH
+address while advancing the outpoint and strictly increasing `V`. A fresh
+client/server runtime reloaded the genesis evidence, top-up evidence, active
+outpoint, channel state, and the exact pre-broadcast claim artifact. No open
+claim attempt survived the accepted top-up.
 
 ### Stale-head rejection and terminal refund
 
 - A stale claim transaction against the spent genesis outpoint was submitted
   to TN10 and definitively rejected while the current continuation remained
   present.
-- Absolute refund DAA: `539853905`
-- Refund lock time: `539853906`
-- Observed DAA at submission: `539853936`
+- Absolute refund DAA: `539878159`
+- Refund lock time: `539878160`
+- Observed DAA at submission: `539878185`
 - Refund transaction:
-  `9557bf79fa621524db03d01bcc0f4f545ec9b4b9857642e2ba707d12cdae484f`
+  `1fc6d66d515942d54ff9652252f0a12addc09a3d63dbe59be80a6619738417c8`
 - Refund input: `750000000` sompi
 - Refund output: `748000000` sompi
 - Refund fee: `2000000` sompi

@@ -20,7 +20,7 @@
   "type": "module",
   "scripts": {
     "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && npm --workspace @kaspa-x402/server run build && npm --workspace @kaspa-x402/client run build && npm --workspace @kaspa-x402/facilitator run build && npm --workspace @kaspa-x402/cli run build && npm --workspace @kaspa-x402/demo-gateway run build",
-    "test": "npm --workspace @kaspa-x402/core test && npm --workspace @kaspa-x402/covenant test && npm --workspace @kaspa-x402/server test && npm --workspace @kaspa-x402/client test && npm --workspace @kaspa-x402/facilitator test && npm --workspace @kaspa-x402/cli test && npm --workspace @kaspa-x402/demo-gateway test && node --test scripts/npm-pack-output.test.mjs",
+    "test": "npm --workspace @kaspa-x402/core test && npm --workspace @kaspa-x402/covenant test && npm --workspace @kaspa-x402/server test && npm --workspace @kaspa-x402/client test && npm --workspace @kaspa-x402/facilitator test && npm --workspace @kaspa-x402/cli test && npm --workspace @kaspa-x402/demo-gateway test && node --test scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs",
     "site:build": "node scripts/site-build.mjs",
     "site:check": "node scripts/site-check.mjs",
     "site:deploy:check": "node scripts/site-build.mjs --require-clean && node scripts/site-check.mjs --require-clean",

@@ -59,7 +59,7 @@ history-provider retention can make the genesis transaction unavailable.
 Each active lane record must contain:
 
 - stable `covenantId` and channel id;
-- current outpoint, script public key, and value V;
+- current derived escrow address, outpoint, script public key, and value V;
 - lifetime actual charges A and lifetime on-chain gross settlement S;
 - latest buyer-signed lifetime ceiling T and its signature;
 - refund terms, status, and the evidence needed to reconcile the next
@@ -94,11 +94,14 @@ evidence to distinguish:
 - accepted with the expected successor or terminal refund;
 - rejected or conclusively absent and safe to rebuild.
 
-Applying a claim must verify one same-ID successor, advance S by the gross claim
-D, reduce V by D, and preserve A and T. Applying a top-up must verify one
-same-ID successor, increase V, and preserve A, S, and T. Applying a refund must
-verify that no same-ID successor exists and close the lane. Each application is
-a compare-and-set on the attempt's expected outpoint and accounting snapshot.
+Applying a claim must verify one same-ID successor, derive its escrow address
+from the verified successor script, atomically advance the address, outpoint,
+and script, advance S by the gross claim D, reduce V by D, and preserve A and T.
+Because a top-up preserves S, applying one must verify and preserve the current
+address and script, atomically advance the outpoint, increase V, and preserve A,
+S, and T. Applying a refund must verify that no same-ID successor exists and
+close the lane. Each application is a compare-and-set on the attempt's expected
+outpoint and accounting snapshot.
 
 A timeout, process crash, or RPC error after submission must leave the attempt
 unresolved. It must never make the old outpoint available for another claim,
