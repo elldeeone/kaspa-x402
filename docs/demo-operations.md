@@ -7,11 +7,13 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: alpha.9 Worker version
-`d28e6b35-54c6-459f-b8cd-02084a769593`, built from commit `4997713`. The funded
+Current deployment: Alpha.10 Worker version
+`c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit `78f2ada`. The funded
 `standard-native` exact canary passed with accepted finality, identical replay,
-and cross-resource replay rejection. The default exact profile needs no
-merchant inventory; optional `additive` uses durable KIP-10 head chains.
+and cross-resource replay rejection. The funded batch canary opened and reused
+one `kaspa-escrow-v2` lane, then rejected a stale voucher. The default exact
+profile needs no merchant inventory; optional `additive` uses durable KIP-10
+head chains.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
@@ -73,6 +75,10 @@ object.
 5. Enable the public Alpha.10 Worker only after its canaries pass. New batch
    clients must open singleton v2 genesis lanes; no older batch lane continues
    across the cutover.
+
+Completed on 2026-08-10. Alpha.9 remains available only as immutable release
+and rollback evidence; the active Worker resolves fresh
+`demo-gateway-alpha.10` state.
 
 ## Deploy
 

@@ -1,9 +1,8 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.9` is published to npm, tagged, released, and deployed on
-`kaspa:testnet-10`. `0.1.0-alpha.10` is an unpublished source candidate and has
-not been tagged or deployed. Publishes require npm authorization and must not
-happen accidentally from CI or an unauthenticated shell.
+Status: `0.1.0-alpha.10` is published to npm, tagged, released, and deployed on
+`kaspa:testnet-10`. Publishes require npm authorization and must not happen
+accidentally from CI or an unauthenticated shell.
 
 Registry note: the `alpha` dist-tag is the supported prerelease install path.
 The `latest` dist-tag is not advertised for alpha releases and may lag until a
@@ -119,6 +118,45 @@ explicitly authorized operator action:
    Worker, because the Worker canary checks the Alpha.10 snapshot.
 5. Cut over to fresh `demo-gateway-alpha.10` state, run funded batch and exact
    canaries, then separately record deployment evidence, tag, and release.
+
+## Alpha.10 Release Recheck
+
+Completed on 2026-08-10:
+
+- merged source commit `78f2ada2b2dd3d54116b4cbca1fe9ec08691efc0`
+  passed `npm run validate:release`, including 433 tests, schemas, the immutable
+  site, browser/PNN/WASM checks, Worker dry run, 74 covenant fixture checks,
+  pinned Kaspa consensus and exact/batch interop vectors, offline proof, live
+  readiness, package checks, and diff hygiene;
+- the immutable `v0.1.0-alpha.10` snapshot is locked at
+  `cedaf891368bfc8fff6188570abee1b205ab82b32fa4b0c261532dcab0a88a3a`;
+- the four public tarballs installed and imported together in a clean project;
+- npm registry SHA-1 values match the staged and independently downloaded
+  tarballs: core `6baa12d23b25f62047a7d64815111319843a616b`, covenant
+  `3cf53546844965e7a3f2f5d4bf90a563b869dcfc`, client
+  `901c9b386cbdf01663e8aa57d69ab8321991b9d2`, and server
+  `6a78bf8d66c64a53901bbe32c7f198b69e93344d`;
+- the npm `alpha` dist-tag resolves to `0.1.0-alpha.10` for all four packages,
+  while `latest` remains on `0.1.0-alpha.4`;
+- Pages deployment `8db44e87-c332-42cc-b956-f5748c67fb41` serves the locked
+  snapshot from both `kaspa-x402.org` and `www.kaspa-x402.org`;
+- the gateway first deployed fail-closed as Worker
+  `fed8d256-f330-4c6c-adda-6c20c18c283c`, then enabled reviewed Worker
+  `c57eb755-e169-4a00-ac4a-5e035371cad1` against fresh
+  `demo-gateway-alpha.10` state;
+- the funded hosted standard-native exact canary settled transaction
+  `8876bcd3a97592d6f5a2583c60994b1f5425067a3db23077851d47fe91bb2ffb`
+  at accepted finality, replayed idempotently, and rejected cross-resource use;
+- the funded hosted batch canary opened channel
+  `4920563a8f4ff59bd8fc6422f0e939a639e234f4117c4abbfabeda3ad5b07afb`
+  on covenant ID
+  `e83c52704998c7a72b24e93dad918ba16d9554ffb605ed8d29fb3276b1e1dcee`,
+  reused it with a voucher-only payment, and returned a corrective `402` for
+  the stale deposit voucher;
+- the first scheduled Alpha.10 canary passed the TN10 REST, schema, immutable
+  release, docs, exact-offer, batch-offer, and foreign-scheme checks; and
+- annotated tag `v0.1.0-alpha.10` and its GitHub prerelease were created after
+  registry, site, Worker, and funded-canary verification.
 
 ## Alpha.9 Release Recheck
 

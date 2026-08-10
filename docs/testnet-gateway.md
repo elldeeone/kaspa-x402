@@ -1,6 +1,6 @@
 # Testnet Gateway
 
-Status: paid-canary-proven alpha.9 deployment on `kaspa:testnet-10`.
+Status: paid-canary-proven Alpha.10 deployment on `kaspa:testnet-10`.
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
@@ -64,10 +64,9 @@ mass depends on the complete transaction shape. The reference Worker uses
 `10000000` sompi as a conservative application policy for on-chain outputs,
 including the advertised batch successor reserve.
 
-The deployed Alpha.9 Worker still emits batch offers with
-`extra.binding: "kaspa-escrow-v1"`; this is deployment evidence, not the active
-Alpha.10 source contract. Its exact offers carry
-`extra.binding: "kaspa-exact-v2"` and an explicit profile:
+The deployed Worker emits batch offers with binding `kaspa-escrow-v2`, template
+`kaspa-x402-escrow-v2`, and a `10000000` sompi claim reserve. Its exact offers
+carry binding `kaspa-exact-v2` and an explicit profile:
 
 - `standard-native` needs no merchant head inventory;
 - `additive` spends the advertised KIP-10 head and recreates a same-script
@@ -148,26 +147,32 @@ exposes `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE`. Paid retries may send
 it only over TLS to the intended gateway and do not publish or log unused
 payment headers or transaction material.
 
-## Current Alpha.9 Evidence
+## Current Alpha.10 Evidence
 
-The 2026-07-20 deployment completed a funded `standard-native` exact run:
+The 2026-08-10 deployment completed funded exact and batch runs:
 
-- Worker version `d28e6b35-54c6-459f-b8cd-02084a769593`, built from commit
-  `4997713`;
-- `/supported` advertised exact and batch settlement;
+- Worker version `c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit
+  `78f2ada` and using fresh `demo-gateway-alpha.10` state;
+- `/supported` advertised `kaspa-exact-v2` and `kaspa-escrow-v2`;
 - unpaid `/exact` returned a valid `20000000` sompi offer without inventory;
 - transaction id
-  `2fa08f26792721ea2b2f3e791affc6bafe7d36878d660a39dae826473cca38d7`;
+  `8876bcd3a97592d6f5a2583c60994b1f5425067a3db23077851d47fe91bb2ffb`;
 - paid request returned HTTP `200` at accepted finality;
 - identical retry returned the same settlement;
 - cross-resource reuse returned HTTP `409` with
   `invalid_transaction_state`;
-- the merchant outpoint was observed through an operator-controlled synced
-  TN10 node.
+- batch channel
+  `4920563a8f4ff59bd8fc6422f0e939a639e234f4117c4abbfabeda3ad5b07afb`
+  opened with a deposit-voucher on stable covenant ID
+  `e83c52704998c7a72b24e93dad918ba16d9554ffb605ed8d29fb3276b1e1dcee`;
+- voucher-only reuse returned HTTP `200` on the same channel and covenant ID;
+- replaying the stale deposit voucher returned corrective HTTP `402`; and
+- the scheduled canary passed TN10 REST, release-snapshot, schema, docs, offer,
+  and unsupported-scheme checks.
 
-The alpha.9 source, package, specification, vector, and live-proof gates were
-completed before deployment. The transaction above is from the released
-source and public npm package version.
+The Alpha.10 source, package, specification, vector, and live-proof gates were
+completed before deployment. The evidence above is from the released source
+and public npm package version.
 
 ## Testnet Funding
 

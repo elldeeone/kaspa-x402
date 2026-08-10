@@ -3,9 +3,9 @@
 Status: Alpha.10, Testnet-10 only. The hosted gateway is an integration target,
 not a production or mainnet service.
 
-This guide describes the unpublished Alpha.10 source. The public gateway
-remains on Alpha.9 until an explicit fresh-state cutover, so it is not yet an
-Alpha.10 interoperability endpoint.
+This guide describes the published Alpha.10 source and public gateway. The
+gateway completed its fresh-state cutover and is an Alpha.10 interoperability
+endpoint.
 
 Alpha.10 uses `kaspa-escrow-v2` / `kaspa-x402-escrow-v2` for batch settlement.
 The exact profiles are unchanged. Older alpha snapshots are historical artifacts
@@ -27,16 +27,14 @@ Useful entry points:
 - gateway docs: `https://kaspa-x402.org/docs/testnet-gateway/`;
 - gateway base URL: `https://demo.kaspa-x402.org`.
 
-Until Alpha.10 is published, build the package workspaces from this source
-tree. After publication, install the exact prerelease explicitly:
+Install the exact prerelease explicitly:
 
 ```sh
 npm install @kaspa-x402/core@0.1.0-alpha.10 @kaspa-x402/client@0.1.0-alpha.10
 ```
 
-The registry `alpha` tag still resolves to the published Alpha.9 package set
-until the explicit Alpha.10 release step. Those packages do not implement this
-clean-replacement batch binding. The hosted gateway package is not published.
+The registry `alpha` tag resolves to the same Alpha.10 package set. The hosted
+gateway package is not published.
 
 ## Validate Schemas And Vectors
 
