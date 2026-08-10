@@ -1,12 +1,15 @@
+import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
-import crypto from "node:crypto";
 import { fileURLToPath } from "node:url";
 
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
+  applyBatchClaimAccounting,
+  assertBatchVoucherReserve,
   batchCommitmentId,
   batchCommitmentPreimageHex,
+  batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
   channelId,
@@ -16,9 +19,9 @@ import {
   voucherPreimageHex,
 } from "@kaspa-x402/core";
 import {
-  buildEscrowRedeemScript,
-  escrowScriptPublicKey,
+  escrowV2ScriptPublicKey,
   serializedScriptPublicKey,
+  transactionV1CovenantId,
 } from "../packages/covenant/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -28,19 +31,17 @@ const clientPublicKey = bytesToHex(schnorr.getPublicKey(clientPrivateKey));
 const serverPublicKey = bytesToHex(
   schnorr.getPublicKey(new Uint8Array(32).fill(9)),
 );
-const payoutPublicKey = bytesToHex(
-  schnorr.getPublicKey(new Uint8Array(32).fill(8)),
-);
-const payoutScriptPublicKey = `000020${payoutPublicKey}ac`;
-const refundScriptPublicKey = `000020${clientPublicKey}ac`;
 const payTo =
   "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz";
 const refundAddress =
   "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu";
+
+const activeOutpoint = { txid: "44".repeat(32), index: 2 };
+const successorOutpoint = { txid: "45".repeat(32), index: 1 };
 const channelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v1",
+  templateId: "kaspa-x402-escrow-v2",
   clientPublicKey,
   serverPublicKey,
   payTo,
@@ -48,27 +49,48 @@ const channelConfig = {
   refundTimeoutDaa: "123456789",
   salt: "55".repeat(32),
 };
-const escrowParams = {
+const resolvedChannelId = channelId(channelConfig);
+const payoutScriptPublicKey = `000020${bytesToHex(
+  schnorr.getPublicKey(new Uint8Array(32).fill(8)),
+)}ac`;
+const refundScriptPublicKey = `000020${clientPublicKey}ac`;
+const escrowParams = (settledTotal) => ({
   clientPublicKey,
   serverPublicKey,
   network: channelConfig.network,
   payoutScriptPublicKeyHash: sha256HexBytes(payoutScriptPublicKey),
   refundScriptPublicKeyHash: sha256HexBytes(refundScriptPublicKey),
   timeoutDaa: channelConfig.refundTimeoutDaa,
-};
-const redeemScript = buildEscrowRedeemScript(escrowParams);
-const activeScriptPublicKey = serializedScriptPublicKey(
-  escrowScriptPublicKey(escrowParams),
+  settledTotal,
+});
+const genesisScriptPublicKey = serializedScriptPublicKey(
+  escrowV2ScriptPublicKey(escrowParams("0")),
 );
-const activeOutpoint = { txid: "44".repeat(32), index: 2 };
+const activeScriptPublicKey = serializedScriptPublicKey(
+  escrowV2ScriptPublicKey(escrowParams("17000000")),
+);
+const successorScriptPublicKey = serializedScriptPublicKey(
+  escrowV2ScriptPublicKey(escrowParams("25000000")),
+);
+const genesisAuthorizingInput = { txid: "01".repeat(32), index: 0 };
+const covenantId = transactionV1CovenantId(genesisAuthorizingInput, [
+  {
+    index: 0,
+    output: {
+      amount: "90000000",
+      scriptPublicKey: genesisScriptPublicKey,
+    },
+  },
+]);
+
 const voucherInput = {
   network: channelConfig.network,
-  activeScriptPublicKey,
-  outpoint: activeOutpoint,
+  covenantId,
   amount: "30000000",
 };
 const voucherDigestHex = voucherDigest(voucherInput);
 const voucher = {
+  covenantId,
   amount: voucherInput.amount,
   signature: bytesToHex(
     schnorr.sign(
@@ -96,28 +118,30 @@ const accepted = {
   payTo,
   maxTimeoutSeconds: 60,
   extra: {
-    binding: "kaspa-escrow-v1",
+    binding: "kaspa-escrow-v2",
     templateId: channelConfig.templateId,
     serverPublicKey,
     minDepositSompi: "90000000",
+    claimReserveSompi: "2000000",
     refundTimeoutDaa: channelConfig.refundTimeoutDaa,
   },
 };
 const requestFingerprint = "99".repeat(32);
 const commitmentInput = {
   accepted,
-  channelId: channelId(channelConfig),
+  channelId: resolvedChannelId,
   requestFingerprint,
   activeOutpoint,
   voucher,
   chargedAmount: "700000",
   chargedCumulativeBefore: "24300000",
   chargedCumulativeAfter: "25000000",
-  claimedCumulativeAmount: "0",
+  claimedCumulativeAmount: "17000000",
 };
 const commitmentId = batchCommitmentId(commitmentInput);
 const channelStateBefore = {
-  channelId: commitmentInput.channelId,
+  channelId: resolvedChannelId,
+  covenantId,
   activeOutpoint,
   activeScriptPublicKey,
   fundingAmount: "90000000",
@@ -125,10 +149,22 @@ const channelStateBefore = {
   claimedCumulativeAmount: commitmentInput.claimedCumulativeAmount,
   signedMaxClaimable: voucher.amount,
 };
-const channelStateAfter = {
+const channelStateAfterCharge = {
   ...channelStateBefore,
   chargedCumulativeAmount: commitmentInput.chargedCumulativeAfter,
 };
+const claimAmount = "8000000";
+const channelStateAfterClaim = {
+  ...channelStateAfterCharge,
+  ...applyBatchClaimAccounting(channelStateAfterCharge, claimAmount),
+  activeOutpoint: successorOutpoint,
+  activeScriptPublicKey: successorScriptPublicKey,
+};
+assertBatchVoucherReserve(
+  channelStateAfterCharge,
+  accepted.extra.claimReserveSompi,
+);
+
 const paymentRequired = {
   x402Version: 2,
   resource: {
@@ -143,7 +179,7 @@ const paymentPayload = {
   accepted,
   payload: {
     type: "voucher",
-    channelId: commitmentInput.channelId,
+    channelId: resolvedChannelId,
     clientPublicKey,
     fundingOutpoint: activeOutpoint,
     activeScriptPublicKey,
@@ -159,15 +195,71 @@ const settlementResponse = {
   extensions: {
     kaspa: {
       commitmentId,
+      covenantId,
       chargedAmount: commitmentInput.chargedAmount,
-      channelState: channelStateAfter,
+      channelState: channelStateAfterCharge,
     },
   },
 };
+
+const baseChannelConfig = {
+  network: "kaspa:testnet-10",
+  asset: "KAS",
+  templateId: "kaspa-x402-escrow-v2",
+  clientPublicKey: "33".repeat(32),
+  serverPublicKey: "44".repeat(32),
+  payTo:
+    "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+  refundAddress:
+    "kaspatest:qrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrrr",
+  refundTimeoutDaa: "123456789",
+  salt: "55".repeat(32),
+};
+const channelVector = {
+  kind: "channel-id",
+  description:
+    "Alpha.10 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
+  context: {
+    x402Version: 2,
+    scheme: "batch-settlement",
+    notHashed: ["covenantId", "activeOutpoint", "activeScriptPublicKey"],
+  },
+  input: baseChannelConfig,
+  expected: {
+    preimage: channelIdPreimageHex(baseChannelConfig),
+    channelId: channelId(baseChannelConfig),
+  },
+};
+
+const voucherCases = [
+  ["base", voucherInput],
+  ["different-network", { ...voucherInput, network: "kaspa:mainnet" }],
+  ["different-covenant-id", { ...voucherInput, covenantId: "67".repeat(32) }],
+  ["amount-plus-one", { ...voucherInput, amount: "30000001" }],
+].map(([name, input]) => ({
+  name,
+  input,
+  expected: {
+    preimage: voucherPreimageHex(input),
+    digest: voucherDigest(input),
+  },
+}));
+const voucherVector = {
+  kind: "voucher-digest",
+  description:
+    "Alpha.10 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+  context: {
+    domain: "kaspa:x402:escrow-voucher:v2",
+    signedFields: ["network", "covenantId", "amount"],
+    notSigned: ["activeOutpoint", "activeScriptPublicKey"],
+  },
+  cases: voucherCases,
+};
+
 const httpVector = {
   kind: "x402-http",
   description:
-    "Semantic HTTP header vector for a batch-settlement voucher request.",
+    "Alpha.10 semantic HTTP header vector for a batch-settlement voucher request.",
   verificationContext: {
     channelConfig,
     channelStateBefore,
@@ -183,45 +275,41 @@ const httpVector = {
   },
 };
 
-const claim = readJson("vectors/tx-v1/batch-claim.json");
-const refund = readJson("vectors/tx-v1/batch-refund.json");
-assertEqual(
-  claim.input.activeScriptPublicKey,
-  activeScriptPublicKey,
-  "claim active script",
-);
-assertEqual(
-  claim.input.voucherSignature,
-  voucher.signature,
-  "claim voucher signature",
-);
-assertEqual(
-  claim.input.claimAmount,
-  commitmentInput.chargedCumulativeAfter,
-  "claim amount",
-);
-assertEqual(
-  refund.input.activeScriptPublicKey,
-  activeScriptPublicKey,
-  "refund active script",
-);
-
 const interopVector = {
-  kind: "batch-interop-v1",
+  kind: "batch-interop-v2",
   description:
-    "Language-independent channel, escrow, voucher, commitment, claim, refund, expiry, and finality evidence for Kaspa batch-settlement v1.",
+    "Language-independent Alpha.10 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
+  scope: {
+    transactionEvidenceIncluded: false,
+    reason:
+      "KIP-20 genesis and successor transaction evidence is maintained in transaction-v1 vectors; this vector covers the non-transaction protocol layer.",
+  },
   channel: {
     config: channelConfig,
     preimage: channelIdPreimageHex(channelConfig),
-    channelId: commitmentInput.channelId,
+    channelId: resolvedChannelId,
   },
-  escrow: {
-    templateId: channelConfig.templateId,
-    params: escrowParams,
-    redeemScript,
-    scriptPublicKey: activeScriptPublicKey,
-    payoutScriptPublicKey,
-    refundScriptPublicKey,
+  lineage: {
+    covenantId,
+    genesisDerivation: {
+      authorizingInput: genesisAuthorizingInput,
+      authorizedOutputs: [
+        {
+          index: 0,
+          amount: "90000000",
+          scriptPublicKey: genesisScriptPublicKey,
+        },
+      ],
+      note: "Canonical KIP-20 id derivation input only; this is not accepted transaction evidence.",
+    },
+    currentHead: {
+      outpoint: activeOutpoint,
+      scriptPublicKey: activeScriptPublicKey,
+    },
+    successorHead: {
+      outpoint: successorOutpoint,
+      scriptPublicKey: successorScriptPublicKey,
+    },
   },
   voucher: {
     input: voucherInput,
@@ -241,10 +329,17 @@ const interopVector = {
     preimage: batchCommitmentPreimageHex(commitmentInput),
     commitmentId,
   },
-  transactions: {
-    claim: transactionReference("vectors/tx-v1/batch-claim.json", claim),
-    refund: transactionReference("vectors/tx-v1/batch-refund.json", refund),
-    note: "Funding and top-up construction is wallet-adapter-owned. The binding verifies the accepted resulting escrow UTXO and, for top-up, its transition from the prior active outpoint.",
+  accounting: {
+    reserveAmount: accepted.extra.claimReserveSompi,
+    claimAmount,
+    beforeRequest: channelStateBefore,
+    afterRequest: channelStateAfterCharge,
+    afterClaim: channelStateAfterClaim,
+    derivedBeforeRequest: stringifyBigints(batchLaneAccounting(channelStateBefore)),
+    derivedAfterRequest: stringifyBigints(
+      batchLaneAccounting(channelStateAfterCharge),
+    ),
+    derivedAfterClaim: stringifyBigints(batchLaneAccounting(channelStateAfterClaim)),
   },
   expiry: {
     timeoutDaa: channelConfig.refundTimeoutDaa,
@@ -272,24 +367,10 @@ const interopVector = {
   },
 };
 
+writeOrCheck("vectors/channel-id/base.json", channelVector);
+writeOrCheck("vectors/voucher/stable-covenant-binding.json", voucherVector);
 writeOrCheck("vectors/x402-http/batch-voucher.json", httpVector);
-writeOrCheck("vectors/batch/interop-v1.json", interopVector);
-
-function transactionReference(relativePath, vector) {
-  return {
-    path: relativePath,
-    sha256: crypto
-      .createHash("sha256")
-      .update(fs.readFileSync(path.join(root, relativePath)))
-      .digest("hex"),
-    transactionId: vector.expected.transactionId,
-    transactionHash: vector.expected.transactionHash,
-    sighash: vector.expected.sighash,
-    compute: vector.expected.compute,
-    fullConsensusValidated: true,
-    scriptExecuted: true,
-  };
-}
+writeOrCheck("vectors/batch/interop-v2.json", interopVector);
 
 function writeOrCheck(relativePath, value) {
   const output = path.join(root, relativePath);
@@ -311,8 +392,12 @@ function writeOrCheck(relativePath, value) {
   console.log(`wrote ${relativePath}`);
 }
 
-function readJson(relativePath) {
-  return JSON.parse(fs.readFileSync(path.join(root, relativePath), "utf8"));
+function bytesToHex(bytes) {
+  return Buffer.from(bytes).toString("hex");
+}
+
+function encode(value) {
+  return Buffer.from(stableStringify(value), "utf8").toString("base64");
 }
 
 function sha256HexBytes(hex) {
@@ -322,16 +407,8 @@ function sha256HexBytes(hex) {
     .digest("hex");
 }
 
-function bytesToHex(bytes) {
-  return Buffer.from(bytes).toString("hex");
-}
-
-function encode(value) {
-  return Buffer.from(stableStringify(value), "utf8").toString("base64");
-}
-
-function assertEqual(actual, expected, label) {
-  if (actual !== expected) {
-    throw new Error(`${label} mismatch: expected ${expected}, got ${actual}`);
-  }
+function stringifyBigints(value) {
+  return Object.fromEntries(
+    Object.entries(value).map(([key, item]) => [key, item.toString()]),
+  );
 }

@@ -1,4 +1,5 @@
 import {
+  BATCH_AMOUNT_DECIMAL_PATTERN,
   HASH32_PATTERN,
   SIGNATURE64_PATTERN,
   U32_MAX,
@@ -742,10 +743,22 @@ function classifyRequirementEntry(
   }
   if (!["kaspa:mainnet", "kaspa:testnet-10"].includes(String(entry.network)))
     return "invalid_kaspa_x402_network";
+  if (
+    entry.scheme === "batch-settlement" &&
+    entry.network !== "kaspa:testnet-10"
+  ) {
+    return "invalid_kaspa_x402_network";
+  }
   if (entry.asset !== "KAS") return "invalid_kaspa_x402_asset";
   if (
     typeof entry.amount !== "string" ||
     !U64_DECIMAL_PATTERN.test(entry.amount)
+  ) {
+    return "invalid_kaspa_x402_amount";
+  }
+  if (
+    entry.scheme === "batch-settlement" &&
+    !BATCH_AMOUNT_DECIMAL_PATTERN.test(entry.amount)
   ) {
     return "invalid_kaspa_x402_amount";
   }
@@ -764,6 +777,13 @@ function classifyPaymentPayload(value: unknown): KaspaX402ErrorCode {
   const accepted = asRecord(record?.accepted);
   const payload = asRecord(record?.payload);
   const expectedTypes = expectedPayloadTypesForScheme(String(accepted?.scheme));
+
+  if (
+    accepted?.scheme === "batch-settlement" &&
+    accepted.network !== "kaspa:testnet-10"
+  ) {
+    return "invalid_kaspa_x402_network";
+  }
 
   if (expectedTypes && !expectedTypes.includes(String(payload?.type))) {
     return "invalid_kaspa_payment_payload_type";
@@ -792,6 +812,13 @@ function classifyKaspaPaymentPayload(value: unknown): KaspaX402ErrorCode {
   const voucher = asRecord(record?.voucher);
 
   if (
+    (record?.covenantId !== undefined && !isNonzeroHash32(record.covenantId)) ||
+    (voucher?.covenantId !== undefined && !isNonzeroHash32(voucher.covenantId))
+  ) {
+    return "invalid_kaspa_x402_binding";
+  }
+
+  if (
     record?.clientPublicKey !== undefined &&
     !HASH32_PATTERN.test(String(record.clientPublicKey))
   ) {
@@ -813,17 +840,17 @@ function classifyKaspaPaymentPayload(value: unknown): KaspaX402ErrorCode {
     return "invalid_kaspa_signature";
   if (
     voucher?.amount !== undefined &&
-    !U64_DECIMAL_PATTERN.test(String(voucher.amount))
+    !BATCH_AMOUNT_DECIMAL_PATTERN.test(String(voucher.amount))
   )
     return "invalid_kaspa_x402_amount";
   if (
     record?.claimAmount !== undefined &&
-    !U64_DECIMAL_PATTERN.test(String(record.claimAmount))
+    !BATCH_AMOUNT_DECIMAL_PATTERN.test(String(record.claimAmount))
   )
     return "invalid_kaspa_x402_amount";
   if (
     record?.refundAmount !== undefined &&
-    !U64_DECIMAL_PATTERN.test(String(record.refundAmount))
+    !BATCH_AMOUNT_DECIMAL_PATTERN.test(String(record.refundAmount))
   )
     return "invalid_kaspa_x402_amount";
 
@@ -843,7 +870,12 @@ function classifySettlementResponse(value: unknown): KaspaX402ErrorCode {
 
 function isExpectedBindingForScheme(scheme: string, binding: unknown): boolean {
   if (scheme === "exact") return binding === "kaspa-exact-v2";
-  return scheme === "batch-settlement" && binding === "kaspa-escrow-v1";
+  return scheme === "batch-settlement" && binding === "kaspa-escrow-v2";
+}
+
+function isNonzeroHash32(value: unknown): boolean {
+  const normalized = String(value);
+  return HASH32_PATTERN.test(normalized) && !/^0{64}$/i.test(normalized);
 }
 
 function expectedPayloadTypesForScheme(scheme: string): string[] | undefined {

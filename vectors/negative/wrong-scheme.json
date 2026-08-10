@@ -1,7 +1,7 @@
 {
   "kind": "negative",
   "name": "wrong-scheme",
-  "description": "Kaspa x402 v0.1 only accepts exact and batch-settlement.",
+  "description": "Kaspa x402 only accepts exact and batch-settlement.",
   "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
   "expectedError": "invalid_kaspa_x402_scheme",
   "value": {

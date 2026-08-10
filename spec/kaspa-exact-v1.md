@@ -16,7 +16,7 @@ Use `exact` for:
 - fixed-price API responses;
 - fixed-price MCP tool calls.
 
-Do not use `exact` for repeated micropayment sessions or variable-cost requests. Use [batch-settlement](kaspa-batch-settlement-v1.md) for those.
+Do not use `exact` for repeated micropayment sessions or variable-cost requests. Use [batch-settlement](kaspa-batch-settlement-v2.md) for those.
 
 ## Scheme and Network Pair
 

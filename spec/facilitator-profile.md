@@ -14,7 +14,9 @@ For `exact`, this means selecting the advertised `kaspa-exact-v2` profile,
 verifying its `exact-transaction` artifact with trusted UTXO and consensus
 facts, broadcasting it if needed, and observing it at the required finality.
 
-For `batch-settlement`, this means verifying vouchers, tracking channel state, and building claim/refund transactions.
+For `batch-settlement`, this means verifying lifetime vouchers, tracking the
+stable covenant id plus current outpoint, and building partial claim, top-up,
+and refund transactions.
 
 ### Self-Hosted Facilitator Mode
 
@@ -49,7 +51,7 @@ POST /settle
       "network": "kaspa:testnet-10",
       "extra": {
         "asset": "KAS",
-        "binding": "kaspa-escrow-v1",
+        "binding": "kaspa-escrow-v2",
         "modes": ["verify", "settle", "claim"]
       }
     }
@@ -114,11 +116,18 @@ Invalid verification returns:
   independently recomputed transaction id. For `additive`, verification also
   atomically claims the expected head and settlement advances the durable head
   state through its recoverable stages;
-- `batch-settlement`: for voucher-only requests, store the voucher commitment using settlement-time `paymentRequirements.amount` as the actual charge while the signed voucher ceiling remains bound to `paymentPayload.accepted.amount`; for `deposit-voucher`, broadcast if needed, wait until the deposit or top-up transaction is accepted by the selected Kaspa network, and store the voucher commitment before returning success; for claim operations, broadcast if needed and wait until the relevant transaction is accepted by the selected Kaspa network before returning success or mutating active channel state.
+- `batch-settlement`: for voucher-only requests, store the actual charge and
+  lifetime signed ceiling atomically; for `deposit-voucher`, verify singleton
+  genesis or top-up lineage, wait for accepted Testnet-10 evidence, and store
+  the voucher commitment before returning success; for partial claim, top-up,
+  or refund, save a crash-safe attempt before broadcast and wait for accepted
+  evidence before advancing the persisted current outpoint and covenant state.
 
 For `batch-settlement`, `/verify` responses should include `extra.channelState` and `/settle` responses should include `extensions.kaspa.channelState` whenever the facilitator reads or changes channel state.
 
-Refund transaction construction is implementation-specific in v0.1. A facilitator must not advertise refund support in `/supported` unless it has an explicit refund settler and verifies client refund authorization before broadcasting or reporting success.
+A facilitator MUST NOT advertise refund support unless it has the canonical v2
+refund builder and verifies client refund authorization before broadcasting or
+reporting success.
 
 ### Third-Party Facilitator Mode
 
@@ -126,4 +135,4 @@ A third-party facilitator may verify payment state, relay transactions, index ch
 
 Hardcoded facilitator keys, URLs, or service identities are out of scope for the standard.
 
-Third-party facilitators must authenticate resource servers before performing server-owned operations such as settlement, claim, refund relay, or receipt signing. A facilitator can relay and index state, but voucher correctness must remain independently verifiable from channel config, active outpoint, voucher digest, and settlement responses.
+Third-party facilitators must authenticate resource servers before performing server-owned operations such as settlement, claim, refund relay, or receipt signing. A facilitator can relay and index state, but voucher correctness must remain independently verifiable from channel config, covenant id, the persisted current outpoint, voucher digest, and settlement responses.

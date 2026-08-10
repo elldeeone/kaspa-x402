@@ -74,8 +74,12 @@ accepted by this profile.
 Scheme-specific payment identity is enforced by the normal payment payload hash and settlement scope:
 
 - `exact`: transaction id and payment output index;
-- `batch-settlement`: channel id and voucher amount.
+- `batch-settlement`: channel id, stable covenant id, and lifetime voucher
+  amount.
 
 This avoids circular dependencies where a transaction id is not known until after the client creates the payment.
 
-For `batch-settlement`, a successful voucher-only tool response uses the non-empty commitment id as `transaction`, includes the actual charge as top-level `amount`, and carries commitment and channel metadata in `extensions.kaspa`.
+For `batch-settlement`, a successful voucher-only tool response uses the
+non-empty commitment id as `transaction`, includes the actual charge as
+top-level `amount`, and carries the stable covenant id, persisted current head,
+and lifetime accounting metadata in `extensions.kaspa`.

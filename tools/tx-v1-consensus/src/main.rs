@@ -1,5 +1,4 @@
 use anyhow::{Context, Result, anyhow};
-use kaspa_addresses::{Address, Prefix};
 use kaspa_consensus::processes::transaction_validator::{
     TransactionValidator, tx_validation_in_utxo_context::TxValidationFlags,
 };
@@ -28,11 +27,12 @@ use kaspa_hashes::{
 use kaspa_txscript::{
     EngineCtx, EngineFlags, TxScriptEngine,
     caches::Cache,
+    covenants::CovenantsContext,
     opcodes::codes::{
         OpCheckSig, OpElse, OpEndIf, OpEqualVerify, OpFalse, OpGreaterThanOrEqual, OpIf, OpSub,
         OpTxInputAmount, OpTxInputIndex, OpTxInputSpk, OpTxOutputAmount, OpTxOutputSpk,
     },
-    pay_to_address_script, pay_to_script_hash_script,
+    pay_to_script_hash_script,
     script_builder::ScriptBuilder,
 };
 use secp256k1::{Keypair, Message, SECP256K1, XOnlyPublicKey, schnorr::Signature};
@@ -50,7 +50,18 @@ const EXACT_PAYMENT_SOMPI: u64 = 20_000_000;
 #[serde(rename_all = "camelCase")]
 struct VectorFile {
     kind: String,
+    sequence: SequenceEvidence,
     expected: Artifact,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct SequenceEvidence {
+    step: usize,
+    covenant_id: String,
+    previous_transaction_id: Option<String>,
+    total_authorized: Option<String>,
+    voucher_signature: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -63,7 +74,17 @@ struct Artifact {
     transaction_hash: String,
     txid: TxIdDebug,
     hash: HashDebug,
-    sighash: SighashDebug,
+    sighashes: Vec<SighashDebug>,
+    #[serde(default)]
+    compute: Option<ComputeEvidence>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct ComputeEvidence {
+    compute_budget: u16,
+    script_units_estimate: u64,
+    script_unit_allowance: u64,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -104,6 +125,8 @@ struct ArtifactUtxo {
     script_public_key: String,
     block_daa_score: String,
     is_coinbase: bool,
+    #[serde(default)]
+    covenant_id: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
@@ -150,21 +173,30 @@ fn main() -> Result<()> {
         .context("usage: tx-v1-consensus <repo-root>")?;
     let repo_root = Path::new(&repo_root);
     let vector_paths = [
+        "vectors/tx-v1/batch-genesis.json",
         "vectors/tx-v1/batch-claim.json",
+        "vectors/tx-v1/batch-claim-second.json",
+        "vectors/tx-v1/batch-top-up.json",
         "vectors/tx-v1/batch-refund.json",
     ];
     let mut checked = Vec::new();
+    let mut batch_vectors = Vec::new();
 
     for relative_path in vector_paths {
         let vector = read_vector(&repo_root.join(relative_path))?;
-        validate_vector(&vector).with_context(|| format!("validating {relative_path}"))?;
+        let validation =
+            validate_vector(&vector).with_context(|| format!("validating {relative_path}"))?;
         checked.push(json!({
             "path": relative_path,
             "kind": vector.expected.kind,
             "transactionId": vector.expected.transaction_id,
             "transactionHash": vector.expected.transaction_hash,
+            "validation": validation,
         }));
+        batch_vectors.push((relative_path, vector));
     }
+    let batch_chain = validate_batch_chain(&batch_vectors)?;
+    let batch_negative = validate_batch_negative_cases(&batch_vectors)?;
     let exact_profiles = validate_exact_consensus_profiles()?;
     validate_exact_profiles_vector(repo_root, &exact_profiles)?;
     let exact_interop = validate_exact_interop_vector(repo_root, &exact_profiles)?;
@@ -181,6 +213,8 @@ fn main() -> Result<()> {
                 "commit": EXPECTED_SOURCE_COMMIT,
             },
             "vectors": checked,
+            "batchChain": batch_chain,
+            "batchNegative": batch_negative,
             "kip10Exact": kip10,
             "exactProfiles": exact_profiles,
             "exactInterop": exact_interop,
@@ -191,12 +225,347 @@ fn main() -> Result<()> {
     Ok(())
 }
 
+fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
+    if vectors.len() != 5 {
+        return Err(anyhow!("Alpha.10 batch chain must contain five vectors"));
+    }
+    let stable_id = vectors[0].1.sequence.covenant_id.as_str();
+    if stable_id == "00".repeat(32) {
+        return Err(anyhow!("batch chain covenant id must not be zero"));
+    }
+
+    for (index, (path, vector)) in vectors.iter().enumerate() {
+        if vector.sequence.step != index {
+            return Err(anyhow!(
+                "{path} has sequence step {}, expected {index}",
+                vector.sequence.step
+            ));
+        }
+        if vector.sequence.covenant_id != stable_id {
+            return Err(anyhow!("{path} changed the stable covenant id"));
+        }
+        if index == 0 {
+            if vector.sequence.previous_transaction_id.is_some() {
+                return Err(anyhow!("batch genesis must not name a predecessor"));
+            }
+        } else {
+            let previous = &vectors[index - 1].1.expected.transaction_id;
+            if vector.sequence.previous_transaction_id.as_deref() != Some(previous) {
+                return Err(anyhow!("{path} predecessor transaction id mismatch"));
+            }
+        }
+    }
+
+    let genesis = &vectors[0].1.expected;
+    let genesis_binding = genesis.transaction.outputs[0]
+        .covenant
+        .as_ref()
+        .ok_or_else(|| anyhow!("batch genesis output 0 must carry a covenant binding"))?;
+    if genesis_binding.authorizing_input != 0 || genesis_binding.covenant_id != stable_id {
+        return Err(anyhow!("batch genesis singleton binding mismatch"));
+    }
+    let authorizing_input = genesis
+        .transaction
+        .inputs
+        .get(usize::from(genesis_binding.authorizing_input))
+        .ok_or_else(|| anyhow!("batch genesis authorizing input is missing"))?;
+    let genesis_output = &genesis.transaction.outputs[0];
+    let derived_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
+        TransactionOutpoint::new(
+            parse_hash(&authorizing_input.previous_outpoint.txid)?,
+            authorizing_input.previous_outpoint.index,
+        ),
+        std::iter::once((
+            0,
+            &TransactionOutput::new(
+                parse_u64(&genesis_output.amount, "batch genesis amount")?,
+                parse_script_public_key(&genesis_output.script_public_key)?,
+            ),
+        )),
+    );
+    if derived_id.to_string() != stable_id {
+        return Err(anyhow!("batch genesis covenant id derivation mismatch"));
+    }
+    if genesis.transaction.outputs.len() != 1 {
+        return Err(anyhow!(
+            "batch genesis must contain exactly one total output"
+        ));
+    }
+
+    let successor_indices = [0_usize, 1, 1, 0];
+    for next_index in 1..vectors.len() {
+        let previous = &vectors[next_index - 1].1.expected;
+        let next = &vectors[next_index].1.expected;
+        let output_index = successor_indices[next_index - 1];
+        let previous_output = previous
+            .transaction
+            .outputs
+            .get(output_index)
+            .ok_or_else(|| anyhow!("batch chain predecessor output is missing"))?;
+        let next_input = next
+            .transaction
+            .inputs
+            .first()
+            .ok_or_else(|| anyhow!("batch chain successor input is missing"))?;
+        if next_input.previous_outpoint.txid != previous.transaction_id
+            || next_input.previous_outpoint.index != u32::try_from(output_index)?
+        {
+            return Err(anyhow!(
+                "batch chain outpoint continuity failed at step {next_index}"
+            ));
+        }
+        if next_input.utxo.amount != previous_output.amount
+            || next_input.utxo.script_public_key != previous_output.script_public_key
+            || next_input.utxo.covenant_id.as_deref() != Some(stable_id)
+        {
+            return Err(anyhow!(
+                "batch chain UTXO continuity failed at step {next_index}"
+            ));
+        }
+    }
+
+    let claim1 = &vectors[1].1;
+    let claim2 = &vectors[2].1;
+    if claim1.sequence.total_authorized != claim2.sequence.total_authorized
+        || claim1.sequence.voucher_signature != claim2.sequence.voucher_signature
+        || claim1.sequence.total_authorized.as_deref() != Some("30000000")
+    {
+        return Err(anyhow!("partial claims must reuse one lifetime voucher"));
+    }
+    let (claim1_ceiling, claim1_delta) = claim_ceiling_and_delta(&claim1.expected.transaction)?;
+    let (claim2_ceiling, claim2_delta) = claim_ceiling_and_delta(&claim2.expected.transaction)?;
+    if claim1_ceiling != 30_000_000
+        || claim2_ceiling != claim1_ceiling
+        || claim1_delta != 8_000_000
+        || claim2_delta != 9_000_000
+        || claim1_delta + claim2_delta >= claim1_ceiling
+    {
+        return Err(anyhow!("partial claim cumulative accounting mismatch"));
+    }
+    for claim in [&claim1.expected, &claim2.expected] {
+        let (_, delta) = claim_ceiling_and_delta(&claim.transaction)?;
+        let input_amount = parse_u64(
+            &claim.transaction.inputs[0].utxo.amount,
+            "claim input amount",
+        )?;
+        let successor_amount = parse_u64(
+            &claim.transaction.outputs[1].amount,
+            "claim successor amount",
+        )?;
+        if input_amount.checked_sub(delta) != Some(successor_amount) {
+            return Err(anyhow!("claim successor value does not advance by D"));
+        }
+        let binding = claim.transaction.outputs[1]
+            .covenant
+            .as_ref()
+            .ok_or_else(|| anyhow!("claim successor must carry the stable id"))?;
+        if binding.authorizing_input != 0 || binding.covenant_id != stable_id {
+            return Err(anyhow!("claim successor binding mismatch"));
+        }
+        if claim.transaction.outputs[0].covenant.is_some() {
+            return Err(anyhow!("claim payout must remain unbound"));
+        }
+    }
+
+    let top_up = &vectors[3].1.expected.transaction;
+    if top_up.inputs.len() != 2
+        || top_up.inputs[0].utxo.script_public_key != top_up.outputs[0].script_public_key
+        || parse_u64(&top_up.outputs[0].amount, "top-up successor amount")?
+            <= parse_u64(&top_up.inputs[0].utxo.amount, "top-up active amount")?
+        || top_up.inputs[1].utxo.covenant_id.is_some()
+        || top_up.outputs[1].covenant.is_some()
+    {
+        return Err(anyhow!(
+            "top-up must preserve state and use ordinary client funding/change"
+        ));
+    }
+    let top_up_binding = top_up.outputs[0]
+        .covenant
+        .as_ref()
+        .ok_or_else(|| anyhow!("top-up successor must remain covenant-bound"))?;
+    if top_up_binding.authorizing_input != 0 || top_up_binding.covenant_id != stable_id {
+        return Err(anyhow!("top-up stable binding mismatch"));
+    }
+
+    let refund = &vectors[4].1.expected.transaction;
+    if refund.outputs.len() != 1 || refund.outputs[0].covenant.is_some() {
+        return Err(anyhow!("refund must terminate the covenant lineage"));
+    }
+
+    Ok(json!({
+        "status": "accepted",
+        "covenantId": stable_id,
+        "genesisCovenantId": "rusty-kaspa-matched",
+        "steps": ["genesis", "partial-claim-1", "partial-claim-2", "top-up", "refund"],
+        "voucher": {
+            "totalAuthorized": claim1_ceiling,
+            "reusedAcrossClaims": true,
+            "settledAfterSecondClaim": claim1_delta + claim2_delta,
+            "remainingHeadroom": claim1_ceiling - claim1_delta - claim2_delta,
+        },
+    }))
+}
+
+fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
+    let claim1 = &vectors[1].1.expected;
+    let claim2 = &vectors[2].1.expected;
+    let refund = &vectors[4].1.expected;
+
+    let mut exhausted = build_transaction(&claim2.transaction)?;
+    let exhausted_entries = build_utxo_entries(&claim2.transaction)?;
+    set_claim_delta(&mut exhausted.inputs[0].signature_script, 22_000_001)?;
+    expect_consensus_rejection(
+        &exhausted,
+        &exhausted_entries,
+        "claim above remaining voucher headroom",
+    )?;
+
+    let wrong_id_tx = build_transaction(&claim1.transaction)?;
+    let mut wrong_id_entries = build_utxo_entries(&claim1.transaction)?;
+    wrong_id_entries[0].covenant_id = Some(Hash::from_bytes([0x99; 32]));
+    expect_consensus_rejection(
+        &wrong_id_tx,
+        &wrong_id_entries,
+        "claim with wrong covenant id",
+    )?;
+
+    let mut wrong_successor = build_transaction(&claim1.transaction)?;
+    let wrong_successor_entries = build_utxo_entries(&claim1.transaction)?;
+    let successor = &wrong_successor.outputs[1].script_public_key;
+    let mut wrong_script = successor.script().to_vec();
+    let byte = wrong_script
+        .get_mut(3)
+        .ok_or_else(|| anyhow!("claim successor script is too short to mutate"))?;
+    *byte ^= 0x01;
+    wrong_successor.outputs[1].script_public_key =
+        ScriptPublicKey::from_vec(successor.version(), wrong_script);
+    resign_embedded_signature(
+        &mut wrong_successor,
+        &wrong_successor_entries,
+        0,
+        &[9_u8; 32],
+    )?;
+    expect_consensus_rejection(
+        &wrong_successor,
+        &wrong_successor_entries,
+        "claim with wrong successor state script",
+    )?;
+
+    let mut early_refund = build_transaction(&refund.transaction)?;
+    let early_refund_entries = build_utxo_entries(&refund.transaction)?;
+    early_refund.lock_time = early_refund
+        .lock_time
+        .checked_sub(1)
+        .ok_or_else(|| anyhow!("refund lock time cannot be decremented"))?;
+    resign_embedded_signature(&mut early_refund, &early_refund_entries, 0, &[7_u8; 32])?;
+    expect_consensus_rejection(
+        &early_refund,
+        &early_refund_entries,
+        "refund before timeout",
+    )?;
+
+    Ok(json!({
+        "exhaustedVoucher": "rejected-by-full-TransactionValidator",
+        "wrongCovenantId": "rejected-by-full-TransactionValidator",
+        "wrongSuccessor": "rejected-by-full-TransactionValidator",
+        "earlyRefund": "rejected-by-full-TransactionValidator",
+    }))
+}
+
+fn claim_ceiling_and_delta(transaction: &ArtifactTransaction) -> Result<(u64, u64)> {
+    let signature_script = parse_hex(
+        &transaction
+            .inputs
+            .first()
+            .ok_or_else(|| anyhow!("claim transaction has no input"))?
+            .signature_script,
+        "claim signature script",
+    )?;
+    let mut cursor = 0;
+    let server_signature = read_canonical_push(&signature_script, &mut cursor)?;
+    let voucher_signature = read_canonical_push(&signature_script, &mut cursor)?;
+    let total_authorized = read_canonical_push(&signature_script, &mut cursor)?;
+    let claim_amount = read_canonical_push(&signature_script, &mut cursor)?;
+    if server_signature.len() != 65
+        || voucher_signature.len() != 64
+        || total_authorized.len() != 8
+        || claim_amount.len() != 8
+        || signature_script.get(cursor) != Some(&0)
+    {
+        return Err(anyhow!("claim signature script ABI mismatch"));
+    }
+    Ok((
+        u64::from_le_bytes(total_authorized.try_into().expect("checked length")),
+        u64::from_le_bytes(claim_amount.try_into().expect("checked length")),
+    ))
+}
+
+fn set_claim_delta(signature_script: &mut [u8], delta: u64) -> Result<()> {
+    let mut cursor = 0;
+    read_canonical_push(signature_script, &mut cursor)?;
+    read_canonical_push(signature_script, &mut cursor)?;
+    read_canonical_push(signature_script, &mut cursor)?;
+    let opcode = *signature_script
+        .get(cursor)
+        .ok_or_else(|| anyhow!("claim amount push is missing"))?;
+    if opcode != 8 || cursor + 9 > signature_script.len() {
+        return Err(anyhow!("claim amount must be a canonical 8-byte push"));
+    }
+    signature_script[cursor + 1..cursor + 9].copy_from_slice(&delta.to_le_bytes());
+    Ok(())
+}
+
+fn read_canonical_push<'a>(script: &'a [u8], cursor: &mut usize) -> Result<&'a [u8]> {
+    let length = usize::from(
+        *script
+            .get(*cursor)
+            .ok_or_else(|| anyhow!("script push opcode is missing"))?,
+    );
+    if length == 0 || length > 75 || *cursor + 1 + length > script.len() {
+        return Err(anyhow!("script uses a non-canonical short push"));
+    }
+    let start = *cursor + 1;
+    let end = start + length;
+    *cursor = end;
+    Ok(&script[start..end])
+}
+
+fn resign_embedded_signature(
+    tx: &mut Transaction,
+    entries: &[UtxoEntry],
+    input_index: usize,
+    private_key: &[u8; 32],
+) -> Result<()> {
+    set_storage_mass(tx, entries)?;
+    tx.finalize();
+    let populated = PopulatedTransaction::new(tx, entries.to_vec());
+    let signature = deterministic_signature(&populated, input_index, private_key)?;
+    let script = &mut tx.inputs[input_index].signature_script;
+    if script.len() < 66 || script[0] != 65 || signature.len() != 66 {
+        return Err(anyhow!("embedded covenant signature ABI mismatch"));
+    }
+    script[1..66].copy_from_slice(&signature[1..66]);
+    tx.finalize();
+    Ok(())
+}
+
 fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> {
-    let relative_path = "vectors/batch/interop-v1.json";
+    let relative_path = "vectors/batch/interop-v2.json";
     let contents = fs::read_to_string(repo_root.join(relative_path))
         .with_context(|| format!("reading {relative_path}"))?;
     let vector: serde_json::Value =
         serde_json::from_str(&contents).with_context(|| format!("parsing {relative_path}"))?;
+
+    expect_eq(
+        json_string(&vector, "kind")?,
+        "batch-interop-v2",
+        "batch interop kind",
+    )?;
+    if vector["scope"]["transactionEvidenceIncluded"] != serde_json::Value::Bool(false) {
+        return Err(anyhow!(
+            "batch interoperability vector must remain non-transactional"
+        ));
+    }
 
     let channel = &vector["channel"];
     let config = &channel["config"];
@@ -222,58 +591,32 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         json_string(channel, "channelId")?,
         "batch channel id",
     )?;
-
-    let escrow = &vector["escrow"];
-    let escrow_params = &escrow["params"];
     expect_eq(
-        json_string(escrow, "templateId")?,
         json_string(config, "templateId")?,
-        "batch escrow template",
-    )?;
-    for (field, label) in [
-        ("clientPublicKey", "batch escrow client key"),
-        ("serverPublicKey", "batch escrow server key"),
-        ("network", "batch escrow network"),
-    ] {
-        expect_eq(
-            json_string(escrow_params, field)?,
-            json_string(config, field)?,
-            label,
-        )?;
-    }
-    expect_eq(
-        json_string(escrow_params, "timeoutDaa")?,
-        json_string(config, "refundTimeoutDaa")?,
-        "batch escrow timeout",
-    )?;
-    validate_address_script_binding(
-        json_string(config, "payTo")?,
-        json_string(config, "network")?,
-        json_string(escrow, "payoutScriptPublicKey")?,
-        "batch payTo payout script",
-    )?;
-    validate_address_script_binding(
-        json_string(config, "refundAddress")?,
-        json_string(config, "network")?,
-        json_string(escrow, "refundScriptPublicKey")?,
-        "batch refund address script",
+        "kaspa-x402-escrow-v2",
+        "batch template",
     )?;
 
     let voucher = &vector["voucher"];
     let voucher_input = &voucher["input"];
-    let voucher_outpoint = &voucher_input["outpoint"];
+    let covenant_id = json_string(&vector["lineage"], "covenantId")?;
+    if covenant_id == "00".repeat(32) {
+        return Err(anyhow!(
+            "batch covenant id must not be the unbound sentinel"
+        ));
+    }
+    expect_eq(
+        json_string(voucher_input, "covenantId")?,
+        covenant_id,
+        "batch voucher covenant id",
+    )?;
     let voucher_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:escrow-voucher:v1"),
+        sha256_bytes(b"kaspa:x402:escrow-voucher:v2"),
         sha256_bytes(json_string(voucher_input, "network")?.as_bytes()),
-        sha256_bytes(&parse_hex(
-            json_string(voucher_input, "activeScriptPublicKey")?,
-            "activeScriptPublicKey",
-        )?),
         parse_hex(
-            json_string(voucher_outpoint, "txid")?,
-            "voucher outpoint txid",
+            json_string(voucher_input, "covenantId")?,
+            "voucher covenant id",
         )?,
-        json_u32(voucher_outpoint, "index")?.to_le_bytes().to_vec(),
         json_u64(voucher_input, "amount")?.to_le_bytes().to_vec(),
     ]);
     expect_eq(
@@ -298,11 +641,6 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         json_string(voucher_input, "network")?,
         json_string(config, "network")?,
         "batch voucher network",
-    )?;
-    expect_eq(
-        json_string(voucher_input, "activeScriptPublicKey")?,
-        json_string(escrow, "scriptPublicKey")?,
-        "batch voucher active script",
     )?;
     let voucher_signature = Signature::from_slice(&parse_hex(
         json_string(voucher, "signature")?,
@@ -358,8 +696,13 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
             label,
         )?;
     }
+    expect_eq(
+        json_string(extra, "binding")?,
+        "kaspa-escrow-v2",
+        "batch requirements binding",
+    )?;
     let requirements_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:batch-payment-requirements:v1"),
+        sha256_bytes(b"kaspa:x402:batch-payment-requirements:v2"),
         sha256_bytes(b"batch-settlement"),
         sha256_bytes(json_string(accepted, "network")?.as_bytes()),
         sha256_bytes(b"KAS"),
@@ -368,10 +711,11 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         json_u64_number(accepted, "maxTimeoutSeconds")?
             .to_le_bytes()
             .to_vec(),
-        sha256_bytes(b"kaspa-escrow-v1"),
+        sha256_bytes(b"kaspa-escrow-v2"),
         sha256_bytes(json_string(extra, "templateId")?.as_bytes()),
         parse_hex(json_string(extra, "serverPublicKey")?, "serverPublicKey")?,
         json_u64(extra, "minDepositSompi")?.to_le_bytes().to_vec(),
+        json_u64(extra, "claimReserveSompi")?.to_le_bytes().to_vec(),
         json_u64(extra, "refundTimeoutDaa")?.to_le_bytes().to_vec(),
     ]);
     expect_eq(
@@ -396,6 +740,11 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     if before.checked_add(charged) != Some(after) {
         return Err(anyhow!("batch commitment cumulative accounting mismatch"));
     }
+    let claimed = json_u64(commitment_input, "claimedCumulativeAmount")?;
+    let authorized = json_u64(commitment_voucher, "amount")?;
+    if claimed > before || after > authorized {
+        return Err(anyhow!("batch commitment lifetime ceiling mismatch"));
+    }
     if &commitment_input["accepted"] != accepted {
         return Err(anyhow!("batch commitment payment requirements mismatch"));
     }
@@ -404,17 +753,22 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         json_string(channel, "channelId")?,
         "batch commitment channel id",
     )?;
-    if active_outpoint != &voucher_input["outpoint"] {
-        return Err(anyhow!("batch commitment active outpoint mismatch"));
+    if active_outpoint != &vector["lineage"]["currentHead"]["outpoint"] {
+        return Err(anyhow!("batch commitment current head mismatch"));
     }
-    if commitment_voucher["amount"] != voucher_input["amount"]
+    if commitment_voucher["covenantId"] != voucher_input["covenantId"]
+        || commitment_voucher["amount"] != voucher_input["amount"]
         || commitment_voucher["signature"] != voucher["signature"]
     {
         return Err(anyhow!("batch commitment voucher mismatch"));
     }
     let commitment_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:batch-commitment:v1"),
+        sha256_bytes(b"kaspa:x402:batch-commitment:v2"),
         parse_hex(json_string(commitment_input, "channelId")?, "channelId")?,
+        parse_hex(
+            json_string(commitment_voucher, "covenantId")?,
+            "commitment covenant id",
+        )?,
         parse_hex(
             json_string(commitment_input, "requestFingerprint")?,
             "requestFingerprint",
@@ -450,56 +804,50 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         "batch commitment id",
     )?;
 
-    for (script_field, hash_field) in [
-        ("payoutScriptPublicKey", "payoutScriptPublicKeyHash"),
-        ("refundScriptPublicKey", "refundScriptPublicKeyHash"),
-    ] {
-        let script = parse_hex(json_string(escrow, script_field)?, script_field)?;
-        expect_eq(
-            hex::encode(Sha256::digest(script)),
-            json_string(&escrow["params"], hash_field)?,
-            hash_field,
-        )?;
+    let genesis = &vector["lineage"]["genesisDerivation"];
+    let genesis_outpoint = &genesis["authorizingInput"];
+    let genesis_outputs = genesis["authorizedOutputs"]
+        .as_array()
+        .ok_or_else(|| anyhow!("batch genesis authorized outputs must be an array"))?;
+    if genesis_outputs.len() != 1 {
+        return Err(anyhow!("batch genesis must derive one singleton output"));
     }
+    let genesis_output = &genesis_outputs[0];
+    let output_index = json_u32(genesis_output, "index")?;
+    let output = TransactionOutput::new(
+        json_u64(genesis_output, "amount")?,
+        parse_script_public_key(json_string(genesis_output, "scriptPublicKey")?)?,
+    );
+    let derived_id = kaspa_consensus_core::hashing::covenant_id::covenant_id(
+        TransactionOutpoint::new(
+            parse_hash(json_string(genesis_outpoint, "txid")?)?,
+            json_u32(genesis_outpoint, "index")?,
+        ),
+        std::iter::once((output_index, &output)),
+    );
+    expect_eq(
+        derived_id.to_string(),
+        covenant_id,
+        "batch genesis covenant id",
+    )?;
 
-    let claim_transaction = validate_batch_transaction_reference(
-        repo_root,
-        &vector["transactions"]["claim"],
-        "claim",
-        "vectors/tx-v1/batch-claim.json",
-        escrow,
-        voucher,
-        commitment_input,
-        config,
-    )?;
-    let refund_transaction = validate_batch_transaction_reference(
-        repo_root,
-        &vector["transactions"]["refund"],
-        "refund",
-        "vectors/tx-v1/batch-refund.json",
-        escrow,
-        voucher,
-        commitment_input,
-        config,
-    )?;
-    if refund_transaction["input"]["activeOutpoint"]
-        != claim_transaction["expected"]["continuation"]["outpoint"]
-    {
-        return Err(anyhow!("batch refund continuation outpoint mismatch"));
+    for state_name in ["beforeRequest", "afterRequest", "afterClaim"] {
+        let state = &vector["accounting"][state_name];
+        expect_eq(
+            json_string(state, "covenantId")?,
+            covenant_id,
+            "batch accounting covenant id",
+        )?;
+        let funding = json_u64(state, "fundingAmount")?;
+        let charged = json_u64(state, "chargedCumulativeAmount")?;
+        let settled = json_u64(state, "claimedCumulativeAmount")?;
+        let signed = json_u64(state, "signedMaxClaimable")?;
+        if settled > charged || charged > signed || signed.saturating_sub(settled) > funding {
+            return Err(anyhow!(
+                "batch accounting invariant failed for {state_name}"
+            ));
+        }
     }
-    expect_eq(
-        json_string(&refund_transaction["input"], "activeAmount")?,
-        json_string(&claim_transaction["expected"]["continuation"], "amount")?,
-        "batch refund continuation amount",
-    )?;
-    expect_eq(
-        json_string(&refund_transaction["input"], "activeScriptPublicKey")?,
-        json_string(
-            &claim_transaction["expected"]["continuation"],
-            "scriptPublicKey",
-        )?,
-        "batch refund continuation script",
-    )?;
 
     Ok(json!({
         "vector": relative_path,
@@ -508,131 +856,9 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         "mutatedVoucherSignature": "rejected",
         "paymentRequirements": "sha256-matched",
         "commitment": "sha256-matched",
-        "claimAndRefund": "full-consensus-and-script-execution-validated",
+        "genesisCovenantId": "rusty-kaspa-matched",
+        "transactionEvidence": "separate-tx-v1-chain",
     }))
-}
-
-fn validate_address_script_binding(
-    address: &str,
-    network: &str,
-    expected_script_public_key: &str,
-    label: &str,
-) -> Result<()> {
-    let address = Address::try_from(address).with_context(|| format!("parsing {label} address"))?;
-    let expected_prefix = match network {
-        "kaspa:mainnet" => Prefix::Mainnet,
-        "kaspa:testnet-10" => Prefix::Testnet,
-        _ => {
-            return Err(anyhow!(
-                "unsupported batch interoperability network {network}"
-            ));
-        }
-    };
-    if address.prefix != expected_prefix {
-        return Err(anyhow!("{label} address prefix does not match {network}"));
-    }
-    expect_eq(
-        serialize_script_public_key(&pay_to_address_script(&address)),
-        expected_script_public_key,
-        label,
-    )
-}
-
-#[allow(clippy::too_many_arguments)]
-fn validate_batch_transaction_reference(
-    repo_root: &Path,
-    reference: &serde_json::Value,
-    name: &str,
-    expected_path: &str,
-    escrow: &serde_json::Value,
-    voucher: &serde_json::Value,
-    commitment_input: &serde_json::Value,
-    config: &serde_json::Value,
-) -> Result<serde_json::Value> {
-    expect_eq(
-        json_string(reference, "path")?,
-        expected_path,
-        &format!("batch {name} path"),
-    )?;
-    let bytes = fs::read(repo_root.join(expected_path))
-        .with_context(|| format!("reading {expected_path}"))?;
-    expect_eq(
-        hex::encode(Sha256::digest(&bytes)),
-        json_string(reference, "sha256")?,
-        &format!("batch {name} file hash"),
-    )?;
-    let transaction: serde_json::Value =
-        serde_json::from_slice(&bytes).with_context(|| format!("parsing {expected_path}"))?;
-    let expected = &transaction["expected"];
-    for field in ["transactionId", "transactionHash"] {
-        expect_eq(
-            json_string(expected, field)?,
-            json_string(reference, field)?,
-            &format!("batch {name} {field}"),
-        )?;
-    }
-    if expected["sighash"] != reference["sighash"] {
-        return Err(anyhow!("batch {name} sighash evidence mismatch"));
-    }
-    if expected["compute"] != reference["compute"] {
-        return Err(anyhow!("batch {name} compute evidence mismatch"));
-    }
-
-    let input = &transaction["input"];
-    expect_eq(
-        json_string(input, "activeScriptPublicKey")?,
-        json_string(escrow, "scriptPublicKey")?,
-        &format!("batch {name} active script"),
-    )?;
-    expect_eq(
-        json_string(input, "redeemScript")?,
-        json_string(escrow, "redeemScript")?,
-        &format!("batch {name} redeem script"),
-    )?;
-
-    if name == "claim" {
-        if input["activeOutpoint"] != voucher["input"]["outpoint"] {
-            return Err(anyhow!("batch claim active outpoint mismatch"));
-        }
-        expect_eq(
-            json_string(input, "serverOutputScriptPublicKey")?,
-            json_string(escrow, "payoutScriptPublicKey")?,
-            "batch claim payout script",
-        )?;
-        expect_eq(
-            json_string(input, "voucherSignature")?,
-            json_string(voucher, "signature")?,
-            "batch claim voucher signature",
-        )?;
-        expect_eq(
-            json_string(input, "expectedPayoutScriptPublicKeyHash")?,
-            json_string(&escrow["params"], "payoutScriptPublicKeyHash")?,
-            "batch claim payout hash",
-        )?;
-        expect_eq(
-            json_string(input, "claimAmount")?,
-            json_string(commitment_input, "chargedCumulativeAfter")?,
-            "batch claim amount",
-        )?;
-    } else {
-        expect_eq(
-            json_string(input, "refundOutputScriptPublicKey")?,
-            json_string(escrow, "refundScriptPublicKey")?,
-            "batch refund output script",
-        )?;
-        expect_eq(
-            json_string(input, "expectedRefundScriptPublicKeyHash")?,
-            json_string(&escrow["params"], "refundScriptPublicKeyHash")?,
-            "batch refund output hash",
-        )?;
-        expect_eq(
-            json_string(input, "timeoutDaa")?,
-            json_string(config, "refundTimeoutDaa")?,
-            "batch refund timeout",
-        )?;
-    }
-
-    Ok(transaction)
 }
 
 fn concat_bytes(parts: &[Vec<u8>]) -> Vec<u8> {
@@ -1135,7 +1361,11 @@ fn measure_input_units(tx: &Transaction, entries: &[UtxoEntry], input_index: usi
     let populated = PopulatedTransaction::new(tx, entries.to_vec());
     let cache = Cache::new(64);
     let reused = SigHashReusedValuesUnsync::new();
-    let ctx = EngineCtx::new(&cache).with_reused(&reused);
+    let covenants =
+        CovenantsContext::from_tx(&populated).map_err(|error| anyhow!(error.to_string()))?;
+    let ctx = EngineCtx::new(&cache)
+        .with_reused(&reused)
+        .with_covenants_ctx(&covenants);
     let flags = EngineFlags {
         covenants_enabled: true,
         sigop_script_units: Gram(TESTNET_PARAMS.mass_per_sig_op).into(),
@@ -1635,7 +1865,7 @@ fn read_vector(path: &Path) -> Result<VectorFile> {
     serde_json::from_str(&contents).with_context(|| format!("parsing {}", path.display()))
 }
 
-fn validate_vector(vector: &VectorFile) -> Result<()> {
+fn validate_vector(vector: &VectorFile) -> Result<serde_json::Value> {
     if !vector.kind.starts_with("tx-v1-") {
         return Err(anyhow!("unexpected vector kind {}", vector.kind));
     }
@@ -1685,25 +1915,27 @@ fn validate_vector(vector: &VectorFile) -> Result<()> {
         vector.expected.txid.rest_digest.as_str(),
         "txid.restDigest",
     )?;
-    expect_eq(
-        calc_schnorr_signature_hash(
-            &populated,
-            vector.expected.sighash.input_index,
-            SIG_HASH_ALL,
-            &SigHashReusedValuesUnsync::new(),
-        )
-        .to_string(),
-        vector.expected.sighash.digest.as_str(),
-        "sighash.digest",
-    )?;
-    expect_eq(
-        hex::encode(sighash_all_preimage(
-            &populated,
-            vector.expected.sighash.input_index,
-        )?),
-        vector.expected.sighash.preimage.as_str(),
-        "sighash.preimage",
-    )?;
+    if vector.expected.sighashes.len() != tx.inputs.len() {
+        return Err(anyhow!("sighash evidence must cover every input"));
+    }
+    for sighash in &vector.expected.sighashes {
+        expect_eq(
+            calc_schnorr_signature_hash(
+                &populated,
+                sighash.input_index,
+                SIG_HASH_ALL,
+                &SigHashReusedValuesUnsync::new(),
+            )
+            .to_string(),
+            sighash.digest.as_str(),
+            "sighash.digest",
+        )?;
+        expect_eq(
+            hex::encode(sighash_all_preimage(&populated, sighash.input_index)?),
+            sighash.preimage.as_str(),
+            "sighash.preimage",
+        )?;
+    }
     expect_eq(
         tx.storage_mass().to_string(),
         vector.expected.transaction.mass.as_str(),
@@ -1751,21 +1983,86 @@ fn validate_vector(vector: &VectorFile) -> Result<()> {
     validate_compute_budget_hash_boundary(&vector.expected)?;
 
     let batch_entries = build_utxo_entries(&vector.expected.transaction)?;
+    let mut measured = Vec::new();
+    for index in 0..tx.inputs.len() {
+        execute_populated_input(&tx, &batch_entries, index).with_context(|| {
+            format!("batch input {index} must execute with committed signatures")
+        })?;
+        let script_units = measure_input_units(&tx, &batch_entries, index)?;
+        let minimum_budget = ComputeBudget::checked_covering_script_units(script_units.into())
+            .ok_or_else(|| anyhow!("input {index} compute budget exceeds uint16"))?;
+        let committed_budget = tx.inputs[index]
+            .compute_commit
+            .compute_budget()
+            .ok_or_else(|| anyhow!("input {index} is missing compute budget"))?;
+        if committed_budget != minimum_budget.value() {
+            return Err(anyhow!(
+                "input {index} compute budget is not minimal: measured {script_units} units, expected {}, artifact {committed_budget}",
+                minimum_budget.value()
+            ));
+        }
+        if committed_budget > 0 {
+            let mut insufficient = tx.clone();
+            insufficient.inputs[index].compute_commit = ComputeBudget(committed_budget - 1).into();
+            expect_consensus_rejection(
+                &insufficient,
+                &batch_entries,
+                &format!("input {index} with one-less compute budget"),
+            )?;
+        }
+        measured.push(json!({
+            "inputIndex": index,
+            "scriptUnits": script_units,
+            "minimumComputeBudget": minimum_budget.value(),
+            "scriptUnitAllowance": tx.inputs[index].compute_commit.allowed_script_units().0,
+        }));
+    }
     validate_full_consensus(&tx, &batch_entries)
         .context("batch transaction must pass full populated-UTXO consensus validation")?;
-    execute_populated_input(&tx, &batch_entries, 0)
-        .context("batch covenant input must execute with the committed signatures")?;
+    if let Some(compute) = &vector.expected.compute {
+        let head = measured
+            .first()
+            .ok_or_else(|| anyhow!("compute evidence requires input 0"))?;
+        let measured_units = head["scriptUnits"]
+            .as_u64()
+            .ok_or_else(|| anyhow!("measured script units are missing"))?;
+        let measured_budget = u16::try_from(
+            head["minimumComputeBudget"]
+                .as_u64()
+                .ok_or_else(|| anyhow!("measured compute budget is missing"))?,
+        )?;
+        let measured_allowance = head["scriptUnitAllowance"]
+            .as_u64()
+            .ok_or_else(|| anyhow!("measured script allowance is missing"))?;
+        if compute.script_units_estimate != measured_units
+            || compute.compute_budget != measured_budget
+            || compute.script_unit_allowance != measured_allowance
+        {
+            return Err(anyhow!(
+                "{} compute evidence is stale: measured units={measured_units}, budget={measured_budget}, allowance={measured_allowance}; artifact units={}, budget={}, allowance={}",
+                vector.expected.kind,
+                compute.script_units_estimate,
+                compute.compute_budget,
+                compute.script_unit_allowance,
+            ));
+        }
+    }
     let mut bad_signature = tx.clone();
     let signature_byte = bad_signature.inputs[0]
         .signature_script
         .get_mut(1)
         .ok_or_else(|| anyhow!("batch signature script is unexpectedly empty"))?;
     *signature_byte ^= 0x01;
-    if execute_populated_input(&bad_signature, &batch_entries, 0).is_ok() {
+    if validate_full_consensus(&bad_signature, &batch_entries).is_ok() {
         return Err(anyhow!("batch covenant accepted a mutated signature"));
     }
 
-    Ok(())
+    Ok(json!({
+        "fullTransactionValidator": "accepted",
+        "scriptExecution": "accepted",
+        "mutatedSignature": "rejected",
+        "inputs": measured,
+    }))
 }
 
 fn execute_populated_input(
@@ -1784,19 +2081,34 @@ fn execute_populated_input(
         .ok_or_else(|| anyhow!("UTXO index is out of range"))?;
     let cache = Cache::new(64);
     let reused = SigHashReusedValuesUnsync::new();
-    let ctx = EngineCtx::new(&cache).with_reused(&reused);
-    let mut engine = TxScriptEngine::from_transaction_input(
-        &populated,
-        input,
-        input_index,
-        utxo,
-        ctx,
-        EngineFlags {
-            covenants_enabled: true,
-            ..Default::default()
-        },
-    );
-    engine.execute().map_err(|error| anyhow!(error.to_string()))
+    let covenants =
+        CovenantsContext::from_tx(&populated).map_err(|error| anyhow!(error.to_string()))?;
+    let ctx = EngineCtx::new(&cache)
+        .with_reused(&reused)
+        .with_covenants_ctx(&covenants);
+    let mut execution_log = Vec::new();
+    let result = {
+        let mut engine = TxScriptEngine::from_transaction_input(
+            &populated,
+            input,
+            input_index,
+            utxo,
+            ctx,
+            EngineFlags {
+                covenants_enabled: true,
+                ..Default::default()
+            },
+        )
+        .with_opcode_execution_log_buffer(&mut execution_log);
+        engine.execute()
+    };
+    result.map_err(|error| {
+        anyhow!(
+            "{}\nopcode execution log:\n{}",
+            error,
+            String::from_utf8_lossy(&execution_log)
+        )
+    })
 }
 
 fn sighash_all_preimage(
@@ -1885,12 +2197,16 @@ impl HasherBase for PreimageWriter {
 }
 
 fn validate_compute_budget_hash_boundary(artifact: &Artifact) -> Result<()> {
+    let first_sighash = artifact
+        .sighashes
+        .first()
+        .ok_or_else(|| anyhow!("transaction has no sighash evidence"))?;
     let original_tx = build_transaction(&artifact.transaction)?;
     let original_populated =
         PopulatedTransaction::new(&original_tx, build_utxo_entries(&artifact.transaction)?);
     let original_sighash = calc_schnorr_signature_hash(
         &original_populated,
-        artifact.sighash.input_index,
+        first_sighash.input_index,
         SIG_HASH_ALL,
         &SigHashReusedValuesUnsync::new(),
     );
@@ -1908,7 +2224,7 @@ fn validate_compute_budget_hash_boundary(artifact: &Artifact) -> Result<()> {
         PopulatedTransaction::new(&mutated_tx, build_utxo_entries(&mutated_artifact)?);
     let mutated_sighash = calc_schnorr_signature_hash(
         &mutated_populated,
-        artifact.sighash.input_index,
+        first_sighash.input_index,
         SIG_HASH_ALL,
         &SigHashReusedValuesUnsync::new(),
     );
@@ -1987,7 +2303,12 @@ fn build_utxo_entries(artifact: &ArtifactTransaction) -> Result<Vec<UtxoEntry>> 
                 parse_script_public_key(&input.utxo.script_public_key)?,
                 parse_u64(&input.utxo.block_daa_score, "utxo.blockDaaScore")?,
                 input.utxo.is_coinbase,
-                None,
+                input
+                    .utxo
+                    .covenant_id
+                    .as_deref()
+                    .map(parse_hash)
+                    .transpose()?,
             ))
         })
         .collect()

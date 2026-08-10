@@ -1,20 +1,20 @@
 {
   "kind": "negative",
-  "name": "txid-wrong-length",
-  "description": "Outpoint txids must be 32-byte hex strings.",
+  "name": "zero-covenant-id",
+  "description": "The all-zero KIP-20 unbound sentinel is not a batch lane identity.",
   "schema": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json",
-  "expectedError": "invalid_kaspa_outpoint",
+  "expectedError": "invalid_kaspa_x402_binding",
   "value": {
     "type": "voucher",
     "channelId": "9bfed05435db41e5700c80d9d18108f0700edab7c6ae59487f4761fbe3ba398f",
-    "clientPublicKey": "3333333333333333333333333333333333333333333333333333333333333333",
+    "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
     "fundingOutpoint": {
-      "txid": "11",
+      "txid": "1111111111111111111111111111111111111111111111111111111111111111",
       "index": 2
     },
     "activeScriptPublicKey": "0000aa207299b931ba72a20f97f25ef7ec1d77695037482b30ec7c4626a4a0503e0bb9f887",
     "voucher": {
-      "covenantId": "5ba2c68c3d802af99e71126cb4fd08f7149797048b68fda47d9d412477aa03c2",
+      "covenantId": "0000000000000000000000000000000000000000000000000000000000000000",
       "amount": "2500000",
       "signature": "66666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666666"
     }

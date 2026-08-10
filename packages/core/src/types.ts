@@ -8,7 +8,7 @@ export type SignatureHex = string;
 export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v1";
+export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v2";
 export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
 export type ExactProfile = "standard-native" | "additive";
@@ -69,10 +69,11 @@ export interface ClaimPolicy extends JsonRecord {
 }
 
 export interface BatchRequirementsExtra extends JsonRecord {
-  binding: "kaspa-escrow-v1";
-  templateId: "kaspa-x402-escrow-v1";
+  binding: "kaspa-escrow-v2";
+  templateId: "kaspa-x402-escrow-v2";
   serverPublicKey: PublicKeyHex;
   minDepositSompi: SompiString;
+  claimReserveSompi: SompiString;
   refundTimeoutDaa: SompiString;
   claimPolicy?: ClaimPolicy;
   channelState?: ChannelState;
@@ -123,6 +124,9 @@ export interface FundingOutpoint {
 }
 
 export interface Voucher extends JsonRecord {
+  /** Stable KIP-20 covenant lineage authorized by this voucher. */
+  covenantId: Hash32Hex;
+  /** Lifetime cumulative settlement ceiling for the covenant lineage. */
   amount: SompiString;
   signature: SignatureHex;
 }
@@ -130,7 +134,7 @@ export interface Voucher extends JsonRecord {
 export interface ChannelConfig extends JsonRecord {
   network: NetworkId;
   asset: "KAS";
-  templateId: "kaspa-x402-escrow-v1";
+  templateId: "kaspa-x402-escrow-v2";
   clientPublicKey: PublicKeyHex;
   serverPublicKey: PublicKeyHex;
   payTo: string;
@@ -141,11 +145,15 @@ export interface ChannelConfig extends JsonRecord {
 
 export interface ChannelState extends JsonRecord {
   channelId: Hash32Hex;
+  /** Stable KIP-20 covenant lineage. This does not locate the current UTXO. */
+  covenantId: Hash32Hex;
   activeOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   fundingAmount: SompiString;
   chargedCumulativeAmount: SompiString;
+  /** On-chain lifetime gross amount removed from escrow, including claim fees. */
   claimedCumulativeAmount: SompiString;
+  /** Latest signed lifetime cumulative ceiling; it does not reset on rotation. */
   signedMaxClaimable: SompiString;
 }
 
@@ -194,6 +202,7 @@ export interface ClaimPayload extends JsonRecord {
 export interface RefundPayload extends JsonRecord {
   type: "refund";
   channelId: Hash32Hex;
+  covenantId: Hash32Hex;
   fundingOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   refundAddress: string;
@@ -223,6 +232,7 @@ export interface SettlementResponseExtra extends JsonRecord {
   headOutpoint?: FundingOutpoint;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
+  covenantId?: Hash32Hex;
   claimOutpoint?: FundingOutpoint;
   continuationOutpoint?: FundingOutpoint;
   refundAddress?: string;

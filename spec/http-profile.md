@@ -42,7 +42,11 @@ The historical `X-PAYMENT` and `X-PAYMENT-RESPONSE` names are not part of this s
 Protected content must not be returned until the selected scheme has reached its success condition:
 
 - `exact`: the transaction is verified and reaches the server's finality policy;
-- `batch-settlement`: voucher-only requests require the commitment to be verified and stored; `deposit-voucher` requests require the deposit or top-up transaction to be accepted by the selected Kaspa network and the voucher commitment to be stored; claim/refund operations require the relevant transaction to be accepted by the selected Kaspa network.
+- `batch-settlement`: voucher-only requests require the v2 lifetime-voucher
+  commitment and staged protected result to be durably stored;
+  `deposit-voucher` requests additionally require accepted singleton genesis or
+  same-id top-up evidence; claim and refund operations require accepted
+  Testnet-10 evidence before the persisted current head advances or closes.
 
 Servers should require the x402 `payment-identifier` extension for paid HTTP retries. This prevents duplicate side effects when clients or agents retry after timeouts.
 
@@ -53,4 +57,7 @@ Servers may include multiple Kaspa entries in `PaymentRequired.accepts`. Clients
 - `exact` for fixed-price one-shot purchases;
 - `batch-settlement` when an existing escrow/channel can pay for repeated or variable-cost requests.
 
-If the server returns a corrective `402` for `batch-settlement`, it should include `accepts[].extra.channelState` and, when asking the client to adopt a newer cumulative value, `accepts[].extra.voucherState`.
+If the server returns a corrective `402` for `batch-settlement`, it should
+include `accepts[].extra.channelState` with the stable `covenantId` and current
+outpoint. When asking the client to adopt a newer lifetime ceiling, it must also
+include the signed `accepts[].extra.voucherState`.

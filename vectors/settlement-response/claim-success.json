@@ -5,10 +5,11 @@
     "success": true,
     "transaction": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
     "network": "kaspa:testnet-10",
-    "payer": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
+    "payer": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
     "amount": "1700000",
     "extensions": {
       "kaspa": {
+        "covenantId": "5ba2c68c3d802af99e71126cb4fd08f7149797048b68fda47d9d412477aa03c2",
         "claimOutpoint": {
           "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
           "index": 0
@@ -18,16 +19,17 @@
           "index": 1
         },
         "channelState": {
-          "channelId": "1de0efa58f79aae1547fad5bbfa72e83e49c52c732db5e3f21a8fa3f4a3ddabc",
+          "channelId": "9bfed05435db41e5700c80d9d18108f0700edab7c6ae59487f4761fbe3ba398f",
+          "covenantId": "5ba2c68c3d802af99e71126cb4fd08f7149797048b68fda47d9d412477aa03c2",
           "activeOutpoint": {
             "txid": "bbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbbb",
             "index": 1
           },
-          "activeScriptPublicKey": "00002079be667ef9dcbbac55a06295ce870b07029bfcdb2dce28d959f2815b16f81798ac",
+          "activeScriptPublicKey": "0000aa20eb8be9058f653d8fc8f05171c07e7304dc2e4ababf3bd64abf7a5ba783bcfa0187",
           "fundingAmount": "88300000",
           "chargedCumulativeAmount": "1700000",
           "claimedCumulativeAmount": "1700000",
-          "signedMaxClaimable": "0"
+          "signedMaxClaimable": "1700000"
         }
       }
     }
