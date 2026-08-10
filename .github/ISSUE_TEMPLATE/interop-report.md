@@ -25,4 +25,5 @@ unpaid payment headers. See docs/demo-implementer-guide.md for field details.
 ## Evidence
 
 - Transaction id and output index (exact flows):
-- Channel id, active outpoint, and voucher amount (batch flows):
+- Channel id, stable covenant id, active outpoint, voucher ceiling, and
+  A/S/T/V/R state (batch flows):

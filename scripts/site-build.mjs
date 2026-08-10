@@ -164,7 +164,7 @@ function writeHomePage() {
     <ul>
       <li>Alpha reference: draft specs, JSON schemas, conformance vectors, and TypeScript packages under prerelease npm tags.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.9 deployment until an explicit Alpha.10 cutover. The unversioned site describes the active ${escapeHtml(releaseVersion)} source; the <a href="/docs/testnet-gateway/">gateway reference</a> records deployed evidence separately.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is the paid-canary-proven Alpha.10 Testnet-10 deployment. The unversioned site describes the active ${escapeHtml(releaseVersion)} source; the <a href="/docs/testnet-gateway/">gateway reference</a> records the deployed evidence.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change until the first tagged spec release. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -403,7 +403,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or Alpha.10 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> remains the paid-canary-proven alpha.9 deployment until an explicit cutover; see the <a href="/docs/testnet-gateway/">gateway reference</a> for deployed evidence.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or Alpha.10 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> is the paid-canary-proven Alpha.10 Testnet-10 deployment; see the <a href="/docs/testnet-gateway/">gateway reference</a> for deployed evidence.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>

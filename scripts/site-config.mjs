@@ -155,8 +155,6 @@ export const ARTIFACT_NOTES = {
     "Core binding: common rules for x402 v2 payments on Kaspa — networks, asset, amounts, envelopes.",
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
-  "spec/kaspa-exact-v1.md":
-    "Superseded alpha.7 `exact` profile retained as the KIP-10 reservation record.",
   "spec/kaspa-batch-settlement-v2.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":

@@ -34,7 +34,9 @@ npm install @kaspa-x402/core@0.1.0-alpha.10 @kaspa-x402/client@0.1.0-alpha.10
 ```
 
 The registry `latest` and `alpha` tags both resolve to the same Alpha.10 package
-set. The hosted gateway package is not published.
+set. Alpha.10 remains prerelease software: `latest` identifies the currently
+recommended alpha and does not imply a stable API, frozen wire format, or
+mainnet readiness. The hosted gateway package is not published.
 
 ## Validate Schemas And Vectors
 

@@ -452,6 +452,7 @@ function checkContent() {
     /must (?:clear|sit at or above)[^.]*storage-mass/i,
     /Alpha\.6 focuses on preferred KIP-10/i,
     /For real paid requests, use the hosted gateway/i,
+    /remains the paid-canary-proven alpha\.\d+ deployment until/i,
   ];
   for (const file of activeTextFiles) {
     const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
