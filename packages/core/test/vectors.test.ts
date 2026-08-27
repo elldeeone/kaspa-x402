@@ -1287,6 +1287,45 @@ describe("payment-identifier semantic validation", () => {
     expectFailureCode(result, "invalid_kaspa_payment_identifier");
   });
 
+  it("rejects regular expressions in untrusted payment-identifier schemas", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const schema = {
+      type: "object",
+      required: ["required"],
+      properties: {
+        required: { type: "boolean" },
+        id: { type: "string", pattern: "^(a+)+$" },
+      },
+      additionalProperties: true,
+    };
+    const result = validatePaymentRetry({
+      paymentRequired: {
+        ...vector.paymentRequired,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true },
+            schema,
+          },
+        },
+      },
+      paymentPayload: {
+        ...vector.paymentPayload,
+        extensions: {
+          "payment-identifier": {
+            info: { required: true, id: "a".repeat(127) + "b" },
+            schema,
+          },
+        },
+      },
+    });
+
+    expectFailureCode(result, "invalid_kaspa_payment_identifier");
+    if (result.ok) throw new Error("expected untrusted pattern rejection");
+    expect(result.error.message).toBe(
+      "payment-identifier extension schema is invalid",
+    );
+  });
+
   it("accepts payment-identifier retries that preserve advertised info and schema", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const schema = {

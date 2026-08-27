@@ -13,6 +13,7 @@ import {
   type KaspaX402ErrorCode,
   type ValidationResult,
 } from "./errors.js";
+import { PAYMENT_IDENTIFIER_INFO_SCHEMA } from "./extensions.js";
 import {
   validateChannelState as validateChannelStateSchema,
   validateKaspaBatchExtra as validateKaspaBatchExtraSchema,
@@ -58,6 +59,10 @@ export const SCHEMA_IDS = {
   settlementResponse:
     "https://kaspa-x402.org/schemas/settlement-response.schema.json",
 } as const;
+
+const TRUSTED_PAYMENT_IDENTIFIER_SCHEMA = stableStringify(
+  PAYMENT_IDENTIFIER_INFO_SCHEMA,
+);
 
 type SchemaId = (typeof SCHEMA_IDS)[keyof typeof SCHEMA_IDS];
 
@@ -244,7 +249,7 @@ export function validatePaymentIdentifierInfo(
   value: unknown,
   schema?: JsonRecord,
 ): ValidationResult<PaymentIdentifierInfo> {
-  if (schema) {
+  if (schema && stableStringify(schema) !== TRUSTED_PAYMENT_IDENTIFIER_SCHEMA) {
     const advertised = validateWithInlineSchema<PaymentIdentifierInfo>(
       schema,
       value,
@@ -578,22 +583,6 @@ function validateJsonSchemaSubset(
         Number.isInteger(schemaRecord.maxLength),
       );
     }
-    if (schemaRecord.pattern !== undefined) {
-      if (typeof schemaRecord.pattern !== "string")
-        return subsetFailure(path, "pattern must be a string", false);
-      let pattern: RegExp;
-      try {
-        pattern = new RegExp(schemaRecord.pattern);
-      } catch {
-        return subsetFailure(
-          path,
-          "pattern must be a valid regular expression",
-          false,
-        );
-      }
-      if (!pattern.test(value))
-        return subsetFailure(path, "string does not match pattern", true);
-    }
     return { ok: true, schemaSupported: true };
   }
 
@@ -629,7 +618,6 @@ const SUPPORTED_INLINE_SCHEMA_KEYWORDS = new Set([
   "examples",
   "maxLength",
   "minLength",
-  "pattern",
   "properties",
   "required",
   "title",
@@ -651,7 +639,7 @@ function inferSchemaType(
     "properties",
     "required",
   ].filter((key) => Object.hasOwn(schema, key));
-  const stringKeywords = ["maxLength", "minLength", "pattern"].filter((key) =>
+  const stringKeywords = ["maxLength", "minLength"].filter((key) =>
     Object.hasOwn(schema, key),
   );
   if (objectKeywords.length > 0 && stringKeywords.length > 0) {

@@ -334,6 +334,32 @@ describe("direct-mode client", () => {
     }
   });
 
+  it("enforces origin and recipient pins before batch funding", async () => {
+    const required = encodePaymentRequiredHeader(
+      makeRequired({ amount: "100" }),
+    );
+    const cases: FundingPolicy[] = [
+      { allowedOrigins: ["https://other.example"] },
+      { allowedPayTo: ["kaspatest:other"] },
+    ];
+
+    for (const fundingPolicy of cases) {
+      const provider = new FakeFundingProvider();
+      const client = makeClient({
+        provider,
+        store: new MemoryChannelStore(),
+        fundingPolicy,
+      });
+
+      await expect(
+        client.createPayment(required, {
+          url: "https://api.example.test/file",
+        }),
+      ).rejects.toThrow("funding policy");
+      expect(provider.deposits).toHaveLength(0);
+    }
+  });
+
   it("creates the default standard-native exact transaction without head state", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });

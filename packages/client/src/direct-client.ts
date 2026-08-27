@@ -138,6 +138,10 @@ export class DirectModeClient {
     const origin = context.origin ?? originForUrl(context.url);
     const resourceUrl = parsed.paymentRequired.resource.url;
     const accepted = parsed.accepted;
+    assertPaymentDestinationPolicy(this.#options, {
+      origin,
+      payTo: accepted.payTo,
+    });
     const existing = await this.#selectExistingChannel(
       accepted,
       origin,
@@ -1734,15 +1738,7 @@ function assertExactFundingPolicy(
 ): void {
   const policy = options.fundingPolicy;
   if (!policy) return;
-  if (
-    policy.allowedOrigins &&
-    !policy.allowedOrigins.includes(request.origin)
-  ) {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_payload",
-      `exact payment origin ${request.origin} is not allowed by funding policy`,
-    );
-  }
+  assertPaymentDestinationPolicy(options, request);
   if (
     policy.allowedExactProfiles &&
     !policy.allowedExactProfiles.includes(request.profile)
@@ -1750,12 +1746,6 @@ function assertExactFundingPolicy(
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
       `exact profile ${request.profile} is not allowed by funding policy`,
-    );
-  }
-  if (policy.allowedPayTo && !policy.allowedPayTo.includes(request.payTo)) {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_payload",
-      "exact payment recipient is not allowed by funding policy",
     );
   }
   if (
@@ -1766,6 +1756,29 @@ function assertExactFundingPolicy(
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
       "exact payment amount exceeds funding policy",
+    );
+  }
+}
+
+function assertPaymentDestinationPolicy(
+  options: DirectModeClientOptions,
+  request: { origin: string; payTo: string },
+): void {
+  const policy = options.fundingPolicy;
+  if (!policy) return;
+  if (
+    policy.allowedOrigins &&
+    !policy.allowedOrigins.includes(request.origin)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `payment origin ${request.origin} is not allowed by funding policy`,
+    );
+  }
+  if (policy.allowedPayTo && !policy.allowedPayTo.includes(request.payTo)) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "payment recipient is not allowed by funding policy",
     );
   }
 }
