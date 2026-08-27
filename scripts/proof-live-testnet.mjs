@@ -399,13 +399,13 @@ function validateLiveProofResult(result, flows) {
   const restartReload = result.batch?.restartReload;
   require(
     restartReload?.snapshotFormat ===
-      "kaspa-x402-alpha10-batch-recovery-v1",
+      "kaspa-x402-alpha11-batch-recovery-v1",
     "batch.restartReload.snapshotFormat",
     "must use the Alpha.11 recovery snapshot",
   );
   require(
     restartReload?.preBroadcastSnapshotFormat ===
-      "kaspa-x402-alpha10-claim-before-broadcast-v1",
+      "kaspa-x402-alpha11-claim-before-broadcast-v1",
     "batch.restartReload.preBroadcastSnapshotFormat",
     "must reload the exact pre-broadcast Alpha.11 claim snapshot",
   );
@@ -1402,9 +1402,9 @@ function validateLiveProofResult(result, flows) {
   const refundRecovery = refund?.recovery;
   require(
     refundRecovery?.preBroadcastSnapshotFormat ===
-      "kaspa-x402-alpha10-refund-before-broadcast-v1" &&
+      "kaspa-x402-alpha11-refund-before-broadcast-v1" &&
       refundRecovery?.appliedSnapshotFormat ===
-        "kaspa-x402-alpha10-refund-applied-v1",
+        "kaspa-x402-alpha11-refund-applied-v1",
     "batch.refund.recovery",
     "must reload both the pre-broadcast and atomically applied refund snapshots",
   );

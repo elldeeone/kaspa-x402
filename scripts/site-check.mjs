@@ -483,13 +483,13 @@ function checkContent() {
     "docs/testnet-gateway.md Alpha.11 pending deployment proof",
   );
   for (const [relative, marker] of [
-    ["docs/live-testnet-report.md", "historical `0.1.0-alpha.10` funded live harness run"],
+    ["docs/live-testnet-report.md", "successful `0.1.0-alpha.11` funded live harness run"],
     ["docs/demo-implementer-guide.md", "public registry and gateway remain Alpha.10"],
   ]) {
     assertContains(
       path.join(outDir, relative),
       marker,
-      `${relative} Alpha.10 evidence boundary`,
+      `${relative} release evidence boundary`,
     );
   }
   for (const [relative, marker] of [
