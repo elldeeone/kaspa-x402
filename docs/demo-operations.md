@@ -25,8 +25,7 @@ Important non-secret variables:
 | Variable                                     | Purpose                                                                                                                                                        |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_GATEWAY_ENABLED`                 | Set to `false` to stop protected exact and batch endpoints with HTTP `503`. `/health`, `/canary`, `/metrics`, and `/supported` remain visible.                 |
-| `KASPA_X402_CHAIN_API_BASE`                  | REST chain evidence source. Current value: `https://api-tn10.kaspa.org`.                                                                                       |
-| `KASPA_X402_CHAIN_EVIDENCE_API_BASE`         | Required independent REST source when enabled. Operate it separately from `KASPA_X402_CHAIN_API_BASE`; the gateway rejects matching origins.                  |
+| `KASPA_X402_CHAIN_API_BASE`                  | Operator-controlled authoritative Kaspa REST node used for chain reads and acceptance evidence. Current value: `https://api-tn10.kaspa.org`.                  |
 | `KASPA_X402_PAY_TO`                          | Testnet address receiving exact payments.                                                                                                                      |
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |

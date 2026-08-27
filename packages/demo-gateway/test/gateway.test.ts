@@ -38,8 +38,6 @@ const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_GATEWAY_ENABLED: "true",
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
-  KASPA_X402_CHAIN_EVIDENCE_API_BASE:
-    "https://independent-tn10.example.test",
   KASPA_X402_PAY_TO:
     "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
   KASPA_X402_SERVER_PUBLIC_KEY:
@@ -244,12 +242,6 @@ describe("gateway canary", () => {
             ? input.toString()
             : input.url;
       if (url === "https://api-tn10.kaspa.org/info/blockdag") {
-        return Response.json({
-          networkName: "kaspa-testnet-10",
-          virtualDaaScore: "507000000",
-        });
-      }
-      if (url === "https://independent-tn10.example.test/info/blockdag") {
         return Response.json({
           networkName: "kaspa-testnet-10",
           virtualDaaScore: "507000000",
@@ -587,12 +579,6 @@ function stubCanaryFetches(): void {
           ? input.toString()
           : input.url;
     if (url === "https://api-tn10.kaspa.org/info/blockdag") {
-      return Response.json({
-        networkName: "kaspa-testnet-10",
-        virtualDaaScore: "507000000",
-      });
-    }
-    if (url === "https://independent-tn10.example.test/info/blockdag") {
       return Response.json({
         networkName: "kaspa-testnet-10",
         virtualDaaScore: "507000000",

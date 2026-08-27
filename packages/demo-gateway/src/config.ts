@@ -18,14 +18,12 @@ type GeneratedGatewayEnv = WidenStringBindings<Env>;
 export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
   Pick<GeneratedGatewayEnv, "GATEWAY_STATE"> & {
     KASPA_X402_ADMIN_TOKEN?: string;
-    KASPA_X402_CHAIN_EVIDENCE_API_BASE?: string;
   };
 
 export interface GatewayConfig {
   enabled: boolean;
   network: NetworkId;
   chainApiBase: string;
-  chainEvidenceApiBase?: string;
   payTo: string;
   serverPublicKey: string;
   exactAmount: SompiString;
@@ -114,22 +112,6 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     required(env.KASPA_X402_CHAIN_API_BASE, "KASPA_X402_CHAIN_API_BASE"),
     "KASPA_X402_CHAIN_API_BASE",
   );
-  const chainEvidenceApiBase = env.KASPA_X402_CHAIN_EVIDENCE_API_BASE?.trim()
-    ? baseUrl(
-        env.KASPA_X402_CHAIN_EVIDENCE_API_BASE,
-        "KASPA_X402_CHAIN_EVIDENCE_API_BASE",
-      )
-    : undefined;
-  if (enabled && !chainEvidenceApiBase)
-    throw new Error(
-      "KASPA_X402_CHAIN_EVIDENCE_API_BASE is required when the gateway is enabled",
-    );
-  if (
-    chainEvidenceApiBase &&
-    new URL(chainEvidenceApiBase).origin === new URL(chainApiBase).origin
-  ) {
-    throw new Error("chain API and evidence API must use independent origins");
-  }
   const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "");
   if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
     throw new Error(
@@ -153,7 +135,6 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     enabled,
     network,
     chainApiBase,
-    ...(chainEvidenceApiBase ? { chainEvidenceApiBase } : {}),
     payTo,
     serverPublicKey,
     exactAmount,

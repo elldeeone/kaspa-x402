@@ -2,7 +2,6 @@ import {
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   KaspaX402Error,
-  stableStringify,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -399,145 +398,6 @@ export class RestKaspaChainProvider
   }
 }
 
-export class QuorumKaspaChainProvider
-  implements ServerChainProvider, TopUpVerifier
-{
-  readonly #primary: ServerChainProvider & TopUpVerifier;
-  readonly #secondary: ServerChainProvider & TopUpVerifier;
-  readonly #primaryClient: KaspaRestClient;
-  readonly #secondaryClient: KaspaRestClient;
-  readonly #maxDaaScoreDivergence: bigint;
-
-  constructor(
-    primary: ServerChainProvider & TopUpVerifier,
-    secondary: ServerChainProvider & TopUpVerifier,
-    primaryClient: KaspaRestClient,
-    secondaryClient: KaspaRestClient,
-    maxDaaScoreDivergence: SompiString,
-  ) {
-    this.#primary = primary;
-    this.#secondary = secondary;
-    this.#primaryClient = primaryClient;
-    this.#secondaryClient = secondaryClient;
-    this.#maxDaaScoreDivergence = BigInt(maxDaaScoreDivergence);
-  }
-
-  async getUtxo(outpoint: FundingOutpoint, network: NetworkId) {
-    return matchingEvidence(
-      "UTXO",
-      await Promise.all([
-        this.#primary.getUtxo(outpoint, network),
-        this.#secondary.getUtxo(outpoint, network),
-      ]),
-    );
-  }
-
-  async verifyCovenantGenesis(
-    request: Parameters<ServerChainProvider["verifyCovenantGenesis"]>[0],
-  ) {
-    return matchingEvidence(
-      "covenant genesis",
-      await Promise.all([
-        this.#primary.verifyCovenantGenesis(request),
-        this.#secondary.verifyCovenantGenesis(request),
-      ]),
-    );
-  }
-
-  async verifyTopUp(request: TopUpVerificationRequest) {
-    return matchingEvidence(
-      "covenant top-up",
-      await Promise.all([
-        this.#primary.verifyTopUp(request),
-        this.#secondary.verifyTopUp(request),
-      ]),
-    );
-  }
-
-  async getVirtualDaaScore(): Promise<SompiString> {
-    const [primary, secondary] = await Promise.all([
-      this.#primary.getVirtualDaaScore(),
-      this.#secondary.getVirtualDaaScore(),
-    ]);
-    const primaryScore = BigInt(primary);
-    const secondaryScore = BigInt(secondary);
-    const divergence =
-      primaryScore >= secondaryScore
-        ? primaryScore - secondaryScore
-        : secondaryScore - primaryScore;
-    if (divergence > this.#maxDaaScoreDivergence)
-      throw invalidTransaction(
-        "independent chain evidence disagrees on virtual DAA score",
-      );
-    return String(
-      primaryScore >= secondaryScore ? primaryScore : secondaryScore,
-    ) as SompiString;
-  }
-
-  async estimateClaimFee(request: Parameters<ServerChainProvider["estimateClaimFee"]>[0]) {
-    return matchingEvidence(
-      "claim fee",
-      await Promise.all([
-        this.#primary.estimateClaimFee(request),
-        this.#secondary.estimateClaimFee(request),
-      ]),
-    );
-  }
-
-  async sendTransaction(transaction: PreparedTransaction) {
-    const broadcast = await this.#primary.sendTransaction(transaction);
-    const [primaryId, secondaryId] = await Promise.all([
-      this.#primaryClient.assertPreparedTransactionAccepted(transaction),
-      this.#secondaryClient.assertPreparedTransactionAccepted(transaction),
-    ]);
-    if (
-      broadcast.transactionId.toLowerCase() !== primaryId ||
-      primaryId !== secondaryId
-    )
-      throw invalidTransaction("independent chain evidence disagrees on the broadcast transaction");
-    return { transactionId: primaryId, finality: "accepted" } as const;
-  }
-}
-
-export class QuorumExactTransactionVerifier
-  implements ExactTransactionVerifier
-{
-  constructor(
-    readonly primary: ExactTransactionVerifier,
-    readonly secondary: ExactTransactionVerifier,
-  ) {}
-
-  async verifyExactPayment(request: ExactTransactionVerificationRequest) {
-    return matchingEvidence(
-      "exact payment",
-      await Promise.all([
-        this.primary.verifyExactPayment(request),
-        this.secondary.verifyExactPayment(request),
-      ]),
-    );
-  }
-}
-
-export class QuorumExactHeadReconciler implements ExactHeadReconciler {
-  constructor(
-    readonly primary: ExactHeadReconciler,
-    readonly secondary: ExactHeadReconciler,
-  ) {}
-
-  async reconcileExactHead(
-    head: ExactHeadRecord,
-    candidateTransactionIds: readonly Hash32Hex[] = [],
-  ) {
-    return matchingEvidence(
-      "exact head",
-      await Promise.all([
-        this.primary.reconcileExactHead(head, candidateTransactionIds),
-        this.secondary.reconcileExactHead(head, candidateTransactionIds),
-      ]),
-    );
-  }
-}
-
 export class RestExactHeadReconciler implements ExactHeadReconciler {
   readonly #client: KaspaRestClient;
 
@@ -664,15 +524,18 @@ export class PnnBroadcastChainProvider
   readonly #reads: RestKaspaChainProvider;
   readonly #book: ScriptAddressBook;
   readonly #pnn: KaspaPnnClient;
+  readonly #acceptance: KaspaRestClient;
 
   constructor(
     reads: RestKaspaChainProvider,
     book: ScriptAddressBook,
     pnn: KaspaPnnClient,
+    acceptance: KaspaRestClient,
   ) {
     this.#reads = reads;
     this.#book = book;
     this.#pnn = pnn;
+    this.#acceptance = acceptance;
   }
 
   getUtxo(
@@ -702,10 +565,18 @@ export class PnnBroadcastChainProvider
     return this.#reads.estimateClaimFee();
   }
 
-  sendTransaction(
+  async sendTransaction(
     transaction: PreparedTransaction,
   ): Promise<TransactionBroadcast> {
-    return this.#pnn.submitTransaction(transaction, this.#book);
+    const broadcast = await this.#pnn.submitTransaction(transaction, this.#book);
+    const transactionId =
+      await this.#acceptance.assertPreparedTransactionAccepted(transaction);
+    if (broadcast.transactionId.toLowerCase() !== transactionId) {
+      throw invalidTransaction(
+        "authoritative Kaspa REST node disagrees with the broadcast transaction",
+      );
+    }
+    return { transactionId, finality: "accepted" };
   }
 }
 
@@ -1736,13 +1607,6 @@ export class KaspaRestClient {
       clearTimeout(timeout);
     }
   }
-}
-
-function matchingEvidence<T>(label: string, values: readonly [T, T]): T {
-  if (stableStringify(values[0]) !== stableStringify(values[1])) {
-    throw invalidTransaction(`independent chain evidence disagrees on ${label}`);
-  }
-  return values[0];
 }
 
 class RestNotFoundError extends Error {}

@@ -24,9 +24,6 @@ import {
   NativeAddressCodec,
   NativeChannelSignatureVerifier,
   PnnBroadcastChainProvider,
-  QuorumExactHeadReconciler,
-  QuorumExactTransactionVerifier,
-  QuorumKaspaChainProvider,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -256,20 +253,10 @@ export async function runGatewayCanary(
 
   checks.push(
     await checked("kaspa-rest", async () => {
-      if (!config.chainEvidenceApiBase)
-        throw new Error("independent chain evidence API is required");
-      const [chain, evidence] = await Promise.all([
-        new KaspaRestClient(config.chainApiBase).health(),
-        new KaspaRestClient(config.chainEvidenceApiBase).health(),
-      ]);
-      if (
-        chain.networkName !== evidence.networkName ||
-        chain.virtualDaaScore !== evidence.virtualDaaScore
-      )
-        throw new Error("independent chain health evidence disagrees");
+      const chain = await new KaspaRestClient(config.chainApiBase).health();
       return {
-        detail: "independent REST sources returned matching testnet-10 evidence",
-        evidence: { primary: chain, secondary: evidence },
+        detail: "REST chain health returned testnet-10 evidence",
+        evidence: chain,
       };
     }),
   );
@@ -437,20 +424,12 @@ async function createGateway(
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
-  if (!config.chainEvidenceApiBase)
-    throw new Error("independent chain evidence API is required");
-  const evidenceRest = new KaspaRestClient(config.chainEvidenceApiBase);
   const restChainProvider = new RestKaspaChainProvider(
     rest,
     book,
     config.claimFeeSompi,
   );
-  const evidenceChainProvider = new RestKaspaChainProvider(
-    evidenceRest,
-    book,
-    config.claimFeeSompi,
-  );
-  const broadcaster =
+  const chainProvider =
     config.chainBroadcastMode === "pnn"
       ? new PnnBroadcastChainProvider(
           restChainProvider,
@@ -460,16 +439,10 @@ async function createGateway(
             timeoutMs: config.pnnTimeoutMs,
             attempts: config.pnnAttempts,
           }),
+          rest,
         )
       : restChainProvider;
-  const chainProvider = new QuorumKaspaChainProvider(
-    broadcaster,
-    evidenceChainProvider,
-    rest,
-    evidenceRest,
-    config.minimumRefundLeadDaa,
-  );
-  const currentDaa = BigInt(await chainProvider.getVirtualDaaScore());
+  const currentDaa = BigInt(await rest.getVirtualDaaScore());
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -509,15 +482,9 @@ async function createGateway(
     chainProvider,
     addressCodec,
     channelSignatureVerifier: new NativeChannelSignatureVerifier(),
-    exactTransactionVerifier: new QuorumExactTransactionVerifier(
-      new RestExactTransactionVerifier(rest),
-      new RestExactTransactionVerifier(evidenceRest),
-    ),
-    exactHeadReconciler: new QuorumExactHeadReconciler(
-      new RestExactHeadReconciler(rest),
-      new RestExactHeadReconciler(evidenceRest),
-    ),
-    topUpVerifier: chainProvider,
+    exactTransactionVerifier: new RestExactTransactionVerifier(rest),
+    exactHeadReconciler: new RestExactHeadReconciler(rest),
+    topUpVerifier: restChainProvider,
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",

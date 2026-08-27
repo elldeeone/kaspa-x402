@@ -34,7 +34,6 @@
     "KASPA_X402_GATEWAY_ENABLED": "false",
     "KASPA_X402_NETWORK": "kaspa:testnet-10",
     "KASPA_X402_CHAIN_API_BASE": "https://api-tn10.kaspa.org",
-    "KASPA_X402_CHAIN_EVIDENCE_API_BASE": "",
     "KASPA_X402_PAY_TO": "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
     "KASPA_X402_SERVER_PUBLIC_KEY": "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
     "KASPA_X402_EXACT_AMOUNT": "20000000",

@@ -18,8 +18,7 @@ import {
   KaspaRestClient,
   NativeAddressCodec,
   NativeChannelSignatureVerifier,
-  QuorumExactTransactionVerifier,
-  QuorumKaspaChainProvider,
+  PnnBroadcastChainProvider,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -872,6 +871,52 @@ describe("KaspaPnnClient", () => {
   });
 });
 
+describe("PnnBroadcastChainProvider", () => {
+  it("confirms PNN broadcasts through the authoritative REST node", async () => {
+    const transactionId = "11".repeat(32);
+    const acceptance = vi.fn(async () => transactionId);
+    const provider = new PnnBroadcastChainProvider(
+      {} as never,
+      new ScriptAddressBook(),
+      {
+        async submitTransaction() {
+          return { transactionId, finality: "accepted" as const };
+        },
+      } as never,
+      { assertPreparedTransactionAccepted: acceptance } as never,
+    );
+    const transaction = {} as never;
+
+    await expect(provider.sendTransaction(transaction)).resolves.toEqual({
+      transactionId,
+      finality: "accepted",
+    });
+    expect(acceptance).toHaveBeenCalledWith(transaction);
+  });
+
+  it("fails closed when the authoritative REST node does not confirm acceptance", async () => {
+    const transactionId = "11".repeat(32);
+    const provider = new PnnBroadcastChainProvider(
+      {} as never,
+      new ScriptAddressBook(),
+      {
+        async submitTransaction() {
+          return { transactionId, finality: "accepted" as const };
+        },
+      } as never,
+      {
+        async assertPreparedTransactionAccepted() {
+          throw new Error("transaction not accepted by authoritative node");
+        },
+      } as never,
+    );
+
+    await expect(provider.sendTransaction({} as never)).rejects.toThrow(
+      "transaction not accepted by authoritative node",
+    );
+  });
+});
+
 describe("RestExactTransactionVerifier", () => {
   it("verifies the Rust-consensus standard-native vector from trusted UTXOs and Schnorr signatures", async () => {
     const vector = JSON.parse(
@@ -1674,56 +1719,6 @@ describe("NativeChannelSignatureVerifier", () => {
         purpose: "voucher",
       }),
     ).toBe(false);
-  });
-});
-
-describe("independent chain evidence quorum", () => {
-  it("uses the higher close DAA score and rejects excessive divergence", async () => {
-    const provider = (score: string) => ({
-      async getVirtualDaaScore() {
-        return score;
-      },
-    });
-    const close = new QuorumKaspaChainProvider(
-      provider("1000") as never,
-      provider("1050") as never,
-      {} as never,
-      {} as never,
-      "100",
-    );
-    const divergent = new QuorumKaspaChainProvider(
-      provider("1000") as never,
-      provider("1200") as never,
-      {} as never,
-      {} as never,
-      "100",
-    );
-
-    await expect(close.getVirtualDaaScore()).resolves.toBe("1050");
-    await expect(divergent.getVirtualDaaScore()).rejects.toThrow(
-      "independent chain evidence disagrees",
-    );
-  });
-
-  it("fails closed when exact-payment providers disagree", async () => {
-    const primary = {
-      async verifyExactPayment() {
-        return { transactionId: "11".repeat(32), finality: "accepted" };
-      },
-    };
-    const secondary = {
-      async verifyExactPayment() {
-        return { transactionId: "22".repeat(32), finality: "accepted" };
-      },
-    };
-    const verifier = new QuorumExactTransactionVerifier(
-      primary as never,
-      secondary as never,
-    );
-
-    await expect(verifier.verifyExactPayment({} as never)).rejects.toThrow(
-      "independent chain evidence disagrees",
-    );
   });
 });
 
