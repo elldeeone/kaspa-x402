@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kaspa-x402.org/v0.1.0-alpha.8/schemas/payment-required.schema.json",
+  "$id": "https://kaspa-x402.org/schemas/payment-required.schema.json",
   "title": "Kaspa x402 PaymentRequired",
   "type": "object",
   "required": ["x402Version", "resource", "accepts"],
@@ -61,7 +61,7 @@
       "required": ["info", "schema"],
       "properties": {
         "info": {
-          "$ref": "https://kaspa-x402.org/v0.1.0-alpha.8/schemas/payment-identifier.schema.json"
+          "$ref": "https://kaspa-x402.org/schemas/payment-identifier.schema.json"
         },
         "schema": {
           "type": "object"
@@ -103,7 +103,7 @@
           "maximum": 4294967295
         },
         "extra": {
-          "$ref": "https://kaspa-x402.org/v0.1.0-alpha.8/schemas/kaspa-requirements-extra.schema.json"
+          "$ref": "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json"
         }
       },
       "additionalProperties": true

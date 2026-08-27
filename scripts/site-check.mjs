@@ -24,7 +24,10 @@ import {
   VENDORED_KASPA_WASM,
 } from "./site-config.mjs";
 import { releaseMetadataForHash } from "./release-metadata.mjs";
-import { assertReleaseLocalSchema } from "./release-schema.mjs";
+import {
+  assertReleaseLocalSchema,
+  requiresReleaseLocalSchemas,
+} from "./release-schema.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -262,7 +265,8 @@ function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
       fail(`${releasePath}/release.json content lock path is stale`);
     if (expectedHash !== lock.contentSha256)
       fail(`${releasePath} bytes differ from ${lock.path}`);
-    checkVersionedSchemas(releasePath, lock.version);
+    if (requiresReleaseLocalSchemas(lock.version))
+      checkVersionedSchemas(releasePath, lock.version);
 
     for (const route of [
       `/${releasePath}/`,

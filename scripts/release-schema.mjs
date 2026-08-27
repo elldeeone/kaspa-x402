@@ -19,6 +19,14 @@ export function assertReleaseLocalSchema(schema, expectedId) {
   });
 }
 
+export function requiresReleaseLocalSchemas(version) {
+  return compareVersions(version, "0.1.0-alpha.11") >= 0;
+}
+
+function compareVersions(left, right) {
+  return String(left).localeCompare(String(right), "en", { numeric: true });
+}
+
 function visit(value, inspect) {
   if (!value || typeof value !== "object") return;
   if (Array.isArray(value)) {

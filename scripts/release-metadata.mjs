@@ -23,5 +23,26 @@ export function releaseMetadataForHash(release) {
     throw new Error(
       `release metadata contains unknown fields: ${unknown.join(", ")}`,
     );
+  if (!usesCompleteMetadataHash(release.version)) {
+    return {
+      version: release.version,
+      sourceState: "locked",
+      dirtyInputs: [],
+      contentLock: release.contentLock,
+      snapshotScope: release.snapshotScope,
+      activeAlphaOnlyRoutes: release.activeAlphaOnlyRoutes,
+      unversionedRoutes: release.unversionedRoutes,
+      npmInstall: release.npmInstall,
+      artifacts: release.artifacts,
+    };
+  }
   return { ...release, contentSha256: "<content-sha256>" };
+}
+
+export function usesCompleteMetadataHash(version) {
+  return compareVersions(version, "0.1.0-alpha.11") >= 0;
+}
+
+function compareVersions(left, right) {
+  return String(left).localeCompare(String(right), "en", { numeric: true });
 }

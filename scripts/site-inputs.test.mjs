@@ -2,8 +2,14 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import { isPublishableDirtyPath } from "./site-inputs.mjs";
-import { releaseMetadataForHash } from "./release-metadata.mjs";
-import { assertReleaseLocalSchema } from "./release-schema.mjs";
+import {
+  releaseMetadataForHash,
+  usesCompleteMetadataHash,
+} from "./release-metadata.mjs";
+import {
+  assertReleaseLocalSchema,
+  requiresReleaseLocalSchemas,
+} from "./release-schema.mjs";
 import {
   decodePreviewPathname,
   parsePreviewRequestUrl,
@@ -48,6 +54,39 @@ test("release hashes bind every supported metadata field", () => {
     () => releaseMetadataForHash({ ...release, unboundField: true }),
     /unknown fields: unboundField/,
   );
+});
+
+test("published Alpha.1-10 retain their historical release rules", () => {
+  const legacy = {
+    version: "0.1.0-alpha.10",
+    generatedFrom: "historical",
+    commitDate: "2026-01-01T00:00:00Z",
+    sourceState: "locked",
+    dirtyInputs: [],
+    contentLock: "site/releases/v0.1.0-alpha.10.json",
+    snapshotScope: "snapshot",
+    activeAlphaOnlyRoutes: ["/"],
+    unversionedRoutes: "active alpha",
+    npmInstall: ["@kaspa-x402/core@alpha"],
+    artifacts: [],
+    contentSha256: "historical-hash",
+  };
+
+  assert.equal(usesCompleteMetadataHash(legacy.version), false);
+  assert.equal(requiresReleaseLocalSchemas(legacy.version), false);
+  assert.deepEqual(releaseMetadataForHash(legacy), {
+    version: legacy.version,
+    sourceState: "locked",
+    dirtyInputs: [],
+    contentLock: legacy.contentLock,
+    snapshotScope: legacy.snapshotScope,
+    activeAlphaOnlyRoutes: legacy.activeAlphaOnlyRoutes,
+    unversionedRoutes: legacy.unversionedRoutes,
+    npmInstall: legacy.npmInstall,
+    artifacts: legacy.artifacts,
+  });
+  assert.equal(usesCompleteMetadataHash("0.1.0-alpha.11"), true);
+  assert.equal(requiresReleaseLocalSchemas("0.1.0-alpha.11"), true);
 });
 
 test("release schemas reject cross-version and external references", () => {
