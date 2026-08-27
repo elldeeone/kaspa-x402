@@ -4,10 +4,13 @@ import {
   BATCH_SCRIPT_INT_MAX,
   applyBatchClaimAccounting,
   assertBatchVoucherReserve,
+  assertBatchAuthorizationExpiry,
   batchLaneAccounting,
   batchPaymentRequirementsPreimageHex,
+  batchRequestAuthorizationDigest,
   parseBatchLaneAmount,
   requiredBatchVoucherAmount,
+  stableStringify,
   voucherDigest,
   voucherPreimageHex,
   type BatchLaneState,
@@ -137,6 +140,60 @@ describe("Alpha.11 batch lane accounting", () => {
         },
       }),
     ).toThrow("minimum deposit must cover");
+  });
+});
+
+describe("batch request authorization", () => {
+  const input = {
+    network: "kaspa:testnet-10" as const,
+    channelId: "11".repeat(32),
+    covenantId: "22".repeat(32),
+    amount: "500",
+    paymentRequirementsHash: "33".repeat(32),
+    requestHash: "44".repeat(32),
+    audience: "https://api.example.test/resource",
+    expiresAt: "2026-08-27T12:00:30.000Z",
+    nonce: "55".repeat(32),
+  };
+
+  it("binds the request, audience, payment terms, and nonce", () => {
+    const digest = batchRequestAuthorizationDigest(input);
+    expect(batchRequestAuthorizationDigest({ ...input, requestHash: "66".repeat(32) })).not.toBe(digest);
+    expect(batchRequestAuthorizationDigest({ ...input, audience: "https://relay.example.test/resource" })).not.toBe(digest);
+    expect(batchRequestAuthorizationDigest({ ...input, nonce: "77".repeat(32) })).not.toBe(digest);
+  });
+
+  it("rejects expired and overlong authorizations", () => {
+    expect(() =>
+      assertBatchAuthorizationExpiry({
+        expiresAt: input.expiresAt,
+        maxTimeoutSeconds: 60,
+        nowMs: Date.parse("2026-08-27T12:00:00.000Z"),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertBatchAuthorizationExpiry({
+        expiresAt: input.expiresAt,
+        maxTimeoutSeconds: 60,
+        nowMs: Date.parse("2026-08-27T12:00:30.000Z"),
+      }),
+    ).toThrow("expired");
+    expect(() =>
+      assertBatchAuthorizationExpiry({
+        expiresAt: input.expiresAt,
+        maxTimeoutSeconds: 10,
+        nowMs: Date.parse("2026-08-27T12:00:00.000Z"),
+      }),
+    ).toThrow("exceeds");
+  });
+});
+
+describe("stable JSON resource limits", () => {
+  it("rejects excessive nesting, nodes, keys, and output", () => {
+    expect(() => stableStringify([[[0]]], { maxDepth: 2 })).toThrow("depth");
+    expect(() => stableStringify([1, 2, 3], { maxNodes: 3 })).toThrow("node");
+    expect(() => stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 })).toThrow("object-key");
+    expect(() => stableStringify("large", { maxOutputBytes: 4 })).toThrow("byte");
   });
 });
 

@@ -2986,6 +2986,10 @@ class FakeSigner {
     return `${digest}${digest}`;
   }
 
+  async signBatchRequestAuthorization({ digest }: { digest: Hash32Hex }) {
+    return `${digest}${digest}`;
+  }
+
   async signRefund() {
     return "cc".repeat(64);
   }

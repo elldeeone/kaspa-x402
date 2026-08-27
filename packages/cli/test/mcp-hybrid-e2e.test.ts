@@ -228,7 +228,13 @@ function unusedChannelSigner(): ChannelSigner {
     async randomSalt() {
       throw new Error("not used");
     },
+    async randomNonce() {
+      throw new Error("not used");
+    },
     async signVoucher() {
+      throw new Error("not used");
+    },
+    async signBatchRequestAuthorization() {
       throw new Error("not used");
     },
   };

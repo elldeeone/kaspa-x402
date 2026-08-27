@@ -95,29 +95,13 @@ describe("gateway durable ledger", () => {
         salt: "13".repeat(32),
       },
     });
-    const attempt = batchSettlementAttempt(alias);
-    await ledger.claimBatchSettlement(attempt);
-    await ledger.beginBatchHandler(
-      attempt.attemptId,
-      "2026-07-07T00:00:01.000Z",
-    );
-    await ledger.recordBatchHandlerResult(
-      attempt.attemptId,
-      { chargedAmount: "100" },
-      "2026-07-07T00:00:02.000Z",
-    );
-    const commit = settlementCommit(alias, {
-      chargedCumulativeAmount: "100",
-      signedMaxClaimable: "100",
-      voucherSignature: "16".repeat(64),
-    });
-
-    await expect(ledger.commitSettlement(commit)).rejects.toThrow(
+    const attempt = batchSettlementAttempt(alias, { prior: undefined });
+    await expect(ledger.claimBatchSettlement(attempt)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
     await expect(
-      ledger.loadCommitment(commit.commitment.commitmentId),
+      ledger.loadBatchSettlementAttempt(attempt.attemptId),
     ).resolves.toBeUndefined();
   });
 
@@ -390,7 +374,7 @@ describe("gateway durable ledger", () => {
       ledger.claimBatchSettlement({
         ...attempt,
         attemptId: OTHER_TX,
-        paymentPayloadHash: OTHER_TX,
+        paymentEvidenceHash: OTHER_TX,
       }),
     ).rejects.toThrow("pending batch settlement");
     await expect(
@@ -416,7 +400,7 @@ describe("gateway durable ledger", () => {
       ledger.loadBatchSettlementAttempt(ATTEMPT),
     ).resolves.toMatchObject({
       status: "applied",
-      paymentPayloadHash: PAYLOAD,
+      paymentEvidenceHash: PAYLOAD,
       handlerResult: { body: "download", chargedAmount: "100" },
     });
     await expect(ledger.loadChannel(CHANNEL_ID)).resolves.toMatchObject({
@@ -467,12 +451,12 @@ describe("gateway durable ledger", () => {
         message: "payment requirements hash",
       },
       {
-        name: "uppercase payload hash",
+        name: "uppercase payment evidence hash",
         attempt: {
           ...base,
-          paymentPayloadHash: "EF".repeat(32),
+          paymentEvidenceHash: "EF".repeat(32),
         },
-        message: "payment payload hash",
+        message: "payment evidence hash",
       },
       {
         name: "uppercase active outpoint transaction id",
@@ -873,7 +857,8 @@ function settlementCommit(
     covenantId: previous.covenantId,
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
-    paymentPayloadHash: PAYLOAD,
+    paymentEvidenceHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     activeOutpoint: previous.activeOutpoint,
     activeScriptPublicKey: previous.activeScriptPublicKey,
     voucher: {
@@ -922,8 +907,22 @@ function batchSettlementAttempt(
     covenantId: previous.covenantId,
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
-    paymentPayloadHash: PAYLOAD,
+    paymentEvidenceHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     maximumCharge: "100",
+    adoptedChannel: previous,
+    prior: {
+      channelId: previous.channelId,
+      covenantId: previous.covenantId,
+      fundingAmount: previous.fundingAmount,
+      chargedCumulativeAmount: previous.chargedCumulativeAmount,
+      claimedCumulativeAmount: previous.claimedCumulativeAmount,
+      signedMaxClaimable: previous.signedMaxClaimable,
+      voucherSignature: previous.voucherSignature,
+      activeOutpoint: previous.activeOutpoint,
+      activeScriptPublicKey: previous.activeScriptPublicKey,
+      status: previous.status,
+    },
     expected: {
       channelId: previous.channelId,
       covenantId: previous.covenantId,

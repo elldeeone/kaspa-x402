@@ -22,8 +22,8 @@ import type {
   TopUpVerificationResult,
   TopUpVerifier,
   TransactionBroadcast,
-  VoucherVerificationRequest,
-  VoucherVerifier,
+  ChannelSignatureVerificationRequest,
+  ChannelSignatureVerifier,
 } from "@kaspa-x402/server";
 import {
   KIP10_EXACT_TRANSACTION_ENCODING,
@@ -1311,12 +1311,14 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
   }
 }
 
-export class NativeVoucherVerifier implements VoucherVerifier {
-  verifyVoucher(request: VoucherVerificationRequest): boolean {
+export class NativeChannelSignatureVerifier
+  implements ChannelSignatureVerifier
+{
+  verifySignature(request: ChannelSignatureVerificationRequest): boolean {
     return verifyKaspaSchnorrDigest({
       digest: request.digest,
-      signature: request.voucher.signature,
-      publicKey: request.clientPublicKey,
+      signature: request.signature,
+      publicKey: request.publicKey,
     });
   }
 }

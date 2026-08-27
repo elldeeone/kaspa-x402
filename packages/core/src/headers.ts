@@ -8,6 +8,8 @@ import {
   validateSettlementResponse,
 } from "./schema-validation.js";
 
+const MAX_PAYMENT_HEADER_BYTES = 256 * 1_024;
+
 export function encodePaymentRequiredHeader(value: PaymentRequired): string {
   return encodeHeader(value, validatePaymentRequired);
 }
@@ -53,7 +55,18 @@ function encodeHeader<T>(value: T, validate: (value: unknown) => { ok: true; val
 function decodeHeader<T>(value: string, validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: Error }): T {
   let decoded: unknown;
   try {
-    decoded = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
+    if (Buffer.byteLength(value, "utf8") > MAX_PAYMENT_HEADER_BYTES)
+      throw new RangeError("encoded payment header exceeds the byte limit");
+    const bytes = Buffer.from(value, "base64");
+    if (bytes.byteLength > MAX_PAYMENT_HEADER_BYTES)
+      throw new RangeError("decoded payment header exceeds the byte limit");
+    decoded = JSON.parse(bytes.toString("utf8"));
+    stableStringify(decoded, {
+      maxDepth: 32,
+      maxNodes: 16_384,
+      maxObjectKeys: 1_024,
+      maxOutputBytes: MAX_PAYMENT_HEADER_BYTES,
+    });
   } catch (error) {
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "header must contain base64-encoded JSON", error);
   }

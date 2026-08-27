@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   X402_VERSION,
+  batchPaymentRequirementsHash,
+  batchRequestAuthorizationDigest,
   channelId,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
@@ -1071,9 +1073,9 @@ function makeFacilitator(
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
-    voucherVerifier: {
-      verifyVoucher({ digest, voucher }) {
-        return voucher.signature === `${digest}${digest}`;
+    channelSignatureVerifier: {
+      verifySignature({ digest, signature }) {
+        return signature === `${digest}${digest}`;
       },
     },
     exactProfile: "standard-native",
@@ -1197,6 +1199,7 @@ function makeDepositPayment(
     salt: SALT,
   };
   const derived = deriveEscrow(channelConfig);
+  const resolvedChannelId = channelId(channelConfig);
   const fundingOutpoint = { txid: FUNDING_TX, index: 0 };
   chain.setUtxo({
     outpoint: fundingOutpoint,
@@ -1205,22 +1208,43 @@ function makeDepositPayment(
     scriptPublicKey: derived.activeScriptPublicKey,
     finality: "accepted",
   });
+  const voucher = signVoucher({
+    network: accepted.network,
+    covenantId: COVENANT_ID,
+    amount: accepted.amount,
+  });
+  const expiresAt = new Date(Date.now() + 30_000).toISOString();
+  const nonce = "97".repeat(32);
+  const authorizationDigest = batchRequestAuthorizationDigest({
+    network: accepted.network,
+    channelId: resolvedChannelId,
+    covenantId: COVENANT_ID,
+    amount: voucher.amount,
+    paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+    requestHash: REQUEST_HASH,
+    audience: RESOURCE.url,
+    expiresAt,
+    nonce,
+  });
   return {
     x402Version: X402_VERSION,
     accepted,
     payload: {
       type: "deposit-voucher",
       channelConfig,
-      channelId: channelId(channelConfig),
+      channelId: resolvedChannelId,
       escrowAddress: derived.escrowAddress,
       fundingOutpoint,
       fundingAmountSompi: accepted.extra.minDepositSompi,
       activeScriptPublicKey: derived.activeScriptPublicKey,
-      voucher: signVoucher({
-        network: accepted.network,
-        covenantId: COVENANT_ID,
-        amount: accepted.amount,
-      }),
+      voucher,
+      authorization: {
+        version: "kaspa-x402-batch-request-authorization-v1",
+        expiresAt,
+        nonce,
+        digest: authorizationDigest,
+        signature: `${authorizationDigest}${authorizationDigest}`,
+      },
     },
   };
 }

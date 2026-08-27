@@ -249,6 +249,28 @@ export function validatePaymentIdentifierInfo(
   value: unknown,
   schema?: JsonRecord,
 ): ValidationResult<PaymentIdentifierInfo> {
+  try {
+    stableStringify(value, {
+      maxDepth: 16,
+      maxNodes: 2_048,
+      maxObjectKeys: 256,
+      maxOutputBytes: 64 * 1_024,
+    });
+    if (schema)
+      stableStringify(schema, {
+        maxDepth: 16,
+        maxNodes: 2_048,
+        maxObjectKeys: 256,
+        maxOutputBytes: 64 * 1_024,
+      });
+  } catch (error) {
+    return fail(
+      "invalid_kaspa_payment_identifier",
+      error instanceof Error
+        ? error.message
+        : "payment-identifier input exceeds validation limits",
+    );
+  }
   if (schema && stableStringify(schema) !== TRUSTED_PAYMENT_IDENTIFIER_SCHEMA) {
     const advertised = validateWithInlineSchema<PaymentIdentifierInfo>(
       schema,
@@ -330,6 +352,16 @@ export function validatePaymentRetry(input: {
     payload.value,
   );
   if (!payloadPaymentIdentifier.ok) return payloadPaymentIdentifier;
+  if (
+    payloadPaymentIdentifier.present &&
+    !paymentIdentifier.present &&
+    payloadPaymentIdentifier.value.schema !== undefined
+  ) {
+    return fail(
+      "invalid_kaspa_payment_identifier",
+      "payer-supplied payment-identifier schemas must be advertised by the server",
+    );
+  }
   if (payloadPaymentIdentifier.present) {
     const info = validatePaymentIdentifierInfo(
       payloadPaymentIdentifier.value.info,
@@ -487,9 +519,12 @@ function validateJsonSchemaSubset(
   if (enumValues !== undefined) {
     if (!Array.isArray(enumValues))
       return subsetFailure(path, "enum must be an array", false);
+    if (enumValues.length > 128)
+      return subsetFailure(path, "enum exceeds the entry limit", false);
+    const canonicalValue = stableStringify(value);
     if (
       !enumValues.some(
-        (candidate) => stableStringify(candidate) === stableStringify(value),
+        (candidate) => stableStringify(candidate) === canonicalValue,
       )
     )
       return subsetFailure(path, "must equal one enum value", true);

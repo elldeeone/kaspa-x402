@@ -30,13 +30,16 @@ export function normalizeBatchSettlementAttempt(
   for (const [value, label] of [
     [input.requestFingerprint, "request fingerprint"],
     [input.paymentRequirementsHash, "payment requirements hash"],
-    [input.paymentPayloadHash, "payment payload hash"],
+    [input.paymentEvidenceHash, "payment evidence hash"],
+    [input.requestAuthorizationId, "request authorization id"],
     [input.expected.activeOutpoint.txid, "active outpoint transaction id"],
   ] as const) {
     if (!isLowerHash32(value))
       throw new Error(`${label} must be canonical lowercase hash hex`);
   }
   parseBatchLaneAmount(input.maximumCharge, "maximum batch charge");
+  if (input.adoptedChannel.channelId !== input.channelId)
+    throw new Error("adopted channel does not match the batch attempt");
   batchLaneAccounting({
     chargedCumulativeAmount: input.expected.chargedCumulativeAmount,
     claimedCumulativeAmount: input.expected.claimedCumulativeAmount,
@@ -58,7 +61,9 @@ export function batchSettlementAttemptsMatch(
     left.covenantId === right.covenantId &&
     left.requestFingerprint === right.requestFingerprint &&
     left.paymentRequirementsHash === right.paymentRequirementsHash &&
-    left.paymentPayloadHash === right.paymentPayloadHash &&
+    left.paymentEvidenceHash === right.paymentEvidenceHash &&
+    left.requestAuthorizationId === right.requestAuthorizationId &&
+    left.paymentIdentifier === right.paymentIdentifier &&
     left.maximumCharge === right.maximumCharge &&
     stableJson(left.expected) === stableJson(right.expected)
   );
@@ -78,7 +83,9 @@ export function batchSettlementAttemptIsReadyToCommit(
     attempt.requestFingerprint === record.commitment.requestFingerprint &&
     attempt.paymentRequirementsHash ===
       record.commitment.paymentRequirementsHash &&
-    attempt.paymentPayloadHash === record.commitment.paymentPayloadHash &&
+    attempt.paymentEvidenceHash === record.commitment.paymentEvidenceHash &&
+    attempt.requestAuthorizationId ===
+      record.commitment.requestAuthorizationId &&
     (attempt.handlerResult.chargedAmount ?? attempt.maximumCharge) ===
       record.commitment.chargedAmount &&
     stableJson(attempt.expected) === stableJson(record.expected),

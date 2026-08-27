@@ -2,7 +2,11 @@ import {
   X402_VERSION,
   assertBatchVoucherReserve,
   assertMainnetAllowed,
+  batchAuthorizationExpiresAt,
   batchLaneAccounting,
+  batchPaymentRequirementsHash,
+  batchRequestAuthorizationDigest,
+  batchRequestAuthorizationPreimage,
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
@@ -21,6 +25,7 @@ import {
   voucherDigest,
   voucherPreimageHex,
   type BatchPaymentRequirements,
+  type BatchRequestAuthorization,
   type ChannelConfig,
   type ChannelState,
   type ExactPaymentRequirements,
@@ -138,6 +143,7 @@ export class DirectModeClient {
     const origin = context.origin ?? originForUrl(context.url);
     const resourceUrl = parsed.paymentRequired.resource.url;
     const accepted = parsed.accepted;
+    const authorizedContext = contextWithRequestHash(context, accepted);
     assertPaymentDestinationPolicy(this.#options, {
       origin,
       payTo: accepted.payTo,
@@ -153,7 +159,7 @@ export class DirectModeClient {
         existing.channel,
         accepted,
         parsed.paymentRequired,
-        context,
+        authorizedContext,
         existing.toppedUp,
       );
       return {
@@ -183,7 +189,7 @@ export class DirectModeClient {
     const { channel, paymentPayload } = await this.#openDepositVoucherChannel(
       accepted,
       parsed.paymentRequired,
-      context,
+      authorizedContext,
       origin,
     );
     return {
@@ -985,6 +991,18 @@ export class DirectModeClient {
       signedMaxClaimable: voucher.amount,
       latestVoucher: voucher,
     };
+    if (!context.requestHash) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "batch request authorization requires a canonical request hash",
+      );
+    }
+    const authorization = await this.#signBatchRequestAuthorization(
+      signedChannel,
+      accepted,
+      paymentRequired.resource.url,
+      context.requestHash,
+    );
     const paymentPayload = buildPaymentPayload(
       paymentRequired,
       accepted,
@@ -999,6 +1017,7 @@ export class DirectModeClient {
         fundingTransaction: prepared.transaction,
         activeScriptPublicKey,
         voucher,
+        authorization,
       },
     );
 
@@ -1251,6 +1270,18 @@ export class DirectModeClient {
       signedMaxClaimable: voucher.amount,
       latestVoucher: voucher,
     };
+    if (!context.requestHash) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "batch request authorization requires a canonical request hash",
+      );
+    }
+    const authorization = await this.#signBatchRequestAuthorization(
+      updated,
+      accepted,
+      paymentRequired.resource.url,
+      context.requestHash,
+    );
     const paymentPayload = buildPaymentPayload(
       paymentRequired,
       accepted,
@@ -1265,6 +1296,7 @@ export class DirectModeClient {
             fundingAmountSompi: updated.fundingAmount,
             activeScriptPublicKey: updated.activeScriptPublicKey,
             voucher,
+            authorization,
           }
         : {
             type: "voucher",
@@ -1273,6 +1305,7 @@ export class DirectModeClient {
             fundingOutpoint: updated.activeOutpoint,
             activeScriptPublicKey: updated.activeScriptPublicKey,
             voucher,
+            authorization,
           },
     );
 
@@ -1303,6 +1336,47 @@ export class DirectModeClient {
       amount,
     });
     return { covenantId: channel.covenantId, amount, signature };
+  }
+
+  async #signBatchRequestAuthorization(
+    channel: DirectModeChannel,
+    accepted: BatchPaymentRequirements,
+    audience: string,
+    requestHash: Hash32Hex,
+  ): Promise<BatchRequestAuthorization> {
+    const nonce = await this.#options.signer.randomNonce();
+    const expiresAt = batchAuthorizationExpiresAt(accepted.maxTimeoutSeconds);
+    const input = {
+      network: accepted.network,
+      channelId: channel.id,
+      covenantId: channel.covenantId,
+      amount: channel.latestVoucher!.amount,
+      paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+      requestHash,
+      audience,
+      expiresAt,
+      nonce,
+    };
+    const digest = batchRequestAuthorizationDigest(input);
+    const preimage = batchRequestAuthorizationPreimage(input);
+    const signature =
+      await this.#options.signer.signBatchRequestAuthorization({
+        digest,
+        preimage,
+        channel,
+        accepted,
+        requestHash,
+        audience,
+        expiresAt,
+        nonce,
+      });
+    return {
+      version: "kaspa-x402-batch-request-authorization-v1",
+      expiresAt,
+      nonce,
+      digest,
+      signature,
+    };
   }
 
   async #broadcastFundingTransition(

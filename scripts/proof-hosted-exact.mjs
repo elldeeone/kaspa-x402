@@ -935,6 +935,9 @@ function makeSigner({ schnorr, dataDir }) {
     async signVoucher() {
       throw new Error("hosted exact proof does not sign batch vouchers");
     },
+    async signBatchRequestAuthorization() {
+      throw new Error("hosted exact proof does not sign batch authorizations");
+    },
   };
 }
 

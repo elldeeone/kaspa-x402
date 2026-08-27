@@ -58,6 +58,13 @@ type LockRecord = {
   expiresAt: number;
 };
 
+type PaymentIdentifierReservation = {
+  attemptId: string;
+  fingerprint: string;
+  paymentEvidenceHash: string;
+  channelId: string;
+};
+
 type RateWindowRecord = {
   resetAt: number;
   counts: Record<string, number>;
@@ -200,11 +207,13 @@ export class GatewayLedger implements ServerStateStore {
         }
         return { attempt: clone(existing), created: false };
       }
+      const currentChannel = await txn.get<ServerChannelRecord>(
+        channelKey(attempt.channelId),
+      );
       if (
-        !matchesExpectedChannel(
-          await txn.get<ServerChannelRecord>(channelKey(attempt.channelId)),
-          attempt.expected,
-        )
+        attempt.prior
+          ? !currentChannel || !matchesExpectedChannel(currentChannel, attempt.prior)
+          : currentChannel !== undefined
       ) {
         throw new Error("channel state changed before batch settlement claim");
       }
@@ -220,6 +229,29 @@ export class GatewayLedger implements ServerStateStore {
         }
         await txn.delete(openBatchAttemptKey(attempt.channelId));
       }
+      if (attempt.paymentIdentifier) {
+        if (
+          await txn.get<PaymentIdentifierRecord>(
+            paymentIdentifierKey(attempt.paymentIdentifier),
+          )
+        )
+          throw new Error("payment identifier was already committed");
+        const reserved = await txn.get<PaymentIdentifierReservation>(
+          paymentIdentifierReservationKey(attempt.paymentIdentifier),
+        );
+        if (reserved && reserved.attemptId !== attempt.attemptId)
+          throw new Error("payment identifier is already reserved");
+        await txn.put(
+          paymentIdentifierReservationKey(attempt.paymentIdentifier),
+          {
+            attemptId: attempt.attemptId,
+            fingerprint: attempt.requestFingerprint,
+            paymentEvidenceHash: attempt.paymentEvidenceHash,
+            channelId: attempt.channelId,
+          },
+        );
+      }
+      await putChannel(txn, attempt.adoptedChannel);
       await txn.put(batchAttemptKey(attempt.attemptId), clone(attempt));
       await txn.put(openBatchAttemptKey(attempt.channelId), attempt.attemptId);
       return { attempt: clone(attempt), created: true };
@@ -622,18 +654,32 @@ export class GatewayLedger implements ServerStateStore {
       if (!batchSettlementAttemptIsReadyToCommit(attempt, record)) {
         throw new Error("batch settlement attempt is not ready to apply");
       }
-      if (record.paymentIdentifier)
-        await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      if (record.paymentIdentifier) {
+        await assertPaymentIdentifierAvailable(
+          txn,
+          record.paymentIdentifier,
+          attempt.attemptId,
+        );
+        const reserved = await txn.get<PaymentIdentifierReservation>(
+          paymentIdentifierReservationKey(record.paymentIdentifier.id),
+        );
+        if (!reserved || reserved.attemptId !== attempt.attemptId)
+          throw new Error("payment identifier is not reserved by this batch attempt");
+      }
       await putChannel(txn, record.channel);
       await txn.put(
         commitmentKey(record.commitment.commitmentId),
         clone(record.commitment),
       );
-      if (record.paymentIdentifier)
+      if (record.paymentIdentifier) {
         await txn.put(
           paymentIdentifierKey(record.paymentIdentifier.id),
           clone(record.paymentIdentifier),
         );
+        await txn.delete(
+          paymentIdentifierReservationKey(record.paymentIdentifier.id),
+        );
+      }
       await txn.put(batchAttemptKey(attempt.attemptId), {
         ...attempt,
         status: "applied",
@@ -1186,7 +1232,13 @@ function readPayload<T>(request: GatewayStateRequest): T {
 async function assertPaymentIdentifierAvailable(
   txn: GatewayTransaction,
   paymentIdentifier: PaymentIdentifierRecord,
+  reservedAttemptId?: string,
 ): Promise<void> {
+  const reserved = await txn.get<PaymentIdentifierReservation>(
+    paymentIdentifierReservationKey(paymentIdentifier.id),
+  );
+  if (reserved && reserved.attemptId !== reservedAttemptId)
+    throw new Error("payment identifier is reserved by pending batch work");
   const existing = await txn.get<PaymentIdentifierRecord>(
     paymentIdentifierKey(paymentIdentifier.id),
   );
@@ -1421,6 +1473,10 @@ function exactAttemptKey(transactionId: string): string {
 
 function paymentIdentifierKey(id: string): string {
   return `payment-identifier:${id}`;
+}
+
+function paymentIdentifierReservationKey(id: string): string {
+  return `payment-identifier-reservation:${id}`;
 }
 
 function claimAttemptKey(attemptId: string): string {

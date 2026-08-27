@@ -153,9 +153,7 @@ function defineStoreContract(factory: StoreFactory): void {
       signedMaxClaimable: "100",
       voucherSignature: "16".repeat(64),
     });
-    await stageBatchAttempt(store, commit);
-
-    await expect(store.commitSettlement(commit)).rejects.toThrow(
+    await expect(stageBatchAttempt(store, commit)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
@@ -558,12 +556,12 @@ function defineStoreContract(factory: StoreFactory): void {
         message: "payment requirements hash",
       },
       {
-        name: "uppercase payload hash",
+        name: "uppercase payment evidence hash",
         attempt: {
           ...base,
-          paymentPayloadHash: "EF".repeat(32),
+          paymentEvidenceHash: "EF".repeat(32),
         },
-        message: "payment payload hash",
+        message: "payment evidence hash",
       },
       {
         name: "uppercase active outpoint transaction id",
@@ -789,14 +787,29 @@ async function stageBatchAttempt(
   commit: SettlementCommit,
 ): Promise<void> {
   const now = "2026-07-07T00:00:00.000Z";
+  const current = await store.loadChannel(commit.channel.channelId);
+  const adoptedChannel = {
+    ...commit.channel,
+    fundingAmount: commit.expected.fundingAmount,
+    chargedCumulativeAmount: commit.expected.chargedCumulativeAmount,
+    claimedCumulativeAmount: commit.expected.claimedCumulativeAmount,
+    signedMaxClaimable: commit.expected.signedMaxClaimable,
+    voucherSignature: commit.expected.voucherSignature,
+    activeOutpoint: commit.expected.activeOutpoint,
+    activeScriptPublicKey: commit.expected.activeScriptPublicKey,
+    status: commit.expected.status,
+  };
   await store.claimBatchSettlement({
     attemptId: commit.batchAttemptId,
     channelId: commit.channel.channelId,
     covenantId: commit.channel.covenantId,
     requestFingerprint: commit.commitment.requestFingerprint,
     paymentRequirementsHash: commit.commitment.paymentRequirementsHash,
-    paymentPayloadHash: commit.commitment.paymentPayloadHash,
+    paymentEvidenceHash: commit.commitment.paymentEvidenceHash,
+    requestAuthorizationId: commit.commitment.requestAuthorizationId,
     maximumCharge: commit.commitment.chargedAmount,
+    adoptedChannel,
+    ...(current ? { prior: expectedChannelState(current) } : {}),
     expected: commit.expected,
     status: "pending",
     createdAt: now,
@@ -823,8 +836,11 @@ function batchSettlementAttempt(
     covenantId: current.covenantId,
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
-    paymentPayloadHash: PAYLOAD,
+    paymentEvidenceHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     maximumCharge: "100",
+    adoptedChannel: current,
+    prior: expectedChannelState(current),
     expected: {
       channelId: current.channelId,
       covenantId: current.covenantId,
@@ -843,6 +859,23 @@ function batchSettlementAttempt(
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
     ...overrides,
+  };
+}
+
+function expectedChannelState(current: ServerChannelRecord) {
+  return {
+    channelId: current.channelId,
+    covenantId: current.covenantId,
+    fundingAmount: current.fundingAmount,
+    chargedCumulativeAmount: current.chargedCumulativeAmount,
+    claimedCumulativeAmount: current.claimedCumulativeAmount,
+    signedMaxClaimable: current.signedMaxClaimable,
+    ...(current.voucherSignature
+      ? { voucherSignature: current.voucherSignature }
+      : {}),
+    activeOutpoint: current.activeOutpoint,
+    activeScriptPublicKey: current.activeScriptPublicKey,
+    status: current.status,
   };
 }
 
@@ -1329,7 +1362,8 @@ function settlementCommit(
     covenantId: previous.covenantId,
     requestFingerprint: REQUEST,
     paymentRequirementsHash: REQUIREMENTS,
-    paymentPayloadHash: PAYLOAD,
+    paymentEvidenceHash: PAYLOAD,
+    requestAuthorizationId: "17".repeat(32),
     activeOutpoint: previous.activeOutpoint,
     activeScriptPublicKey: previous.activeScriptPublicKey,
     voucher: {

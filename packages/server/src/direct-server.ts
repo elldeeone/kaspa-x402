@@ -4,7 +4,11 @@ import {
   applyBatchClaimAccounting,
   assertMainnetAllowed,
   assertBatchVoucherReserve,
+  assertBatchAuthorizationExpiry,
   batchLaneAccounting,
+  batchRequestAuthorizationDigest,
+  batchRequestAuthorizationId,
+  batchRequestAuthorizationPreimage,
   batchCommitmentId,
   batchPaymentRequirementsHash,
   channelId,
@@ -32,6 +36,7 @@ import {
   voucherDigest,
   voucherPreimageHex,
   type BatchPaymentRequirements,
+  type BatchRequestAuthorization,
   type ChannelConfig,
   type DepositVoucherPayload,
   type ExactPaymentRequirements,
@@ -506,11 +511,16 @@ export class DirectModeServer {
           let batchAttemptId: Hash32Hex | undefined;
           if (verified.scheme === "batch-settlement") {
             try {
-              verified = await this.#preserveLiveDepositTransition(verified);
               const claim = await this.#claimBatchSettlement(
                 verified,
                 fingerprint,
+                paymentIdentifier,
               );
+              verified = {
+                ...verified,
+                channel: claim.attempt.adoptedChannel,
+                commitExpectedChannel: claim.attempt.adoptedChannel,
+              };
               batchAttemptId = claim.attempt.attemptId;
               recoveredBatchHandlerResult = claim.attempt.handlerResult;
               if (
@@ -617,7 +627,6 @@ export class DirectModeServer {
                   "protected handler threw after batch payment verification",
                 );
               }
-              await this.#preserveLiveDepositTransition(verified);
               return {
                 status: 500,
                 headers: {},
@@ -672,7 +681,6 @@ export class DirectModeServer {
               );
               return batchSettlementRecoveryRequiredResponse(500);
             }
-            await this.#preserveLiveDepositTransition(verified);
             return this.#correctiveResponse(
               resource,
               paymentPayload,
@@ -1465,6 +1473,7 @@ export class DirectModeServer {
         paymentPayload,
         accepted,
         payload,
+        requestFingerprint,
       );
     }
     if (payload.type === "voucher") {
@@ -1473,6 +1482,7 @@ export class DirectModeServer {
         paymentPayload,
         accepted,
         payload,
+        requestFingerprint,
       );
     }
     throw new KaspaX402Error(
@@ -1752,6 +1762,7 @@ export class DirectModeServer {
     paymentPayload: PaymentPayload,
     accepted: BatchPaymentRequirements,
     payload: DepositVoucherPayload,
+    requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
     await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
@@ -1910,6 +1921,14 @@ export class DirectModeServer {
       accepted,
       payload.voucher,
     );
+    await this.#verifyBatchRequestAuthorization(
+      paymentRequired,
+      initial,
+      accepted,
+      payload.voucher,
+      payload.authorization,
+      requestFingerprint,
+    );
     return {
       scheme: "batch-settlement",
       paymentRequired,
@@ -1927,6 +1946,7 @@ export class DirectModeServer {
     paymentPayload: PaymentPayload,
     accepted: BatchPaymentRequirements,
     payload: VoucherPayload,
+    requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     const channel = await this.#requireChannel(payload.channelId);
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
@@ -1966,6 +1986,14 @@ export class DirectModeServer {
       channel,
       accepted,
       payload.voucher,
+    );
+    await this.#verifyBatchRequestAuthorization(
+      paymentRequired,
+      channel,
+      accepted,
+      payload.voucher,
+      payload.authorization,
+      requestFingerprint,
     );
     return {
       scheme: "batch-settlement",
@@ -2013,18 +2041,75 @@ export class DirectModeServer {
       covenantId: channel.covenantId,
       amount: voucher.amount,
     };
-    const verified = await this.#config.voucherVerifier.verifyVoucher({
+    const verified = await this.#config.channelSignatureVerifier.verifySignature({
       channelId: channel.channelId,
-      clientPublicKey: channel.channelConfig.clientPublicKey,
+      publicKey: channel.channelConfig.clientPublicKey,
       digest: voucherDigest(input),
       preimage: voucherPreimageHex(input),
-      voucher,
+      signature: voucher.signature,
+      purpose: "voucher",
     });
     if (!verified)
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         "voucher signature was rejected",
       );
+  }
+
+  async #verifyBatchRequestAuthorization(
+    paymentRequired: PaymentRequired,
+    channel: ServerChannelRecord,
+    accepted: BatchPaymentRequirements,
+    voucher: Voucher,
+    authorization: DepositVoucherPayload["authorization"],
+    requestFingerprint: Hash32Hex,
+  ): Promise<void> {
+    if (
+      authorization.version !==
+      "kaspa-x402-batch-request-authorization-v1"
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "batch request authorization version is invalid",
+      );
+    }
+    assertBatchAuthorizationExpiry({
+      expiresAt: authorization.expiresAt,
+      maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+    });
+    const input = {
+      network: accepted.network,
+      channelId: channel.channelId,
+      covenantId: channel.covenantId,
+      amount: voucher.amount,
+      paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+      requestHash: requestFingerprint,
+      audience: paymentRequired.resource.url,
+      expiresAt: authorization.expiresAt,
+      nonce: authorization.nonce,
+    };
+    const digest = batchRequestAuthorizationDigest(input);
+    if (authorization.digest.toLowerCase() !== digest) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "batch request authorization does not bind this request",
+      );
+    }
+    const verified =
+      await this.#config.channelSignatureVerifier.verifySignature({
+        channelId: channel.channelId,
+        publicKey: channel.channelConfig.clientPublicKey,
+        digest,
+        preimage: batchRequestAuthorizationPreimage(input),
+        signature: authorization.signature,
+        purpose: "request-authorization",
+      });
+    if (!verified) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "batch request authorization signature was rejected",
+      );
+    }
   }
 
   async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
@@ -2138,7 +2223,6 @@ export class DirectModeServer {
         paymentIdentifier,
       );
     } catch (error) {
-      await this.#preserveLiveDepositTransition(verified);
       void error;
       return batchSettlementRecoveryRequiredResponse(500);
     }
@@ -2161,7 +2245,9 @@ export class DirectModeServer {
               paymentIdentifier: {
                 id: paymentIdentifier,
                 fingerprint,
-                paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+                paymentPayloadHash: batchPaymentEvidenceHash(
+                  verified.paymentPayload,
+                ),
                 response,
                 settlement,
                 paymentScopeId: channel.channelId,
@@ -2233,40 +2319,26 @@ export class DirectModeServer {
     return response;
   }
 
-  async #preserveLiveDepositTransition<T extends VerifiedPayment>(
-    verified: T,
-  ): Promise<T> {
-    if (
-      verified.scheme !== "batch-settlement" ||
-      verified.paymentPayload.payload.type !== "deposit-voucher"
-    )
-      return verified;
-    const channel: ServerChannelRecord = {
-      ...verified.channel,
-      signedMaxClaimable: verified.voucher.amount,
-      voucherSignature: verified.voucher.signature,
-      status: "active",
-    };
-    validateChannelAccounting(channel);
-    await this.#config.store.saveChannel(channel);
-    return {
-      ...verified,
-      channel,
-      commitExpectedChannel: channel,
-    } as T;
-  }
-
   async #claimBatchSettlement(
     verified: VerifiedBatchPayment,
     fingerprint: Hash32Hex,
+    paymentIdentifier?: string,
   ) {
     const now = new Date().toISOString();
     const paymentRequirementsHash = batchPaymentRequirementsHash(
       verified.accepted,
     );
-    const payloadHash = paymentPayloadHash(verified.paymentPayload);
-    const expected = expectedSettlementChannelState(
-      verified.commitExpectedChannel,
+    const evidenceHash = batchPaymentEvidenceHash(verified.paymentPayload);
+    const adoptedChannel: ServerChannelRecord = {
+      ...verified.channel,
+      signedMaxClaimable: verified.voucher.amount,
+      voucherSignature: verified.voucher.signature,
+      status: "active",
+    };
+    validateChannelAccounting(adoptedChannel);
+    const expected = expectedSettlementChannelState(adoptedChannel);
+    const requestAuthorizationId = batchRequestAuthorizationId(
+      batchAuthorization(verified.paymentPayload),
     );
     const attempt: BatchSettlementAttemptRecord = {
       attemptId: batchSettlementAttemptId({
@@ -2274,14 +2346,24 @@ export class DirectModeServer {
         covenantId: verified.channel.covenantId,
         requestFingerprint: fingerprint,
         paymentRequirementsHash,
-        paymentPayloadHash: payloadHash,
+        paymentEvidenceHash: evidenceHash,
       }),
       channelId: verified.channel.channelId,
       covenantId: verified.channel.covenantId,
       requestFingerprint: fingerprint,
       paymentRequirementsHash,
-      paymentPayloadHash: payloadHash,
+      paymentEvidenceHash: evidenceHash,
+      requestAuthorizationId,
+      ...(paymentIdentifier ? { paymentIdentifier } : {}),
       maximumCharge: verified.accepted.amount,
+      adoptedChannel,
+      ...(verified.openedChannel
+        ? {}
+        : {
+            prior: expectedSettlementChannelState(
+              verified.commitExpectedChannel,
+            ),
+          }),
       expected,
       status: "pending",
       createdAt: now,
@@ -2536,7 +2618,10 @@ export class DirectModeServer {
         paymentRequirementsHash: batchPaymentRequirementsHash(
           verified.accepted,
         ),
-        paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+        paymentEvidenceHash: batchPaymentEvidenceHash(verified.paymentPayload),
+        requestAuthorizationId: batchRequestAuthorizationId(
+          batchAuthorization(verified.paymentPayload),
+        ),
         activeOutpoint: channel.activeOutpoint,
         activeScriptPublicKey: channel.activeScriptPublicKey,
         voucher: verified.voucher,
@@ -2609,7 +2694,10 @@ export class DirectModeServer {
     const record =
       await this.#config.store.loadPaymentIdentifier(paymentIdentifier);
     if (!record) return undefined;
-    const currentPayloadHash = paymentPayloadHash(paymentPayload);
+    const currentPayloadHash =
+      paymentPayload.accepted.scheme === "batch-settlement"
+        ? batchPaymentEvidenceHash(paymentPayload)
+        : paymentPayloadHash(paymentPayload);
     const fingerprintMatches = record.fingerprint === fingerprint;
     const scopeMatches = paymentIdentifierScopeMatches(record, paymentScopeId);
     const payloadMatches = record.paymentPayloadHash === currentPayloadHash;
@@ -2668,7 +2756,9 @@ export class DirectModeServer {
       batchPaymentRequirementsHash(paymentPayload.accepted)
     )
       return undefined;
-    if (record.paymentPayloadHash !== paymentPayloadHash(paymentPayload))
+    if (
+      record.paymentEvidenceHash !== batchPaymentEvidenceHash(paymentPayload)
+    )
       return undefined;
     if (
       !sameActiveOutpoint(
@@ -3806,6 +3896,45 @@ function paymentPayloadHash(paymentPayload: PaymentPayload): Hash32Hex {
   return sha256Hex(stableStringify(paymentPayload));
 }
 
+function batchPaymentEvidenceHash(paymentPayload: PaymentPayload): Hash32Hex {
+  const payload = paymentPayload.payload;
+  if (payload.type !== "deposit-voucher" && payload.type !== "voucher") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_payment_payload_type",
+      "batch payment evidence requires a voucher payload",
+    );
+  }
+  return sha256Hex(
+    stableStringify({
+      scheme: "batch-settlement",
+      channelId: payload.channelId.toLowerCase(),
+      covenantId: payload.voucher.covenantId.toLowerCase(),
+      fundingOutpoint: {
+        txid: payload.fundingOutpoint.txid.toLowerCase(),
+        index: payload.fundingOutpoint.index,
+      },
+      activeScriptPublicKey: payload.activeScriptPublicKey.toLowerCase(),
+      voucher: {
+        amount: payload.voucher.amount,
+        signature: payload.voucher.signature.toLowerCase(),
+      },
+    }),
+  );
+}
+
+function batchAuthorization(
+  paymentPayload: PaymentPayload,
+): BatchRequestAuthorization {
+  const payload = paymentPayload.payload;
+  if (payload.type !== "deposit-voucher" && payload.type !== "voucher") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_payment_payload_type",
+      "batch request authorization requires a voucher payload",
+    );
+  }
+  return payload.authorization;
+}
+
 function paymentIdentifierScopeMatches(
   record: PaymentIdentifierRecord,
   paymentScopeId: Hash32Hex | undefined,
@@ -3860,7 +3989,7 @@ function batchSettlementAttemptId(input: {
   covenantId: Hash32Hex;
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
-  paymentPayloadHash: Hash32Hex;
+  paymentEvidenceHash: Hash32Hex;
 }): Hash32Hex {
   return sha256Hex(
     stableStringify({

@@ -4,6 +4,8 @@ import {
   MCP_PAYMENT_META_KEY,
   MCP_PAYMENT_RESPONSE_META_KEY,
   X402_VERSION,
+  batchRequestAuthorizationDigest,
+  batchPaymentRequirementsHash,
   channelId,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -2406,6 +2408,28 @@ describe("direct-mode server", () => {
     expect(commitment?.response.status).toBe(200);
   });
 
+  it("rejects a signed batch authorization replayed for another request", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithRawPaymentPayload(payment.payload, {
+        requestHash: "aa".repeat(32),
+      }),
+      async () => {
+        executed = true;
+        return { chargedAmount: "100" };
+      },
+    );
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects a salted channel alias for an already registered covenant", async () => {
     const setup = makeServer();
     const first = makeDepositPayment(setup, { salt: "31".repeat(32) });
@@ -2895,7 +2919,7 @@ describe("direct-mode server", () => {
     });
   });
 
-  it("retries from persisted genesis evidence after admission evidence is pruned", async () => {
+  it("does not preserve unclaimed genesis evidence after atomic adoption fails", async () => {
     const store = new FailingBatchClaimStore();
     const setup = makeServer({ store });
     const payment = makeDepositPayment(setup);
@@ -2920,9 +2944,9 @@ describe("direct-mode server", () => {
       },
     );
 
-    expect(retried.status).toBe(200);
-    expect(executions).toBe(1);
-    expect(setup.chain.genesisVerificationCount).toBe(1);
+    expect(retried.status).toBe(402);
+    expect(executions).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(2);
   });
 
   it("rejects covenant genesis evidence with an extra unauthorized output", async () => {
@@ -4409,9 +4433,9 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
     store,
     chainProvider: chain,
     addressCodec: new FakeAddressCodec(),
-    voucherVerifier: {
-      verifyVoucher({ digest, voucher }) {
-        return voucher.signature === `${digest}${digest}`;
+    channelSignatureVerifier: {
+      verifySignature({ digest, signature }) {
+        return signature === `${digest}${digest}`;
       },
     },
     exactProfile: "standard-native",
@@ -4793,6 +4817,12 @@ function makeDepositPayment(
         fundingAmountSompi: fundingAmount,
         activeScriptPublicKey: derived.activeScriptPublicKey,
         voucher,
+        authorization: fakeBatchRequestAuthorization(
+          accepted,
+          id,
+          voucher.covenantId,
+          voucher.amount,
+        ),
       },
       ...(options.paymentIdentifier
         ? paymentIdentifierExtension(options.paymentIdentifier)
@@ -4835,6 +4865,12 @@ function makeVoucherPayment(
         covenantId: channel.covenantId,
         amount,
       }),
+      authorization: fakeBatchRequestAuthorization(
+        accepted,
+        channel.channelId,
+        channel.covenantId,
+        amount,
+      ),
     },
     ...(options.paymentIdentifier
       ? paymentIdentifierExtension(options.paymentIdentifier)
@@ -4852,6 +4888,27 @@ function requestWithPayment(
     body?: unknown;
   } = {},
 ) {
+  let payloadWithAuthorization = paymentPayload;
+  try {
+    const requestHash =
+      options.requestHash ??
+      sha256Hex(
+        stableStringify({
+          method: "GET",
+          url: RESOURCE.url,
+          body: options.body ?? null,
+          paymentRequirementsHash: sha256Hex(
+            stableStringify(paymentPayload.accepted),
+          ),
+        }),
+      );
+    payloadWithAuthorization = addBatchRequestAuthorization(
+      paymentPayload,
+      requestHash,
+    );
+  } catch {
+    // Preserve the payload so the server owns malformed-body rejection.
+  }
   return {
     url: RESOURCE.url,
     resource: RESOURCE,
@@ -4861,7 +4918,74 @@ function requestWithPayment(
     paymentSchemes: options.paymentSchemes,
     requestHash: options.requestHash,
     headers: {
-      [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),
+      [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(
+        payloadWithAuthorization,
+      ),
+    },
+  };
+}
+
+function fakeBatchRequestAuthorization(
+  accepted: BatchPaymentRequirements,
+  channelId: Hash32Hex,
+  covenantId: Hash32Hex,
+  amount: string,
+  requestHash = sha256Hex(
+    stableStringify({
+      method: "GET",
+      url: RESOURCE.url,
+      body: null,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+    }),
+  ),
+) {
+  const expiresAt = new Date(
+    Math.floor(Date.now() / 10_000) * 10_000 +
+      Math.min(accepted.maxTimeoutSeconds, 30) * 1000,
+  ).toISOString();
+  const nonce = "97".repeat(32);
+  const digest = batchRequestAuthorizationDigest({
+    network: accepted.network,
+    channelId,
+    covenantId,
+    amount,
+    paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+    requestHash,
+    audience: RESOURCE.url,
+    expiresAt,
+    nonce,
+  });
+  return {
+    version: "kaspa-x402-batch-request-authorization-v1" as const,
+    expiresAt,
+    nonce,
+    digest,
+    signature: `${digest}${digest}`,
+  };
+}
+
+function addBatchRequestAuthorization(
+  paymentPayload: PaymentPayload,
+  requestHash: Hash32Hex,
+): PaymentPayload {
+  if (
+    paymentPayload.payload.type !== "deposit-voucher" &&
+    paymentPayload.payload.type !== "voucher"
+  ) {
+    return paymentPayload;
+  }
+  const authorization = fakeBatchRequestAuthorization(
+    paymentPayload.accepted as BatchPaymentRequirements,
+    paymentPayload.payload.channelId,
+    paymentPayload.payload.voucher.covenantId,
+    paymentPayload.payload.voucher.amount,
+    requestHash,
+  );
+  return {
+    ...paymentPayload,
+    payload: {
+      ...paymentPayload.payload,
+      authorization,
     },
   };
 }

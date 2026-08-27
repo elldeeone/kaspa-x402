@@ -39,9 +39,9 @@ export function createMockDirectModeEnvironment() {
     store: serverStore,
     chainProvider,
     addressCodec,
-    voucherVerifier: {
-      verifyVoucher({ digest, voucher }) {
-        return voucher.signature === mockSignature(digest);
+    channelSignatureVerifier: {
+      verifySignature({ digest, signature }) {
+        return signature === mockSignature(digest);
       },
     },
     exactTransactionVerifier: {
@@ -584,6 +584,10 @@ class MockSigner {
   }
 
   async signVoucher({ digest }) {
+    return mockSignature(digest);
+  }
+
+  async signBatchRequestAuthorization({ digest }) {
     return mockSignature(digest);
   }
 

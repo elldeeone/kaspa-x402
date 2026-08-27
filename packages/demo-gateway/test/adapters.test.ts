@@ -17,7 +17,7 @@ import {
   KaspaPnnClient,
   KaspaRestClient,
   NativeAddressCodec,
-  NativeVoucherVerifier,
+  NativeChannelSignatureVerifier,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -1607,7 +1607,7 @@ describe("NativeAddressCodec", () => {
   });
 });
 
-describe("NativeVoucherVerifier", () => {
+describe("NativeChannelSignatureVerifier", () => {
   it("verifies raw digest Schnorr voucher signatures", () => {
     const secretKey = Uint8Array.from([
       0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00,
@@ -1623,29 +1623,23 @@ describe("NativeVoucherVerifier", () => {
     ).toString("hex");
 
     expect(
-      new NativeVoucherVerifier().verifyVoucher({
+      new NativeChannelSignatureVerifier().verifySignature({
         channelId: "11".repeat(32),
-        clientPublicKey: publicKey,
+        publicKey,
         digest,
         preimage: "22".repeat(32),
-        voucher: {
-          covenantId: "23".repeat(32),
-          amount: "100",
-          signature,
-        },
+        signature,
+        purpose: "voucher",
       }),
     ).toBe(true);
     expect(
-      new NativeVoucherVerifier().verifyVoucher({
+      new NativeChannelSignatureVerifier().verifySignature({
         channelId: "11".repeat(32),
-        clientPublicKey: publicKey,
+        publicKey,
         digest: "22".repeat(32),
         preimage: "22".repeat(32),
-        voucher: {
-          covenantId: "23".repeat(32),
-          amount: "100",
-          signature,
-        },
+        signature,
+        purpose: "voucher",
       }),
     ).toBe(false);
   });
@@ -1669,16 +1663,13 @@ describe("NativeVoucherVerifier", () => {
     ).toString("hex");
 
     expect(
-      new NativeVoucherVerifier().verifyVoucher({
+      new NativeChannelSignatureVerifier().verifySignature({
         channelId: "11".repeat(32),
-        clientPublicKey: publicKey,
+        publicKey,
         digest,
         preimage: "22".repeat(32),
-        voucher: {
-          covenantId: "23".repeat(32),
-          amount: "100",
-          signature,
-        },
+        signature,
+        purpose: "voucher",
       }),
     ).toBe(false);
   });

@@ -189,12 +189,12 @@ export async function runLiveProof(context) {
     const clientStore = new MemoryChannelStore();
     batchRecovery.serverStore = serverStore;
     batchRecovery.clientStore = clientStore;
-    const voucherVerifier = {
-      verifyVoucher({ digest, voucher, clientPublicKey }) {
+    const channelSignatureVerifier = {
+      verifySignature({ digest, signature, publicKey }) {
         return schnorr.verify(
-          hexToBytes(voucher.signature, { expectedLength: 64 }),
+          hexToBytes(signature, { expectedLength: 64 }),
           hexToBytes(digest, { expectedLength: 32 }),
-          hexToBytes(clientPublicKey, { expectedLength: 32 }),
+          hexToBytes(publicKey, { expectedLength: 32 }),
         );
       },
     };
@@ -238,7 +238,7 @@ export async function runLiveProof(context) {
       refundTimeoutDaa,
       chainProvider: chain,
       addressCodec,
-      voucherVerifier,
+      channelSignatureVerifier,
       exactTransactionVerifier,
       exactSettlementReconciler,
       acceptedFinality: "accepted",
@@ -3151,6 +3151,16 @@ function makeSigner({
     async signVoucher({ digest, channel }) {
       if (!channel.clientPrivateKey)
         throw new Error("channel private key is required for voucher signing");
+      return bytesToHex(
+        schnorr.sign(
+          hexToBytes(digest, { expectedLength: 32 }),
+          hexToBytes(channel.clientPrivateKey, { expectedLength: 32 }),
+        ),
+      );
+    },
+    async signBatchRequestAuthorization({ digest, channel }) {
+      if (!channel.clientPrivateKey)
+        throw new Error("channel private key is required for request signing");
       return bytesToHex(
         schnorr.sign(
           hexToBytes(digest, { expectedLength: 32 }),

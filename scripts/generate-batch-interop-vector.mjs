@@ -9,6 +9,8 @@ import {
   assertBatchVoucherReserve,
   batchCommitmentId,
   batchCommitmentPreimageHex,
+  batchRequestAuthorizationDigest,
+  batchRequestAuthorizationPreimage,
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
@@ -127,6 +129,33 @@ const accepted = {
   },
 };
 const requestFingerprint = "99".repeat(32);
+const requestAuthorizationInput = {
+  network: accepted.network,
+  channelId: resolvedChannelId,
+  covenantId,
+  amount: voucher.amount,
+  paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+  requestHash: requestFingerprint,
+  audience: "https://api.example.test/report.pdf",
+  expiresAt: "2026-08-27T12:00:00.000Z",
+  nonce: "98".repeat(32),
+};
+const requestAuthorizationDigest = batchRequestAuthorizationDigest(
+  requestAuthorizationInput,
+);
+const requestAuthorization = {
+  version: "kaspa-x402-batch-request-authorization-v1",
+  expiresAt: requestAuthorizationInput.expiresAt,
+  nonce: requestAuthorizationInput.nonce,
+  digest: requestAuthorizationDigest,
+  signature: bytesToHex(
+    schnorr.sign(
+      Buffer.from(requestAuthorizationDigest, "hex"),
+      clientPrivateKey,
+      new Uint8Array(32),
+    ),
+  ),
+};
 const commitmentInput = {
   accepted,
   channelId: resolvedChannelId,
@@ -184,6 +213,7 @@ const paymentPayload = {
     fundingOutpoint: activeOutpoint,
     activeScriptPublicKey,
     voucher,
+    authorization: requestAuthorization,
   },
 };
 const settlementResponse = {
@@ -323,6 +353,14 @@ const interopVector = {
     value: accepted,
     preimage: batchPaymentRequirementsPreimageHex(accepted),
     sha256: batchPaymentRequirementsHash(accepted),
+  },
+  requestAuthorization: {
+    input: requestAuthorizationInput,
+    preimage: batchRequestAuthorizationPreimage(requestAuthorizationInput),
+    digest: requestAuthorizationDigest,
+    signerPublicKey: clientPublicKey,
+    signature: requestAuthorization.signature,
+    expected: "valid-schnorr-signature",
   },
   commitment: {
     input: commitmentInput,

@@ -22,7 +22,7 @@ import {
   KaspaPnnClient,
   KaspaRestClient,
   NativeAddressCodec,
-  NativeVoucherVerifier,
+  NativeChannelSignatureVerifier,
   PnnBroadcastChainProvider,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
@@ -479,7 +479,7 @@ async function createGateway(
           )
         : restChainProvider,
     addressCodec,
-    voucherVerifier: new NativeVoucherVerifier(),
+    channelSignatureVerifier: new NativeChannelSignatureVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
     exactHeadReconciler: new RestExactHeadReconciler(rest),
     topUpVerifier: restChainProvider,

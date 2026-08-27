@@ -90,17 +90,18 @@ export interface CovenantGenesisVerification {
   authorizedOutputCount: number;
 }
 
-export interface VoucherVerificationRequest {
+export interface ChannelSignatureVerificationRequest {
   channelId: Hash32Hex;
-  clientPublicKey: PublicKeyHex;
+  publicKey: PublicKeyHex;
   digest: Hash32Hex;
-  preimage: ByteHex;
-  voucher: Voucher;
+  preimage: string;
+  signature: SignatureHex;
+  purpose: "voucher" | "request-authorization";
 }
 
-export interface VoucherVerifier {
-  verifyVoucher(
-    request: VoucherVerificationRequest,
+export interface ChannelSignatureVerifier {
+  verifySignature(
+    request: ChannelSignatureVerificationRequest,
   ): Promise<boolean> | boolean;
 }
 
@@ -342,7 +343,8 @@ export interface BatchCommitmentRecord {
   covenantId: Hash32Hex;
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
-  paymentPayloadHash: Hash32Hex;
+  paymentEvidenceHash: Hash32Hex;
+  requestAuthorizationId: Hash32Hex;
   activeOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
@@ -472,8 +474,14 @@ export interface BatchSettlementAttemptRecord {
   covenantId: Hash32Hex;
   requestFingerprint: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
-  paymentPayloadHash: Hash32Hex;
+  paymentEvidenceHash: Hash32Hex;
+  requestAuthorizationId: Hash32Hex;
+  paymentIdentifier?: string;
   maximumCharge: SompiString;
+  /** Verified channel state adopted atomically with this work reservation. */
+  adoptedChannel: ServerChannelRecord;
+  /** Prior state required before adoption; absent only for a new channel. */
+  prior?: SettlementCommit["expected"];
   expected: SettlementCommit["expected"];
   status: BatchSettlementAttemptStatus;
   createdAt: string;
@@ -736,7 +744,7 @@ export interface DirectModeServerConfig {
   store: ServerStateStore;
   chainProvider: ServerChainProvider;
   addressCodec: AddressCodec;
-  voucherVerifier: VoucherVerifier;
+  channelSignatureVerifier: ChannelSignatureVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;

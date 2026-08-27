@@ -21,6 +21,14 @@ export interface ExactRequestAuthorization extends JsonRecord {
   signature: SignatureHex;
 }
 
+export interface BatchRequestAuthorization extends JsonRecord {
+  version: "kaspa-x402-batch-request-authorization-v1";
+  expiresAt: string;
+  nonce: Hash32Hex;
+  digest: Hash32Hex;
+  signature: SignatureHex;
+}
+
 export type JsonRecord = Record<string, unknown>;
 
 export interface ResourceInfo extends JsonRecord {
@@ -179,6 +187,7 @@ export interface DepositVoucherPayload extends JsonRecord {
   fundingTransaction?: ByteHex;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
+  authorization: BatchRequestAuthorization;
 }
 
 export interface VoucherPayload extends JsonRecord {
@@ -188,6 +197,7 @@ export interface VoucherPayload extends JsonRecord {
   fundingOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
+  authorization: BatchRequestAuthorization;
 }
 
 export interface ClaimPayload extends JsonRecord {

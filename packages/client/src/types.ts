@@ -1,4 +1,5 @@
 import type {
+  BatchRequestAuthorization,
   BatchPaymentRequirements,
   ByteHex,
   ChannelConfig,
@@ -217,6 +218,17 @@ export interface VoucherSignRequest {
   amount: SompiString;
 }
 
+export interface BatchRequestAuthorizationSignRequest {
+  digest: Hash32Hex;
+  preimage: string;
+  channel: DirectModeChannel;
+  accepted: BatchPaymentRequirements;
+  requestHash: Hash32Hex;
+  audience: string;
+  expiresAt: string;
+  nonce: Hash32Hex;
+}
+
 export interface RefundSignRequest {
   channel: DirectModeChannel;
   refundAmount: SompiString;
@@ -227,8 +239,11 @@ export interface RefundSignRequest {
 export interface ChannelSigner {
   generateChannelKey(): Promise<ChannelKey>;
   randomSalt(): Promise<Hash32Hex>;
-  randomNonce?(): Promise<Hash32Hex>;
+  randomNonce(): Promise<Hash32Hex>;
   signVoucher(request: VoucherSignRequest): Promise<SignatureHex>;
+  signBatchRequestAuthorization(
+    request: BatchRequestAuthorizationSignRequest,
+  ): Promise<SignatureHex>;
   signRefund?(request: RefundSignRequest): Promise<SignatureHex>;
 }
 

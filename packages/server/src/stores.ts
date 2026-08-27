@@ -49,6 +49,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #exactHeads = new Map<Hash32Hex, ExactHeadRecord>();
   readonly #exactAttempts = new Map<Hash32Hex, ExactSettlementAttemptRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
+  readonly #paymentIdentifierReservations = new Map<
+    string,
+    { attemptId: Hash32Hex; fingerprint: Hash32Hex; paymentEvidenceHash: Hash32Hex; channelId: Hash32Hex }
+  >();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
   constructor(channels: readonly ServerChannelRecord[] = []) {
@@ -139,12 +143,23 @@ export class MemoryServerChannelStore implements ServerStateStore {
       : undefined;
     const commitment = clone(record.commitment);
     const channel = clone(record.channel);
-    if (paymentIdentifier)
-      this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    if (paymentIdentifier) {
+      this.#assertPaymentIdentifierAvailable(
+        paymentIdentifier,
+        attempt.attemptId,
+      );
+      const reservation = this.#paymentIdentifierReservations.get(
+        paymentIdentifier.id,
+      );
+      if (!reservation || reservation.attemptId !== attempt.attemptId)
+        throw new Error("payment identifier is not reserved by this batch attempt");
+    }
     this.#assertChannelBinding(channel);
     this.#commitments.set(commitment.commitmentId, commitment);
-    if (paymentIdentifier)
+    if (paymentIdentifier) {
       this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
+      this.#paymentIdentifierReservations.delete(paymentIdentifier.id);
+    }
     this.#setChannel(channel);
     this.#batchAttempts.set(attempt.attemptId, {
       ...attempt,
@@ -165,11 +180,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
         );
       return { attempt: clone(existing), created: false };
     }
+    const currentChannel = this.#channels.get(
+      canonicalHash32(attempt.channelId),
+    );
     if (
-      !matchesExpectedChannel(
-        this.#channels.get(canonicalHash32(attempt.channelId)),
-        attempt.expected,
-      )
+      attempt.prior
+        ? !currentChannel || !matchesExpectedChannel(currentChannel, attempt.prior)
+        : currentChannel !== undefined
     ) {
       throw new Error("channel state changed before batch settlement claim");
     }
@@ -181,6 +198,26 @@ export class MemoryServerChannelStore implements ServerStateStore {
         throw new Error("channel already has a pending batch settlement");
       }
     }
+    if (attempt.paymentIdentifier) {
+      const committed = this.#paymentIdentifiers.get(attempt.paymentIdentifier);
+      if (committed)
+        throw new Error("payment identifier was already committed");
+      const reserved = this.#paymentIdentifierReservations.get(
+        attempt.paymentIdentifier,
+      );
+      if (reserved && reserved.attemptId !== attempt.attemptId)
+        throw new Error("payment identifier is already reserved");
+    }
+    this.#assertChannelBinding(attempt.adoptedChannel);
+    if (attempt.paymentIdentifier) {
+      this.#paymentIdentifierReservations.set(attempt.paymentIdentifier, {
+        attemptId: attempt.attemptId,
+        fingerprint: attempt.requestFingerprint,
+        paymentEvidenceHash: attempt.paymentEvidenceHash,
+        channelId: attempt.channelId,
+      });
+    }
+    this.#setChannel(attempt.adoptedChannel);
     this.#batchAttempts.set(attempt.attemptId, clone(attempt));
     return { attempt: clone(attempt), created: true };
   }
@@ -538,7 +575,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
 
   #assertPaymentIdentifierAvailable(
     paymentIdentifier: PaymentIdentifierRecord,
+    reservedAttemptId?: Hash32Hex,
   ): void {
+    const reserved = this.#paymentIdentifierReservations.get(
+      paymentIdentifier.id,
+    );
+    if (reserved && reserved.attemptId !== reservedAttemptId)
+      throw new Error("payment identifier is reserved by pending batch work");
     const existingIdentifier = this.#paymentIdentifiers.get(
       paymentIdentifier.id,
     );
