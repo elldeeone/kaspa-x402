@@ -514,8 +514,11 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 180_001, 2, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1 });
     const windows = await storage.list({ prefix: "rate-window:" });
-    expect([...windows.keys()]).toEqual(["rate-window:120000"]);
+    expect([...windows.keys()]).toEqual(["rate-window:active"]);
     expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
   });
 
@@ -529,6 +532,22 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.checkRateLimit("overflow:exact", 1_000, 1, 60_000),
     ).resolves.toMatchObject({ allowed: false, count: 2 });
+  });
+
+  it("does not reopen a rate window when wall-clock time moves backward", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    await expect(
+      ledger.checkRateLimit("ip:exact", 61_000, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1, resetAt: 120_000 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 61_001, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 2, resetAt: 120_000 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 59_999, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 3, resetAt: 120_000 });
+    await expect(
+      ledger.checkRateLimit("ip:exact", 61_002, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 4, resetAt: 120_000 });
   });
 
   it("persists the latest canary report", async () => {

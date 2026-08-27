@@ -1,0 +1,146 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://kaspa-x402.org/schemas/kaspa-batch-extra.schema.json",
+  "title": "Kaspa x402 Batch Settlement Extra",
+  "type": "object",
+  "required": [
+    "binding",
+    "templateId",
+    "serverPublicKey",
+    "minDepositSompi",
+    "claimReserveSompi",
+    "refundTimeoutDaa"
+  ],
+  "properties": {
+    "binding": {
+      "const": "kaspa-escrow-v2"
+    },
+    "templateId": {
+      "const": "kaspa-x402-escrow-v3"
+    },
+    "serverPublicKey": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "minDepositSompi": {
+      "$ref": "#/$defs/batchAmount"
+    },
+    "claimReserveSompi": {
+      "$ref": "#/$defs/batchAmount"
+    },
+    "refundTimeoutDaa": {
+      "type": "string",
+      "pattern": "^(?:0|[1-9][0-9]{0,10}|[1-4][0-9]{11})$"
+    },
+    "claimPolicy": {
+      "type": "object",
+      "properties": {
+        "claimWhenUnclaimedAmountExceeds": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "claimAfterSeconds": {
+          "type": "integer",
+          "minimum": 0,
+          "maximum": 4294967295
+        }
+      },
+      "additionalProperties": true
+    },
+    "channelState": {
+      "type": "object",
+      "required": [
+        "channelId",
+        "covenantId",
+        "activeOutpoint",
+        "activeScriptPublicKey",
+        "fundingAmount",
+        "chargedCumulativeAmount",
+        "claimedCumulativeAmount",
+        "signedMaxClaimable"
+      ],
+      "properties": {
+        "channelId": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{64}$"
+        },
+        "covenantId": {
+          "type": "string",
+          "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$"
+        },
+        "activeOutpoint": {
+          "type": "object",
+          "required": [
+            "txid",
+            "index"
+          ],
+          "properties": {
+            "txid": {
+              "type": "string",
+              "pattern": "^[0-9a-fA-F]{64}$"
+            },
+            "index": {
+              "type": "integer",
+              "minimum": 0,
+              "maximum": 4294967295
+            }
+          },
+          "additionalProperties": false
+        },
+        "activeScriptPublicKey": {
+          "type": "string",
+          "description": "Serialized Kaspa ScriptPublicKey: uint16_be version followed by script bytes. Kaspa x402 v1 requires version 0.",
+          "pattern": "^0000(?:[0-9a-fA-F]{2})+$"
+        },
+        "fundingAmount": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "chargedCumulativeAmount": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "claimedCumulativeAmount": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "signedMaxClaimable": {
+          "$ref": "#/$defs/batchAmount"
+        }
+      },
+      "additionalProperties": true
+    },
+    "voucherState": {
+      "type": "object",
+      "required": [
+        "covenantId",
+        "amount",
+        "signature"
+      ],
+      "properties": {
+        "covenantId": {
+          "type": "string",
+          "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$"
+        },
+        "amount": {
+          "$ref": "#/$defs/batchAmount"
+        },
+        "signature": {
+          "type": "string",
+          "pattern": "^[0-9a-fA-F]{128}$"
+        }
+      },
+      "additionalProperties": true
+    },
+    "assetKind": {
+      "const": "native"
+    },
+    "assetDecimals": {
+      "const": 8
+    }
+  },
+  "additionalProperties": true,
+  "$defs": {
+    "batchAmount": {
+      "type": "string",
+      "description": "Canonical non-negative decimal constrained to the signed 64-bit maximum used by the batch covenant.",
+      "pattern": "^(?:0|[1-9][0-9]{0,17}|[1-8][0-9]{18}|9[0-1][0-9]{17}|92[0-1][0-9]{16}|922[0-2][0-9]{15}|9223[0-2][0-9]{14}|92233[0-6][0-9]{13}|922337[0-1][0-9]{12}|92233720[0-2][0-9]{10}|922337203[0-5][0-9]{9}|9223372036[0-7][0-9]{8}|92233720368[0-4][0-9]{7}|922337203685[0-3][0-9]{6}|9223372036854[0-6][0-9]{5}|92233720368547[0-6][0-9]{4}|922337203685477[0-4][0-9]{3}|9223372036854775[0-7][0-9]{2}|922337203685477580[0-7])$"
+    }
+  }
+}

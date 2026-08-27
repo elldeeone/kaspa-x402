@@ -1361,7 +1361,7 @@ function releasePackagesMetadata() {
 }
 
 function releaseNpmInstall() {
-  return PUBLISHABLE_PACKAGES.map((name) => `${name}@alpha`);
+  return PUBLISHABLE_PACKAGES.map((name) => `${name}@${releaseVersion}`);
 }
 
 function releaseContentHash(lockedRelease) {

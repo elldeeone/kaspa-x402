@@ -818,25 +818,25 @@ export class GatewayLedger implements ServerStateStore {
     if (limit <= 0)
       return { allowed: true, count: 0, resetAt: nowMs + windowMs };
     const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
-    const key = rateWindowKey(resetAt);
+    const key = rateWindowKey();
     const scopeHash = sha256Hex(scope);
     return this.#storage.transaction(async (txn) => {
-      await txn.delete(rateWindowKey(resetAt - windowMs));
-      const current = (await txn.get<RateWindowRecord>(key)) ?? {
-        resetAt,
-        counts: {},
-      };
+      const stored = await txn.get<RateWindowRecord>(key);
+      const current =
+        stored && stored.resetAt >= resetAt
+          ? stored
+          : { resetAt, counts: {} };
       const previous = current.counts[scopeHash];
       if (
         previous === undefined &&
         Object.keys(current.counts).length >= MAX_RATE_SCOPES_PER_WINDOW
       ) {
-        return { allowed: false, count: limit + 1, resetAt };
+        return { allowed: false, count: limit + 1, resetAt: current.resetAt };
       }
       const count = (previous ?? 0) + 1;
       current.counts[scopeHash] = count;
       await txn.put(key, current);
-      return { allowed: count <= limit, count, resetAt };
+      return { allowed: count <= limit, count, resetAt: current.resetAt };
     });
   }
 
@@ -1427,8 +1427,8 @@ function lockKey(key: string): string {
   return `lock:${key.toLowerCase()}`;
 }
 
-function rateWindowKey(resetAt: number): string {
-  return `rate-window:${resetAt}`;
+function rateWindowKey(): string {
+  return "rate-window:active";
 }
 
 function canaryReportKey(): string {

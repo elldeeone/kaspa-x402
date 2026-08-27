@@ -169,7 +169,8 @@ function checkMetadataFreshness() {
   )
     fail("release active-alpha routes are stale");
   if (
-    JSON.stringify(release.npmInstall) !== JSON.stringify(releaseNpmInstall())
+    JSON.stringify(release.npmInstall) !==
+    JSON.stringify(releaseNpmInstall(manifest.releaseVersion))
   )
     fail("release npm install metadata is stale");
   if (JSON.stringify(manifest.packages) !== JSON.stringify(publicPackages))
@@ -481,6 +482,26 @@ function checkContent() {
     "Status: Alpha.11 deployment candidate",
     "docs/testnet-gateway.md Alpha.11 pending deployment proof",
   );
+  for (const [relative, marker] of [
+    ["docs/live-testnet-report.md", "historical `0.1.0-alpha.10` funded live harness run"],
+    ["docs/demo-implementer-guide.md", "public registry and gateway remain Alpha.10"],
+  ]) {
+    assertContains(
+      path.join(outDir, relative),
+      marker,
+      `${relative} Alpha.10 evidence boundary`,
+    );
+  }
+  for (const [relative, marker] of [
+    ["docs/alpha-publish.md", "is a local release candidate"],
+    ["docs/demo-interop-checklist.md", "Alpha.11 deployment proof is pending"],
+  ]) {
+    assertContains(
+      path.join(root, relative),
+      marker,
+      `${relative} Alpha.10 evidence boundary`,
+    );
+  }
 
   const home = path.join(outDir, "index.html");
   const specIndex = path.join(outDir, "spec/index.html");
@@ -808,8 +829,8 @@ function sha256File(file) {
     .digest("hex");
 }
 
-function releaseNpmInstall() {
-  return PUBLISHABLE_PACKAGES.map((name) => `${name}@alpha`);
+function releaseNpmInstall(version) {
+  return PUBLISHABLE_PACKAGES.map((name) => `${name}@${version}`);
 }
 
 function lockedReleaseMetadata(release) {

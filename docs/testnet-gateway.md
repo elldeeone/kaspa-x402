@@ -66,7 +66,7 @@ mass depends on the complete transaction shape. The reference Worker uses
 `10000000` sompi as a conservative application policy for on-chain outputs,
 including the advertised batch successor reserve.
 
-The deployed Worker emits batch offers with binding `kaspa-escrow-v2`, template
+The Alpha.11 candidate Worker emits batch offers with binding `kaspa-escrow-v2`, template
 `kaspa-x402-escrow-v3`, and a `10000000` sompi claim reserve. Its exact offers
 carry binding `kaspa-exact-v2` and an explicit profile:
 

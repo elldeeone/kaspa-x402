@@ -1,0 +1,31 @@
+{
+  "kind": "settlement-response",
+  "description": "Voucher-only batch success uses the commitment id as transaction, reports top-level amount, and carries commitment state in extensions.kaspa.",
+  "response": {
+    "success": true,
+    "transaction": "7777777777777777777777777777777777777777777777777777777777777777",
+    "network": "kaspa:testnet-10",
+    "payer": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
+    "extensions": {
+      "kaspa": {
+        "covenantId": "5ba2c68c3d802af99e71126cb4fd08f7149797048b68fda47d9d412477aa03c2",
+        "commitmentId": "7777777777777777777777777777777777777777777777777777777777777777",
+        "chargedAmount": "700000",
+        "channelState": {
+          "channelId": "9bfed05435db41e5700c80d9d18108f0700edab7c6ae59487f4761fbe3ba398f",
+          "covenantId": "5ba2c68c3d802af99e71126cb4fd08f7149797048b68fda47d9d412477aa03c2",
+          "activeOutpoint": {
+            "txid": "1111111111111111111111111111111111111111111111111111111111111111",
+            "index": 2
+          },
+          "activeScriptPublicKey": "0000aa207299b931ba72a20f97f25ef7ec1d77695037482b30ec7c4626a4a0503e0bb9f887",
+          "fundingAmount": "90000000",
+          "chargedCumulativeAmount": "1700000",
+          "claimedCumulativeAmount": "0",
+          "signedMaxClaimable": "2500000"
+        }
+      }
+    },
+    "amount": "700000"
+  }
+}

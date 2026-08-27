@@ -1,0 +1,256 @@
+{
+  "kind": "exact-interop-v1",
+  "description": "Language-independent transaction-id, authorization, expiry, and finality vectors for the Kaspa exact v2 profiles.",
+  "transactionEncoding": {
+    "name": "kaspa-sdk-safe-json-v2.0.0",
+    "note": "The JSON text is an interchange envelope. Transaction identifiers are computed from the normalized consensus fields, not from the JSON bytes or object-key order.",
+    "profiles": {
+      "standardNative": {
+        "artifact": {
+          "id": "90246a5068190db36c21495c313d917e6ba72bc29157b5966b426658534dd2e5",
+          "version": 0,
+          "inputs": [
+            {
+              "previousOutpoint": {
+                "transactionId": "7070707070707070707070707070707070707070707070707070707070707070",
+                "index": 0
+              },
+              "sequence": "18446744073709551615",
+              "sigOpCount": 1,
+              "signatureScript": "416f19fc3a1159eae0f4488158c9a32e26d28b5875d665a3002a1a62ace4f1e5cd28ba1b0dbe3c3b4ccf9e7facb22891173854989c77a6edf7d4c286b15ac70c8a01",
+              "utxo": {
+                "amount": "50000000",
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "outputs": [
+            {
+              "value": "20000000",
+              "scriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac",
+              "covenant": null
+            },
+            {
+              "value": "29800000",
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac",
+              "covenant": null
+            }
+          ],
+          "lockTime": "0",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "gas": "0",
+          "payload": "",
+          "storageMass": "63557"
+        },
+        "transactionId": "90246a5068190db36c21495c313d917e6ba72bc29157b5966b426658534dd2e5",
+        "txid": {
+          "algorithm": "blake2b-256-keyed",
+          "digest": "90246a5068190db36c21495c313d917e6ba72bc29157b5966b426658534dd2e5",
+          "domain": "TransactionID",
+          "preimage": "000001000000000000007070707070707070707070707070707070707070707070707070707070707070000000000000000000000000ffffffffffffffff0200000000000000002d3101000000000000220000000000000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac40b6c601000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac0000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      },
+      "additive": {
+        "artifact": {
+          "id": "15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e",
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 0,
+              "sequence": "18446744073709551615",
+              "previousOutpoint": {
+                "transactionId": "7171717171717171717171717171717171717171717171717171717171717171",
+                "index": 0
+              },
+              "sigOpCount": 0,
+              "signatureScript": "0035632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268",
+              "utxo": {
+                "amount": "100000000",
+                "scriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "sequence": "18446744073709551615",
+              "previousOutpoint": {
+                "transactionId": "7272727272727272727272727272727272727272727272727272727272727272",
+                "index": 1
+              },
+              "sigOpCount": 0,
+              "signatureScript": "4131d7cc51e265c83f723add87206976bd00848a021b1e62aa1a54c8744bae568dc8248efeab2a1961411f3bfcaf15d75aec7504fd521c320bad19bc4e85357ca601",
+              "utxo": {
+                "amount": "40000000",
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "covenant": null,
+              "scriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
+              "value": "120000000"
+            },
+            {
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac",
+              "value": "19800000"
+            }
+          ],
+          "payload": "",
+          "storageMass": "23838",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionId": "15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38ae7f952034c1543146394a5f59a6cefd73cad6c5d87db4c198158ae79d3396ce",
+          "restDigest": "ae7f952034c1543146394a5f59a6cefd73cad6c5d87db4c198158ae79d3396ce",
+          "restDomain": "TransactionRest",
+          "restPreimage": "010002000000000000007171717171717171717171717171717171717171717171717171717171717171000000000000000000000000ffffffffffffffff7272727272727272727272727272727272727272727272727272727272727272010000000000000000000000ffffffffffffffff0200000000000000000e27070000000000002300000000000000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f8700c01f2e01000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        }
+      }
+    }
+  },
+  "paymentRequirements": {
+    "value": {
+      "scheme": "exact",
+      "network": "kaspa:testnet-10",
+      "amount": "20000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-exact-v2",
+        "profile": "additive",
+        "finality": "accepted",
+        "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
+        "payToScriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
+        "templateId": "kaspa-x402-kip10-additive-v1",
+        "headId": "9090909090909090909090909090909090909090909090909090909090909090",
+        "headVersion": "0",
+        "expectedHeadOutpoint": {
+          "index": 0,
+          "txid": "7171717171717171717171717171717171717171717171717171717171717171"
+        },
+        "headAmount": "100000000",
+        "headScriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
+        "headRedeemScript": "632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268",
+        "additiveThresholdSompi": "10000000",
+        "challengeId": "9191919191919191919191919191919191919191919191919191919191919191",
+        "challengeExpiresAt": "2099-01-01T00:00:00.000Z",
+        "paymentOutputIndex": 0,
+        "assetKind": "native",
+        "assetDecimals": 8
+      }
+    },
+    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"asset\":\"KAS\",\"extra\":{\"additiveThresholdSompi\":\"10000000\",\"assetDecimals\":8,\"assetKind\":\"native\",\"binding\":\"kaspa-exact-v2\",\"challengeExpiresAt\":\"2099-01-01T00:00:00.000Z\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expectedHeadOutpoint\":{\"index\":0,\"txid\":\"7171717171717171717171717171717171717171717171717171717171717171\"},\"finality\":\"accepted\",\"headAmount\":\"100000000\",\"headId\":\"9090909090909090909090909090909090909090909090909090909090909090\",\"headRedeemScript\":\"632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268\",\"headScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"headVersion\":\"0\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentOutputIndex\":0,\"profile\":\"additive\",\"templateId\":\"kaspa-x402-kip10-additive-v1\",\"transactionEncoding\":\"kaspa-sdk-safe-json-v2.0.0\"},\"maxTimeoutSeconds\":60,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"scheme\":\"exact\"}",
+    "sha256": "dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c"
+  },
+  "requestAuthorization": {
+    "input": {
+      "network": "kaspa:testnet-10",
+      "profile": "additive",
+      "transactionId": "15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e",
+      "paymentOutputIndex": 0,
+      "amount": "20000000",
+      "payTo": "kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q",
+      "payToScriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
+      "paymentRequirementsHash": "dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c",
+      "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
+      "challengeId": "9191919191919191919191919191919191919191919191919191919191919191",
+      "inputIndex": 1,
+      "expiresAt": "2099-01-01T00:00:00.000Z"
+    },
+    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\",\"inputIndex\":1,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentOutputIndex\":0,\"paymentRequirementsHash\":\"dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c\",\"profile\":\"additive\",\"requestHash\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"scope\":\"kaspa-x402-exact-request-authorization-v1\",\"transactionId\":\"15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e\"}",
+    "sha256": "ce9e2f4d1270d7256665508a7758a57b9da934a8fe94131314eb1223edcc653f",
+    "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    "signature": "ebc0b8e9a7044803cd7ed05cec7c6b9099de64d42c2773df7dfa0bfc7f9f437f5b4754cf6ae8a53f6bd3615faaeae1483bc714ccf89b6bea2c6ed1ea9ede12ee",
+    "expected": "valid-schnorr-signature"
+  },
+  "expiry": {
+    "referenceTime": "2098-12-31T23:59:00.000Z",
+    "maxTimeoutSeconds": 60,
+    "rule": "authorization expiry must be future, no later than reference time plus maxTimeoutSeconds, and no later than challenge expiry when a challenge exists",
+    "cases": [
+      {
+        "name": "standard-valid",
+        "profile": "standard-native",
+        "authorizationExpiresAt": "2099-01-01T00:00:00.000Z",
+        "expected": "valid"
+      },
+      {
+        "name": "standard-expired",
+        "profile": "standard-native",
+        "authorizationExpiresAt": "2098-12-31T23:59:00.000Z",
+        "expected": "expired_authorization"
+      },
+      {
+        "name": "standard-beyond-timeout",
+        "profile": "standard-native",
+        "authorizationExpiresAt": "2099-01-01T00:00:00.001Z",
+        "expected": "authorization_exceeds_max_timeout"
+      },
+      {
+        "name": "additive-valid-at-challenge",
+        "profile": "additive",
+        "authorizationExpiresAt": "2099-01-01T00:00:00.000Z",
+        "challengeExpiresAt": "2099-01-01T00:00:00.000Z",
+        "expected": "valid"
+      },
+      {
+        "name": "additive-authorization-after-challenge",
+        "profile": "additive",
+        "authorizationExpiresAt": "2098-12-31T23:59:45.000Z",
+        "challengeExpiresAt": "2098-12-31T23:59:30.000Z",
+        "expected": "authorization_exceeds_challenge"
+      },
+      {
+        "name": "additive-expired-challenge",
+        "profile": "additive",
+        "authorizationExpiresAt": "2099-01-01T00:00:00.000Z",
+        "challengeExpiresAt": "2098-12-31T23:59:00.000Z",
+        "expected": "expired_challenge"
+      }
+    ]
+  },
+  "finality": {
+    "ordering": [
+      "mempool",
+      "accepted",
+      "confirmed"
+    ],
+    "cases": [
+      {
+        "actual": "mempool",
+        "required": "accepted",
+        "expected": false
+      },
+      {
+        "actual": "accepted",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "accepted",
+        "required": "confirmed",
+        "expected": false
+      },
+      {
+        "actual": "confirmed",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "confirmed",
+        "required": "confirmed",
+        "expected": true
+      }
+    ]
+  }
+}
