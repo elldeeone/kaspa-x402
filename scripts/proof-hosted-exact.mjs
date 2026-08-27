@@ -34,6 +34,10 @@ import {
   assertHostedSettlementHeadPinned,
 } from "./hosted-offer-pins.mjs";
 import { normalizedBaseUrl } from "./demo-exact-heads.mjs";
+import {
+  stringifySanitizedProofOutput,
+  writePrivateProofJson,
+} from "./proof-output-security.mjs";
 import { readBoundedResponseText } from "./read-bounded-response.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
@@ -51,7 +55,7 @@ const options = readOptions(process.argv.slice(2));
 const fileEnv = readOptionalEnv(options.configFile);
 const env = { ...nonEmptyValues(fileEnv), ...process.env };
 const config = {
-  gatewayBase: normalizedBaseUrl(
+  gatewayBase: normalizedProofGatewayBaseUrl(
     env.KASPA_X402_DEMO_GATEWAY_URL ||
       env.KASPA_X402_GATEWAY_BASE_URL ||
       DEFAULT_GATEWAY_URL,
@@ -77,6 +81,14 @@ const config = {
   confirmation: env.KASPA_X402_LIVE_CONFIRM || "",
 };
 
+function normalizedProofGatewayBaseUrl(value) {
+  try {
+    return normalizedBaseUrl(value);
+  } catch {
+    throw new Error("configured gateway URL is invalid or unsafe");
+  }
+}
+
 const report = {
   generatedAt: new Date().toISOString(),
   mode: "hosted-exact-testnet",
@@ -96,11 +108,10 @@ try {
     result,
   });
   console.log(
-    JSON.stringify(
+    stringifySanitizedProofOutput(
       { ...report, status: "complete", findings: [], result },
-      null,
-      2,
-    ),
+      { secrets: proofOutputSecrets() },
+    ).trimEnd(),
   );
 } catch (error) {
   const failed = {
@@ -114,7 +125,11 @@ try {
     ],
   };
   writeJson(config.reportFile, failed);
-  console.error(JSON.stringify(failed, null, 2));
+  console.error(
+    stringifySanitizedProofOutput(failed, {
+      secrets: proofOutputSecrets(),
+    }).trimEnd(),
+  );
   process.exitCode = 1;
 }
 
@@ -1140,13 +1155,13 @@ function sleep(ms) {
 }
 
 function writeJson(file, value) {
-  fs.mkdirSync(path.dirname(path.resolve(file)), {
-    recursive: true,
-    mode: 0o700,
+  writePrivateProofJson(file, value, {
+    secrets: proofOutputSecrets(),
   });
-  fs.writeFileSync(path.resolve(file), `${JSON.stringify(value, null, 2)}\n`, {
-    mode: 0o600,
-  });
+}
+
+function proofOutputSecrets() {
+  return [config.rpcUrl, config.fundingWallet, config.adminToken];
 }
 
 function readOptions(argv) {

@@ -43,6 +43,7 @@ import {
   transactionV1CovenantId,
 } from "@kaspa-x402/covenant";
 import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
+import { sanitizeProofOutputText } from "./proof-output-security.mjs";
 
 // Reference adapter for scripts/proof-live-testnet.mjs. It is testnet-only,
 // spends testnet funds, and writes local signing/recovery material under
@@ -2895,7 +2896,10 @@ function makeChainProvider({
             {
               generatedAt: new Date().toISOString(),
               transactionId: parsed.id,
-              message: error instanceof Error ? error.message : String(error),
+              message: sanitizeProofOutputText(
+                error instanceof Error ? error.message : String(error),
+                { secrets: [context.rpcUrl, context.fundingWallet] },
+              ),
             },
             null,
             2,

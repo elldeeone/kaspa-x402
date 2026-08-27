@@ -3,6 +3,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { pathToFileURL } from "node:url";
 
+import {
+  sanitizeProofOutputText,
+  stringifySanitizedProofOutput,
+  writePrivateProofJson,
+} from "./proof-output-security.mjs";
+
 const options = readOptions(process.argv.slice(2));
 const fileEnv = readOptionalEnv(options.envFile);
 const env = { ...nonEmptyValues(fileEnv), ...process.env };
@@ -1513,7 +1519,11 @@ function readOptions(argv) {
   try {
     return parseArgs(argv);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(
+      sanitizeProofOutputText(
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
     process.exit(1);
   }
 }
@@ -1523,7 +1533,11 @@ function readOptionalEnv(file) {
   try {
     return readEnvFile(file);
   } catch (error) {
-    console.error(error instanceof Error ? error.message : String(error));
+    console.error(
+      sanitizeProofOutputText(
+        error instanceof Error ? error.message : String(error),
+      ),
+    );
     process.exit(1);
   }
 }
@@ -1532,11 +1546,11 @@ function readEnvFile(file) {
   const resolved = path.resolve(file);
   const lines = fs.readFileSync(resolved, "utf8").split(/\r?\n/);
   const values = {};
-  for (const line of lines) {
+  for (const [index, line] of lines.entries()) {
     const trimmed = line.trim();
     if (!trimmed || trimmed.startsWith("#")) continue;
     const match = /^([A-Za-z_][A-Za-z0-9_]*)=(.*)$/.exec(trimmed);
-    if (!match) throw new Error(`invalid env file line: ${line}`);
+    if (!match) throw new Error(`invalid env file line ${index + 1}`);
     values[match[1]] = unquote(match[2]);
   }
   return values;
@@ -1586,8 +1600,7 @@ function redactedConfig(current) {
 
 function redact(value) {
   if (!value) return "";
-  if (value.length <= 12) return "<set>";
-  return `${value.slice(0, 6)}...${value.slice(-4)}`;
+  return "<set>";
 }
 
 async function importAdapter(specifier) {
@@ -1604,9 +1617,7 @@ async function importAdapter(specifier) {
 
 function writeJson(file, value, { onlyIfRequested = false } = {}) {
   if (onlyIfRequested) return;
-  const resolved = path.resolve(file);
-  fs.mkdirSync(path.dirname(resolved), { recursive: true });
-  fs.writeFileSync(resolved, `${JSON.stringify(value, null, 2)}\n`);
+  writePrivateProofJson(file, value, { secrets: proofOutputSecrets() });
 }
 
 function writeRecovery(file, current, currentReport) {
@@ -1623,5 +1634,13 @@ function writeRecovery(file, current, currentReport) {
 }
 
 function printReport(value) {
-  console.log(JSON.stringify(value, null, 2));
+  console.log(
+    stringifySanitizedProofOutput(value, {
+      secrets: proofOutputSecrets(),
+    }).trimEnd(),
+  );
+}
+
+function proofOutputSecrets() {
+  return [config.rpcUrl, config.fundingWallet];
 }
