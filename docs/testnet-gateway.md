@@ -1,18 +1,20 @@
 # Testnet Gateway
 
-Status: paid-canary-proven Alpha.11 deployment on `kaspa:testnet-10`.
+Status: Alpha.11 deployment candidate on `kaspa:testnet-10`; funded deployment
+proof is pending.
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
 mainnet service, or availability commitment.
 
-The current Worker uses `kaspa-exact-v2` with the default `standard-native`
-profile and also supports `batch-settlement`. The optional `additive` exact
-profile is implemented but is advertised only when a current KIP-10 head is
-available.
+The Alpha.11 candidate uses `kaspa-exact-v2` with the default
+`standard-native` profile and also supports `batch-settlement`. The optional
+`additive` exact profile is implemented but is advertised only when a current
+KIP-10 head is available.
 
 Historical gateway evidence remains available in the immutable
-[release snapshots](/releases/). This page describes only the active alpha.
+[release snapshots](/releases/). This page separates the Alpha.11 candidate
+from historical deployment evidence.
 
 ## Base URL
 
@@ -147,12 +149,12 @@ exposes `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE`. Paid retries may send
 it only over TLS to the intended gateway and do not publish or log unused
 payment headers or transaction material.
 
-## Current Alpha.11 Evidence
+## Historical Alpha.10 Evidence
 
-The 2026-08-10 deployment completed funded exact and batch runs:
+The 2026-08-10 Alpha.10 deployment completed funded exact and batch runs:
 
 - Worker version `c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit
-  `78f2ada` and using fresh `demo-gateway-alpha.11` state;
+  `78f2ada` and using Alpha.10 state;
 - `/supported` advertised `kaspa-exact-v2` and `kaspa-escrow-v2`;
 - unpaid `/exact` returned a valid `20000000` sompi offer without inventory;
 - transaction id
@@ -170,9 +172,9 @@ The 2026-08-10 deployment completed funded exact and batch runs:
 - the scheduled canary passed TN10 REST, release-snapshot, schema, docs, offer,
   and unsupported-scheme checks.
 
-The Alpha.11 source, package, specification, vector, and live-proof gates were
-completed before deployment. The evidence above is from the released source
-and public npm package version.
+This evidence predates the Alpha.11 alias controls, fresh
+`demo-gateway-alpha.11` state, and `kaspa-x402-escrow-v3` template. It must not
+be used as Alpha.11 deployment or funded-canary proof.
 
 ## Testnet Funding
 

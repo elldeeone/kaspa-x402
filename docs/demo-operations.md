@@ -7,13 +7,11 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: Alpha.11 Worker version
-`c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit `78f2ada`. The funded
-`standard-native` exact canary passed with accepted finality, identical replay,
-and cross-resource replay rejection. The funded batch canary opened and reused
-one `kaspa-escrow-v2` lane, then rejected a stale voucher. The default exact
-profile needs no merchant inventory; optional `additive` uses durable KIP-10
-head chains.
+Last repository-backed funded deployment evidence: Alpha.10 Worker version
+`c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit `78f2ada`. That
+historical evidence does not validate the Alpha.11 source, fresh durable state,
+or `kaspa-x402-escrow-v3`. Alpha.11 deployment and funded canary proof are
+pending.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
@@ -55,30 +53,31 @@ Secret variables:
 
 ## Alpha.11 Cutover
 
-Alpha.11 is a clean-state cutover, not an Alpha.9 Durable Object migration.
+Alpha.11 is a clean-state cutover, not an Alpha.10 Durable Object migration.
 The Worker resolves `GATEWAY_STATE` with the logical object name
-`demo-gateway-alpha.11`; it MUST NOT read, import, or overwrite the Alpha.9
+`demo-gateway-alpha.11`; it MUST NOT read, import, or overwrite the Alpha.10
 object.
 
 1. Create the new Alpha.11 release snapshot and content lock, pass the release
    gate from a clean checkout, then deploy the static apex and `www` site first.
    Verify the Alpha.11 release metadata, schemas, vectors, and docs publicly.
-2. Disable the Alpha.9 public gateway before replacing its Worker. Keep the
-   Alpha.9 deployment and Durable Object untouched for rollback evidence.
+2. Disable the Alpha.10 public gateway before replacing its Worker. Keep the
+   Alpha.10 deployment and Durable Object untouched for rollback evidence.
 3. Confirm the Worker advertises `0.1.0-alpha.11`, `kaspa-escrow-v2`,
    `kaspa-x402-escrow-v3`, and R, and resolves fresh
    `demo-gateway-alpha.11` state.
 4. Validate the disabled Alpha.11 Worker, then run funded exact and batch
    canaries through an operator-controlled preview. Re-register any verified,
    still-unspent additive heads; exact replay records, payment identifiers, and
-   batch channels are intentionally not copied from Alpha.9.
+   batch channels are intentionally not copied from Alpha.10.
 5. Enable the public Alpha.11 Worker only after its canaries pass. New batch
-   clients must open singleton v2 genesis lanes; no older batch lane continues
-   across the cutover.
+   clients must open singleton `kaspa-escrow-v2` binding lanes using the
+   `kaspa-x402-escrow-v3` template; no older batch lane continues across the
+   cutover.
 
-Completed on 2026-08-10. Alpha.9 remains available only as immutable release
-and rollback evidence; the active Worker resolves fresh
-`demo-gateway-alpha.11` state.
+Pending. Do not mark this cutover complete until the Alpha.11 release snapshot,
+fresh `demo-gateway-alpha.11` state, and funded exact and batch canaries have
+been independently recorded.
 
 ## Deploy
 
@@ -182,8 +181,8 @@ Rollback procedure:
    deliberately enabled and tested.
 5. Record the version, reason, and verification result in the operator notes.
 
-Alpha.9 and Alpha.11 use separate logical Durable Objects. A rollback to the
-Alpha.9 Worker must continue resolving its Alpha.9 state; never point either
+Alpha.10 and Alpha.11 use separate logical Durable Objects. A rollback to the
+Alpha.10 Worker must continue resolving its Alpha.10 state; never point either
 Worker version at the other release's object.
 
 ## Emergency Disable
@@ -200,8 +199,9 @@ Deploy the Worker. Protected endpoints must return:
 { "ok": false, "error": "gateway_disabled" }
 ```
 
-Health and canary endpoints stay readable so operators can distinguish an
-intentional disable from a platform or chain outage.
+Health and canary endpoints stay readable. `/health` proves only that the
+Worker loaded its configuration; use a fresh `/canary` result and funded proof
+to assess chain readiness.
 
 Re-enable by restoring:
 
@@ -212,8 +212,9 @@ KASPA_X402_GATEWAY_ENABLED=true
 ## Chain Evidence Or PNN Outage
 
 The Worker uses REST evidence for accepted UTXOs and DAA health. Hosted exact
-also uses public TN10 PNN/WSS for transaction submission. If `/health`, the
-scheduled canary, or the hosted exact proof reports chain failure:
+also uses public TN10 PNN/WSS for transaction submission. `/health` is shallow
+and does not probe either dependency. If the scheduled canary or hosted exact
+proof reports chain failure:
 
 1. Confirm whether `https://api-tn10.kaspa.org/info/blockdag` is reachable.
 2. If the REST endpoint is down or stale, disable the gateway.
@@ -222,8 +223,9 @@ scheduled canary, or the hosted exact proof reports chain failure:
    unpaid offers and a manual paid exact check pass.
 5. If PNN submission is failing, disable hosted exact or the full gateway until
    a paid exact proof passes again.
-6. Re-enable only after `/health`, `/canary`, batch deposit, replay rejection,
-   and exact payment checks pass when hosted exact settlement is enabled.
+6. Re-enable only after `/health`, a fresh successful `/canary`, batch deposit,
+   replay rejection, and exact payment checks pass when hosted exact settlement
+   is enabled.
 
 The static browser demo uses PNN/WASM for client-side checks, and hosted exact
 uses lightweight PNN/WSS JSON inside the Worker for KIP-10 submission. A PNN
@@ -336,9 +338,9 @@ For Alpha.11, `demo-gateway-alpha.11` starts empty by design. This resets exact
 replay and payment-identifier records, additive-head inventory, batch channels,
 settlement commitments, counters, metrics, and canary history. Re-register only
 independently verified, still-unspent additive heads and require every batch
-client to create a new v2 lane. Do not copy Alpha.9 rows or reuse its logical
+client to create a new v2 lane. Do not copy Alpha.10 rows or reuse its logical
 object name. The immutable [release snapshots](/releases/) and untouched
-Alpha.9 object retain the earlier cutover record.
+Alpha.10 object retain the earlier cutover record.
 
 ## Rotate Addresses And Keys
 

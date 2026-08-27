@@ -453,6 +453,7 @@ function checkContent() {
     /Alpha\.6 focuses on preferred KIP-10/i,
     /For real paid requests, use the hosted gateway/i,
     /remains the paid-canary-proven alpha\.\d+ deployment until/i,
+    /paid-canary-proven Alpha\.11/i,
   ];
   for (const file of activeTextFiles) {
     const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
@@ -463,17 +464,23 @@ function checkContent() {
     }
   }
 
-  for (const relative of [
-    "index.html",
-    "demo/index.html",
-    "docs/testnet-gateway.md",
-  ]) {
+  for (const relative of ["index.html", "demo/index.html"]) {
     assertContains(
       path.join(outDir, relative),
-      "paid-canary",
-      `${relative} current-alpha paid-canary evidence`,
+      "funded deployment proof is pending",
+      `${relative} Alpha.11 pending deployment proof`,
     );
   }
+  assertContains(
+    path.join(outDir, "docs/testnet-gateway.md"),
+    "Historical Alpha.10 Evidence",
+    "docs/testnet-gateway.md historical deployment boundary",
+  );
+  assertContains(
+    path.join(outDir, "docs/testnet-gateway.md"),
+    "Status: Alpha.11 deployment candidate",
+    "docs/testnet-gateway.md Alpha.11 pending deployment proof",
+  );
 
   const home = path.join(outDir, "index.html");
   const specIndex = path.join(outDir, "spec/index.html");
