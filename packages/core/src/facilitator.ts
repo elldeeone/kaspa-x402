@@ -28,7 +28,7 @@ export interface FacilitatorRequest extends JsonRecord {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentRequirements;
   resource?: ResourceInfo;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
   extensions?: JsonRecord;
 }
 
@@ -54,16 +54,11 @@ export function isFacilitatorRequest(
     paymentRequirements?: unknown;
   };
   const requestHash = recordWithRequestHash(value).requestHash;
-  const exact =
-    isRecord(record.paymentRequirements) &&
-    record.paymentRequirements.scheme === "exact";
   return (
     record.x402Version === X402_VERSION &&
     isRecord(record.paymentPayload) &&
     isRecord(record.paymentRequirements) &&
-    (exact
-      ? isHash32Hex(requestHash)
-      : requestHash === undefined || isHash32Hex(requestHash))
+    isHash32Hex(requestHash)
   );
 }
 

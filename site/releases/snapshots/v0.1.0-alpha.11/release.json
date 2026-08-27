@@ -83,8 +83,8 @@
     {
       "source": "spec/kaspa-batch-settlement-v2.md",
       "target": "v0.1.0-alpha.11/spec/kaspa-batch-settlement-v2.md",
-      "bytes": 28733,
-      "sha256": "d0bd784e98b373a41596cdc6d0ea288c96f90a253fccee126d1b9a5051d49f59"
+      "bytes": 32438,
+      "sha256": "55f85695e22bc74eebc1bc2796d15425e98a43c01e8fb736815823a0de6aa960"
     },
     {
       "source": "spec/http-profile.md",
@@ -101,8 +101,8 @@
     {
       "source": "spec/facilitator-profile.md",
       "target": "v0.1.0-alpha.11/spec/facilitator-profile.md",
-      "bytes": 5284,
-      "sha256": "607fc503d47f49385a1379e9811f425051e2279d1c11a0f610e5f30b25d81765"
+      "bytes": 5157,
+      "sha256": "48a21384ecae1e34144b23e49e06f0930dccc1810edc6d18c6a4a0ca7f682752"
     },
     {
       "source": "spec/errors.md",
@@ -191,14 +191,14 @@
     {
       "source": "vectors/README.md",
       "target": "v0.1.0-alpha.11/vectors/README.md",
-      "bytes": 4619,
-      "sha256": "11fc3131c2f23b44eb612729f22d0c98753e398288888ac04109f8d3157fadbd"
+      "bytes": 4686,
+      "sha256": "bc7b1354a297f6dcf1277c459ee7824eb4654171c2ddf3c0c735ece6744a18a8"
     },
     {
       "source": "vectors/batch/interop-v2.json",
       "target": "v0.1.0-alpha.11/vectors/batch/interop-v2.json",
-      "bytes": 12842,
-      "sha256": "365602af6cee7dcf02d0e1ac02cd6e3f20855f12652f948562ef7fd22c916394"
+      "bytes": 13423,
+      "sha256": "d8ebf87d2e150bacc279655dcd5052bc6c7e7a494853d9a9d355553606db5624"
     },
     {
       "source": "vectors/channel-id/base.json",
@@ -293,14 +293,20 @@
     {
       "source": "vectors/negative/hex-key-too-short.json",
       "target": "v0.1.0-alpha.11/vectors/negative/hex-key-too-short.json",
-      "bytes": 925,
-      "sha256": "b815a15088d8f33010088208981c16116b8bc368e0c902cacf0ca4dd94552bdb"
+      "bytes": 1381,
+      "sha256": "8045c2e00226566aca1d5cab220c6b3b6767f527c07b6b2472d1d50a578e573e"
     },
     {
       "source": "vectors/negative/invalid-asset.json",
       "target": "v0.1.0-alpha.11/vectors/negative/invalid-asset.json",
       "bytes": 942,
       "sha256": "3efeb97f2929221e8ef9c9a3b7e8c2b5ffc044e651c565d331def50d1efd57d5"
+    },
+    {
+      "source": "vectors/negative/missing-batch-authorization.json",
+      "target": "v0.1.0-alpha.11/vectors/negative/missing-batch-authorization.json",
+      "bytes": 1067,
+      "sha256": "c05c896bddb4ccd4b1b5e79c4ed9e70be5b28e1a5ecc20fcc2ecf6922428b529"
     },
     {
       "source": "vectors/negative/missing-payment-identifier.json",
@@ -317,8 +323,8 @@
     {
       "source": "vectors/negative/outpoint-index-overflow.json",
       "target": "v0.1.0-alpha.11/vectors/negative/outpoint-index-overflow.json",
-      "bytes": 1030,
-      "sha256": "481d3249239e9a7ea6bdc40100b45b2b93e2e69dc17532325cb44c922ed98923"
+      "bytes": 1486,
+      "sha256": "3eed209ccb0ca79f1c6d75bd3868052754e8a8b427d6bdcc6274cb30a13efe9f"
     },
     {
       "source": "vectors/negative/payment-identifier-conflict.json",
@@ -341,14 +347,14 @@
     {
       "source": "vectors/negative/txid-wrong-length.json",
       "target": "v0.1.0-alpha.11/vectors/negative/txid-wrong-length.json",
-      "bytes": 926,
-      "sha256": "e8363239ef7f1247c6d1619d7c448370232389c6bcd33bafe0dcaa6433ecf190"
+      "bytes": 1382,
+      "sha256": "944b56f77851213639ace69de4cd829350d0b960bbb75dc4db02f4e63a2286cd"
     },
     {
       "source": "vectors/negative/voucher-signature-wrong-length.json",
       "target": "v0.1.0-alpha.11/vectors/negative/voucher-signature-wrong-length.json",
-      "bytes": 880,
-      "sha256": "dbd9ae3c7af351fbaa7017be12baf1d1e4686568bde6084c296215c6f1418e67"
+      "bytes": 1336,
+      "sha256": "399df7e39550b0c88a7be0a15a0bff2213563df913cb6d235a1d2661a7714a7a"
     },
     {
       "source": "vectors/negative/wrong-binding.json",
@@ -371,8 +377,8 @@
     {
       "source": "vectors/negative/zero-covenant-id.json",
       "target": "v0.1.0-alpha.11/vectors/negative/zero-covenant-id.json",
-      "bytes": 1014,
-      "sha256": "2bdfaf02ad35dfd6010e0c6915245869592a8bc38888a1f77986d3f82cd83411"
+      "bytes": 1470,
+      "sha256": "5e32f1d20a4faca7670523bfe4f33cfc7731d1293f6540846a9386f51c5a4621"
     },
     {
       "source": "vectors/settlement-response/claim-success.json",
@@ -465,5 +471,5 @@
       "sha256": "36564ac622863b7621f3d95fb1fa6c8a126d813d238919c3aa856c4a04cd0508"
     }
   ],
-  "contentSha256": "eaf38ef55f2dcf649938ddd4240e952f72c6a317d160c1873f1f89213bdb3dd6"
+  "contentSha256": "3eab3fe203f31fba495c6f0db4d40bd29adef9b296bccc333e4d013f16b72381"
 }

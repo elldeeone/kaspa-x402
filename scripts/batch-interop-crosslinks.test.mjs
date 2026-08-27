@@ -13,6 +13,8 @@ import {
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
+  batchRequestAuthorizationDigest,
+  batchRequestAuthorizationPreimage,
   channelId,
   channelIdPreimageHex,
   voucherDigest,
@@ -45,6 +47,25 @@ test("rejects a voucher signer unrelated to the channel client", () => {
   const mutated = structuredClone(vector);
   mutated.voucher.signerPublicKey = mutated.channel.config.serverPublicKey;
   assert.throws(() => assertBatchCoreCrossLinks(mutated), /voucher signer/);
+});
+
+test("rejects a request authorization for another audience", () => {
+  const mutated = structuredClone(vector);
+  mutated.requestAuthorization.input.audience = "https://attacker.example/";
+  assert.throws(
+    () => assertBatchCoreCrossLinks(mutated),
+    /request authorization preimage/,
+  );
+});
+
+test("rejects a request authorization signer unrelated to the channel client", () => {
+  const mutated = structuredClone(vector);
+  mutated.requestAuthorization.signerPublicKey =
+    mutated.channel.config.serverPublicKey;
+  assert.throws(
+    () => assertBatchCoreCrossLinks(mutated),
+    /request authorization signer/,
+  );
 });
 
 test("rejects a commitment unrelated to the channel", () => {
@@ -146,6 +167,61 @@ function assertBatchCoreCrossLinks(item) {
   assert.equal(
     batchPaymentRequirementsHash(accepted),
     item.paymentRequirements.sha256,
+  );
+  const authorization = item.requestAuthorization;
+  assert.equal(
+    authorization.input.network,
+    config.network,
+    "request authorization network mismatch",
+  );
+  assert.equal(
+    authorization.input.channelId,
+    item.channel.channelId,
+    "request authorization channel mismatch",
+  );
+  assert.equal(
+    authorization.input.covenantId,
+    covenantId,
+    "request authorization covenant mismatch",
+  );
+  assert.equal(
+    authorization.input.amount,
+    item.voucher.input.amount,
+    "request authorization amount mismatch",
+  );
+  assert.equal(
+    authorization.input.paymentRequirementsHash,
+    item.paymentRequirements.sha256,
+    "request authorization requirements mismatch",
+  );
+  assert.equal(
+    authorization.input.requestHash,
+    commitment.requestFingerprint,
+    "request authorization fingerprint mismatch",
+  );
+  assert.equal(
+    authorization.signerPublicKey,
+    config.clientPublicKey,
+    "request authorization signer mismatch",
+  );
+  assert.equal(
+    batchRequestAuthorizationPreimage(authorization.input),
+    authorization.preimage,
+    "request authorization preimage mismatch",
+  );
+  assert.equal(
+    batchRequestAuthorizationDigest(authorization.input),
+    authorization.digest,
+    "request authorization digest mismatch",
+  );
+  assert.equal(
+    schnorr.verify(
+      Buffer.from(authorization.signature, "hex"),
+      Buffer.from(authorization.digest, "hex"),
+      Buffer.from(authorization.signerPublicKey, "hex"),
+    ),
+    true,
+    "request authorization signature mismatch",
   );
   assert.equal(
     batchCommitmentPreimageHex(commitment),

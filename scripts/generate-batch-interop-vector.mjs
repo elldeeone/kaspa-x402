@@ -156,6 +156,24 @@ const requestAuthorization = {
     ),
   ),
 };
+const requestAuthorizationReferenceTime = "2026-08-27T11:59:30.000Z";
+const requestAuthorizationExpiryCases = [
+  {
+    name: "valid-within-timeout",
+    expiresAt: requestAuthorizationInput.expiresAt,
+    expected: "valid",
+  },
+  {
+    name: "expired-at-reference-time",
+    expiresAt: requestAuthorizationReferenceTime,
+    expected: "expired",
+  },
+  {
+    name: "beyond-accepted-timeout",
+    expiresAt: "2026-08-27T12:00:31.000Z",
+    expected: "exceeds-timeout",
+  },
+];
 const commitmentInput = {
   accepted,
   channelId: resolvedChannelId,
@@ -361,6 +379,11 @@ const interopVector = {
     signerPublicKey: clientPublicKey,
     signature: requestAuthorization.signature,
     expected: "valid-schnorr-signature",
+    expiry: {
+      referenceTime: requestAuthorizationReferenceTime,
+      maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+      cases: requestAuthorizationExpiryCases,
+    },
   },
   commitment: {
     input: commitmentInput,

@@ -40,8 +40,9 @@ Every JSON vector has a `kind` field:
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
 - `batch-interop-v2`: reconstruct the Alpha.11 channel, KIP-20 lineage id,
-  voucher, request commitment, lifetime accounting, DAA expiry boundaries,
-  and finality ordering. Transaction evidence remains in `tx-v1/`.
+  voucher, batch request-authorization preimage/signature/expiry decisions,
+  request commitment, lifetime accounting, DAA expiry boundaries, and
+  finality ordering. Transaction evidence remains in `tx-v1/`.
 - `x402-http`: validate decoded objects and recompute the three HTTP headers. The
   exact-transaction fixture is also verified against the hosted verifier and the
   pinned rusty-kaspa consensus harness so its KIP-10 script and transaction shape

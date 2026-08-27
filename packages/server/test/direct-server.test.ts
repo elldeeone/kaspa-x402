@@ -151,6 +151,7 @@ describe("direct-mode server", () => {
         paymentPayload: mainnetBatch,
         paymentRequirements: accepted,
         resource: RESOURCE,
+        requestHash: "a0".repeat(32),
       }),
     ).rejects.toThrow();
   });

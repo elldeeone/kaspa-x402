@@ -81,14 +81,12 @@ configured.
 }
 ```
 
-Kaspa facilitators may also accept `resource` and `requestHash` fields.
+Kaspa facilitators also accept `resource` and `requestHash` fields.
 `requestHash` binds verification and settlement to the resource server's
-operation fingerprint. It is mandatory for `exact`, must match the mandatory
-signed request authorization in the payment payload, and cannot be inferred or
-removed. For batch vouchers a facilitator may still derive a deterministic
-local fingerprint when an explicit hash is absent. Servers that need portable
-idempotency across direct and facilitator mode should send `requestHash`
-explicitly for every scheme.
+operation fingerprint. It is mandatory for `exact` and `batch-settlement`,
+must match the mandatory signed request authorization in the payment payload,
+and cannot be inferred from that payload or removed. Resource servers MUST
+send their independently computed `requestHash` explicitly.
 
 Successful `/verify` returns x402 v2 `VerifyResponse`:
 

@@ -87,6 +87,8 @@ test("published Alpha.1-10 retain their historical release rules", () => {
   });
   assert.equal(usesCompleteMetadataHash("0.1.0-alpha.11"), true);
   assert.equal(requiresReleaseLocalSchemas("0.1.0-alpha.11"), true);
+  assert.equal(usesCompleteMetadataHash("0.1.0"), true);
+  assert.equal(requiresReleaseLocalSchemas("0.1.0"), true);
 });
 
 test("release schemas reject cross-version and external references", () => {

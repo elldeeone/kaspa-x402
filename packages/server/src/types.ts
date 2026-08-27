@@ -780,7 +780,7 @@ export interface DirectPaymentVerificationOptions {
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentPayload["accepted"];
   resource?: ResourceInfo;
-  requestHash?: Hash32Hex;
+  requestHash: Hash32Hex;
 }
 
 export interface DirectPaymentVerification {

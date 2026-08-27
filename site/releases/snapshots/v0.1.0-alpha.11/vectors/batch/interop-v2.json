@@ -99,7 +99,28 @@
     "digest": "d36f85386d4108691237e0bdd287eaa0165401ac566007b9ecde30f01ab7a078",
     "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
     "signature": "b5b4a11ddd6b873a207d8beada6ff09a27d29776ae2f1f9576a640b8436fa2335a3eaed42707d88550f506ac9fb7fe7ec2c33c61ed72bddfda1abf29af82e703",
-    "expected": "valid-schnorr-signature"
+    "expected": "valid-schnorr-signature",
+    "expiry": {
+      "referenceTime": "2026-08-27T11:59:30.000Z",
+      "maxTimeoutSeconds": 60,
+      "cases": [
+        {
+          "name": "valid-within-timeout",
+          "expiresAt": "2026-08-27T12:00:00.000Z",
+          "expected": "valid"
+        },
+        {
+          "name": "expired-at-reference-time",
+          "expiresAt": "2026-08-27T11:59:30.000Z",
+          "expected": "expired"
+        },
+        {
+          "name": "beyond-accepted-timeout",
+          "expiresAt": "2026-08-27T12:00:31.000Z",
+          "expected": "exceeds-timeout"
+        }
+      ]
+    }
   },
   "commitment": {
     "input": {

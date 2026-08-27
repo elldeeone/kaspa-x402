@@ -775,6 +775,7 @@ describe("direct-mode facilitator", () => {
       paymentPayload: claimPayload,
       paymentRequirements: { ...deposit.accepted, amount: "101" },
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
 
     expect(settlement).toMatchObject({
@@ -824,6 +825,7 @@ describe("direct-mode facilitator", () => {
       } as PaymentPayload,
       paymentRequirements: { ...deposit.accepted, amount: "101" },
       resource: RESOURCE,
+      requestHash: REQUEST_HASH,
     });
 
     expect(settlement).toMatchObject({

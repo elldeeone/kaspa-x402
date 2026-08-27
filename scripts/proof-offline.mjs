@@ -74,7 +74,7 @@ try {
 
 async function runExactProof() {
   const { client, facilitator, server, serverStore } =
-    createMockDirectModeEnvironment();
+    createMockDirectModeEnvironment({ requirePaymentIdentifier: true });
   const url = "https://api.example.test/exact-download";
   const resource = {
     url,
@@ -195,13 +195,15 @@ async function runExactProof() {
     handlerExecutions: cachedExecutions,
   });
 
+  const { client: replayClient, server: replayServer } =
+    createMockDirectModeEnvironment();
   const replayUrl = "https://api.example.test/exact-replay";
   const replayResource = {
     url: replayUrl,
     description: "Fixed-price exact replay source",
     mimeType: "application/octet-stream",
   };
-  const replayRequired = await server.handlePaidRequest(
+  const replayRequired = await replayServer.handlePaidRequest(
     {
       url: replayUrl,
       resource: replayResource,
@@ -214,7 +216,7 @@ async function runExactProof() {
     }),
   );
   assert.equal(replayRequired.status, 402);
-  const replayPayment = await client.createPayment(
+  const replayPayment = await replayClient.createPayment(
     replayRequired.headers[PAYMENT_REQUIRED_HEADER],
     {
       url: replayUrl,
@@ -222,7 +224,7 @@ async function runExactProof() {
   );
   const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
   assert.ok(replayFirstHash);
-  const replaySource = await server.handlePaidRequest(
+  const replaySource = await replayServer.handlePaidRequest(
     requestWithPayment(replayPayment.paymentPayload, {
       url: replayUrl,
       resource: replayResource,
@@ -238,7 +240,7 @@ async function runExactProof() {
   assert.equal(replaySource.status, 200);
 
   let replayExecutions = 0;
-  const replay = await server.handlePaidRequest(
+  const replay = await replayServer.handlePaidRequest(
     requestWithPayment(replayPayment.paymentPayload, {
       url: replayUrl,
       resource: replayResource,
@@ -278,7 +280,7 @@ async function runExactProof() {
 
 async function runBatchProof() {
   const { client, facilitator, server, serverStore } =
-    createMockDirectModeEnvironment();
+    createMockDirectModeEnvironment({ requirePaymentIdentifier: true });
   const url = "https://api.example.test/metered";
   const resource = {
     url,
@@ -521,7 +523,10 @@ async function runBatchProof() {
   });
 
   let replayExecutions = 0;
-  const staleReplayPayload = withoutPaymentIdentifier(voucher.paymentPayload);
+  const staleReplayPayload = withPaymentIdentifier(
+    voucher.paymentPayload,
+    "offline-batch-stale-replay",
+  );
   const staleReplay = await server.handlePaidRequest(
     requestWithPayment(staleReplayPayload, {
       url,
@@ -916,11 +921,9 @@ function requestWithPayment(
   };
 }
 
-function withoutPaymentIdentifier(paymentPayload) {
+function withPaymentIdentifier(paymentPayload, id) {
   const next = structuredClone(paymentPayload);
-  if (!next.extensions) return next;
-  delete next.extensions["payment-identifier"];
-  if (Object.keys(next.extensions).length === 0) delete next.extensions;
+  next.extensions["payment-identifier"].info.id = id;
   return next;
 }
 

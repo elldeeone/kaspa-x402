@@ -249,6 +249,25 @@ function batchPaymentRequirementsPreimage(accepted) {
   ]);
 }
 
+function batchRequestAuthorizationPreimage(input) {
+  const audience = new URL(input.audience);
+  audience.hash = "";
+  return Buffer.from(
+    stableStringify({
+      scope: "kaspa-x402-batch-request-authorization-v1",
+      network: input.network,
+      channelId: input.channelId.toLowerCase(),
+      covenantId: input.covenantId.toLowerCase(),
+      amount: input.amount,
+      paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
+      requestHash: input.requestHash.toLowerCase(),
+      audience: audience.toString(),
+      expiresAt: input.expiresAt,
+      nonce: input.nonce.toLowerCase(),
+    }),
+  );
+}
+
 function batchCommitmentPreimage(input) {
   return Buffer.concat([
     sha256(Buffer.from("kaspa:x402:batch-commitment:v2", "utf8")),
@@ -1058,6 +1077,48 @@ function assertBatchInteropVector(ajv, file, vector, rootDir) {
     `${file}:paymentRequirements.sha256`,
   );
 
+  const authorization = vector.requestAuthorization;
+  const authorizationBytes = batchRequestAuthorizationPreimage(
+    authorization.input,
+  );
+  assertEqual(
+    authorizationBytes.toString("utf8"),
+    authorization.preimage,
+    `${file}:requestAuthorization.preimage`,
+  );
+  assertEqual(
+    sha256(authorizationBytes).toString("hex"),
+    authorization.digest,
+    `${file}:requestAuthorization.digest`,
+  );
+  assertHash32(
+    authorization.signerPublicKey,
+    `${file}:requestAuthorization.signerPublicKey`,
+  );
+  if (
+    !SIGNATURE64_PATTERN.test(authorization.signature) ||
+    authorization.expected !== "valid-schnorr-signature"
+  ) {
+    throw new Error(`${file}: request authorization evidence is incomplete`);
+  }
+  const authorizationNow = Date.parse(authorization.expiry.referenceTime);
+  for (const testCase of authorization.expiry.cases ?? []) {
+    const expiresAt = Date.parse(testCase.expiresAt);
+    const actual =
+      expiresAt <= authorizationNow
+        ? "expired"
+        : expiresAt >
+            authorizationNow +
+              authorization.expiry.maxTimeoutSeconds * 1_000
+          ? "exceeds-timeout"
+          : "valid";
+    assertEqual(
+      actual,
+      testCase.expected,
+      `${file}:requestAuthorization.expiry.${testCase.name}`,
+    );
+  }
+
   const commitment = vector.commitment.input;
   if (
     BigInt(commitment.chargedCumulativeBefore) +
@@ -1172,6 +1233,43 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     voucher.input.covenantId,
     lineage.covenantId,
     `${file}: voucher covenant id mismatch`,
+  );
+
+  const authorization = vector.requestAuthorization;
+  assertEqual(
+    authorization.input.network,
+    config.network,
+    `${file}: request authorization network mismatch`,
+  );
+  assertEqual(
+    authorization.input.channelId,
+    vector.channel.channelId,
+    `${file}: request authorization channel mismatch`,
+  );
+  assertEqual(
+    authorization.input.covenantId,
+    lineage.covenantId,
+    `${file}: request authorization covenant mismatch`,
+  );
+  assertEqual(
+    authorization.input.amount,
+    voucher.input.amount,
+    `${file}: request authorization amount mismatch`,
+  );
+  assertEqual(
+    authorization.input.paymentRequirementsHash,
+    vector.paymentRequirements.sha256,
+    `${file}: request authorization requirements mismatch`,
+  );
+  assertEqual(
+    authorization.input.requestHash,
+    commitment.requestFingerprint,
+    `${file}: request authorization fingerprint mismatch`,
+  );
+  assertEqual(
+    authorization.signerPublicKey,
+    config.clientPublicKey,
+    `${file}: request authorization signer mismatch`,
   );
 
   assertEqual(

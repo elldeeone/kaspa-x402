@@ -5,12 +5,15 @@ import { describe, expect, it } from "vitest";
 
 import {
   applyBatchClaimAccounting,
+  assertBatchAuthorizationExpiry,
   assertBatchVoucherReserve,
   batchCommitmentId,
   batchCommitmentPreimageHex,
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
+  batchRequestAuthorizationDigest,
+  batchRequestAuthorizationPreimage,
   decodePaymentRequiredEnvelopeHeader,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -163,6 +166,23 @@ type BatchInteropVector = {
     value: BatchPaymentRequirements;
     preimage: string;
     sha256: string;
+  };
+  requestAuthorization: {
+    input: Parameters<typeof batchRequestAuthorizationDigest>[0];
+    preimage: string;
+    digest: string;
+    signerPublicKey: string;
+    signature: string;
+    expected: "valid-schnorr-signature";
+    expiry: {
+      referenceTime: string;
+      maxTimeoutSeconds: number;
+      cases: Array<{
+        name: string;
+        expiresAt: string;
+        expected: "valid" | "expired" | "exceeds-timeout";
+      }>;
+    };
   };
   commitment: {
     input: BatchCommitmentInput;
@@ -847,7 +867,7 @@ describe("exact v2 language-independent interoperability vector", () => {
 describe("batch v2 language-independent interoperability vector", () => {
   const vector = readJson<BatchInteropVector>("vectors/batch/interop-v2.json");
 
-  it("reproduces the channel, voucher, requirements, and commitment digests", () => {
+  it("reproduces the channel, voucher, authorization, requirements, and commitment digests", () => {
     expect(channelIdPreimageHex(vector.channel.config)).toBe(
       vector.channel.preimage,
     );
@@ -866,12 +886,42 @@ describe("batch v2 language-independent interoperability vector", () => {
     expect(batchPaymentRequirementsHash(vector.paymentRequirements.value)).toBe(
       vector.paymentRequirements.sha256,
     );
+    expect(
+      batchRequestAuthorizationPreimage(vector.requestAuthorization.input),
+    ).toBe(vector.requestAuthorization.preimage);
+    expect(
+      batchRequestAuthorizationDigest(vector.requestAuthorization.input),
+    ).toBe(vector.requestAuthorization.digest);
+    expect(vector.requestAuthorization.signerPublicKey).toBe(
+      vector.channel.config.clientPublicKey,
+    );
     expect(batchCommitmentPreimageHex(vector.commitment.input)).toBe(
       vector.commitment.preimage,
     );
     expect(batchCommitmentId(vector.commitment.input)).toBe(
       vector.commitment.commitmentId,
     );
+  });
+
+  it("reproduces every batch request-authorization expiry decision", () => {
+    const expiry = vector.requestAuthorization.expiry;
+    const nowMs = Date.parse(expiry.referenceTime);
+    for (const testCase of expiry.cases) {
+      let result: "valid" | "expired" | "exceeds-timeout" = "valid";
+      try {
+        assertBatchAuthorizationExpiry({
+          expiresAt: testCase.expiresAt,
+          maxTimeoutSeconds: expiry.maxTimeoutSeconds,
+          nowMs,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        result = message.includes("has expired")
+          ? "expired"
+          : "exceeds-timeout";
+      }
+      expect(result, testCase.name).toBe(testCase.expected);
+    }
   });
 
   it("reproduces the strict DAA refund boundary", () => {

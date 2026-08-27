@@ -3299,23 +3299,7 @@ function facilitatorResource(): ResourceInfo {
 function facilitatorRequestFingerprint(
   options: DirectPaymentVerificationOptions,
 ): Hash32Hex {
-  if (options.requestHash !== undefined)
-    return normalizedFacilitatorRequestHash(options.requestHash);
-  const payload = options.paymentPayload.payload;
-  if (payload.type === "exact-transaction") {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_payload",
-      "exact facilitator requests require an independently computed requestHash",
-    );
-  }
-  return sha256Hex(
-    stableStringify({
-      scope: "kaspa:x402:facilitator-request:v1",
-      resource: options.resource ?? null,
-      paymentRequirements: options.paymentRequirements,
-      paymentPayloadHash: paymentPayloadHash(options.paymentPayload),
-    }),
-  );
+  return normalizedFacilitatorRequestHash(options.requestHash);
 }
 
 function normalizedFacilitatorRequestHash(requestHash: unknown): Hash32Hex {

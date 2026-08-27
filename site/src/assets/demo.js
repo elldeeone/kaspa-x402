@@ -444,6 +444,13 @@ function buildBatchPaymentRetry(accepted) {
       fundingOutpoint: lane.current.activeOutpoint,
       activeScriptPublicKey: lane.current.activeScriptPublicKey,
       voucher,
+      authorization: {
+        version: "kaspa-x402-batch-request-authorization-v1",
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        nonce: "3".repeat(64),
+        digest: "4".repeat(64),
+        signature: "5".repeat(128),
+      },
     },
   };
   const commitmentId = "9".repeat(64);
@@ -469,11 +476,13 @@ function buildBatchPaymentRetry(accepted) {
     paymentPayload,
     mockVoucher:
       "schema-only placeholder; a real buyer must sign the v2 voucher digest for covenantId and lifetime T",
+    mockAuthorization:
+      "schema-only placeholder; a real buyer must sign the canonical batch request authorization digest",
     mockSettlementResponse: settlement,
     lanePreview: lane.preview,
   });
   setStatus(
-    "Alpha.11 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
+    "Alpha.11 batch voucher retry and partial-claim preview built; the sample signatures are not settlement evidence.",
   );
 }
 

@@ -146,6 +146,7 @@ function assertBrowserResult(value) {
   assert(value.batchTemplateId === "kaspa-x402-escrow-v3", `unexpected batch template: ${value.batchTemplateId}`);
   assert(value.batchCovenantId === "7".repeat(64), "batch voucher did not bind the stable covenant id");
   assert(value.batchVoucherAmount === "30000000", `unexpected batch voucher T: ${value.batchVoucherAmount}`);
+  assert(value.batchAuthorizationVersion === "kaspa-x402-batch-request-authorization-v1", "batch payload omitted request authorization");
   assert(value.batchCurrentTxid === "8".repeat(64), "batch payload did not carry the current outpoint");
   assert(value.batchBefore.A === "2500000", `unexpected A before request: ${value.batchBefore.A}`);
   assert(value.batchBefore.S === "1700000", `unexpected S before request: ${value.batchBefore.S}`);
@@ -304,6 +305,7 @@ function demoExerciseExpression() {
     batchTemplateId: batch.accepts[0].extra.templateId,
     batchCovenantId: batchPayment.payload.voucher.covenantId,
     batchVoucherAmount: batchPayment.payload.voucher.amount,
+    batchAuthorizationVersion: batchPayment.payload.authorization.version,
     batchCurrentTxid: batchPayment.payload.fundingOutpoint.txid,
     batchBefore: lanePreview.beforeRequest,
     batchAfterWork: lanePreview.afterSuccessfulWork,

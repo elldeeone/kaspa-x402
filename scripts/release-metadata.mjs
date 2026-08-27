@@ -40,9 +40,10 @@ export function releaseMetadataForHash(release) {
 }
 
 export function usesCompleteMetadataHash(version) {
-  return compareVersions(version, "0.1.0-alpha.11") >= 0;
+  return !isLegacyPublishedAlpha(version);
 }
 
-function compareVersions(left, right) {
-  return String(left).localeCompare(String(right), "en", { numeric: true });
+export function isLegacyPublishedAlpha(version) {
+  const match = /^0\.1\.0-alpha\.(\d+)$/.exec(String(version));
+  return Boolean(match && Number(match[1]) >= 1 && Number(match[1]) <= 10);
 }

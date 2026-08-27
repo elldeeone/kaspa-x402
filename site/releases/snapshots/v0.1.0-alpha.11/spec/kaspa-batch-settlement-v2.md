@@ -270,6 +270,13 @@ commits to the current request.
     "covenantId": "<32-byte covenant id hex>",
     "amount": "1000000",
     "signature": "<64-byte Schnorr signature hex>"
+  },
+  "authorization": {
+    "version": "kaspa-x402-batch-request-authorization-v1",
+    "expiresAt": "2026-08-27T12:00:00.000Z",
+    "nonce": "<32-byte random hex>",
+    "digest": "<32-byte authorization digest hex>",
+    "signature": "<64-byte Schnorr signature hex>"
   }
 }
 ```
@@ -290,12 +297,77 @@ commits to the current request.
     "covenantId": "<32-byte covenant id hex>",
     "amount": "3000000",
     "signature": "<64-byte Schnorr signature hex>"
+  },
+  "authorization": {
+    "version": "kaspa-x402-batch-request-authorization-v1",
+    "expiresAt": "2026-08-27T12:00:00.000Z",
+    "nonce": "<32-byte random hex>",
+    "digest": "<32-byte authorization digest hex>",
+    "signature": "<64-byte Schnorr signature hex>"
   }
 }
 ```
 
 The outpoint and script remain payload evidence for head synchronization. They
 are not part of the voucher digest.
+
+### Batch Request Authorization
+
+Every `deposit-voucher` and `voucher` payload MUST contain a fresh
+`authorization`. The authorization binds a reusable lifetime voucher to one
+HTTP or MCP operation; possession of a voucher alone does not authorize an
+unrelated request.
+
+`paymentRequirementsHash` is the batch requirements hash defined under
+[Commitment Identifier](#commitment-identifier). `requestHash` is the
+resource server's independently computed normalized request fingerprint.
+Construct the following object, using lowercase hex for every hex field:
+
+```json
+{
+  "scope": "kaspa-x402-batch-request-authorization-v1",
+  "network": "kaspa:testnet-10",
+  "channelId": "<lowercase channel id>",
+  "covenantId": "<lowercase covenant id>",
+  "amount": "3000000",
+  "paymentRequirementsHash": "<lowercase requirements hash>",
+  "requestHash": "<lowercase request fingerprint>",
+  "audience": "https://api.example.test/report.pdf",
+  "expiresAt": "2026-08-27T12:00:00.000Z",
+  "nonce": "<lowercase 32-byte random hex>"
+}
+```
+
+The fields have these meanings:
+
+- `amount` is the voucher's lifetime cumulative ceiling `T`, not the charge
+  for this request;
+- `audience` is the `PaymentRequired.resource.url` parsed as an absolute URL,
+  normalized by the URL standard, with its fragment removed;
+- `expiresAt` MUST parse as a timestamp strictly after verifier time and MUST
+  be no later than verifier time plus `maxTimeoutSeconds`;
+- `nonce` MUST be a fresh 32-byte value chosen by the client.
+
+Serialize the complete object as recursive canonical JSON: object keys sorted
+in ascending UTF-16 code-unit order, arrays retaining order, compact JSON
+encoding, and no whitespace. SHA-256 the UTF-8 serialization. The result MUST
+equal `authorization.digest`. `authorization.signature` MUST be a 64-byte
+Schnorr signature over those raw 32 digest bytes, signed by the x-only
+`channelConfig.clientPublicKey`; implementations MUST NOT sign the digest's
+hex text or a personal-message hash.
+
+The verifier MUST independently derive the channel, covenant, voucher amount,
+selected requirements hash, request hash, and audience before checking the
+digest and signature. A malformed, expired, overlong, incorrectly bound, or
+badly signed authorization MUST be rejected before new protected work starts.
+
+An expired authorization MAY be accepted only to finish an already-pending
+attempt whose protected handler result was durably staged before expiry. The
+retry MUST reproduce the original attempt id, authorization id, channel and
+covenant ids, request fingerprint, requirements hash, payment evidence,
+payment identifier, and maximum charge. It MUST reuse the staged result and
+MUST NOT invoke the protected handler. A fresh or conflicting authorization
+MUST NOT adopt that attempt.
 
 ### Claim
 
@@ -560,8 +632,9 @@ lane. For a `deposit-voucher` or `voucher` request it MUST:
 3. verify the latest on-chain `S` and current `V` from trusted UTXO data;
 4. calculate the required ceiling
    `requiredT = max(previousT, A + PaymentRequirements.amount)`;
-5. require `voucher.amount == requiredT`, verify the v2 digest and signature,
-   and enforce `0 <= S <= A <= T` plus `(T - S) + R <= V`;
+5. require `voucher.amount == requiredT`, verify the v2 voucher and request
+   authorization digests and signatures, enforce authorization expiry, and
+   enforce `0 <= S <= A <= T` plus `(T - S) + R <= V`;
 6. durably reserve a work attempt keyed by channel, payment identifier when
    present, and request fingerprint before invoking the protected handler;
 7. execute the protected handler only when that attempt has no staged result,
@@ -746,6 +819,9 @@ Implementations MUST reject:
 - a current outpoint that does not match durable state or same-id lineage;
 - a voucher for another network or covenant id, a bad signature, a decreasing
   `T`, or a snapshot violating the accounting/reserve invariants;
+- a missing, malformed, expired, overlong, incorrectly bound, or badly signed
+  batch request authorization, except the exact staged-result recovery case
+  defined above;
 - a claim with zero `D`, `D > T-S`, `D > A-S`, an invalid payout, fee taken
   from the successor, or a non-singleton same-id transition;
 - a top-up that changes `S`, fails to increase `V`, or creates another same-id
@@ -759,7 +835,9 @@ Implementations MUST reject:
 ## Interoperability Evidence
 
 Alpha.11 vectors MUST cover channel id, v2 voucher digest, structured
-requirements hash, request commitment, singleton genesis, partial claim and
+requirements hash, the batch request-authorization canonical preimage, digest,
+signer, signature, request and audience binding, valid/expired/overlong expiry
+decisions, request commitment, singleton genesis, partial claim and
 same-voucher reuse, top-up, refund, signed-int64 boundaries, reserve failures,
 concurrent attempts, and transaction-v1 full-consensus execution.
 

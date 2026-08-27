@@ -1,3 +1,5 @@
+import { isLegacyPublishedAlpha } from "./release-metadata.mjs";
+
 export function assertReleaseLocalSchema(schema, expectedId) {
   if (!schema || typeof schema !== "object" || Array.isArray(schema))
     throw new Error("release schema must be an object");
@@ -20,11 +22,7 @@ export function assertReleaseLocalSchema(schema, expectedId) {
 }
 
 export function requiresReleaseLocalSchemas(version) {
-  return compareVersions(version, "0.1.0-alpha.11") >= 0;
-}
-
-function compareVersions(left, right) {
-  return String(left).localeCompare(String(right), "en", { numeric: true });
+  return !isLegacyPublishedAlpha(version);
 }
 
 function visit(value, inspect) {
