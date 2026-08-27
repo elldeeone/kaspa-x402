@@ -2,7 +2,9 @@ import { paidMcpToolCall } from "@kaspa-x402/client";
 import { handlePaidMcpToolCall } from "@kaspa-x402/server";
 import { createMockDirectModeEnvironment } from "../lib/mock-direct-mode.mjs";
 
-const { client, server } = createMockDirectModeEnvironment();
+const { client, server } = createMockDirectModeEnvironment({
+  requirePaymentIdentifier: true,
+});
 const audience = "https://mcp.example.test";
 
 async function callTool(params) {

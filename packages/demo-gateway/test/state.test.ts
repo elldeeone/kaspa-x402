@@ -536,7 +536,13 @@ describe("gateway durable ledger", () => {
       ledger.acquireLock(CHANNEL_ID, "second", 1_100, 1_000),
     ).resolves.toBe(false);
     await expect(
+      ledger.renewLock(CHANNEL_ID, "first", 1_500, 1_000),
+    ).resolves.toBe(true);
+    await expect(
       ledger.acquireLock(CHANNEL_ID, "second", 2_001, 1_000),
+    ).resolves.toBe(false);
+    await expect(
+      ledger.acquireLock(CHANNEL_ID, "second", 2_501, 1_000),
     ).resolves.toBe(true);
     await ledger.releaseLock(CHANNEL_ID, "first");
     await expect(
@@ -567,20 +573,35 @@ describe("gateway durable ledger", () => {
       ledger.checkRateLimit("ip:exact", 180_001, 2, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
     const windows = await storage.list({ prefix: "rate-window:" });
-    expect([...windows.keys()]).toEqual(["rate-window:active"]);
+    expect([...windows.keys()]).toEqual(["rate-window:exact"]);
     expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
   });
 
-  it("fails closed when a rate window reaches its bounded scope capacity", async () => {
+  it("evicts the least-recently-used scope instead of denying a new client", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     for (let index = 0; index < 1_024; index += 1) {
       await expect(
-        ledger.checkRateLimit(`ip-${index}:exact`, 1_000, 1, 60_000),
+        ledger.checkRateLimit(`ip-${index}:exact`, index, 1, 60_000),
       ).resolves.toMatchObject({ allowed: true, count: 1 });
     }
     await expect(
-      ledger.checkRateLimit("overflow:exact", 1_000, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 2 });
+      ledger.checkRateLimit("overflow:exact", 2_000, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1 });
+    await expect(
+      ledger.checkRateLimit("ip-0:exact", 2_001, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: true, count: 1 });
+  });
+
+  it("isolates exact and batch rate windows", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    await ledger.checkRateLimit("ip:exact", 1_000, 1, 60_000);
+    await ledger.checkRateLimit("ip:batch", 1_000, 1, 60_000);
+    const windows = await storage.list({ prefix: "rate-window:" });
+    expect([...windows.keys()].sort()).toEqual([
+      "rate-window:batch",
+      "rate-window:exact",
+    ]);
   });
 
   it("does not reopen a rate window when wall-clock time moves backward", async () => {

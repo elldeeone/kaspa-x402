@@ -2,6 +2,7 @@ import {
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   KaspaX402Error,
+  stableStringify,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -395,6 +396,130 @@ export class RestKaspaChainProvider
     }
     await this.#client.waitForTransactionAccepted(parsed);
     return { transactionId: parsed.id, finality: "accepted" };
+  }
+}
+
+export class QuorumKaspaChainProvider
+  implements ServerChainProvider, TopUpVerifier
+{
+  readonly #primary: ServerChainProvider & TopUpVerifier;
+  readonly #secondary: ServerChainProvider & TopUpVerifier;
+  readonly #primaryClient: KaspaRestClient;
+  readonly #secondaryClient: KaspaRestClient;
+
+  constructor(
+    primary: ServerChainProvider & TopUpVerifier,
+    secondary: ServerChainProvider & TopUpVerifier,
+    primaryClient: KaspaRestClient,
+    secondaryClient: KaspaRestClient,
+  ) {
+    this.#primary = primary;
+    this.#secondary = secondary;
+    this.#primaryClient = primaryClient;
+    this.#secondaryClient = secondaryClient;
+  }
+
+  async getUtxo(outpoint: FundingOutpoint, network: NetworkId) {
+    return matchingEvidence(
+      "UTXO",
+      await Promise.all([
+        this.#primary.getUtxo(outpoint, network),
+        this.#secondary.getUtxo(outpoint, network),
+      ]),
+    );
+  }
+
+  async verifyCovenantGenesis(
+    request: Parameters<ServerChainProvider["verifyCovenantGenesis"]>[0],
+  ) {
+    return matchingEvidence(
+      "covenant genesis",
+      await Promise.all([
+        this.#primary.verifyCovenantGenesis(request),
+        this.#secondary.verifyCovenantGenesis(request),
+      ]),
+    );
+  }
+
+  async verifyTopUp(request: TopUpVerificationRequest) {
+    return matchingEvidence(
+      "covenant top-up",
+      await Promise.all([
+        this.#primary.verifyTopUp(request),
+        this.#secondary.verifyTopUp(request),
+      ]),
+    );
+  }
+
+  async getVirtualDaaScore(): Promise<SompiString> {
+    const [primary, secondary] = await Promise.all([
+      this.#primary.getVirtualDaaScore(),
+      this.#secondary.getVirtualDaaScore(),
+    ]);
+    return (BigInt(primary) < BigInt(secondary) ? primary : secondary) as SompiString;
+  }
+
+  async estimateClaimFee(request: Parameters<ServerChainProvider["estimateClaimFee"]>[0]) {
+    return matchingEvidence(
+      "claim fee",
+      await Promise.all([
+        this.#primary.estimateClaimFee(request),
+        this.#secondary.estimateClaimFee(request),
+      ]),
+    );
+  }
+
+  async sendTransaction(transaction: PreparedTransaction) {
+    const broadcast = await this.#primary.sendTransaction(transaction);
+    const [primaryId, secondaryId] = await Promise.all([
+      this.#primaryClient.assertPreparedTransactionAccepted(transaction),
+      this.#secondaryClient.assertPreparedTransactionAccepted(transaction),
+    ]);
+    if (
+      broadcast.transactionId.toLowerCase() !== primaryId ||
+      primaryId !== secondaryId
+    )
+      throw invalidTransaction("independent chain evidence disagrees on the broadcast transaction");
+    return { transactionId: primaryId, finality: "accepted" } as const;
+  }
+}
+
+export class QuorumExactTransactionVerifier
+  implements ExactTransactionVerifier
+{
+  constructor(
+    readonly primary: ExactTransactionVerifier,
+    readonly secondary: ExactTransactionVerifier,
+  ) {}
+
+  async verifyExactPayment(request: ExactTransactionVerificationRequest) {
+    return matchingEvidence(
+      "exact payment",
+      await Promise.all([
+        this.primary.verifyExactPayment(request),
+        this.secondary.verifyExactPayment(request),
+      ]),
+    );
+  }
+}
+
+export class QuorumExactHeadReconciler implements ExactHeadReconciler {
+  constructor(
+    readonly primary: ExactHeadReconciler,
+    readonly secondary: ExactHeadReconciler,
+  ) {}
+
+  async reconcileExactHead(
+    head: ExactHeadRecord,
+    candidateTransactionIds: readonly Hash32Hex[] = [],
+  ) {
+    return matchingEvidence(
+      "exact head",
+      await Promise.all([
+        this.primary.reconcileExactHead(head, candidateTransactionIds),
+        this.secondary.reconcileExactHead(head, candidateTransactionIds),
+      ]),
+    );
   }
 }
 
@@ -1537,6 +1662,14 @@ export class KaspaRestClient {
     );
   }
 
+  async assertPreparedTransactionAccepted(
+    transaction: PreparedTransaction,
+  ): Promise<Hash32Hex> {
+    const parsed = parseSafeTransactionArtifact(transaction);
+    await this.waitForTransactionAccepted(parsed);
+    return parsed.id;
+  }
+
   async #transactionAccepted(transactionId: string): Promise<boolean> {
     const result = await this.#json<RestTxAcceptanceResponse[]>(
       "/transactions/acceptance",
@@ -1588,6 +1721,13 @@ export class KaspaRestClient {
       clearTimeout(timeout);
     }
   }
+}
+
+function matchingEvidence<T>(label: string, values: readonly [T, T]): T {
+  if (stableStringify(values[0]) !== stableStringify(values[1])) {
+    throw invalidTransaction(`independent chain evidence disagrees on ${label}`);
+  }
+  return values[0];
 }
 
 class RestNotFoundError extends Error {}

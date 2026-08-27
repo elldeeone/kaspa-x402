@@ -36,6 +36,25 @@ describe("kaspa-x402 CLI", () => {
     expect(report.covenantFixtureChecks).toBeGreaterThanOrEqual(22);
   });
 
+  it("treats --root as data and never imports validator code from it", () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-root-"));
+    const marker = path.join(dir, "executed");
+    fs.mkdirSync(path.join(dir, "scripts"));
+    fs.writeFileSync(
+      path.join(dir, "scripts", "validate-schemas.mjs"),
+      `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marker)}, "executed");`,
+    );
+    for (const name of ["schemas", "vectors", "contracts"]) {
+      fs.symlinkSync(path.join(root, name), path.join(dir, name), "dir");
+    }
+
+    const report = JSON.parse(
+      run("vectors", "verify", "--root", dir, "--json"),
+    ) as { ok: boolean };
+    expect(report.ok).toBe(true);
+    expect(fs.existsSync(marker)).toBe(false);
+  });
+
   it("inspects and verifies exact payloads", () => {
     const fixture = readJson("vectors/x402-http/exact-transaction.json") as {
       paymentRequired: unknown;

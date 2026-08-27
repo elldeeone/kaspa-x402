@@ -1,7 +1,9 @@
 #!/usr/bin/env node
 import fs from "node:fs";
 import path from "node:path";
-import { fileURLToPath, pathToFileURL } from "node:url";
+import { fileURLToPath } from "node:url";
+
+import { validateSchemasAndVectors } from "../../../scripts/validate-schemas.mjs";
 
 import {
   X402_VERSION,
@@ -156,18 +158,7 @@ async function verifyVectors(
   io: CliIo,
 ): Promise<Record<string, unknown>> {
   const root = optionString(parsed, "root") ?? findRepoRoot(io.cwd);
-  const validatorPath = path.join(root, "scripts", "validate-schemas.mjs");
-  if (!fs.existsSync(validatorPath)) {
-    throw new CliError(`cannot find vector validator at ${validatorPath}`);
-  }
-
-  const module = (await import(pathToFileURL(validatorPath).href)) as {
-    validateSchemasAndVectors(options?: { root?: string }): {
-      schemaCount: number;
-      vectorCount: number;
-    };
-  };
-  const report = module.validateSchemasAndVectors({ root });
+  const report = validateSchemasAndVectors({ root });
   const fixtureReport = await verifyCovenantFixture(root);
   return {
     ok: true,

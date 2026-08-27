@@ -67,7 +67,7 @@ type PaymentIdentifierReservation = {
 
 type RateWindowRecord = {
   resetAt: number;
-  counts: Record<string, number>;
+  counts: Record<string, { count: number; lastSeenAt: number }>;
 };
 
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
@@ -129,6 +129,7 @@ export type GatewayStateMethod =
   | "applyClaimAttempt"
   | "abandonClaimAttempt"
   | "acquireLock"
+  | "renewLock"
   | "releaseLock"
   | "checkRateLimit"
   | "loadCanaryReport"
@@ -834,6 +835,21 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
+  async renewLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const current = await txn.get<LockRecord>(lockKey(key));
+      if (!current || current.token !== token || current.expiresAt <= nowMs)
+        return false;
+      await txn.put(lockKey(key), { token, expiresAt: nowMs + ttlMs });
+      return true;
+    });
+  }
+
   async checkRateLimit(
     scope: string,
     nowMs: number,
@@ -843,7 +859,7 @@ export class GatewayLedger implements ServerStateStore {
     if (limit <= 0)
       return { allowed: true, count: 0, resetAt: nowMs + windowMs };
     const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
-    const key = rateWindowKey();
+    const key = rateWindowKey(scope);
     const scopeHash = sha256Hex(scope);
     return this.#storage.transaction(async (txn) => {
       const stored = await txn.get<RateWindowRecord>(key);
@@ -856,10 +872,15 @@ export class GatewayLedger implements ServerStateStore {
         previous === undefined &&
         Object.keys(current.counts).length >= MAX_RATE_SCOPES_PER_WINDOW
       ) {
-        return { allowed: false, count: limit + 1, resetAt: current.resetAt };
+        const oldest = Object.entries(current.counts).sort(
+          ([leftHash, left], [rightHash, right]) =>
+            left.lastSeenAt - right.lastSeenAt ||
+            leftHash.localeCompare(rightHash),
+        )[0];
+        if (oldest) delete current.counts[oldest[0]];
       }
-      const count = (previous ?? 0) + 1;
-      current.counts[scopeHash] = count;
+      const count = (previous?.count ?? 0) + 1;
+      current.counts[scopeHash] = { count, lastSeenAt: nowMs };
       await txn.put(key, current);
       return { allowed: count <= limit, count, resetAt: current.resetAt };
     });
@@ -937,9 +958,30 @@ export class DurableGatewayLockManager implements ChannelLockManager {
         throw new Error("gateway lock acquisition timed out");
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
+    let lost = false;
+    let renewal = Promise.resolve();
+    const heartbeat = setInterval(() => {
+      renewal = renewal.then(async () => {
+        if (
+          !(await this.#state.renewLock(
+            channelId,
+            token,
+            Date.now(),
+            this.#ttlMs,
+          ))
+        )
+          lost = true;
+      });
+    }, Math.max(10, Math.floor(this.#ttlMs / 3)));
     try {
-      return await fn();
+      const result = await fn();
+      clearInterval(heartbeat);
+      await renewal;
+      if (lost) throw new Error("gateway lock lease was lost during protected work");
+      return result;
     } finally {
+      clearInterval(heartbeat);
+      await renewal;
       await this.#state.releaseLock(channelId, token);
     }
   }
@@ -948,6 +990,12 @@ export class DurableGatewayLockManager implements ChannelLockManager {
 export type GatewayStateClient = ServerStateStore & {
   exactHeadStats(): Promise<ExactHeadStats>;
   acquireLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean>;
+  renewLock(
     key: string,
     token: string,
     nowMs: number,
@@ -1195,6 +1243,20 @@ export async function dispatchGatewayState(
     case "releaseLock": {
       const payload = readPayload<{ key: string; token: string }>(request);
       return ledger.releaseLock(payload.key, payload.token);
+    }
+    case "renewLock": {
+      const payload = readPayload<{
+        key: string;
+        token: string;
+        nowMs: number;
+        ttlMs: number;
+      }>(request);
+      return ledger.renewLock(
+        payload.key,
+        payload.token,
+        payload.nowMs,
+        payload.ttlMs,
+      );
     }
     case "checkRateLimit": {
       const payload = readPayload<{
@@ -1491,8 +1553,9 @@ function lockKey(key: string): string {
   return `lock:${key.toLowerCase()}`;
 }
 
-function rateWindowKey(): string {
-  return "rate-window:active";
+function rateWindowKey(scope: string): string {
+  const profile = scope.slice(scope.lastIndexOf(":") + 1);
+  return `rate-window:${profile === "batch" ? "batch" : "exact"}`;
 }
 
 function canaryReportKey(): string {

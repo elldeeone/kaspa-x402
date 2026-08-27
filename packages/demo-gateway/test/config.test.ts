@@ -16,6 +16,22 @@ const BASE_ENV: GatewayEnv = {
 };
 
 describe("gateway config", () => {
+  it("requires a distinct independent chain evidence origin when enabled", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GATEWAY_ENABLED: "true",
+      }),
+    ).toThrow("CHAIN_EVIDENCE_API_BASE is required");
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GATEWAY_ENABLED: "true",
+        KASPA_X402_CHAIN_EVIDENCE_API_BASE:
+          "https://api-tn10.kaspa.org/independent-in-name-only",
+      }),
+    ).toThrow("independent origins");
+  });
   it("rejects exact offers below the reference on-chain output policy", () => {
     expect(() =>
       readGatewayConfig({

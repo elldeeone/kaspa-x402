@@ -1572,6 +1572,7 @@ export function validateSchemasAndVectors(options = {}) {
 
 if (
   process.argv[1] &&
+  path.basename(process.argv[1]) === "validate-schemas.mjs" &&
   path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)
 ) {
   validateSchemasAndVectors();

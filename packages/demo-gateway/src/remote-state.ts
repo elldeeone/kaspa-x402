@@ -275,6 +275,15 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("acquireLock", { key, token, nowMs, ttlMs });
   }
 
+  renewLock(
+    key: string,
+    token: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    return this.#call("renewLock", { key, token, nowMs, ttlMs });
+  }
+
   releaseLock(key: string, token: string): Promise<void> {
     return this.#call("releaseLock", { key, token });
   }

@@ -1,6 +1,8 @@
 import { createMockDirectModeEnvironment } from "../lib/mock-direct-mode.mjs";
 
-const { client } = createMockDirectModeEnvironment();
+const { client } = createMockDirectModeEnvironment({
+  requirePaymentIdentifier: true,
+});
 
 const exact = await client.paidFetch("https://api.example.test/download", {
   paymentIdentifier: "http_exact_download_1",

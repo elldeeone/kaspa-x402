@@ -21,7 +21,7 @@ export const CLIENT_PUBLIC_KEY = "22".repeat(32);
 export const REFUND_ADDRESS = "kaspatest:refund";
 export const PAYOUT_ADDRESS = "kaspatest:payout";
 
-export function createMockDirectModeEnvironment() {
+export function createMockDirectModeEnvironment({ requirePaymentIdentifier = false } = {}) {
   const chainProvider = new MockChainProvider();
   const fundingProvider = new MockFundingProvider(chainProvider);
   const addressCodec = new MockAddressCodec();
@@ -127,6 +127,7 @@ export function createMockDirectModeEnvironment() {
       },
     },
     exactProfile: "standard-native",
+    requirePaymentIdentifier,
   });
   const client = new DirectModeClient({
     fundingProvider,

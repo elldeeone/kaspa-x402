@@ -1,6 +1,7 @@
 import { createMockDirectModeEnvironment, mockHash, X402_VERSION } from "../lib/mock-direct-mode.mjs";
 
-const { client, facilitator, server, serverStore } = createMockDirectModeEnvironment();
+const { client, facilitator, server, serverStore } =
+  createMockDirectModeEnvironment({ requirePaymentIdentifier: true });
 
 const batch = await client.paidFetch("https://api.example.test/metered", {
   paymentIdentifier: "recovery_batch_1",

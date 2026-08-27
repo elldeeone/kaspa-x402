@@ -18,6 +18,7 @@ import {
   KaspaRestClient,
   NativeAddressCodec,
   NativeChannelSignatureVerifier,
+  QuorumExactTransactionVerifier,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -1672,6 +1673,29 @@ describe("NativeChannelSignatureVerifier", () => {
         purpose: "voucher",
       }),
     ).toBe(false);
+  });
+});
+
+describe("independent chain evidence quorum", () => {
+  it("fails closed when exact-payment providers disagree", async () => {
+    const primary = {
+      async verifyExactPayment() {
+        return { transactionId: "11".repeat(32), finality: "accepted" };
+      },
+    };
+    const secondary = {
+      async verifyExactPayment() {
+        return { transactionId: "22".repeat(32), finality: "accepted" };
+      },
+    };
+    const verifier = new QuorumExactTransactionVerifier(
+      primary as never,
+      secondary as never,
+    );
+
+    await expect(verifier.verifyExactPayment({} as never)).rejects.toThrow(
+      "independent chain evidence disagrees",
+    );
   });
 });
 

@@ -24,6 +24,9 @@ import {
   NativeAddressCodec,
   NativeChannelSignatureVerifier,
   PnnBroadcastChainProvider,
+  QuorumExactHeadReconciler,
+  QuorumExactTransactionVerifier,
+  QuorumKaspaChainProvider,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -253,10 +256,20 @@ export async function runGatewayCanary(
 
   checks.push(
     await checked("kaspa-rest", async () => {
-      const chain = await new KaspaRestClient(config.chainApiBase).health();
+      if (!config.chainEvidenceApiBase)
+        throw new Error("independent chain evidence API is required");
+      const [chain, evidence] = await Promise.all([
+        new KaspaRestClient(config.chainApiBase).health(),
+        new KaspaRestClient(config.chainEvidenceApiBase).health(),
+      ]);
+      if (
+        chain.networkName !== evidence.networkName ||
+        chain.virtualDaaScore !== evidence.virtualDaaScore
+      )
+        throw new Error("independent chain health evidence disagrees");
       return {
-        detail: "REST chain health returned testnet-10 evidence",
-        evidence: chain,
+        detail: "independent REST sources returned matching testnet-10 evidence",
+        evidence: { primary: chain, secondary: evidence },
       };
     }),
   );
@@ -424,7 +437,38 @@ async function createGateway(
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const rest = new KaspaRestClient(config.chainApiBase);
-  const currentDaa = BigInt(await rest.getVirtualDaaScore());
+  if (!config.chainEvidenceApiBase)
+    throw new Error("independent chain evidence API is required");
+  const evidenceRest = new KaspaRestClient(config.chainEvidenceApiBase);
+  const restChainProvider = new RestKaspaChainProvider(
+    rest,
+    book,
+    config.claimFeeSompi,
+  );
+  const evidenceChainProvider = new RestKaspaChainProvider(
+    evidenceRest,
+    book,
+    config.claimFeeSompi,
+  );
+  const broadcaster =
+    config.chainBroadcastMode === "pnn"
+      ? new PnnBroadcastChainProvider(
+          restChainProvider,
+          book,
+          new KaspaPnnClient({
+            endpoints: config.pnnEndpoints,
+            timeoutMs: config.pnnTimeoutMs,
+            attempts: config.pnnAttempts,
+          }),
+        )
+      : restChainProvider;
+  const chainProvider = new QuorumKaspaChainProvider(
+    broadcaster,
+    evidenceChainProvider,
+    rest,
+    evidenceRest,
+  );
+  const currentDaa = BigInt(await chainProvider.getVirtualDaaScore());
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -445,11 +489,6 @@ async function createGateway(
       "computed refund DAA crosses the consensus timestamp boundary",
     );
   }
-  const restChainProvider = new RestKaspaChainProvider(
-    rest,
-    book,
-    config.claimFeeSompi,
-  );
   const store = new AddressRecordingStore(state, book);
   const server = new DirectModeServer({
     network: config.network,
@@ -466,23 +505,18 @@ async function createGateway(
     maximumRefundHorizonDaa: config.refundTimeoutDaaDelta,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     store,
-    chainProvider:
-      config.chainBroadcastMode === "pnn"
-        ? new PnnBroadcastChainProvider(
-            restChainProvider,
-            book,
-            new KaspaPnnClient({
-              endpoints: config.pnnEndpoints,
-              timeoutMs: config.pnnTimeoutMs,
-              attempts: config.pnnAttempts,
-            }),
-          )
-        : restChainProvider,
+    chainProvider,
     addressCodec,
     channelSignatureVerifier: new NativeChannelSignatureVerifier(),
-    exactTransactionVerifier: new RestExactTransactionVerifier(rest),
-    exactHeadReconciler: new RestExactHeadReconciler(rest),
-    topUpVerifier: restChainProvider,
+    exactTransactionVerifier: new QuorumExactTransactionVerifier(
+      new RestExactTransactionVerifier(rest),
+      new RestExactTransactionVerifier(evidenceRest),
+    ),
+    exactHeadReconciler: new QuorumExactHeadReconciler(
+      new RestExactHeadReconciler(rest),
+      new RestExactHeadReconciler(evidenceRest),
+    ),
+    topUpVerifier: chainProvider,
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
