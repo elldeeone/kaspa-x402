@@ -4,6 +4,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { decodePaymentRequiredHeader } from "../packages/core/dist/index.js";
+import { readBoundedResponseText } from "./read-bounded-response.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const gatewayDir = path.join(root, "packages/demo-gateway");
@@ -193,7 +194,12 @@ async function getJson(url, init) {
   const response = await smokeFetch(url, init);
   return {
     status: response.status,
-    body: JSON.parse(await readBoundedText(response)),
+    body: JSON.parse(
+      await readBoundedResponseText(response, {
+        maxBytes: MAX_RESPONSE_BYTES,
+        tooLargeMessage: "gateway smoke response exceeded the size limit",
+      }),
+    ),
   };
 }
 
@@ -203,27 +209,6 @@ async function smokeFetch(url, init = {}) {
     redirect: "error",
     signal: AbortSignal.timeout(timeoutMs),
   });
-}
-
-async function readBoundedText(response) {
-  const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES)
-    throw new Error("gateway smoke response exceeded the size limit");
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) return text + decoder.decode();
-    bytes += chunk.value.byteLength;
-    if (bytes > MAX_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new Error("gateway smoke response exceeded the size limit");
-    }
-    text += decoder.decode(chunk.value, { stream: true });
-  }
 }
 
 async function openPort() {

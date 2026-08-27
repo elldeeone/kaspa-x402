@@ -34,6 +34,7 @@ import {
   assertHostedSettlementHeadPinned,
 } from "./hosted-offer-pins.mjs";
 import { normalizedBaseUrl } from "./demo-exact-heads.mjs";
+import { readBoundedResponseText } from "./read-bounded-response.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
@@ -756,7 +757,7 @@ async function fetchPaymentRequired(url) {
   const response = await gatewayFetch(url);
   if (response.status !== 402)
     throw new Error(
-      `${safeUrlLabel(url)} expected 402, got ${response.status}: ${await readBoundedResponseText(response)}`,
+      `${safeUrlLabel(url)} expected 402, got ${response.status}: ${await readGatewayResponseText(response)}`,
     );
   const header = response.headers.get(PAYMENT_REQUIRED_HEADER);
   if (!header) throw new Error(`${safeUrlLabel(url)} missing PAYMENT-REQUIRED`);
@@ -770,7 +771,7 @@ async function submitPayment(url, paymentPayload, { expectStatus, label }) {
     redirect: "error",
     headers: { [PAYMENT_SIGNATURE_HEADER]: header },
   });
-  const text = await readBoundedResponseText(response);
+  const text = await readGatewayResponseText(response);
   const body = parseJson(text);
   if (response.status !== expectStatus) {
     throw new Error(
@@ -801,7 +802,7 @@ async function gatewayAdminRequest(baseUrl, pathName, adminToken, init = {}) {
       ...init.headers,
     },
   });
-  const text = await readBoundedResponseText(response);
+  const text = await readGatewayResponseText(response);
   const body = parseJson(text);
   if (!response.ok || body?.ok === false)
     throw new Error(
@@ -1106,26 +1107,11 @@ function safeUrlLabel(value) {
   }
 }
 
-async function readBoundedResponseText(response) {
-  const contentLength = Number(response.headers.get("content-length"));
-  if (Number.isFinite(contentLength) && contentLength > MAX_GATEWAY_RESPONSE_BYTES) {
-    throw new Error("gateway response exceeded the size limit");
-  }
-  if (!response.body) return "";
-  const reader = response.body.getReader();
-  const decoder = new TextDecoder();
-  let bytes = 0;
-  let text = "";
-  for (;;) {
-    const chunk = await reader.read();
-    if (chunk.done) return text + decoder.decode();
-    bytes += chunk.value.byteLength;
-    if (bytes > MAX_GATEWAY_RESPONSE_BYTES) {
-      await reader.cancel();
-      throw new Error("gateway response exceeded the size limit");
-    }
-    text += decoder.decode(chunk.value, { stream: true });
-  }
+function readGatewayResponseText(response) {
+  return readBoundedResponseText(response, {
+    maxBytes: MAX_GATEWAY_RESPONSE_BYTES,
+    tooLargeMessage: "gateway response exceeded the size limit",
+  });
 }
 
 function markOutpointSpent(spentOutpoints, outpoint) {

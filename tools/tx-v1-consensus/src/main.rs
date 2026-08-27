@@ -40,7 +40,7 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
 
-const EXPECTED_SOURCE_COMMIT: &str = "78257f273a26c4be085bab0f79437dee99ca8835";
+const EXPECTED_SOURCE_COMMIT: &str = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
 const STORAGE_MASS_PARAMETER: u64 = 1_000_000_000_000;
 const POST_TOCCATA_DAA_SCORE: u64 = 600_000_000;
 const EXACT_FEE_SOMPI: u64 = 200_000;
@@ -1262,14 +1262,13 @@ fn transaction_validator() -> TransactionValidator {
     TransactionValidator::new(
         params.max_tx_inputs,
         params.max_tx_outputs,
-        params.max_signature_script_len(),
+        params.max_signature_script_len,
         params.max_script_public_key_len,
         params.coinbase_payload_script_public_key_max_len,
         params.coinbase_maturity(),
         params.ghostdag_k(),
         Default::default(),
         MassCalculator::new_with_consensus_params(&params),
-        params.toccata_activation,
         params.mass_per_sig_op,
     )
 }
@@ -1368,7 +1367,6 @@ fn measure_input_units(tx: &Transaction, entries: &[UtxoEntry], input_index: usi
         .with_reused(&reused)
         .with_covenants_ctx(&covenants);
     let flags = EngineFlags {
-        covenants_enabled: true,
         sigop_script_units: Gram(TESTNET_PARAMS.mass_per_sig_op).into(),
     };
     let mut engine = TxScriptEngine::from_transaction_input(
@@ -2095,10 +2093,7 @@ fn execute_populated_input(
             input_index,
             utxo,
             ctx,
-            EngineFlags {
-                covenants_enabled: true,
-                ..Default::default()
-            },
+            EngineFlags::default(),
         )
         .with_opcode_execution_log_buffer(&mut execution_log);
         engine.execute()

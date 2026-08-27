@@ -30,7 +30,7 @@ jobs:
         run: |
           git init --quiet "$RUNNER_TEMP/rusty-kaspa"
           git -C "$RUNNER_TEMP/rusty-kaspa" remote add origin https://github.com/kaspanet/rusty-kaspa.git
-          git -C "$RUNNER_TEMP/rusty-kaspa" fetch --quiet --depth=1 origin 78257f273a26c4be085bab0f79437dee99ca8835
+          git -C "$RUNNER_TEMP/rusty-kaspa" fetch --quiet --depth=1 origin c338d495bec29e4dc8b5149f99e8db6fa916ed4a
           git -C "$RUNNER_TEMP/rusty-kaspa" checkout --quiet --detach FETCH_HEAD
       - name: Rusty Kaspa consensus oracle and generated vector checks
         env:

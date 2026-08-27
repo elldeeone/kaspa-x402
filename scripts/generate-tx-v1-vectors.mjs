@@ -63,7 +63,7 @@ const consensusValidation = {
   status: "full-consensus-cross-validated",
   tool: "kaspa-consensus",
   toolVersion: "2.0.1",
-  sourceCommit: "78257f273a26c4be085bab0f79437dee99ca8835",
+  sourceCommit: "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
   command:
     "KASPA_X402_KASPA_CONSENSUS_ROOT=<kaspa-consensus-checkout> npm run validate:tx-v1-consensus",
   checkedFields: [

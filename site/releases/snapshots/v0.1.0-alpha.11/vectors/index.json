@@ -17,7 +17,7 @@
   {
     "path": "/vectors/exact/consensus-profiles.json",
     "bytes": 8238,
-    "sha256": "ade8af92f002fc36f5abc80a7a69e698732e8d0956965d17a79ab2463c6706ec"
+    "sha256": "8641cbaeb84289ac0e3fd87771b1356e3ce9762614b5d23fbfed1e2c426ac809"
   },
   {
     "path": "/vectors/exact/interop-v1.json",
@@ -187,27 +187,27 @@
   {
     "path": "/vectors/tx-v1/batch-claim-second.json",
     "bytes": 23991,
-    "sha256": "dfdd9839f6b8758413ca089c2a81c6db8715d2233b503b3e81f0cee29542849d"
+    "sha256": "9f68501fa75551e922794dcde408b4e388f477c8d9fbb69507a9f6280846bded"
   },
   {
     "path": "/vectors/tx-v1/batch-claim.json",
     "bytes": 23996,
-    "sha256": "9790caae4c8da876d1294800b8f7199eacf03a9865e3cf79a457c5dbd9cc6e1a"
+    "sha256": "92c095d5986fe17f67b43707adca2dd489f97e136f50dbd8c21667626b5f0f1c"
   },
   {
     "path": "/vectors/tx-v1/batch-genesis.json",
     "bytes": 11120,
-    "sha256": "d3334d7b81d50343806ce35b68637cba69223d0407022225f3874dccbadcd0e4"
+    "sha256": "4181fdf4f5e567c2245a2e5a51c75cbe47cc987eae63c1b8d61f44413f8141ae"
   },
   {
     "path": "/vectors/tx-v1/batch-refund.json",
     "bytes": 17285,
-    "sha256": "f7eecdfb1797f5defee2cea6be774a9f1f8b62b6e0ee02d0d978cbae13d4e99e"
+    "sha256": "a96d4faf7b172f728ae01b4e59427ff4c0fa9770ba1315b1c07936192da0314c"
   },
   {
     "path": "/vectors/tx-v1/batch-top-up.json",
     "bytes": 25302,
-    "sha256": "5c330d8e2a05621afb4f313b2bfa6cc608668a262a569685489cbaf6e6038e6f"
+    "sha256": "0a52dbf8c7a4ac2beabb8c566f1cc09fec1de81692d9c988a5a011d2bb80ef28"
   },
   {
     "path": "/vectors/tx-v1/plan.json",

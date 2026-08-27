@@ -5,7 +5,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-const EXPECTED_COMMIT = "78257f273a26c4be085bab0f79437dee99ca8835";
+const EXPECTED_COMMIT = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
 const EXPECTED_VERSION = "2.0.1";
 const CONSENSUS_SOURCE_PATHS = [
   "Cargo.lock",
