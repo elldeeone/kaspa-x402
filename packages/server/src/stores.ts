@@ -77,6 +77,15 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   #setChannel(channel: ServerChannelRecord): void {
+    const { channelId, covenantId } = this.#assertChannelBinding(channel);
+    this.#channelByCovenantId.set(covenantId, channelId);
+    this.#channels.set(channelId, clone(channel));
+  }
+
+  #assertChannelBinding(channel: ServerChannelRecord): {
+    channelId: Hash32Hex;
+    covenantId: Hash32Hex;
+  } {
     const channelId = channel.channelId.toLowerCase() as Hash32Hex;
     const covenantId = channel.covenantId.toLowerCase() as Hash32Hex;
     const current = this.#channels.get(channelId);
@@ -89,8 +98,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
         "covenant lineage is already registered to another channel",
       );
     }
-    this.#channelByCovenantId.set(covenantId, channelId);
-    this.#channels.set(channelId, clone(channel));
+    return { channelId, covenantId };
   }
 
   async loadCommitment(
@@ -130,10 +138,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const channel = clone(record.channel);
     if (paymentIdentifier)
       this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    this.#assertChannelBinding(channel);
     this.#commitments.set(commitment.commitmentId, commitment);
     if (paymentIdentifier)
       this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
-    this.#channels.set(channel.channelId, channel);
+    this.#setChannel(channel);
     this.#batchAttempts.set(attempt.attemptId, {
       ...attempt,
       status: "applied",
@@ -604,7 +613,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
     ) {
       throw new Error("channel state changed before claim apply");
     }
-    this.#channels.set(channel.channelId, clone(channel));
+    this.#setChannel(channel);
     this.#claimAttempts.set(currentAttempt.attemptId, {
       ...clone(currentAttempt),
       status: "applied",

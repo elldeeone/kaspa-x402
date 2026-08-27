@@ -56,6 +56,46 @@ describe("gateway durable ledger", () => {
     await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
   });
 
+  it("preserves covenant lineage ownership through settlement and restart", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const first = channel();
+    await ledger.saveChannel(first);
+    await ledger.retireChannel(first.channelId);
+    ledger = new GatewayLedger(storage);
+    const alias = channel({
+      channelId: "12".repeat(32),
+      channelConfig: {
+        ...first.channelConfig,
+        salt: "13".repeat(32),
+      },
+    });
+    const attempt = batchSettlementAttempt(alias);
+    await ledger.claimBatchSettlement(attempt);
+    await ledger.beginBatchHandler(
+      attempt.attemptId,
+      "2026-07-07T00:00:01.000Z",
+    );
+    await ledger.recordBatchHandlerResult(
+      attempt.attemptId,
+      { chargedAmount: "100" },
+      "2026-07-07T00:00:02.000Z",
+    );
+    const commit = settlementCommit(alias, {
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+
+    await expect(ledger.commitSettlement(commit)).rejects.toThrow(
+      "covenant lineage is already registered",
+    );
+    await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
+    await expect(
+      ledger.loadCommitment(commit.commitment.commitmentId),
+    ).resolves.toBeUndefined();
+  });
+
   it("commits exact transaction ids once while allowing identical retries", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = exactPayment({ paymentOutputIndex: 1 });

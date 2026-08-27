@@ -110,6 +110,36 @@ function defineStoreContract(factory: StoreFactory): void {
     ).rejects.toThrow("lineage cannot change");
   });
 
+  it("preserves covenant lineage ownership through settlement and retirement", async () => {
+    const first = channel();
+    let store = await factory.create([first]);
+    await store.retireChannel(first.channelId);
+    if (store instanceof DurableMockServerChannelStore) {
+      store = await store.restart();
+    }
+    const alias = channel({
+      channelId: "1c".repeat(32),
+      channelConfig: {
+        ...first.channelConfig,
+        salt: "1d".repeat(32),
+      },
+    });
+    const commit = settlementCommit(alias, {
+      chargedCumulativeAmount: "100",
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+    await stageBatchAttempt(store, commit);
+
+    await expect(store.commitSettlement(commit)).rejects.toThrow(
+      "covenant lineage is already registered",
+    );
+    await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
+    await expect(
+      store.loadCommitment(commit.commitment.commitmentId),
+    ).resolves.toBeUndefined();
+  });
+
   it("consumes exact transaction ids once while allowing identical retries", async () => {
     const store = await factory.create();
     const first = exactPayment({ paymentOutputIndex: 1 });

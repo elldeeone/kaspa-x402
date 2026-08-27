@@ -151,25 +151,7 @@ export class GatewayLedger implements ServerStateStore {
 
   async saveChannel(channel: ServerChannelRecord): Promise<void> {
     await this.#storage.transaction(async (txn) => {
-      const channelId = channel.channelId.toLowerCase();
-      const covenantId = channel.covenantId.toLowerCase();
-      const current = await txn.get<ServerChannelRecord>(channelKey(channelId));
-      if (current && current.covenantId.toLowerCase() !== covenantId) {
-        throw new Error("channel covenant lineage cannot change");
-      }
-      const registeredChannelId = await txn.get<string>(
-        covenantChannelKey(covenantId),
-      );
-      if (
-        registeredChannelId &&
-        registeredChannelId.toLowerCase() !== channelId
-      ) {
-        throw new Error(
-          "covenant lineage is already registered to another channel",
-        );
-      }
-      await txn.put(covenantChannelKey(covenantId), channelId);
-      await txn.put(channelKey(channelId), clone(channel));
+      await putChannel(txn, channel);
     });
   }
 
@@ -642,6 +624,7 @@ export class GatewayLedger implements ServerStateStore {
       }
       if (record.paymentIdentifier)
         await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+      await putChannel(txn, record.channel);
       await txn.put(
         commitmentKey(record.commitment.commitmentId),
         clone(record.commitment),
@@ -651,10 +634,6 @@ export class GatewayLedger implements ServerStateStore {
           paymentIdentifierKey(record.paymentIdentifier.id),
           clone(record.paymentIdentifier),
         );
-      await txn.put(
-        channelKey(record.channel.channelId),
-        clone(record.channel),
-      );
       await txn.put(batchAttemptKey(attempt.attemptId), {
         ...attempt,
         status: "applied",
@@ -767,7 +746,7 @@ export class GatewayLedger implements ServerStateStore {
       if (!matchesClaimSnapshot(currentChannel, currentAttempt)) {
         throw new Error("channel state changed before claim apply");
       }
-      await txn.put(channelKey(channel.channelId), clone(channel));
+      await putChannel(txn, channel);
       await txn.put(claimAttemptKey(currentAttempt.attemptId), {
         ...clone(currentAttempt),
         status: "applied",
@@ -1221,6 +1200,31 @@ async function assertPaymentIdentifierAvailable(
       "payment identifier was already committed for a different payment",
     );
   }
+}
+
+async function putChannel(
+  txn: GatewayTransaction,
+  channel: ServerChannelRecord,
+): Promise<void> {
+  const channelId = channel.channelId.toLowerCase();
+  const covenantId = channel.covenantId.toLowerCase();
+  const current = await txn.get<ServerChannelRecord>(channelKey(channelId));
+  if (current && current.covenantId.toLowerCase() !== covenantId) {
+    throw new Error("channel covenant lineage cannot change");
+  }
+  const registeredChannelId = await txn.get<string>(
+    covenantChannelKey(covenantId),
+  );
+  if (
+    registeredChannelId &&
+    registeredChannelId.toLowerCase() !== channelId
+  ) {
+    throw new Error(
+      "covenant lineage is already registered to another channel",
+    );
+  }
+  await txn.put(covenantChannelKey(covenantId), channelId);
+  await txn.put(channelKey(channelId), clone(channel));
 }
 
 function matchesExpectedChannel(
