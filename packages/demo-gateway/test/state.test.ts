@@ -742,7 +742,7 @@ function channel(
     channelConfig: {
       network: "kaspa:testnet-10",
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v2",
+      templateId: "kaspa-x402-escrow-v3",
       clientPublicKey: "12".repeat(32),
       serverPublicKey: "13".repeat(32),
       payTo: "kaspatest:payout",

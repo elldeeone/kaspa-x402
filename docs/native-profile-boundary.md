@@ -1,6 +1,6 @@
 # Native Profile Boundary
 
-Status: active Alpha.10 boundary for the shipped Testnet-10 package surface.
+Status: active Alpha.11 boundary for the shipped Testnet-10 package surface.
 
 The current native Kaspa x402 surface ships two profiles:
 
@@ -27,7 +27,7 @@ that spends the advertised current KIP-10 head and recreates its same-script
 successor with an exact delta equal to the advertised amount. The head challenge
 is not an exclusive reservation and there is no second merchant payment output.
 `kaspa-escrow-v2` settles native KAS from a funded
-`kaspa-x402-escrow-v2` channel. Buyer vouchers sign lifetime cumulative
+`kaspa-x402-escrow-v3` channel. Buyer vouchers sign lifetime cumulative
 ceilings, so the provider may make partial claims without resetting the
 authorization history. Top-ups add capacity while preserving the settled
 lifetime total, and the buyer retains a timed refund path. KIP-20 keeps the
@@ -35,7 +35,7 @@ channel's `covenantId` stable across successors and enforces its lineage. The
 runtime separately persists the current outpoint because a `covenantId` does
 not provide reverse lookup of the live UTXO.
 
-Alpha.10 replaces the earlier active batch binding and channel state outright.
+Alpha.11 replaces the earlier active batch binding and channel state outright.
 No active runtime compatibility reader or migration exists for older alpha
 channels. Published alpha releases remain immutable historical snapshots, not
 compatibility targets. Both active schemes are Testnet-10 only; the exact

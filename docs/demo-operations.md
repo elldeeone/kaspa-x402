@@ -7,7 +7,7 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current deployment: Alpha.10 Worker version
+Current deployment: Alpha.11 Worker version
 `c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit `78f2ada`. The funded
 `standard-native` exact canary passed with accepted finality, identical replay,
 and cross-resource replay rejection. The funded batch canary opened and reused
@@ -32,9 +32,9 @@ Important non-secret variables:
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
 | `KASPA_X402_EXACT_PROFILE`                   | Exact profile: `standard-native` (default) or optional `additive`.                                                                                             |
-| `KASPA_X402_BATCH_AMOUNT`                    | Maximum per-request Alpha.10 batch charge in sompi.                                                                                                            |
+| `KASPA_X402_BATCH_AMOUNT`                    | Maximum per-request Alpha.11 batch charge in sompi.                                                                                                            |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI`               | Batch escrow deposit floor. Must be at least `10000000`.                                                                                                       |
-| `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised Alpha.10 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.   |
+| `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised Alpha.11 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.   |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
 | `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
@@ -53,36 +53,36 @@ Secret variables:
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration, reconciliation, and stats endpoints. Set with `wrangler secret put`; do not commit it. |
 
-## Alpha.10 Cutover
+## Alpha.11 Cutover
 
-Alpha.10 is a clean-state cutover, not an Alpha.9 Durable Object migration.
+Alpha.11 is a clean-state cutover, not an Alpha.9 Durable Object migration.
 The Worker resolves `GATEWAY_STATE` with the logical object name
-`demo-gateway-alpha.10`; it MUST NOT read, import, or overwrite the Alpha.9
+`demo-gateway-alpha.11`; it MUST NOT read, import, or overwrite the Alpha.9
 object.
 
-1. Create the new Alpha.10 release snapshot and content lock, pass the release
+1. Create the new Alpha.11 release snapshot and content lock, pass the release
    gate from a clean checkout, then deploy the static apex and `www` site first.
-   Verify the Alpha.10 release metadata, schemas, vectors, and docs publicly.
+   Verify the Alpha.11 release metadata, schemas, vectors, and docs publicly.
 2. Disable the Alpha.9 public gateway before replacing its Worker. Keep the
    Alpha.9 deployment and Durable Object untouched for rollback evidence.
-3. Confirm the Worker advertises `0.1.0-alpha.10`, `kaspa-escrow-v2`,
-   `kaspa-x402-escrow-v2`, and R, and resolves fresh
-   `demo-gateway-alpha.10` state.
-4. Validate the disabled Alpha.10 Worker, then run funded exact and batch
+3. Confirm the Worker advertises `0.1.0-alpha.11`, `kaspa-escrow-v2`,
+   `kaspa-x402-escrow-v3`, and R, and resolves fresh
+   `demo-gateway-alpha.11` state.
+4. Validate the disabled Alpha.11 Worker, then run funded exact and batch
    canaries through an operator-controlled preview. Re-register any verified,
    still-unspent additive heads; exact replay records, payment identifiers, and
    batch channels are intentionally not copied from Alpha.9.
-5. Enable the public Alpha.10 Worker only after its canaries pass. New batch
+5. Enable the public Alpha.11 Worker only after its canaries pass. New batch
    clients must open singleton v2 genesis lanes; no older batch lane continues
    across the cutover.
 
 Completed on 2026-08-10. Alpha.9 remains available only as immutable release
 and rollback evidence; the active Worker resolves fresh
-`demo-gateway-alpha.10` state.
+`demo-gateway-alpha.11` state.
 
 ## Deploy
 
-Do not deploy the Alpha.10 Worker until the locked Alpha.10 static site is live.
+Do not deploy the Alpha.11 Worker until the locked Alpha.11 static site is live.
 The Worker canary reads `KASPA_X402_RELEASE_VERSION`, so Worker-first deployment
 would fail its release-snapshot check.
 
@@ -182,7 +182,7 @@ Rollback procedure:
    deliberately enabled and tested.
 5. Record the version, reason, and verification result in the operator notes.
 
-Alpha.9 and Alpha.10 use separate logical Durable Objects. A rollback to the
+Alpha.9 and Alpha.11 use separate logical Durable Objects. A rollback to the
 Alpha.9 Worker must continue resolving its Alpha.9 state; never point either
 Worker version at the other release's object.
 
@@ -332,7 +332,7 @@ Policy for the public alpha:
 - production operators should design their own backup and state-partitioning
   policy before using this code outside the hosted demo.
 
-For Alpha.10, `demo-gateway-alpha.10` starts empty by design. This resets exact
+For Alpha.11, `demo-gateway-alpha.11` starts empty by design. This resets exact
 replay and payment-identifier records, additive-head inventory, batch channels,
 settlement commitments, counters, metrics, and canary history. Re-register only
 independently verified, still-unspent additive heads and require every batch

@@ -260,7 +260,7 @@ export interface DirectModeChannel {
   /** True until the current genesis/top-up head has been admitted by the server. */
   requiresDepositVoucher: boolean;
   refundTimeoutDaa: SompiString;
-  templateId: "kaspa-x402-escrow-v2";
+  templateId: "kaspa-x402-escrow-v3";
   status: ChannelStatus;
 }
 

@@ -1675,7 +1675,7 @@ function batchChannel(
     channelConfig: {
       network: "kaspa:testnet-10",
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v2",
+      templateId: "kaspa-x402-escrow-v3",
       clientPublicKey: "c6".repeat(32),
       serverPublicKey: "c7".repeat(32),
       payTo: "kaspatest:payout",

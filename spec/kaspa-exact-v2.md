@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: active Alpha.10 exact binding, unchanged from Alpha.9
+Status: active Alpha.11 exact binding, unchanged from Alpha.9
 
 This document defines the Kaspa network binding for x402 v2 `exact`. It
 supersedes `kaspa-exact-v1` for new implementations while preserving the v1
@@ -46,7 +46,7 @@ kaspa:testnet-10
 ```
 
 The `kaspa` CAIP namespace is proposed, not registered. `kaspa:testnet-10` is
-the Alpha.10 validation target. `kaspa:mainnet` is a reserved profile name and
+the Alpha.11 validation target. `kaspa:mainnet` is a reserved profile name and
 does not imply mainnet, custody, or production readiness.
 
 The binding settles native KAS only.
@@ -594,7 +594,7 @@ referenced by the bounded result.
 ## Retry and signer policy
 
 A corrective 402 is a new offer, not permission for a wallet to sign another
-payment automatically. The Alpha.10 clients accept `maxPaymentRetries: 0` only.
+payment automatically. The Alpha.11 clients accept `maxPaymentRetries: 0` only.
 Every replacement exact transaction requires a fresh explicit caller or wallet
 authorization. Funding providers MUST expose an `authorizeExactPayment`
 boundary, and deployments SHOULD pin allowed origins, profiles, recipients,

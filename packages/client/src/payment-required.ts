@@ -98,7 +98,7 @@ export function selectBatchPaymentRequired(
         supportedNetworks.includes(requirement.network) &&
         requirement.asset === "KAS" &&
         requirement.extra.binding === "kaspa-escrow-v2" &&
-        requirement.extra.templateId === "kaspa-x402-escrow-v2"
+        requirement.extra.templateId === "kaspa-x402-escrow-v3"
       );
     },
   );
@@ -143,7 +143,7 @@ function isSupportedKaspaRequirement(
   return (
     requirement.scheme === "batch-settlement" &&
     requirement.extra.binding === "kaspa-escrow-v2" &&
-    requirement.extra.templateId === "kaspa-x402-escrow-v2"
+    requirement.extra.templateId === "kaspa-x402-escrow-v3"
   );
 }
 

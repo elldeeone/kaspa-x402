@@ -342,7 +342,7 @@ function batchExtra() {
     throw new Error("Server public key must be 64 hex characters.");
   return {
     binding: "kaspa-escrow-v2",
-    templateId: "kaspa-x402-escrow-v2",
+    templateId: "kaspa-x402-escrow-v3",
     serverPublicKey,
     minDepositSompi: canonicalBatchAmount(
       ui.minDeposit.value,
@@ -473,7 +473,7 @@ function buildBatchPaymentRetry(accepted) {
     lanePreview: lane.preview,
   });
   setStatus(
-    "Alpha.10 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
+    "Alpha.11 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
   );
 }
 
@@ -820,7 +820,7 @@ function isNonZeroHash32(value) {
 function isBatchExtra(extra) {
   if (!extra || typeof extra !== "object") return false;
   if (extra.binding !== "kaspa-escrow-v2") return false;
-  if (extra.templateId !== "kaspa-x402-escrow-v2") return false;
+  if (extra.templateId !== "kaspa-x402-escrow-v3") return false;
   if (
     typeof extra.serverPublicKey !== "string" ||
     !/^[0-9a-fA-F]{64}$/.test(extra.serverPublicKey)

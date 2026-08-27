@@ -1,41 +1,41 @@
 {
   "kind": "tx-v1-plan",
-  "description": "Alpha.10 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
+  "description": "Alpha.11 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   "mainnetReadiness": {},
   "invariant": {
-    "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
-    "voucherDigest": "76923df63dd59f09f742726d52502737aa9aa5eed09f68973404900d157a4164",
+    "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
+    "voucherDigest": "ed819801913f3f95046d0073cfc9045c8215ad73e90d240d8a202fafc2086f82",
     "totalAuthorized": "30000000",
     "sequence": [
       {
         "step": 0,
         "path": "vectors/tx-v1/batch-genesis.json",
         "kind": "tx-v1-batch-genesis",
-        "transactionId": "0bd1e64c7e84e9f172b1be5e3b537396f866ba38b711b1018b34a201cfdbd6ac"
+        "transactionId": "1a0a4e997f44ae710891847dcc1a23bea13510959af9b07101a7273fe9e1b4a2"
       },
       {
         "step": 1,
         "path": "vectors/tx-v1/batch-claim.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "1a1df4023553e0fc2a9ca84c97f05604f36edfd061d465883494b7df47ce9c41"
+        "transactionId": "6d72b60848a7d549890f7f9ea323c0e1cb4f2cb3d3aff792eed232e9120e653e"
       },
       {
         "step": 2,
         "path": "vectors/tx-v1/batch-claim-second.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "a5043c2624c84d44d33ab75ea2319c0975c95ff0b6589a24fc3f636d71ddc3d6"
+        "transactionId": "b46916d4906d788791a42c8ccaa98b06e73b1f832547c2605ed58ed178cdcb0e"
       },
       {
         "step": 3,
         "path": "vectors/tx-v1/batch-top-up.json",
         "kind": "tx-v1-batch-top-up",
-        "transactionId": "850ef466dbc2c24cc62928af324d8761adc065b241a43b8cc2eac2fb5ebdf1a5"
+        "transactionId": "d2f92b5b4e84a2a500825eee0c93bb12034f003e0ee2992e1a45b2363553a7c2"
       },
       {
         "step": 4,
         "path": "vectors/tx-v1/batch-refund.json",
         "kind": "tx-v1-batch-refund",
-        "transactionId": "341e62f5815f4795c4a4a93b8f802eafe1a248040ce8cc472efd927a354110ea"
+        "transactionId": "77753a4734d8610b0613fec76ff9a65a876fa371511971b6e95de7675ee95fd9"
       }
     ]
   },

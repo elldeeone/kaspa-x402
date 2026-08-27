@@ -128,7 +128,7 @@ export class DirectModeServer {
   constructor(config: DirectModeServerConfig) {
     this.#config = {
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v2",
+      templateId: "kaspa-x402-escrow-v3",
       maxTimeoutSeconds: 60,
       acceptedFinality: "accepted",
       exactProfile: "standard-native",
@@ -3050,7 +3050,7 @@ function makeAcceptedRequirement(
   if (config.network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
-      "batch settlement is restricted to kaspa:testnet-10 in Alpha.10",
+      "batch settlement is restricted to kaspa:testnet-10 in Alpha.11",
     );
   }
   const amount = options.amount ?? config.amount;
@@ -3493,7 +3493,7 @@ function validateChannelTerms(
   if (config.network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
-      "batch settlement is restricted to kaspa:testnet-10 in Alpha.10",
+      "batch settlement is restricted to kaspa:testnet-10 in Alpha.11",
     );
   }
   if (

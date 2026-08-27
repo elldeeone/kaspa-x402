@@ -14,7 +14,7 @@ Status: alpha. Everything targets `kaspa:testnet-10`. Mainnet use is blocked
 by the gates in [docs/mainnet-readiness.md](docs/mainnet-readiness.md), and
 reference runtimes require explicit `allowMainnet` opt-in. Package names,
 schemas, and field names may change until the first tagged spec release.
-Alpha.10 is a clean replacement of the earlier batch binding: active runtimes
+Alpha.11 is a clean replacement of the earlier batch binding: active runtimes
 do not read or migrate older-alpha channel state. Tagged alpha releases remain
 immutable historical snapshots.
 
@@ -50,7 +50,7 @@ default ordinary KAS payment. Optional `additive` spends and recreates a
 merchant-owned KIP-10 head; the successor increase equals the advertised exact
 amount and is the only merchant payment. Unpaid offers do not reserve or retire
 heads.
-`batch-settlement` funds a `kaspa-x402-escrow-v2` covenant and meters repeated
+`batch-settlement` funds a `kaspa-x402-escrow-v3` covenant and meters repeated
 or variable-cost requests with buyer-signed lifetime cumulative vouchers. A
 KIP-20 `covenantId` gives the channel stable identity and enforceable lineage
 across successors; the runtime still persists the current outpoint because the

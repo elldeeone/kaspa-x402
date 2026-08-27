@@ -6,7 +6,7 @@ import {
 } from "../src/remote-state.js";
 
 describe("remote gateway state", () => {
-  it("uses a fresh Alpha.10 object identity instead of migrating old alpha state", () => {
+  it("uses a fresh Alpha.11 object identity instead of migrating old alpha state", () => {
     const idFromName = vi.fn(() => ({}) as DurableObjectId);
     const namespace = {
       idFromName,
@@ -15,7 +15,7 @@ describe("remote gateway state", () => {
 
     new RemoteGatewayState(namespace);
 
-    expect(GATEWAY_STATE_OBJECT_NAME).toBe("demo-gateway-alpha.10");
+    expect(GATEWAY_STATE_OBJECT_NAME).toBe("demo-gateway-alpha.11");
     expect(idFromName).toHaveBeenCalledWith(GATEWAY_STATE_OBJECT_NAME);
   });
 });

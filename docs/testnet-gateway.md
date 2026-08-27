@@ -1,6 +1,6 @@
 # Testnet Gateway
 
-Status: paid-canary-proven Alpha.10 deployment on `kaspa:testnet-10`.
+Status: paid-canary-proven Alpha.11 deployment on `kaspa:testnet-10`.
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
@@ -65,7 +65,7 @@ mass depends on the complete transaction shape. The reference Worker uses
 including the advertised batch successor reserve.
 
 The deployed Worker emits batch offers with binding `kaspa-escrow-v2`, template
-`kaspa-x402-escrow-v2`, and a `10000000` sompi claim reserve. Its exact offers
+`kaspa-x402-escrow-v3`, and a `10000000` sompi claim reserve. Its exact offers
 carry binding `kaspa-exact-v2` and an explicit profile:
 
 - `standard-native` needs no merchant head inventory;
@@ -147,12 +147,12 @@ exposes `PAYMENT-REQUIRED` and `PAYMENT-RESPONSE`. Paid retries may send
 it only over TLS to the intended gateway and do not publish or log unused
 payment headers or transaction material.
 
-## Current Alpha.10 Evidence
+## Current Alpha.11 Evidence
 
 The 2026-08-10 deployment completed funded exact and batch runs:
 
 - Worker version `c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit
-  `78f2ada` and using fresh `demo-gateway-alpha.10` state;
+  `78f2ada` and using fresh `demo-gateway-alpha.11` state;
 - `/supported` advertised `kaspa-exact-v2` and `kaspa-escrow-v2`;
 - unpaid `/exact` returned a valid `20000000` sompi offer without inventory;
 - transaction id
@@ -170,7 +170,7 @@ The 2026-08-10 deployment completed funded exact and batch runs:
 - the scheduled canary passed TN10 REST, release-snapshot, schema, docs, offer,
   and unsupported-scheme checks.
 
-The Alpha.10 source, package, specification, vector, and live-proof gates were
+The Alpha.11 source, package, specification, vector, and live-proof gates were
 completed before deployment. The evidence above is from the released source
 and public npm package version.
 

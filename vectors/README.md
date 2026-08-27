@@ -13,9 +13,9 @@ This directory holds implementation-independent vectors for:
 
 Vectors should be consumable without importing the TypeScript SDK.
 
-Alpha.10 also publishes the normative batch covenant source at
-`contracts/kaspa-x402-escrow-v2.sil` and its language-neutral constructor and
-byte fixture at `contracts/fixtures/kaspa-x402-escrow-v2.json`. Together with
+Alpha.11 also publishes the normative batch covenant source at
+`contracts/kaspa-x402-escrow-v3.sil` and its language-neutral constructor and
+byte fixture at `contracts/fixtures/kaspa-x402-escrow-v3.json`. Together with
 this directory, those artifacts are sufficient to reconstruct and verify the
 batch-v2 contract without importing the TypeScript SDK.
 
@@ -25,11 +25,11 @@ batch-v2 contract without importing the TypeScript SDK.
 vectors/
   voucher/              Voucher preimages and digests.
   channel-id/           Channel ID canonical input and digest fixtures.
-  batch/                Alpha.10 non-transaction batch interoperability evidence.
+  batch/                Alpha.11 non-transaction batch interoperability evidence.
   x402-http/            HTTP header base64 fixtures.
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
   negative/             Schema and semantic rejection fixtures.
-  tx-v1/                Full Alpha.10 batch transaction-v1 lifecycle fixtures.
+  tx-v1/                Full Alpha.11 batch transaction-v1 lifecycle fixtures.
   exact/                Full-consensus standard-native and additive exact fixtures.
 ```
 
@@ -39,7 +39,7 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
-- `batch-interop-v2`: reconstruct the Alpha.10 channel, KIP-20 lineage id,
+- `batch-interop-v2`: reconstruct the Alpha.11 channel, KIP-20 lineage id,
   voucher, request commitment, lifetime accounting, DAA expiry boundaries,
   and finality ordering. Transaction evidence remains in `tx-v1/`.
 - `x402-http`: validate decoded objects and recompute the three HTTP headers. The
@@ -66,7 +66,7 @@ Regenerate the exact consensus vector with `npm run vectors:exact-consensus`.
 The generator uses fixed public test keys and deterministic Schnorr signatures;
 it contains no wallet or deployment secret.
 
-Regenerate the Alpha.10 channel, voucher, HTTP, and batch core vectors with
+Regenerate the Alpha.11 channel, voucher, HTTP, and batch core vectors with
 `npm run vectors:batch-interop`. The generator derives `covenantId` from its
 canonical KIP-20 genesis input and ordered authorized output; it does not treat
 that derivation input as accepted transaction evidence.

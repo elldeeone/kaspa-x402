@@ -19,7 +19,7 @@
         "maxTimeoutSeconds": 60,
         "extra": {
           "binding": "kaspa-escrow-v2",
-          "templateId": "kaspa-x402-escrow-v2",
+          "templateId": "kaspa-x402-escrow-v3",
           "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
           "minDepositSompi": "90000000",
           "claimReserveSompi": "2000000",

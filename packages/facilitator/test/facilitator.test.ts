@@ -21,8 +21,8 @@ import {
   type PaymentPayload,
 } from "@kaspa-x402/core";
 import {
-  deriveEscrowV2Address,
-  escrowV2ScriptPublicKey,
+  deriveEscrowAddress,
+  escrowScriptPublicKey,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
 import {
@@ -1188,7 +1188,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v2",
+    templateId: "kaspa-x402-escrow-v3",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,
@@ -1255,9 +1255,9 @@ function deriveEscrow(channelConfig: ChannelConfig): {
     timeoutDaa: channelConfig.refundTimeoutDaa,
     settledTotal: "0",
   };
-  const script = escrowV2ScriptPublicKey(params);
+  const script = escrowScriptPublicKey(params);
   return {
-    escrowAddress: deriveEscrowV2Address(params, (input) =>
+    escrowAddress: deriveEscrowAddress(params, (input) =>
       addressCodec.encodeScriptAddress(input),
     ),
     activeScriptPublicKey: serializedScriptPublicKey(script),

@@ -1,6 +1,6 @@
 # Live Testnet Report
 
-Status: current `0.1.0-alpha.10` funded live harness run.
+Status: current `0.1.0-alpha.11` funded live harness run.
 
 Generated: `2026-08-10T07:21:05.896Z`
 
@@ -12,7 +12,7 @@ Virtual DAA score at run start: `539876359`
 
 The proof used the NodeJS SDK built from reviewed `rusty-kaspa` commit
 `78257f273a26c4be085bab0f79437dee99ca8835`. It executed all 18 required
-Alpha.10 flows. The raw report and signing material remain in an ignored
+Alpha.11 flows. The raw report and signing material remain in an ignored
 owner-only local directory; this file contains only sanitized public evidence.
 Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 

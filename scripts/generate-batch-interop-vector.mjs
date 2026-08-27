@@ -19,7 +19,7 @@ import {
   voucherPreimageHex,
 } from "@kaspa-x402/core";
 import {
-  escrowV2ScriptPublicKey,
+  escrowScriptPublicKey,
   serializedScriptPublicKey,
   transactionV1CovenantId,
 } from "../packages/covenant/dist/index.js";
@@ -41,7 +41,7 @@ const successorOutpoint = { txid: "45".repeat(32), index: 1 };
 const channelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v2",
+  templateId: "kaspa-x402-escrow-v3",
   clientPublicKey,
   serverPublicKey,
   payTo,
@@ -64,13 +64,13 @@ const escrowParams = (settledTotal) => ({
   settledTotal,
 });
 const genesisScriptPublicKey = serializedScriptPublicKey(
-  escrowV2ScriptPublicKey(escrowParams("0")),
+  escrowScriptPublicKey(escrowParams("0")),
 );
 const activeScriptPublicKey = serializedScriptPublicKey(
-  escrowV2ScriptPublicKey(escrowParams("17000000")),
+  escrowScriptPublicKey(escrowParams("17000000")),
 );
 const successorScriptPublicKey = serializedScriptPublicKey(
-  escrowV2ScriptPublicKey(escrowParams("25000000")),
+  escrowScriptPublicKey(escrowParams("25000000")),
 );
 const genesisAuthorizingInput = { txid: "01".repeat(32), index: 0 };
 const covenantId = transactionV1CovenantId(genesisAuthorizingInput, [
@@ -205,7 +205,7 @@ const settlementResponse = {
 const baseChannelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v2",
+  templateId: "kaspa-x402-escrow-v3",
   clientPublicKey: "33".repeat(32),
   serverPublicKey: "44".repeat(32),
   payTo:
@@ -218,7 +218,7 @@ const baseChannelConfig = {
 const channelVector = {
   kind: "channel-id",
   description:
-    "Alpha.10 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
+    "Alpha.11 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
   context: {
     x402Version: 2,
     scheme: "batch-settlement",
@@ -247,7 +247,7 @@ const voucherCases = [
 const voucherVector = {
   kind: "voucher-digest",
   description:
-    "Alpha.10 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+    "Alpha.11 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   context: {
     domain: "kaspa:x402:escrow-voucher:v2",
     signedFields: ["network", "covenantId", "amount"],
@@ -259,7 +259,7 @@ const voucherVector = {
 const httpVector = {
   kind: "x402-http",
   description:
-    "Alpha.10 semantic HTTP header vector for a batch-settlement voucher request.",
+    "Alpha.11 semantic HTTP header vector for a batch-settlement voucher request.",
   verificationContext: {
     channelConfig,
     channelStateBefore,
@@ -278,7 +278,7 @@ const httpVector = {
 const interopVector = {
   kind: "batch-interop-v2",
   description:
-    "Language-independent Alpha.10 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
+    "Language-independent Alpha.11 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
   scope: {
     transactionEvidenceIncluded: false,
     reason:

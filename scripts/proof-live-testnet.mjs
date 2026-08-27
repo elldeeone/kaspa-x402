@@ -395,13 +395,13 @@ function validateLiveProofResult(result, flows) {
     restartReload?.snapshotFormat ===
       "kaspa-x402-alpha10-batch-recovery-v1",
     "batch.restartReload.snapshotFormat",
-    "must use the Alpha.10 recovery snapshot",
+    "must use the Alpha.11 recovery snapshot",
   );
   require(
     restartReload?.preBroadcastSnapshotFormat ===
       "kaspa-x402-alpha10-claim-before-broadcast-v1",
     "batch.restartReload.preBroadcastSnapshotFormat",
-    "must reload the exact pre-broadcast Alpha.10 claim snapshot",
+    "must reload the exact pre-broadcast Alpha.11 claim snapshot",
   );
   require(
     restartReload?.preBroadcastClaimAttemptStatus === "pending",

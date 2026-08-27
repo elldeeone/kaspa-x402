@@ -108,15 +108,15 @@ async function smokeGateway(baseUrl) {
   );
   assert(
     batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v2",
-    "batch offer did not advertise the Alpha.10 escrow binding",
+    "batch offer did not advertise the Alpha.11 escrow binding",
   );
   assert(
-    batchRequired.accepts[0]?.extra?.templateId === "kaspa-x402-escrow-v2",
+    batchRequired.accepts[0]?.extra?.templateId === "kaspa-x402-escrow-v3",
     "batch offer did not advertise the KIP-20 escrow template",
   );
   assert(
     batchRequired.accepts[0]?.extra?.claimReserveSompi === "10000000",
-    "batch offer did not advertise the Alpha.10 claim reserve",
+    "batch offer did not advertise the Alpha.11 claim reserve",
   );
   assert(
     unsupported.status === 402 &&
@@ -137,8 +137,8 @@ async function smokeGateway(baseUrl) {
   );
   assert(
     supportedBatch?.extra?.binding === "kaspa-escrow-v2" &&
-      supportedBatch?.extra?.templateId === "kaspa-x402-escrow-v2",
-    "supported endpoint did not expose the Alpha.10 KIP-20 batch kind",
+      supportedBatch?.extra?.templateId === "kaspa-x402-escrow-v3",
+    "supported endpoint did not expose the Alpha.11 KIP-20 batch kind",
   );
 
   return {

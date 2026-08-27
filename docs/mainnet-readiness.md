@@ -3,15 +3,15 @@
 Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
 not a production readiness claim.
 
-The active Alpha.10 native profiles are:
+The active Alpha.11 native profiles are:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile); and
 - `batch-settlement` with `kaspa-escrow-v2` and
-  `kaspa-x402-escrow-v2`.
+  `kaspa-x402-escrow-v3`.
 
 `kaspa:testnet-10` is the only validation target. Older alpha releases remain
-available as immutable historical snapshots, but Alpha.10 does not provide
+available as immutable historical snapshots, but Alpha.11 does not provide
 runtime compatibility or state migration for them. Mainnet must remain opt-in
 and disabled by default until every gate below is closed.
 

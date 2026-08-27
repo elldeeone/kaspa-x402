@@ -102,7 +102,7 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.amount).toBe("75");
   });
 
-  it("keeps opted-in exact mainnet support while rejecting Alpha.10 batch", async () => {
+  it("keeps opted-in exact mainnet support while rejecting Alpha.11 batch", async () => {
     expect(() => makeServer({ network: "kaspa:mainnet" })).toThrow(
       "allowMainnet",
     );
@@ -4754,7 +4754,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v2",
+    templateId: "kaspa-x402-escrow-v3",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,

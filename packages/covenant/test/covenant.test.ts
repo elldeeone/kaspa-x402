@@ -6,45 +6,32 @@ import { describe, expect, it } from "vitest";
 
 import {
   ESCROW_TEMPLATE_ID,
-  ESCROW_V2_TEMPLATE_ID,
-  ESCROW_V2_VOUCHER_DOMAIN,
-  ESCROW_V2_VOUCHER_DOMAIN_TAG,
   ESCROW_VOUCHER_DOMAIN,
   ESCROW_VOUCHER_DOMAIN_TAG,
   SCRIPT_INT64_MAX,
   buildClaimArgs,
-  buildClaimV2Args,
   buildEscrowRedeemScript,
-  buildEscrowV2RedeemScript,
   buildKip10AdditiveBorrowArgs,
   buildKip10AdditiveBorrowSignatureScript,
   buildKip10AdditiveRedeemScript,
   buildRefundArgs,
-  buildRefundV2Args,
   buildTopUpArgs,
-  buildTopUpV2Args,
   checkEscrowFixtureReproducibility,
-  checkEscrowV2FixtureReproducibility,
   deriveEscrowAddress,
-  deriveEscrowV2Address,
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
-  escrowV2ScriptPubKeyHash,
-  escrowV2ScriptPublicKey,
   kip10AdditiveScriptPublicKey,
   parseKip10AdditiveRedeemScript,
   serializedScriptPublicKey,
   voucherDigest,
   voucherPreimage,
-  voucherV2Digest,
-  voucherV2Preimage,
 } from "../src/index.js";
 import type { EscrowFixture } from "../src/index.js";
 
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function fixture(): EscrowFixture {
-  return JSON.parse(fs.readFileSync(path.join(repoRoot, "contracts/fixtures/kaspa-x402-escrow-v2.json"), "utf8")) as EscrowFixture;
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, "contracts/fixtures/kaspa-x402-escrow-v3.json"), "utf8")) as EscrowFixture;
 }
 
 function withoutState(redeemScript: string, stateLayout: { start: number; len: number }): string {
@@ -53,12 +40,9 @@ function withoutState(redeemScript: string, stateLayout: { start: number; len: n
 }
 
 describe("stateful escrow covenant template", () => {
-  it("makes escrow-v2 the only active unsuffixed template", () => {
-    expect(ESCROW_TEMPLATE_ID).toBe("kaspa-x402-escrow-v2");
-    expect(ESCROW_V2_TEMPLATE_ID).toBe(ESCROW_TEMPLATE_ID);
+  it("exposes only the active escrow-v3 template", () => {
+    expect(ESCROW_TEMPLATE_ID).toBe("kaspa-x402-escrow-v3");
     expect(ESCROW_VOUCHER_DOMAIN).toBe("kaspa:x402:escrow-voucher:v2");
-    expect(ESCROW_V2_VOUCHER_DOMAIN).toBe(ESCROW_VOUCHER_DOMAIN);
-    expect(ESCROW_V2_VOUCHER_DOMAIN_TAG).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
     expect(crypto.createHash("sha256").update(ESCROW_VOUCHER_DOMAIN).digest("hex")).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
   });
 
@@ -68,9 +52,7 @@ describe("stateful escrow covenant template", () => {
 
     expect(crypto.createHash("sha256").update(source).digest("hex")).toBe(item.sourceSha256);
     expect(checkEscrowFixtureReproducibility(item, source).ok).toBe(true);
-    expect(checkEscrowV2FixtureReproducibility(item, source).ok).toBe(true);
     expect(buildEscrowRedeemScript(item.sample.params)).toBe(item.sample.genesis.redeemScript);
-    expect(buildEscrowV2RedeemScript(item.sample.params)).toBe(item.sample.genesis.redeemScript);
 
     const successorParams = { ...item.sample.params, settledTotal: item.sample.successor.settledTotal };
     expect(buildEscrowRedeemScript(successorParams)).toBe(item.sample.successor.redeemScript);
@@ -82,34 +64,32 @@ describe("stateful escrow covenant template", () => {
 
   it("keeps silverc transition offsets invariant across timeout values", () => {
     const item = fixture();
-    const zeroTimeout = buildEscrowV2RedeemScript({
+    const zeroTimeout = buildEscrowRedeemScript({
       ...item.sample.params,
       timeoutDaa: "0",
     });
-    const runtimeTimeout = buildEscrowV2RedeemScript({
+    const runtimeTimeout = buildEscrowRedeemScript({
       ...item.sample.params,
       timeoutDaa: "123456789",
     });
 
     for (const instantiated of [zeroTimeout, runtimeTimeout]) {
-      expect(instantiated.length / 2).toBe(946);
-      expect(instantiated.match(/02b203/g)).toHaveLength(2);
-      expect(instantiated.match(/02a883/g)).toHaveLength(2);
+      expect(instantiated.length / 2).toBe(item.constructorLayout.redeemScriptBytes);
+      expect(withoutState(instantiated, item.stateLayout).length).toBe(withoutState(item.sample.genesis.redeemScript, item.stateLayout).length);
     }
   });
 
   it("treats transition-like constructor bytes as ordinary data", () => {
     const item = fixture();
     const collidingClient = `02b20302a883${"11".repeat(26)}`;
-    const instantiated = buildEscrowV2RedeemScript({
+    const instantiated = buildEscrowRedeemScript({
       ...item.sample.params,
       clientPublicKey: collidingClient,
       timeoutDaa: "123456789",
     });
 
     expect(instantiated).toContain(`20${collidingClient}`);
-    expect(instantiated.match(/02b203/g)).toHaveLength(5);
-    expect(instantiated.match(/02a883/g)).toHaveLength(5);
+    expect(instantiated.length / 2).toBe(item.constructorLayout.redeemScriptBytes);
   });
 
   it("derives state-specific script public keys and addresses", () => {
@@ -117,11 +97,9 @@ describe("stateful escrow covenant template", () => {
     const genesis = escrowScriptPublicKey(item.sample.params);
     const successor = escrowScriptPublicKey({ ...item.sample.params, settledTotal: item.sample.successor.settledTotal });
 
-    expect(genesis).toEqual(escrowV2ScriptPublicKey(item.sample.params));
     expect(genesis).toEqual({ version: item.sample.genesis.scriptPublicKey.version, script: item.sample.genesis.scriptPublicKey.script });
     expect(serializedScriptPublicKey(genesis)).toBe(item.sample.genesis.scriptPublicKey.serialized);
     expect(escrowScriptPubKeyHash(genesis)).toBe(item.sample.genesis.scriptPublicKey.hash);
-    expect(escrowV2ScriptPubKeyHash(genesis)).toBe(item.sample.genesis.scriptPublicKey.hash);
     expect(successor.script).toBe(item.sample.successor.scriptPublicKey.script);
     expect(successor.script).not.toBe(genesis.script);
 
@@ -131,7 +109,6 @@ describe("stateful escrow covenant template", () => {
       return "kaspatest:qfixture";
     };
     expect(deriveEscrowAddress(item.sample.params, encode)).toBe("kaspatest:qfixture");
-    expect(deriveEscrowV2Address(item.sample.params, encode)).toBe("kaspatest:qfixture");
   });
 
   it("encodes claim, top-up, and refund ABI selectors", () => {
@@ -144,14 +121,11 @@ describe("stateful escrow covenant template", () => {
     };
 
     expect(buildClaimArgs(claimInput)).toBe(item.sample.claimArgsWithDummies);
-    expect(buildClaimV2Args(claimInput)).toBe(item.sample.claimArgsWithDummies);
-    expect(item.sample.claimArgsWithDummies.endsWith("00")).toBe(true);
+    expect(item.sample.claimArgsWithDummies.endsWith("0423959b42")).toBe(true);
     expect(buildTopUpArgs({ clientSignature: "ab".repeat(65) })).toBe(item.sample.topUpArgsWithDummySig);
-    expect(buildTopUpV2Args({ clientSignature: "ab".repeat(65) })).toBe(item.sample.topUpArgsWithDummySig);
-    expect(item.sample.topUpArgsWithDummySig.endsWith("51")).toBe(true);
+    expect(item.sample.topUpArgsWithDummySig.endsWith("04525888a6")).toBe(true);
     expect(buildRefundArgs({ clientSignature: "ab".repeat(65) })).toBe(item.sample.refundArgsWithDummySig);
-    expect(buildRefundV2Args({ clientSignature: "ab".repeat(65) })).toBe(item.sample.refundArgsWithDummySig);
-    expect(item.sample.refundArgsWithDummySig.endsWith("52")).toBe(true);
+    expect(item.sample.refundArgsWithDummySig.endsWith("0417a2027b")).toBe(true);
   });
 
   it("rejects malformed ABI values and unsigned-64 overflow", () => {
@@ -192,9 +166,7 @@ describe("stateful escrow covenant template", () => {
     };
 
     expect(voucherPreimage(input)).toBe(item.sample.voucher.preimage);
-    expect(voucherV2Preimage(input)).toBe(item.sample.voucher.preimage);
     expect(voucherDigest(input)).toBe(item.sample.voucher.digest);
-    expect(voucherV2Digest(input)).toBe(item.sample.voucher.digest);
     expect(voucherPreimage(input).length / 2).toBe(104);
     expect(voucherDigest({ ...input, network: "kaspa:mainnet" })).not.toBe(item.sample.voucher.digest);
     expect(voucherDigest({ ...input, covenantId: "88".repeat(32) })).not.toBe(item.sample.voucher.digest);
@@ -226,7 +198,7 @@ describe("stateful escrow covenant template", () => {
   });
 
   it("keeps singleton, payout, change, and termination guards explicit", () => {
-    const source = fs.readFileSync(path.join(repoRoot, "contracts/kaspa-x402-escrow-v2.sil"), "utf8");
+    const source = fs.readFileSync(path.join(repoRoot, "contracts/kaspa-x402-escrow-v3.sil"), "utf8");
 
     expect(source.match(/groups = single/g)).toHaveLength(2);
     expect(source.match(/OpCovInputCount\(covenantId\) == 1/g)).toHaveLength(3);

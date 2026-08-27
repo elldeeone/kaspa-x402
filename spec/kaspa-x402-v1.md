@@ -185,7 +185,7 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "maxTimeoutSeconds": 60,
       "extra": {
         "binding": "kaspa-escrow-v2",
-        "templateId": "kaspa-x402-escrow-v2",
+        "templateId": "kaspa-x402-escrow-v3",
         "serverPublicKey": "<32-byte x-only hex>",
         "minDepositSompi": "100000000",
         "claimReserveSompi": "2000000",

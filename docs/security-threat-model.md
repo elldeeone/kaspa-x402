@@ -1,8 +1,8 @@
 # Security Threat Model
 
 Status: alpha threat model for the Testnet-10 exact and batch-settlement
-profiles. Alpha.10 replaces the active batch binding with `kaspa-escrow-v2` and
-template `kaspa-x402-escrow-v2`; older alpha snapshots are historical artifacts,
+profiles. Alpha.11 replaces the active batch binding with `kaspa-escrow-v2` and
+template `kaspa-x402-escrow-v3`; older alpha snapshots are historical artifacts,
 not supported runtime profiles.
 
 ## Assets
@@ -75,7 +75,7 @@ Required checks include:
 
 ## Batch-Settlement Profile
 
-The Alpha.10 batch profile uses one singleton KIP-20 covenant lineage and
+The Alpha.11 batch profile uses one singleton KIP-20 covenant lineage and
 lifetime cumulative vouchers. Define:
 
 - A: lifetime actual charges durably committed by the application;

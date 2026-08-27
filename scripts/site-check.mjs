@@ -492,7 +492,7 @@ function checkContent() {
   assertContains(
     path.join(outDir, "demo/index.html"),
     "Current Lane And Voucher",
-    "browser demo exposes Alpha.10 batch lane state",
+    "browser demo exposes Alpha.11 batch lane state",
   );
   assertContains(
     path.join(outDir, "assets/demo.js"),

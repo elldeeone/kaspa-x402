@@ -86,8 +86,8 @@ export const SPEC_FILES = [
 ];
 
 export const CONTRACT_FILES = [
-  "contracts/kaspa-x402-escrow-v2.sil",
-  "contracts/fixtures/kaspa-x402-escrow-v2.json",
+  "contracts/kaspa-x402-escrow-v3.sil",
+  "contracts/fixtures/kaspa-x402-escrow-v3.json",
 ];
 
 export const RELEASE_DOC_FILES = [
@@ -165,9 +165,9 @@ export const ARTIFACT_NOTES = {
     "Optional self-hosted facilitator: `/supported`, `/verify`, `/settle` compatibility surface.",
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
-  "contracts/kaspa-x402-escrow-v2.sil":
-    "Normative SilverScript source for the Alpha.10 stateful batch escrow covenant.",
-  "contracts/fixtures/kaspa-x402-escrow-v2.json":
+  "contracts/kaspa-x402-escrow-v3.sil":
+    "Normative SilverScript source for the Alpha.11 stateful batch escrow covenant.",
+  "contracts/fixtures/kaspa-x402-escrow-v3.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "spec/live-covenant-proof-harness.md":
     "Opt-in Testnet-10 proof for singleton genesis, repeated claims, top-up, refund, and restart recovery.",
@@ -188,7 +188,7 @@ export const ARTIFACT_NOTES = {
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
-    "How exact and full Alpha.10 batch-lifecycle proof artifacts are produced and independently validated.",
+    "How exact and full Alpha.11 batch-lifecycle proof artifacts are produced and independently validated.",
   "docs/review-closure-ledger.md":
     "External review findings and how each one was resolved.",
   "docs/security-threat-model.md":

@@ -4,7 +4,7 @@ The reference `MemoryServerChannelStore` is for tests and examples. Production
 servers need a durable implementation of `ServerStateStore` with the semantics
 below.
 
-Alpha.11 supports `kaspa-escrow-v2` / `kaspa-x402-escrow-v2` as the active
+Alpha.11 supports `kaspa-escrow-v2` / `kaspa-x402-escrow-v3` as the active
 batch profile. Older alpha stores are not migrated or read by the Alpha.11
 runtime; immutable release snapshots remain historical records only.
 

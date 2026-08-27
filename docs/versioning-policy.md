@@ -15,8 +15,13 @@ minor/pre-release versions, and the affected docs in the same change.
 
 Current alpha wire notes:
 
-- `0.1.0-alpha.10` replaces the active batch binding with `kaspa-escrow-v2`
-  and the `kaspa-x402-escrow-v2` KIP-20 covenant. Buyer vouchers authorize a
+- `0.1.0-alpha.11` cleanly replaces the active covenant with
+  `kaspa-x402-escrow-v3`, compiled by SilverScript commit
+  `28a16f0ee194dcb288a5aaf371abd0f4b77f462e`. It uses explicit DAA lock
+  semantics and four-byte KCC-01 dispatch tags; Alpha.10 channel state and
+  signature scripts are not accepted or migrated.
+- `0.1.0-alpha.10` introduced the `kaspa-escrow-v2` binding and
+  `kaspa-x402-escrow-v2` KIP-20 covenant. Buyer vouchers authorize a
   lifetime cumulative ceiling, partial claims advance the settled lifetime
   total, top-ups retain it, and refund closes the channel. The stable
   `covenantId` proves identity and successor lineage; runtimes still persist the
@@ -39,7 +44,7 @@ Current alpha wire notes:
   `transactionEncoding`, and server-advertised buildable reservation terms
   including borrow redeem script and additive threshold.
 
-Alpha.10 is a clean active replacement. The current runtime, schemas, examples,
+Alpha.11 is a clean active replacement. The current runtime, schemas, examples,
 and hosted test surface do not accept or migrate older batch bindings or channel
 state. Published alpha releases remain immutable historical snapshots; they are
 not compatibility targets for the active alpha.
@@ -65,7 +70,7 @@ Rules:
 Template IDs identify covenant families. The current template ids are:
 
 ```text
-kaspa-x402-escrow-v2
+kaspa-x402-escrow-v3
 kaspa-x402-kip10-additive-v1
 ```
 

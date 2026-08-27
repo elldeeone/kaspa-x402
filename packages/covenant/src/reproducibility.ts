@@ -20,14 +20,11 @@ import {
 import type { EscrowTemplateParams, ScriptPublicKey } from "./template.js";
 
 export const ESCROW_FIXTURE_COMPILER_NAME = "silverc";
-export const ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT = "6f9e078b1d8b5389212755183b592704de99fea5";
+export const ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT = "28a16f0ee194dcb288a5aaf371abd0f4b77f462e";
 export const ESCROW_FIXTURE_COMPILER_COMMAND =
-  "SILVERSCRIPT_DIR=<silverscript-checkout> cargo run --quiet -p silverscript-lang --bin silverc -- contracts/kaspa-x402-escrow-v2.sil --constructor-args <args.json> -o <out.json>";
-export const ESCROW_V2_FIXTURE_COMPILER_NAME = ESCROW_FIXTURE_COMPILER_NAME;
-export const ESCROW_V2_FIXTURE_COMPILER_CHECKED_COMMIT = ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT;
-export const ESCROW_V2_FIXTURE_COMPILER_COMMAND = ESCROW_FIXTURE_COMPILER_COMMAND;
+  "SILVERSCRIPT_DIR=<silverscript-checkout> cargo run --quiet -p silverscript-lang --bin silverc -- contracts/kaspa-x402-escrow-v3.sil --constructor-args <args.json> -o <out.json>";
 
-export interface EscrowV2Fixture {
+export interface EscrowFixture {
   format: string;
   templateId: string;
   source: string;
@@ -100,15 +97,13 @@ export interface EscrowV2Fixture {
   };
 }
 
-export type EscrowFixture = EscrowV2Fixture;
-
 export interface EscrowFixtureReproducibilityReport {
   ok: true;
   checks: readonly string[];
 }
 
-export function checkEscrowV2FixtureReproducibility(
-  fixture: EscrowV2Fixture,
+export function checkEscrowFixtureReproducibility(
+  fixture: EscrowFixture,
   source: string | Uint8Array,
 ): EscrowFixtureReproducibilityReport {
   const checks: string[] = [];
@@ -149,8 +144,8 @@ export function checkEscrowV2FixtureReproducibility(
   check(escrowScriptPubKeyHash(successorScriptPublicKey) === fixture.sample.successor.scriptPublicKey.hash, "sample.successor.scriptPublicKey.hash");
   check(genesisRedeemScript !== successorRedeemScript, "sample.successor.stateChangesScript");
   check(
-    bytesToHex(withoutEscrowV2State(genesisRedeemScript, fixture.stateLayout)) ===
-      bytesToHex(withoutEscrowV2State(successorRedeemScript, fixture.stateLayout)),
+    bytesToHex(withoutEscrowState(genesisRedeemScript, fixture.stateLayout)) ===
+      bytesToHex(withoutEscrowState(successorRedeemScript, fixture.stateLayout)),
     "sample.successor.sameTemplate",
   );
   check(fixture.sample.successor.sameTemplate, "sample.successor.sameTemplateFlag");
@@ -183,13 +178,13 @@ export function checkEscrowV2FixtureReproducibility(
 
   function check(value: boolean, label: string): void {
     if (!value) {
-      throw new Error(`escrow-v2 fixture reproducibility check failed: ${label}`);
+      throw new Error(`escrow-v3 fixture reproducibility check failed: ${label}`);
     }
     checks.push(label);
   }
 }
 
-function checkEscrowConstructorLayout(fixture: EscrowV2Fixture, checks: string[]): void {
+function checkEscrowConstructorLayout(fixture: EscrowFixture, checks: string[]): void {
   const layout = fixture.constructorLayout;
   const script = hexToBytes(fixture.sample.genesis.redeemScript);
   check(layout.format === "fixed-width-byte-patches-v1", "constructorLayout.format");
@@ -198,12 +193,12 @@ function checkEscrowConstructorLayout(fixture: EscrowV2Fixture, checks: string[]
 
   const expected = new Map<string, { encoding: string; offsets: number[]; bytes: number; value: Uint8Array }>([
     ["settledTotal", { encoding: "signed-int64-le", offsets: [2], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.settledTotal)) }],
-    ["serverPublicKey", { encoding: "hex", offsets: [85], bytes: 32, value: hexToBytes(fixture.sample.params.serverPublicKey) }],
-    ["networkHash", { encoding: "hex", offsets: [220], bytes: 32, value: networkHash(fixture.sample.params.network) }],
-    ["clientPublicKey", { encoding: "hex", offsets: [261, 522, 800], bytes: 32, value: hexToBytes(fixture.sample.params.clientPublicKey) }],
-    ["payoutScriptPublicKeyHash", { encoding: "hex", offsets: [341], bytes: 32, value: hexToBytes(fixture.sample.params.payoutScriptPublicKeyHash) }],
-    ["refundScriptPublicKeyHash", { encoding: "hex", offsets: [645, 903], bytes: 32, value: hexToBytes(fixture.sample.params.refundScriptPublicKeyHash) }],
-    ["timeoutDaa", { encoding: "signed-int64-le", offsets: [779], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.timeoutDaa)) }],
+    ["serverPublicKey", { encoding: "hex", offsets: [114], bytes: 32, value: hexToBytes(fixture.sample.params.serverPublicKey) }],
+    ["networkHash", { encoding: "hex", offsets: [247], bytes: 32, value: networkHash(fixture.sample.params.network) }],
+    ["clientPublicKey", { encoding: "hex", offsets: [290, 580, 886], bytes: 32, value: hexToBytes(fixture.sample.params.clientPublicKey) }],
+    ["payoutScriptPublicKeyHash", { encoding: "hex", offsets: [372], bytes: 32, value: hexToBytes(fixture.sample.params.payoutScriptPublicKeyHash) }],
+    ["refundScriptPublicKeyHash", { encoding: "hex", offsets: [703, 989], bytes: 32, value: hexToBytes(fixture.sample.params.refundScriptPublicKeyHash) }],
+    ["timeoutDaa", { encoding: "signed-int64-le", offsets: [855], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.timeoutDaa)) }],
   ]);
   check(layout.slots.length === expected.size, "constructorLayout.slots.length");
   for (const slot of layout.slots) {
@@ -219,7 +214,7 @@ function checkEscrowConstructorLayout(fixture: EscrowV2Fixture, checks: string[]
   }
 
   function check(value: boolean, label: string): void {
-    if (!value) throw new Error(`escrow-v2 fixture reproducibility check failed: ${label}`);
+    if (!value) throw new Error(`escrow-v3 fixture reproducibility check failed: ${label}`);
     checks.push(label);
   }
 }
@@ -232,13 +227,6 @@ function signedInt64Le(value: bigint): Uint8Array {
     remaining >>= 8n;
   }
   return bytes;
-}
-
-export function checkEscrowFixtureReproducibility(
-  fixture: EscrowFixture,
-  source: string | Uint8Array,
-): EscrowFixtureReproducibilityReport {
-  return checkEscrowV2FixtureReproducibility(fixture, source);
 }
 
 function scriptHash(serialized: string): string {
@@ -260,10 +248,10 @@ function sha256Hex(value: Uint8Array): string {
   return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function withoutEscrowV2State(redeemScript: string, layout: { start: number; len: number }): Uint8Array {
+function withoutEscrowState(redeemScript: string, layout: { start: number; len: number }): Uint8Array {
   const bytes = hexToBytes(redeemScript, undefined, "redeemScript");
   if (layout.start < 0 || layout.len <= 0 || layout.start + layout.len > bytes.byteLength) {
-    throw new Error("escrow-v2 state layout is outside redeem script");
+    throw new Error("escrow-v3 state layout is outside redeem script");
   }
   return Uint8Array.from([...bytes.subarray(0, layout.start), ...bytes.subarray(layout.start + layout.len)]);
 }

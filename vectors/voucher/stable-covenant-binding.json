@@ -1,6 +1,6 @@
 {
   "kind": "voucher-digest",
-  "description": "Alpha.10 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+  "description": "Alpha.11 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   "context": {
     "domain": "kaspa:x402:escrow-voucher:v2",
     "signedFields": [
@@ -18,24 +18,24 @@
       "name": "base",
       "input": {
         "network": "kaspa:testnet-10",
-        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
         "amount": "30000000"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493608ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef080c3c90100000000",
-        "digest": "76923df63dd59f09f742726d52502737aa9aa5eed09f68973404900d157a4164"
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649363f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc480c3c90100000000",
+        "digest": "ed819801913f3f95046d0073cfc9045c8215ad73e90d240d8a202fafc2086f82"
       }
     },
     {
       "name": "different-network",
       "input": {
         "network": "kaspa:mainnet",
-        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
         "amount": "30000000"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b6ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef080c3c90100000000",
-        "digest": "88a07d88698e56c3581782922bdb041a0d71157d8a4b515c4cff0e623420a4b6"
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b6ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc480c3c90100000000",
+        "digest": "12d36e1481e45a474010b23f1e5796eb8af55c5a8ec781bef42822925cc63a93"
       }
     },
     {
@@ -54,12 +54,12 @@
       "name": "amount-plus-one",
       "input": {
         "network": "kaspa:testnet-10",
-        "covenantId": "08ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef0",
+        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
         "amount": "30000001"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd6493608ded3e66e9260df25a2bf47e51d009f187963db2a804553470d9d5489470ef081c3c90100000000",
-        "digest": "9b3165e82eff67fcdb8543d68d13f1f9d3130e6b81257227e6b1d5dc1bd58e73"
+        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649363f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc481c3c90100000000",
+        "digest": "89e86c21bc51fa2b71b57c6e35d95e0ca22b939a861ec707fb944be33d2a7e27"
       }
     }
   ]

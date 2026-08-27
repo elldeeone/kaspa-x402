@@ -166,7 +166,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_SITE_BASE_URL",
     ),
     releaseVersion: releaseVersion(
-      env.KASPA_X402_RELEASE_VERSION ?? "0.1.0-alpha.10",
+      env.KASPA_X402_RELEASE_VERSION ?? "0.1.0-alpha.11",
     ),
     gatewayBaseUrl: baseUrl(
       env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org",

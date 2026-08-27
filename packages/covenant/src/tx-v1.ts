@@ -2,17 +2,17 @@ import { blake3 } from "@noble/hashes/blake3.js";
 import { blake2b } from "blakejs";
 
 import {
-  buildClaimV2Args,
-  buildRefundV2Args,
-  buildTopUpV2Args,
+  buildClaimArgs,
+  buildRefundArgs,
+  buildTopUpArgs,
   bytesToHex,
   computeBudgetForScriptUnits,
-  escrowV2ScriptPubKeyHash,
+  escrowScriptPubKeyHash,
   hexToBytes,
   payToScriptHashScript,
   scriptUnitAllowance,
   serializedScriptPublicKey,
-  voucherV2Digest,
+  voucherDigest,
 } from "./template.js";
 import type { FundingOutpoint, NetworkId, ScriptPublicKey } from "./template.js";
 import { calculateKaspaStorageMass } from "./storage-mass.js";
@@ -463,7 +463,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
   assertRedeemScriptPublicKey(activeRedeemScript, activeScriptPublicKey, "active");
   assertRedeemScriptPublicKey(successorRedeemScript, successorScriptPublicKey, "successor");
   if (
-    escrowV2ScriptPubKeyHash(parseSerializedScriptPublicKey(serverScriptPublicKey, "serverOutputScriptPublicKey")) !==
+    escrowScriptPubKeyHash(parseSerializedScriptPublicKey(serverScriptPublicKey, "serverOutputScriptPublicKey")) !==
     normalizeHash32(input.expectedPayoutScriptPublicKeyHash, "expectedPayoutScriptPublicKeyHash")
   ) {
     throw new Error("claim output 0 script public key must match the configured payout hash");
@@ -482,7 +482,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
   const outputs = normalizeOutputs(input.outputs ?? expectedOutputs);
   assertExactOutputs(outputs, expectedOutputs, "claim");
 
-  const signatureScript = `${buildClaimV2Args({
+  const signatureScript = `${buildClaimArgs({
     serverSignature: input.serverSignature,
     voucherSignature: input.voucherSignature,
     totalAuthorized,
@@ -510,7 +510,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
     mass,
   });
   const debug = buildDigestDebug(transaction);
-  const voucher = voucherV2Digest({ network: input.network, covenantId, totalAuthorized });
+  const voucher = voucherDigest({ network: input.network, covenantId, totalAuthorized });
 
   return {
     format: FORMAT,
@@ -570,7 +570,7 @@ export function buildBatchTopUpTxV1Artifact(input: BatchTopUpTxV1Input): BatchTo
   if (changeOutputs.some((output) => output.covenant !== null)) throw new Error("top-up change outputs must be unbound");
   if (
     changeOutputs[0] &&
-    escrowV2ScriptPubKeyHash(parseSerializedScriptPublicKey(changeOutputs[0].scriptPublicKey, "topUpChangeScriptPublicKey")) !==
+    escrowScriptPubKeyHash(parseSerializedScriptPublicKey(changeOutputs[0].scriptPublicKey, "topUpChangeScriptPublicKey")) !==
       normalizeHash32(input.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash")
   ) {
     throw new Error("top-up change output must match the configured refund hash");
@@ -586,7 +586,7 @@ export function buildBatchTopUpTxV1Artifact(input: BatchTopUpTxV1Input): BatchTo
   const outputs = normalizeOutputs(input.outputs ?? expectedOutputs);
   assertExactOutputs(outputs, expectedOutputs, "top-up");
 
-  const signatureScript = `${buildTopUpV2Args({ clientSignature: input.clientSignature })}${pushDataHex(activeRedeemScript)}`;
+  const signatureScript = `${buildTopUpArgs({ clientSignature: input.clientSignature })}${pushDataHex(activeRedeemScript)}`;
   const inputs = [
     buildReferenceInput({
       previousOutpoint: input.activeOutpoint,
@@ -660,7 +660,7 @@ export function buildBatchRefundTxV1Artifact(input: BatchRefundTxV1Input): Batch
   const refundScriptPublicKey = normalizeSerializedScriptPublicKey(input.refundOutputScriptPublicKey, "refundOutputScriptPublicKey");
   assertRedeemScriptPublicKey(activeRedeemScript, activeScriptPublicKey, "active");
   if (
-    escrowV2ScriptPubKeyHash(parseSerializedScriptPublicKey(refundScriptPublicKey, "refundOutputScriptPublicKey")) !==
+    escrowScriptPubKeyHash(parseSerializedScriptPublicKey(refundScriptPublicKey, "refundOutputScriptPublicKey")) !==
     normalizeHash32(input.expectedRefundScriptPublicKeyHash, "expectedRefundScriptPublicKeyHash")
   ) {
     throw new Error("refund output script public key must match the configured refund hash");
@@ -670,7 +670,7 @@ export function buildBatchRefundTxV1Artifact(input: BatchRefundTxV1Input): Batch
   const expectedOutputs = [{ amount: refundOutputAmount.toString(), scriptPublicKey: refundScriptPublicKey, covenant: null }];
   const outputs = normalizeOutputs(input.outputs ?? expectedOutputs);
   assertExactOutputs(outputs, expectedOutputs, "refund");
-  const signatureScript = `${buildRefundV2Args({ clientSignature: input.clientSignature })}${pushDataHex(activeRedeemScript)}`;
+  const signatureScript = `${buildRefundArgs({ clientSignature: input.clientSignature })}${pushDataHex(activeRedeemScript)}`;
   const inputs = [
     buildReferenceInput({
       previousOutpoint: input.activeOutpoint,

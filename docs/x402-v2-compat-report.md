@@ -1,7 +1,7 @@
 # x402 v2 Upstream Compatibility Report
 
 Status: internal pre-submission report. The upstream comparison baseline was
-checked 2026-07-08 against `x402-foundation/x402` `main`; this Alpha.10 binding
+checked 2026-07-08 against `x402-foundation/x402` `main`; this Alpha.11 binding
 update was recorded 2026-08-09. Not published on the site.
 
 Scope: line-level comparison of this repository's wire surface against the
@@ -10,9 +10,9 @@ upstream v2 specification (`specs/x402-specification-v2.md`) and transports
 
 ## Verdict
 
-The Kaspa binding remains wire-compatible with upstream x402 v2. Alpha.10
+The Kaspa binding remains wire-compatible with upstream x402 v2. Alpha.11
 leaves both exact profiles unchanged and replaces the active batch binding with
-`kaspa-escrow-v2` / `kaspa-x402-escrow-v2`. KIP-20 covenant identity, lifetime
+`kaspa-escrow-v2` / `kaspa-x402-escrow-v3`. KIP-20 covenant identity, lifetime
 voucher accounting, and transaction-v1 evidence remain ecosystem-defined
 scheme payload details inside the upstream envelope.
 
@@ -70,10 +70,10 @@ cares.
 - Our two extra-sounding error codes (`invalid_transaction_state`,
   `unexpected_settle_error`) exist in the upstream v2 vocabulary.
 - Scheme-specific payload content is ecosystem-defined upstream. Kaspa exact
-  uses a signed transaction artifact; Alpha.10 batch uses stable KIP-20
+  uses a signed transaction artifact; Alpha.11 batch uses stable KIP-20
   `covenantId`, current-outpoint evidence, and cumulative voucher fields.
 - `extra.binding` identifiers (`kaspa-exact-v2`, `kaspa-escrow-v2`) and the
-  `kaspa-x402-escrow-v2` template id live in scheme-defined `extra` objects,
+  `kaspa-x402-escrow-v3` template id live in scheme-defined `extra` objects,
   which upstream leaves to bindings.
 - Signed-int64 batch limits, singleton covenant transitions, and claim fee
   topology constrain the Kaspa binding without changing upstream envelopes or
@@ -81,8 +81,8 @@ cares.
 
 ## Alpha Snapshot Constraint
 
-Alpha.10 is a clean active-profile replacement, not a compatibility layer.
+Alpha.11 is a clean active-profile replacement, not a compatibility layer.
 Older immutable release snapshots remain available for historical
 reproducibility, but their batch bindings and stores are not accepted by the
-Alpha.10 runtime. The Alpha.10 release must create and lock a new snapshot;
+Alpha.11 runtime. The Alpha.11 release must create and lock a new snapshot;
 deployed snapshots must never be mutated in place.

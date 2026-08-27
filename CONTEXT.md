@@ -58,7 +58,7 @@ on `kaspa:testnet-10` only.
 
 ## Batch covenant identity
 
-The KIP-20 `covenantId` that identifies one `kaspa-x402-escrow-v2` channel and
+The KIP-20 `covenantId` that identifies one `kaspa-x402-escrow-v3` channel and
 enforces its successor lineage. The ID is stable across claims and top-ups, but
 it does not locate the live UTXO; the runtime must persist and reconcile the
 current outpoint separately.
@@ -67,7 +67,7 @@ current outpoint separately.
 
 The current outpoint, remaining funding, actual-charge lifetime total, settled
 lifetime total, and latest buyer-signed lifetime ceiling for one batch covenant
-identity. Alpha.10 replaces the earlier active batch state outright; runtimes do
+identity. Alpha.11 replaces the earlier active batch state outright; runtimes do
 not import or interpret older-alpha channel state. Historical tagged releases
 remain unchanged.
 

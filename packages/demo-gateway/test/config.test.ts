@@ -121,7 +121,7 @@ describe("gateway config", () => {
       enabled: false,
       siteBaseUrl: "https://kaspa-x402.org",
       gatewayBaseUrl: "https://demo.kaspa-x402.org",
-      releaseVersion: "0.1.0-alpha.10",
+      releaseVersion: "0.1.0-alpha.11",
     });
   });
 

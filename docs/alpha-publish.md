@@ -1,6 +1,6 @@
 # Alpha Publish Checklist
 
-Status: `0.1.0-alpha.10` is published to npm, tagged, released, and deployed on
+Status: `0.1.0-alpha.11` is published to npm, tagged, released, and deployed on
 `kaspa:testnet-10`. Publishes require npm authorization and must not happen
 accidentally from CI or an unauthenticated shell.
 
@@ -47,7 +47,7 @@ is the sole merchant payment. Unanswered 402s no longer consume inventory.
 their wire formats, transaction construction, verification order, expiry
 rules, commitment preimages, and consensus cross-checks independently
 implementable from the specifications and vectors.
-`0.1.0-alpha.10` keeps both exact profiles unchanged and cleanly replaces the
+`0.1.0-alpha.11` keeps both exact profiles unchanged and cleanly replaces the
 batch binding with `kaspa-escrow-v2`: stable KIP-20 lineage, lifetime A/S/T
 accounting, partial claims, same-lineage top-ups, an advertised claim reserve,
 and fresh runtime state with no older-alpha reader or migration.
@@ -102,12 +102,12 @@ The publishable packages have a `prepack` guard that fails if `dist/index.js`
 or `dist/index.d.ts` is missing. This prevents accidental tarballs with broken
 entrypoints.
 
-## Alpha.10 Release Sequence
+## Alpha.11 Release Sequence
 
 Use this order; every publish, deployment, tag, and release remains a separate
 explicitly authorized operator action:
 
-1. Freeze the approved source, then create the new immutable Alpha.10 snapshot
+1. Freeze the approved source, then create the new immutable Alpha.11 snapshot
    and content lock. Do not modify an older snapshot.
 2. Put that complete candidate, including its snapshot and lock, in a clean
    checkout and pass `npm run validate:release` with the v2 covenant consensus
@@ -115,11 +115,11 @@ explicitly authorized operator action:
 3. Install and import the four real local tarballs in a clean temporary project,
    record their hashes, then stage, approve, and verify the npm packages.
 4. Deploy and verify the locked static site at the apex and `www` before the
-   Worker, because the Worker canary checks the Alpha.10 snapshot.
-5. Cut over to fresh `demo-gateway-alpha.10` state, run funded batch and exact
+   Worker, because the Worker canary checks the Alpha.11 snapshot.
+5. Cut over to fresh `demo-gateway-alpha.11` state, run funded batch and exact
    canaries, then separately record deployment evidence, tag, and release.
 
-## Alpha.10 Release Recheck
+## Alpha.11 Release Recheck
 
 Completed on 2026-08-10:
 
@@ -128,7 +128,7 @@ Completed on 2026-08-10:
   site, browser/PNN/WASM checks, Worker dry run, 74 covenant fixture checks,
   pinned Kaspa consensus and exact/batch interop vectors, offline proof, live
   readiness, package checks, and diff hygiene;
-- the immutable `v0.1.0-alpha.10` snapshot is locked at
+- the immutable `v0.1.0-alpha.11` snapshot is locked at
   `cedaf891368bfc8fff6188570abee1b205ab82b32fa4b0c261532dcab0a88a3a`;
 - the four public tarballs installed and imported together in a clean project;
 - npm registry SHA-1 values match the staged and independently downloaded
@@ -136,14 +136,14 @@ Completed on 2026-08-10:
   `3cf53546844965e7a3f2f5d4bf90a563b869dcfc`, client
   `901c9b386cbdf01663e8aa57d69ab8321991b9d2`, and server
   `6a78bf8d66c64a53901bbe32c7f198b69e93344d`;
-- the npm `latest` and `alpha` dist-tags both resolve to `0.1.0-alpha.10` for
+- the npm `latest` and `alpha` dist-tags both resolve to `0.1.0-alpha.11` for
   all four packages;
 - Pages deployment `8db44e87-c332-42cc-b956-f5748c67fb41` serves the locked
   snapshot from both `kaspa-x402.org` and `www.kaspa-x402.org`;
 - the gateway first deployed fail-closed as Worker
   `fed8d256-f330-4c6c-adda-6c20c18c283c`, then enabled reviewed Worker
   `c57eb755-e169-4a00-ac4a-5e035371cad1` against fresh
-  `demo-gateway-alpha.10` state;
+  `demo-gateway-alpha.11` state;
 - the funded hosted standard-native exact canary settled transaction
   `8876bcd3a97592d6f5a2583c60994b1f5425067a3db23077851d47fe91bb2ffb`
   at accepted finality, replayed idempotently, and rejected cross-resource use;
@@ -153,9 +153,9 @@ Completed on 2026-08-10:
   `e83c52704998c7a72b24e93dad918ba16d9554ffb605ed8d29fb3276b1e1dcee`,
   reused it with a voucher-only payment, and returned a corrective `402` for
   the stale deposit voucher;
-- the first scheduled Alpha.10 canary passed the TN10 REST, schema, immutable
+- the first scheduled Alpha.11 canary passed the TN10 REST, schema, immutable
   release, docs, exact-offer, batch-offer, and foreign-scheme checks; and
-- annotated tag `v0.1.0-alpha.10` and its GitHub prerelease were created after
+- annotated tag `v0.1.0-alpha.11` and its GitHub prerelease were created after
   registry, site, Worker, and funded-canary verification.
 
 ## Alpha.9 Release Recheck
@@ -336,7 +336,7 @@ The expected current live proof must include:
 - batch refund transaction construction, deterministic artifact recovery, and
   broadcast after timeout.
 
-Checked for alpha.10 on 2026-08-10:
+Checked for alpha.11 on 2026-08-10:
 
 - the funded TN10 live proof completed with status `complete` across all 18
   required flows;

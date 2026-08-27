@@ -43,7 +43,7 @@ const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_SERVER_PUBLIC_KEY:
     "bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9",
   KASPA_X402_SITE_BASE_URL: "https://kaspa-x402.org",
-  KASPA_X402_RELEASE_VERSION: "0.1.0-alpha.10",
+  KASPA_X402_RELEASE_VERSION: "0.1.0-alpha.11",
   KASPA_X402_GATEWAY_BASE_URL: "https://demo.kaspa-x402.org",
 };
 
@@ -553,8 +553,8 @@ function stubCanaryFetches(): void {
         $id: "https://kaspa-x402.org/schemas/payment-required.schema.json",
       });
     }
-    if (url.startsWith("https://kaspa-x402.org/v0.1.0-alpha.10/release.json?")) {
-      return Response.json({ version: "0.1.0-alpha.10" });
+    if (url.startsWith("https://kaspa-x402.org/v0.1.0-alpha.11/release.json?")) {
+      return Response.json({ version: "0.1.0-alpha.11" });
     }
     if (url === "https://kaspa-x402.org/docs/") {
       return new Response("<!doctype html><h1>Docs</h1>", {

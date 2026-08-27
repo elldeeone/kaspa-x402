@@ -25,7 +25,7 @@ const vector = JSON.parse(
   fs.readFileSync(path.join(root, "vectors/batch/interop-v2.json"), "utf8"),
 );
 
-test("accepts the canonical Alpha.10 batch core cross-links", () => {
+test("accepts the canonical Alpha.11 batch core cross-links", () => {
   assert.doesNotThrow(() => assertBatchCoreCrossLinks(vector));
 });
 
@@ -87,7 +87,7 @@ function assertBatchCoreCrossLinks(item) {
   const covenantId = item.lineage.covenantId;
 
   assert.notEqual(covenantId, "00".repeat(32), "covenant id is unbound sentinel");
-  assert.equal(config.templateId, "kaspa-x402-escrow-v2");
+  assert.equal(config.templateId, "kaspa-x402-escrow-v3");
   assert.equal(accepted.extra.binding, "kaspa-escrow-v2");
   assert.equal(accepted.extra.templateId, config.templateId);
   assert.equal(accepted.network, config.network);

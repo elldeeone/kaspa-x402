@@ -161,7 +161,7 @@ describe("kaspa-x402 CLI", () => {
     expect(refundReady.reasons).toEqual([]);
   });
 
-  it("shows Alpha.10 lane accounting and previews a partial claim", () => {
+  it("shows Alpha.11 lane accounting and previews a partial claim", () => {
     const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-cli-"));
     const channelPath = path.join(dir, "channel.json");
     const fullyAuthorizedPath = path.join(dir, "fully-authorized.json");

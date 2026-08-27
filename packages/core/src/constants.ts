@@ -7,7 +7,7 @@ export const SUPPORTED_NETWORKS = [
 
 export const ASSET_ID = "KAS";
 export const ESCROW_BINDING_ID = "kaspa-escrow-v2";
-export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v2";
+export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v3";
 
 export const VOUCHER_DOMAIN_TAG = "kaspa:x402:escrow-voucher:v2";
 export const CHANNEL_DOMAIN_TAG = "kaspa:x402:channel:v1";

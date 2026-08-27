@@ -720,7 +720,7 @@ export interface DirectModeServerConfig {
   payTo: string;
   serverPublicKey: PublicKeyHex;
   serverPrivateKey?: string;
-  templateId?: "kaspa-x402-escrow-v2";
+  templateId?: "kaspa-x402-escrow-v3";
   minDepositSompi: SompiString;
   /** Deterministic reserve the client must leave beyond its signed claim ceiling. */
   claimReserveSompi: SompiString;

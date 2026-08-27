@@ -2261,7 +2261,7 @@ function batchComputeProfile(operation) {
   );
   if (!fs.existsSync(vectorPath)) {
     throw new Error(
-      `missing Alpha.10 consensus vector ${path.relative(REPO_ROOT, vectorPath)}`,
+      `missing Alpha.11 consensus vector ${path.relative(REPO_ROOT, vectorPath)}`,
     );
   }
   const vector = JSON.parse(fs.readFileSync(vectorPath, "utf8"));
@@ -2279,7 +2279,7 @@ function batchComputeProfile(operation) {
     vector.expected?.compute?.scriptUnitAllowance !==
       scriptUnitAllowanceValue
   ) {
-    throw new Error(`invalid Alpha.10 ${operation} compute evidence`);
+    throw new Error(`invalid Alpha.11 ${operation} compute evidence`);
   }
   const profile = {
     computeBudget,
@@ -3997,14 +3997,14 @@ function referenceTransactionToSdk(sdk, reference) {
     payload: reference.payload,
     // Toccata renamed the JavaScript transaction commitment to storageMass.
     // `mass` remains only as a deprecated SDK alias and must not be the
-    // canonical Alpha.10 adapter shape.
+    // canonical Alpha.11 adapter shape.
     storageMass: BigInt(reference.mass),
   };
   try {
     return new sdk.Transaction(shape);
   } catch (error) {
     throw new Error(
-      `configured Kaspa SDK cannot construct Alpha.10 KIP-20 transaction-v1: ${error instanceof Error ? error.message : String(error)}`,
+      `configured Kaspa SDK cannot construct Alpha.11 KIP-20 transaction-v1: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -4064,7 +4064,7 @@ function loadPersistedBatchArtifacts({
       artifact.format !== "kaspa-x402-tx-v1-reference-v2" ||
       !/^[0-9a-f]{64}$/.test(artifact.transactionId ?? "")
     ) {
-      throw new Error(`invalid Alpha.10 persisted batch artifact ${name}`);
+      throw new Error(`invalid Alpha.11 persisted batch artifact ${name}`);
     }
     batchArtifactsByTxid.set(artifact.transactionId, artifact);
     if (artifact.kind === "batch-genesis") {
@@ -4076,7 +4076,7 @@ function loadPersistedBatchArtifacts({
       const totalOutputCount = artifact.transaction.outputs.length;
       if (authorizedOutputCount !== 1 || totalOutputCount !== 1) {
         throw new Error(
-          `invalid Alpha.10 singleton genesis artifact ${name}`,
+          `invalid Alpha.11 singleton genesis artifact ${name}`,
         );
       }
       const evidence = {

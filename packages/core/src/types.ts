@@ -70,7 +70,7 @@ export interface ClaimPolicy extends JsonRecord {
 
 export interface BatchRequirementsExtra extends JsonRecord {
   binding: "kaspa-escrow-v2";
-  templateId: "kaspa-x402-escrow-v2";
+  templateId: "kaspa-x402-escrow-v3";
   serverPublicKey: PublicKeyHex;
   minDepositSompi: SompiString;
   claimReserveSompi: SompiString;
@@ -134,7 +134,7 @@ export interface Voucher extends JsonRecord {
 export interface ChannelConfig extends JsonRecord {
   network: NetworkId;
   asset: "KAS";
-  templateId: "kaspa-x402-escrow-v2";
+  templateId: "kaspa-x402-escrow-v3";
   clientPublicKey: PublicKeyHex;
   serverPublicKey: PublicKeyHex;
   payTo: string;

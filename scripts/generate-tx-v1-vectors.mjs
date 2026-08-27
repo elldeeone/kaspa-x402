@@ -12,12 +12,12 @@ import {
   buildBatchGenesisTxV1Artifact,
   buildBatchRefundTxV1Artifact,
   buildBatchTopUpTxV1Artifact,
-  buildEscrowV2RedeemScript,
+  buildEscrowRedeemScript,
   computeBudgetForScriptUnits,
-  escrowV2ScriptPublicKey,
+  escrowScriptPublicKey,
   serializedScriptPublicKey,
   transactionV1Sighash,
-  voucherV2Digest,
+  voucherDigest,
 } from "../packages/covenant/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -33,10 +33,10 @@ const PAYOUT_SCRIPT_PUBLIC_KEY = `000020${PAYOUT_PUBLIC_KEY}ac`;
 // These values are the exact execution measurements returned by the pinned
 // full Rusty Kaspa TransactionValidator harness. During a contract change the
 // harness rejects stale values and reports the newly measured units.
-const FIRST_CLAIM_SCRIPT_UNITS = 207_144;
-const SECOND_CLAIM_SCRIPT_UNITS = 207_147;
-const TOP_UP_SCRIPT_UNITS = 106_490;
-const REFUND_SCRIPT_UNITS = 102_330;
+const FIRST_CLAIM_SCRIPT_UNITS = 208_020;
+const SECOND_CLAIM_SCRIPT_UNITS = 208_024;
+const TOP_UP_SCRIPT_UNITS = 107_127;
+const REFUND_SCRIPT_UNITS = 102_586;
 
 const escrowBaseParams = {
   clientPublicKey: CLIENT_PUBLIC_KEY,
@@ -48,11 +48,11 @@ const escrowBaseParams = {
 };
 const escrowAt = (settledTotal) => {
   const params = { ...escrowBaseParams, settledTotal };
-  const redeemScript = buildEscrowV2RedeemScript(params);
+  const redeemScript = buildEscrowRedeemScript(params);
   return {
     settledTotal,
     redeemScript,
-    scriptPublicKey: serializedScriptPublicKey(escrowV2ScriptPublicKey(params)),
+    scriptPublicKey: serializedScriptPublicKey(escrowScriptPublicKey(params)),
   };
 };
 const state0 = escrowAt("0");
@@ -164,11 +164,11 @@ const vectors = [
 const plan = {
   kind: "tx-v1-plan",
   description:
-    "Alpha.10 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
+    "Alpha.11 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   mainnetReadiness: {},
   invariant: {
     covenantId,
-    voucherDigest: voucherV2Digest({
+    voucherDigest: voucherDigest({
       network: escrowBaseParams.network,
       covenantId,
       totalAuthorized,
@@ -369,7 +369,7 @@ function fundingInput(txidByte, index, amount) {
 function signVoucher(input) {
   return bytesToHex(
     schnorr.sign(
-      Buffer.from(voucherV2Digest(input), "hex"),
+      Buffer.from(voucherDigest(input), "hex"),
       CLIENT_PRIVATE_KEY,
       new Uint8Array(32),
     ),

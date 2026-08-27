@@ -2445,7 +2445,7 @@ function makeRequired(input: {
         maxTimeoutSeconds: 60,
         extra: {
           binding: "kaspa-escrow-v2",
-          templateId: "kaspa-x402-escrow-v2",
+          templateId: "kaspa-x402-escrow-v3",
           serverPublicKey: SERVER_KEY,
           minDepositSompi: input.minDepositSompi ?? "1000",
           claimReserveSompi: input.claimReserveSompi ?? "10",

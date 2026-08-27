@@ -20,7 +20,7 @@ const state: BatchLaneState = {
   signedMaxClaimable: "5000000",
 };
 
-describe("Alpha.10 batch lane accounting", () => {
+describe("Alpha.11 batch lane accounting", () => {
   it("derives unsettled charges and remaining lifetime authorization", () => {
     expect(batchLaneAccounting(state)).toMatchObject({
       activeChargedAmount: 1_500_000n,
@@ -89,7 +89,7 @@ describe("Alpha.10 batch lane accounting", () => {
       maxTimeoutSeconds: 60,
       extra: {
         binding: "kaspa-escrow-v2" as const,
-        templateId: "kaspa-x402-escrow-v2" as const,
+        templateId: "kaspa-x402-escrow-v3" as const,
         serverPublicKey: "22".repeat(32),
         minDepositSompi: BATCH_SCRIPT_INT_MAX.toString(),
         claimReserveSompi: claimReserve.toString(),
@@ -140,7 +140,7 @@ describe("Alpha.10 batch lane accounting", () => {
   });
 });
 
-describe("Alpha.10 voucher identity", () => {
+describe("Alpha.11 voucher identity", () => {
   const input = {
     network: "kaspa:testnet-10" as const,
     covenantId: "11".repeat(32),

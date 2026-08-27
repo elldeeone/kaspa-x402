@@ -1,6 +1,6 @@
 # Kaspa x402 Batch Settlement Binding v2
 
-Status: Alpha.10, Testnet-10-only interoperability candidate
+Status: Alpha.11, Testnet-10-only interoperability candidate
 
 This document defines the active Kaspa network binding for x402 v2
 `batch-settlement`.
@@ -17,7 +17,7 @@ Use `batch-settlement` for repeated API requests, metered agent sessions, and
 variable-cost MCP tools. Use [exact](kaspa-exact-v2.md) for a fixed-price
 one-shot purchase.
 
-Alpha.10 replaces the earlier alpha batch binding. It does not implement a
+Alpha.11 replaces the earlier alpha batch binding. It does not implement a
 compatibility reader, migration path, or dual runtime for older alpha channel
 state. Immutable release snapshots remain historical evidence only.
 
@@ -30,7 +30,7 @@ state. Immutable release snapshots remain historical evidence only.
   "asset": "KAS",
   "extra": {
     "binding": "kaspa-escrow-v2",
-    "templateId": "kaspa-x402-escrow-v2"
+    "templateId": "kaspa-x402-escrow-v3"
   }
 }
 ```
@@ -40,10 +40,10 @@ The active identifiers are:
 ```text
 scheme       batch-settlement
 binding      kaspa-escrow-v2
-templateId   kaspa-x402-escrow-v2
+templateId   kaspa-x402-escrow-v3
 ```
 
-`kaspa:testnet-10` is the only Alpha.10 validation target. The common binding
+`kaspa:testnet-10` is the only Alpha.11 validation target. The common binding
 reserves `kaspa:mainnet` as a draft network identifier, but this batch profile
 MUST NOT be enabled on mainnet.
 
@@ -59,7 +59,7 @@ MUST NOT be enabled on mainnet.
   "maxTimeoutSeconds": 60,
   "extra": {
     "binding": "kaspa-escrow-v2",
-    "templateId": "kaspa-x402-escrow-v2",
+    "templateId": "kaspa-x402-escrow-v3",
     "serverPublicKey": "<32-byte x-only hex>",
     "minDepositSompi": "90000000",
     "claimReserveSompi": "2000000",
@@ -74,13 +74,13 @@ MUST NOT be enabled on mainnet.
 | Field | Required | Rule |
 | --- | --- | --- |
 | `scheme` | yes | MUST equal `batch-settlement`. |
-| `network` | yes | MUST equal `kaspa:testnet-10` in Alpha.10. |
+| `network` | yes | MUST equal `kaspa:testnet-10` in Alpha.11. |
 | `amount` | yes | Maximum per-request charge, as canonical decimal sompi. |
 | `asset` | yes | MUST equal `KAS`. |
 | `payTo` | yes | Provider payout address; it is not the lane address. |
 | `maxTimeoutSeconds` | yes | Positive response timeout in seconds. |
 | `extra.binding` | yes | MUST equal `kaspa-escrow-v2`. |
-| `extra.templateId` | yes | MUST equal `kaspa-x402-escrow-v2`. |
+| `extra.templateId` | yes | MUST equal `kaspa-x402-escrow-v3`. |
 | `extra.serverPublicKey` | yes | Provider key used by the covenant claim path. |
 | `extra.minDepositSompi` | yes | Minimum initial covenant value. |
 | `extra.claimReserveSompi` | yes | Minimum successor value retained beyond remaining authorization. |
@@ -111,7 +111,7 @@ also inside the signed 64-bit range.
 {
   "network": "kaspa:testnet-10",
   "asset": "KAS",
-  "templateId": "kaspa-x402-escrow-v2",
+  "templateId": "kaspa-x402-escrow-v3",
   "clientPublicKey": "<32-byte x-only hex>",
   "serverPublicKey": "<32-byte x-only hex>",
   "payTo": "kaspatest:...",
@@ -249,7 +249,7 @@ commits to the current request.
   "channelConfig": {
     "network": "kaspa:testnet-10",
     "asset": "KAS",
-    "templateId": "kaspa-x402-escrow-v2",
+    "templateId": "kaspa-x402-escrow-v3",
     "clientPublicKey": "<32-byte x-only hex>",
     "serverPublicKey": "<32-byte x-only hex>",
     "payTo": "kaspatest:...",
@@ -367,9 +367,9 @@ with the same script or address but a different id is not the same lane.
 
 ## Escrow Template
 
-`kaspa-x402-escrow-v2` is the byte-exact stateful KIP-20 contract compiled from
-the normative [SilverScript source](../contracts/kaspa-x402-escrow-v2.sil).
-The accompanying [byte fixture](../contracts/fixtures/kaspa-x402-escrow-v2.json)
+`kaspa-x402-escrow-v3` is the byte-exact stateful KIP-20 contract compiled from
+the normative [SilverScript source](../contracts/kaspa-x402-escrow-v3.sil).
+The accompanying [byte fixture](../contracts/fixtures/kaspa-x402-escrow-v3.json)
 pins the compiler commit, source hash, fixed-width constructor layout, compiled
 genesis and successor bytes, script public keys, covenant arguments, and
 voucher digest. Constructor material is derived from the channel config:
@@ -645,7 +645,7 @@ sha256(
   sha256(payTo utf8) ||
   maxTimeoutSeconds_le64 ||
   sha256("kaspa-escrow-v2") ||
-  sha256("kaspa-x402-escrow-v2") ||
+  sha256("kaspa-x402-escrow-v3") ||
   serverPublicKey32 ||
   minDepositSompi_le64 ||
   claimReserveSompi_le64 ||
@@ -758,7 +758,7 @@ Implementations MUST reject:
 
 ## Interoperability Evidence
 
-Alpha.10 vectors MUST cover channel id, v2 voucher digest, structured
+Alpha.11 vectors MUST cover channel id, v2 voucher digest, structured
 requirements hash, request commitment, singleton genesis, partial claim and
 same-voucher reuse, top-up, refund, signed-int64 boundaries, reserve failures,
 concurrent attempts, and transaction-v1 full-consensus execution.

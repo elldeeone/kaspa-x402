@@ -6,7 +6,7 @@ import {
   buildBatchRefundTxV1Artifact,
   buildBatchTopUpTxV1Artifact,
   computeBudgetForScriptUnits,
-  escrowV2ScriptPubKeyHash,
+  escrowScriptPubKeyHash,
   payToScriptHashScript,
   serializedScriptPublicKey,
   TX_V1_P2PK_COMPUTE_BUDGET,
@@ -29,7 +29,7 @@ const I64_MAX = "9223372036854775807";
 const I64_MAX_PLUS_ONE = "9223372036854775808";
 
 function spkHash(serialized: string): string {
-  return escrowV2ScriptPubKeyHash({ version: 0, script: serialized.slice(4) });
+  return escrowScriptPubKeyHash({ version: 0, script: serialized.slice(4) });
 }
 
 function fundingInput(byte: string, index: number, amount: string, scriptPublicKey = P2PK_A) {
@@ -65,7 +65,7 @@ function claimInput() {
   };
 }
 
-describe("Alpha.10 KIP-20 transaction-v1 builders", () => {
+describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
   it("builds one deterministic multi-input singleton genesis head", () => {
     const artifact = buildBatchGenesisTxV1Artifact({
       fundingInputs: [fundingInput("01", 0, "60000000"), fundingInput("02", 1, "30001000", P2PK_B)],

@@ -1,15 +1,15 @@
 # Demo Implementer Guide
 
-Status: Alpha.10, Testnet-10 only. The hosted gateway is an integration target,
+Status: Alpha.11, Testnet-10 only. The hosted gateway is an integration target,
 not a production or mainnet service.
 
-This guide describes the published Alpha.10 source and public gateway. The
-gateway completed its fresh-state cutover and is an Alpha.10 interoperability
+This guide describes the published Alpha.11 source and public gateway. The
+gateway completed its fresh-state cutover and is an Alpha.11 interoperability
 endpoint.
 
-Alpha.10 uses `kaspa-escrow-v2` / `kaspa-x402-escrow-v2` for batch settlement.
+Alpha.11 uses `kaspa-escrow-v2` / `kaspa-x402-escrow-v3` for batch settlement.
 The exact profiles are unchanged. Older alpha snapshots are historical artifacts
-only; clients must not send their batch payloads to the Alpha.10 runtime.
+only; clients must not send their batch payloads to the Alpha.11 runtime.
 
 ## Start With The Artifacts
 
@@ -30,11 +30,11 @@ Useful entry points:
 Install the exact prerelease explicitly:
 
 ```sh
-npm install @kaspa-x402/core@0.1.0-alpha.10 @kaspa-x402/client@0.1.0-alpha.10
+npm install @kaspa-x402/core@0.1.0-alpha.11 @kaspa-x402/client@0.1.0-alpha.11
 ```
 
-The registry `latest` and `alpha` tags both resolve to the same Alpha.10 package
-set. Alpha.10 remains prerelease software: `latest` identifies the currently
+The registry `latest` and `alpha` tags both resolve to the same Alpha.11 package
+set. Alpha.11 remains prerelease software: `latest` identifies the currently
 recommended alpha and does not imply a stable API, frozen wire format, or
 mainnet readiness. The hosted gateway package is not published.
 
@@ -62,13 +62,13 @@ transaction-specific mass and reserve analysis.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Do not submit payment until the response advertises the expected Alpha.10
+Do not submit payment until the response advertises the expected Alpha.11
 release and capability:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - `scheme: "batch-settlement"`, binding `kaspa-escrow-v2`, and template
-  `kaspa-x402-escrow-v2`;
+  `kaspa-x402-escrow-v3`;
 - `scheme: "exact"` under the configured exact profile; and
 - accepted finality `accepted`.
 
@@ -146,7 +146,7 @@ curl -i https://demo.kaspa-x402.org/batch
 
 The `402` response must contain `batch-settlement` requirements with
 `extra.binding: "kaspa-escrow-v2"` and
-`extra.templateId: "kaspa-x402-escrow-v2"`.
+`extra.templateId: "kaspa-x402-escrow-v3"`.
 
 Open a lane by building and funding the advertised singleton KIP-20 genesis.
 Before signing the first voucher, derive and retain its stable `covenantId` and

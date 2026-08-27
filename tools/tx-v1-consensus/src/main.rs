@@ -227,7 +227,7 @@ fn main() -> Result<()> {
 
 fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
     if vectors.len() != 5 {
-        return Err(anyhow!("Alpha.10 batch chain must contain five vectors"));
+        return Err(anyhow!("Alpha.11 batch chain must contain five vectors"));
     }
     let stable_id = vectors[0].1.sequence.covenant_id.as_str();
     if stable_id == "00".repeat(32) {
@@ -486,11 +486,12 @@ fn claim_ceiling_and_delta(transaction: &ArtifactTransaction) -> Result<(u64, u6
     let voucher_signature = read_canonical_push(&signature_script, &mut cursor)?;
     let total_authorized = read_canonical_push(&signature_script, &mut cursor)?;
     let claim_amount = read_canonical_push(&signature_script, &mut cursor)?;
+    let selector = read_canonical_push(&signature_script, &mut cursor)?;
     if server_signature.len() != 65
         || voucher_signature.len() != 64
         || total_authorized.len() != 8
         || claim_amount.len() != 8
-        || signature_script.get(cursor) != Some(&0)
+        || selector != [0x23, 0x95, 0x9b, 0x42]
     {
         return Err(anyhow!("claim signature script ABI mismatch"));
     }
@@ -593,7 +594,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     )?;
     expect_eq(
         json_string(config, "templateId")?,
-        "kaspa-x402-escrow-v2",
+        "kaspa-x402-escrow-v3",
         "batch template",
     )?;
 
