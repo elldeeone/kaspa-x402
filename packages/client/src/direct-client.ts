@@ -52,6 +52,7 @@ import {
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   type ApplySettlementResult,
+  type BatchPaymentAuthorizationRequest,
   type CreatePaymentResult,
   type DirectModeChannel,
   type DirectModeClientOptions,
@@ -148,10 +149,12 @@ export class DirectModeClient {
       origin,
       payTo: accepted.payTo,
     });
+    assertBatchAmountFundingPolicy(this.#options, accepted.amount);
     const existing = await this.#selectExistingChannel(
       accepted,
       origin,
       resourceUrl,
+      authorizedContext,
     );
 
     if (existing) {
@@ -684,6 +687,7 @@ export class DirectModeClient {
     accepted: BatchPaymentRequirements,
     origin: string,
     resourceUrl: string,
+    context: PaymentRequestContext,
   ): Promise<{ channel: DirectModeChannel; toppedUp: boolean } | undefined> {
     const channels = await this.#options.store.loadChannels({
       origin,
@@ -731,6 +735,20 @@ export class DirectModeClient {
           accepted.extra.claimReserveSompi,
         )
       ) {
+        await this.#authorizeBatchPayment({
+          accepted,
+          context,
+          channelId: current.id,
+          origin,
+          resourceUrl,
+          fundingAction: "none",
+          currentFundingAmount: current.fundingAmount,
+          resultingFundingAmount: current.fundingAmount,
+          resultingVoucherAmount: requiredBatchVoucherAmount(
+            current,
+            accepted.amount,
+          ),
+        });
         return {
           channel: current,
           toppedUp: current.requiresDepositVoucher,
@@ -741,7 +759,12 @@ export class DirectModeClient {
 
     if (topUpCandidate) {
       return {
-        channel: await this.#topUpChannel(topUpCandidate, accepted),
+        channel: await this.#topUpChannel(
+          topUpCandidate,
+          accepted,
+          resourceUrl,
+          context,
+        ),
         toppedUp: true,
       };
     }
@@ -751,6 +774,8 @@ export class DirectModeClient {
   async #topUpChannel(
     channel: DirectModeChannel,
     accepted: BatchPaymentRequirements,
+    resourceUrl: string,
+    context: PaymentRequestContext,
   ): Promise<DirectModeChannel> {
     const payoutScriptPublicKeyHash = scriptPublicKeyHash(
       this.#options.addressCodec.scriptPublicKeyForAddress(
@@ -806,6 +831,20 @@ export class DirectModeClient {
       ),
     );
     parseBatchLaneAmount(targetFundingAmount, "top-up target funding amount");
+    await this.#authorizeBatchPayment({
+      accepted,
+      context,
+      channelId: channel.id,
+      origin: channel.origin,
+      resourceUrl,
+      fundingAction: "top-up",
+      currentFundingAmount: channel.fundingAmount,
+      resultingFundingAmount: targetFundingAmount,
+      resultingVoucherAmount: requiredBatchVoucherAmount(
+        { ...channel, fundingAmount: targetFundingAmount },
+        accepted.amount,
+      ),
+    });
     const prepared = await this.#options.fundingProvider.prepareEscrowTopUp({
       network: channel.config.network,
       channel,
@@ -889,6 +928,17 @@ export class DirectModeClient {
       ),
     );
     parseBatchLaneAmount(initialFundingAmount, "initial funding amount");
+    await this.#authorizeBatchPayment({
+      accepted,
+      context,
+      channelId: id,
+      origin,
+      resourceUrl: paymentRequired.resource.url,
+      fundingAction: "deposit",
+      currentFundingAmount: "0",
+      resultingFundingAmount: initialFundingAmount,
+      resultingVoucherAmount: accepted.amount,
+    });
     const payoutScriptPublicKeyHash = scriptPublicKeyHash(
       this.#options.addressCodec.scriptPublicKeyForAddress(
         channelConfig.payTo,
@@ -959,6 +1009,10 @@ export class DirectModeClient {
         "prepared genesis amount is below the required funding target",
       );
     }
+    assertBatchChannelFundingPolicy(
+      this.#options,
+      prepared.successor.amount,
+    );
     const attempt: FundingTransitionAttemptRecord = {
       kind: "genesis",
       channelId: id,
@@ -1316,6 +1370,49 @@ export class DirectModeClient {
     if (!retryValidation.ok) throw retryValidation.error;
     await this.#options.store.saveChannel(updated);
     return { channel: updated, paymentPayload };
+  }
+
+  async #authorizeBatchPayment(
+    input: Omit<
+      BatchPaymentAuthorizationRequest,
+      | "additionalFundingAmount"
+      | "network"
+      | "amount"
+      | "payTo"
+      | "paymentRequirementsHash"
+      | "requestHash"
+      | "fundingSource"
+    > & {
+      accepted: BatchPaymentRequirements;
+      context: PaymentRequestContext;
+    },
+  ): Promise<void> {
+    const requestHash = input.context.requestHash;
+    if (!requestHash) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "batch request authorization requires a canonical request hash",
+      );
+    }
+    assertBatchChannelFundingPolicy(
+      this.#options,
+      input.resultingFundingAmount,
+    );
+    const additionalFundingAmount = formatSompiString(
+      parseSompiString(input.resultingFundingAmount) -
+        parseSompiString(input.currentFundingAmount),
+    );
+    const { accepted, context, ...authorization } = input;
+    await this.#options.fundingProvider.authorizeBatchPayment({
+      ...authorization,
+      network: accepted.network,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      additionalFundingAmount,
+      paymentRequirementsHash: batchPaymentRequirementsHash(accepted),
+      requestHash,
+      fundingSource: this.#options.fundingPolicy?.requiredSource,
+    });
   }
 
   async #signVoucher(
@@ -1830,6 +1927,38 @@ function assertExactFundingPolicy(
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
       "exact payment amount exceeds funding policy",
+    );
+  }
+}
+
+function assertBatchAmountFundingPolicy(
+  options: DirectModeClientOptions,
+  amount: SompiString,
+): void {
+  const maximum = options.fundingPolicy?.maximumBatchAmountSompi;
+  if (
+    maximum !== undefined &&
+    parseSompiString(amount) > parseSompiString(maximum)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "batch payment amount exceeds funding policy",
+    );
+  }
+}
+
+function assertBatchChannelFundingPolicy(
+  options: DirectModeClientOptions,
+  amount: SompiString,
+): void {
+  const maximum = options.fundingPolicy?.maximumBatchChannelFundingSompi;
+  if (
+    maximum !== undefined &&
+    parseSompiString(amount) > parseSompiString(maximum)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "batch channel funding exceeds funding policy",
     );
   }
 }

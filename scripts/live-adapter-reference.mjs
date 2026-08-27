@@ -2582,6 +2582,7 @@ function makeFundingProvider(input) {
       return { address: fundingAddress, publicKey: fundingPublicKey };
     },
     async authorizeExactPayment() {},
+    async authorizeBatchPayment() {},
     async prepareEscrowDeposit(request) {
       const genesis = await buildPreparedGenesis({
         request,

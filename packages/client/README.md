@@ -34,6 +34,14 @@ must provide explicit funding, signer, node, custody, and review controls.
 
 Wallet, node, address-codec, and transaction-builder behavior is injected through typed adapters. Amounts on the wire remain decimal sompi strings.
 
+Every batch request crosses the funding provider's mandatory
+`authorizeBatchPayment` boundary before the client prepares a deposit or
+top-up, broadcasts funding, or signs a voucher. The authorization request
+includes the origin, resource, recipient, request identity, resulting voucher
+ceiling, and current, additional, and required channel funding. Deployments
+SHOULD also configure `maximumBatchAmountSompi` and
+`maximumBatchChannelFundingSompi` for automatic funding providers.
+
 ## Durable Funding Transitions
 
 Genesis and top-up are prepare-then-broadcast transitions. The funding provider

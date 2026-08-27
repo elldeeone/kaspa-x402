@@ -215,6 +215,7 @@ async function runHostedExactProof(input) {
       addressCodec,
       refundAddress: fundingAddress,
       supportedNetworks: [input.network],
+      supportedSchemes: ["exact"],
       fetch: gatewayFetch,
       maxPaymentRetries: 0,
       fundingPolicy: {
@@ -461,6 +462,9 @@ function makeFundingProvider(input) {
       };
     },
     async authorizeExactPayment() {},
+    async authorizeBatchPayment() {
+      throw new Error("batch settlement is not supported by this provider");
+    },
     async payExactTransaction(request) {
       return buildExactTransaction({
         rpc: input.rpc,

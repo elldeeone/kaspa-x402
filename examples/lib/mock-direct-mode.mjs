@@ -270,6 +270,8 @@ class MockFundingProvider {
 
   async authorizeExactPayment() {}
 
+  async authorizeBatchPayment() {}
+
   async prepareEscrowDeposit(request) {
     const authorizingInput = this.nextOutpoint("genesis-authorizer");
     const transaction = mockTransaction(`deposit:${authorizingInput.txid}`);

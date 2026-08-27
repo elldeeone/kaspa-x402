@@ -151,6 +151,23 @@ export interface ExactTransactionPaymentResult {
   fundingSource?: FundingSourceKind;
 }
 
+export interface BatchPaymentAuthorizationRequest {
+  network: NetworkId;
+  origin: string;
+  resourceUrl: string;
+  amount: SompiString;
+  payTo: string;
+  channelId: Hash32Hex;
+  fundingAction: "none" | "deposit" | "top-up";
+  currentFundingAmount: SompiString;
+  additionalFundingAmount: SompiString;
+  resultingFundingAmount: SompiString;
+  resultingVoucherAmount: SompiString;
+  paymentRequirementsHash: Hash32Hex;
+  requestHash: Hash32Hex;
+  fundingSource?: FundingSourceKind;
+}
+
 export type ExactPaymentResult = ExactTransactionPaymentResult;
 
 export interface FeeEstimateRequest {
@@ -174,6 +191,10 @@ export interface FundingProvider {
   getPublicIdentity(): Promise<PublicIdentity>;
   /** Explicit policy boundary invoked before any exact signing operation. */
   authorizeExactPayment(request: ExactTransactionPaymentRequest): Promise<void>;
+  /** Explicit policy boundary invoked before any batch funding or signing operation. */
+  authorizeBatchPayment(
+    request: BatchPaymentAuthorizationRequest,
+  ): Promise<void>;
   prepareEscrowDeposit(
     request: EscrowDepositRequest,
   ): Promise<PreparedEscrowDeposit>;
@@ -204,6 +225,8 @@ export interface FundingPolicy {
   allowedExactProfiles?: readonly ExactProfile[];
   allowedPayTo?: readonly string[];
   maximumExactAmountSompi?: SompiString;
+  maximumBatchAmountSompi?: SompiString;
+  maximumBatchChannelFundingSompi?: SompiString;
 }
 
 export interface ChannelKey {

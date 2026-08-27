@@ -39,6 +39,7 @@ import {
   PAYMENT_SIGNATURE_HEADER,
   paidMcpToolCall,
   type AddressCodec,
+  type BatchPaymentAuthorizationRequest,
   type ChannelKey,
   type DirectModeChannel,
   type EscrowDepositRequest,
@@ -358,6 +359,165 @@ describe("direct-mode client", () => {
       ).rejects.toThrow("funding policy");
       expect(provider.deposits).toHaveLength(0);
     }
+  });
+
+  it("requires explicit batch authorization before opening or reusing a channel", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const signer = new FakeSigner();
+    const client = makeClient({ provider, store, signer });
+    const required = encodePaymentRequiredHeader(
+      makeRequired({ amount: "100" }),
+    );
+
+    provider.batchAuthorizationError = new Error("batch payment denied");
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow("batch payment denied");
+    expect(provider.deposits).toHaveLength(0);
+    expect(signer.voucherSignCount).toBe(0);
+    expect(signer.requestAuthorizationSignCount).toBe(0);
+
+    provider.batchAuthorizationError = undefined;
+    provider.batchAuthorizations.length = 0;
+    const first = await client.createPayment(required, {
+      url: "https://api.example.test/data",
+    });
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+
+    provider.batchAuthorizationError = new Error("batch payment denied");
+    await expect(
+      client.createPayment(required, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow("batch payment denied");
+    expect(provider.deposits).toHaveLength(1);
+    expect(provider.topUps).toHaveLength(0);
+    expect(signer.voucherSignCount).toBe(1);
+    expect(signer.requestAuthorizationSignCount).toBe(1);
+    expect(provider.batchAuthorizations).toEqual([
+      {
+        network: "kaspa:testnet-10",
+        origin: "https://api.example.test",
+        resourceUrl: "https://api.example.test/data",
+        amount: "100",
+        payTo: "kaspatest:payout",
+        channelId: expect.any(String),
+        fundingAction: "deposit",
+        currentFundingAmount: "0",
+        additionalFundingAmount: "1000",
+        resultingFundingAmount: "1000",
+        resultingVoucherAmount: "100",
+        paymentRequirementsHash: expect.any(String),
+        requestHash: expect.any(String),
+        fundingSource: undefined,
+      },
+      {
+        network: "kaspa:testnet-10",
+        origin: "https://api.example.test",
+        resourceUrl: "https://api.example.test/data",
+        amount: "100",
+        payTo: "kaspatest:payout",
+        channelId: first.channel!.id,
+        fundingAction: "none",
+        currentFundingAmount: "1000",
+        additionalFundingAmount: "0",
+        resultingFundingAmount: "1000",
+        resultingVoucherAmount: "200",
+        paymentRequirementsHash: expect.any(String),
+        requestHash: expect.any(String),
+        fundingSource: undefined,
+      },
+    ]);
+  });
+
+  it("requires explicit batch authorization before a top-up", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const signer = new FakeSigner();
+    const client = makeClient({ provider, store, signer });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+
+    provider.batchAuthorizationError = new Error("batch payment denied");
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "950" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("batch payment denied");
+    expect(provider.topUps).toHaveLength(0);
+    expect(signer.voucherSignCount).toBe(1);
+    expect(signer.requestAuthorizationSignCount).toBe(1);
+    expect(provider.batchAuthorizations.at(-1)).toMatchObject({
+      fundingAction: "top-up",
+      currentFundingAmount: "1000",
+      additionalFundingAmount: "1000",
+      resultingFundingAmount: "2000",
+      resultingVoucherAmount: "1050",
+    });
+  });
+
+  it("rejects batch charges above the funding policy before authorization", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      fundingPolicy: { maximumBatchAmountSompi: "99" },
+    });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("batch payment amount exceeds funding policy");
+    expect(provider.batchAuthorizations).toHaveLength(0);
+    expect(provider.deposits).toHaveLength(0);
+  });
+
+  it("rejects deposit and top-up targets above the channel funding policy", async () => {
+    const depositProvider = new FakeFundingProvider();
+    const depositClient = makeClient({
+      provider: depositProvider,
+      fundingPolicy: { maximumBatchChannelFundingSompi: "999" },
+    });
+    await expect(
+      depositClient.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("batch channel funding exceeds funding policy");
+    expect(depositProvider.batchAuthorizations).toHaveLength(0);
+    expect(depositProvider.deposits).toHaveLength(0);
+
+    const topUpProvider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const topUpClient = makeClient({
+      provider: topUpProvider,
+      store,
+      fundingPolicy: { maximumBatchChannelFundingSompi: "1999" },
+    });
+    const first = await topUpClient.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await topUpClient.applySettlement(
+      first,
+      makeSettlement(first.channel!, "100"),
+    );
+    await expect(
+      topUpClient.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "950" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("batch channel funding exceeds funding policy");
+    expect(topUpProvider.batchAuthorizations).toHaveLength(1);
+    expect(topUpProvider.topUps).toHaveLength(0);
   });
 
   it("creates the default standard-native exact transaction without head state", async () => {
@@ -853,6 +1013,42 @@ describe("direct-mode client", () => {
         },
       ),
     ).rejects.toThrow("below the required funding target");
+  });
+
+  it("applies the channel funding cap to the provider's actual deposit", async () => {
+    const provider = new FakeFundingProvider();
+    provider.depositMode = "outpoint-overfunded";
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fundingPolicy: { maximumBatchChannelFundingSompi: "1000" },
+    });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("batch channel funding exceeds funding policy");
+    expect(provider.sendCount).toBe(0);
+  });
+
+  it("accepts a provider-selected larger deposit within the channel funding cap", async () => {
+    const provider = new FakeFundingProvider();
+    provider.depositMode = "outpoint-overfunded";
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+      fundingPolicy: { maximumBatchChannelFundingSompi: "1001" },
+    });
+
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    expect(payment.channel?.fundingAmount).toBe("1001");
+    expect(provider.sendCount).toBe(1);
   });
 
   it("recovers a prepared genesis after transport uncertainty without rebuilding it", async () => {
@@ -2399,11 +2595,12 @@ function makeClient(options: {
   supportedNetworks?: readonly NetworkId[];
   supportedSchemes?: readonly PaymentScheme[];
   fundingPolicy?: FundingPolicy;
+  signer?: FakeSigner;
 }): DirectModeClient {
   const provider = options.provider ?? new FakeFundingProvider();
   return new DirectModeClient({
     fundingProvider: provider,
-    signer: new FakeSigner(),
+    signer: options.signer ?? new FakeSigner(),
     store: options.store ?? new MemoryChannelStore(),
     addressCodec: new FakeAddressCodec(),
     fundingPolicy:
@@ -2741,6 +2938,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly sourceKind: FundingSourceKind;
   readonly deposits: Array<{ amount: string; channelId: string }> = [];
   readonly topUps: Array<{ targetFundingAmount: string }> = [];
+  readonly batchAuthorizations: BatchPaymentAuthorizationRequest[] = [];
   readonly exactPayments: Array<{
     profile: ExactPaymentRequest["profile"];
     amount: string;
@@ -2755,10 +2953,14 @@ class FakeFundingProvider implements FundingProvider {
     string,
     { transactionId: string; successor: FundingProviderUtxo }
   >();
-  depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" =
-    "outpoint";
+  depositMode:
+    | "outpoint"
+    | "txid-only-ambiguous"
+    | "outpoint-underfunded"
+    | "outpoint-overfunded" = "outpoint";
   sendFinality: SendTransactionResult["finality"] = "accepted";
   sendError?: Error;
+  batchAuthorizationError?: Error;
   fundingSendFinality: SendTransactionResult["finality"] = "accepted";
   fundingSendError?: Error;
   genesisTotalOutputCount = 1;
@@ -2783,6 +2985,11 @@ class FakeFundingProvider implements FundingProvider {
 
   async authorizeExactPayment(_request: ExactTransactionPaymentRequest) {}
 
+  async authorizeBatchPayment(request: BatchPaymentAuthorizationRequest) {
+    this.batchAuthorizations.push(request);
+    if (this.batchAuthorizationError) throw this.batchAuthorizationError;
+  }
+
   async prepareEscrowDeposit(request: EscrowDepositRequest) {
     this.deposits.push({
       amount: request.amount,
@@ -2790,7 +2997,11 @@ class FakeFundingProvider implements FundingProvider {
     });
     const outpoint = { txid: FUNDING_TX, index: this.deposits.length - 1 };
     const amount =
-      this.depositMode === "outpoint-underfunded" ? "50" : request.amount;
+      this.depositMode === "outpoint-underfunded"
+        ? "50"
+        : this.depositMode === "outpoint-overfunded"
+          ? (BigInt(request.amount) + 1n).toString()
+          : request.amount;
     const successor = {
       outpoint,
       covenantId: COVENANT_ID,
@@ -2970,6 +3181,9 @@ class FakeFundingProvider implements FundingProvider {
 }
 
 class FakeSigner {
+  voucherSignCount = 0;
+  requestAuthorizationSignCount = 0;
+
   async generateChannelKey(): Promise<ChannelKey> {
     return { publicKey: CLIENT_KEY, privateKey: "client-key" };
   }
@@ -2983,10 +3197,12 @@ class FakeSigner {
   }
 
   async signVoucher({ digest }: VoucherSignRequest) {
+    this.voucherSignCount += 1;
     return `${digest}${digest}`;
   }
 
   async signBatchRequestAuthorization({ digest }: { digest: Hash32Hex }) {
+    this.requestAuthorizationSignCount += 1;
     return `${digest}${digest}`;
   }
 

@@ -159,6 +159,9 @@ function exactFundingProvider(): FundingProvider {
       return { address: "kaspatest:refund" };
     },
     async authorizeExactPayment() {},
+    async authorizeBatchPayment() {
+      throw new Error("batch settlement is not supported by this provider");
+    },
     async prepareEscrowDeposit() {
       throw new Error("not used");
     },
