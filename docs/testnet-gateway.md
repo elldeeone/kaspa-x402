@@ -25,7 +25,7 @@ https://demo.kaspa-x402.org
 | Method | Path | Purpose |
 | --- | --- | --- |
 | `GET` | `/` | JSON endpoint index. |
-| `GET` | `/health` | Configuration health and current TN10 chain evidence. |
+| `GET` | `/health` | Shallow configuration and process health; no upstream calls or endpoint URLs. |
 | `GET` | `/canary` | Enabled state and latest scheduled canary report. |
 | `GET` | `/supported` | Supported x402 schemes and profiles. |
 | `GET` | `/exact`, `/exact/report` | Protected exact-payment resources. |

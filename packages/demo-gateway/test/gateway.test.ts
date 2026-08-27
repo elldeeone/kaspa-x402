@@ -170,6 +170,28 @@ describe("gateway canary", () => {
     });
   });
 
+  it("keeps health shallow and omits configured upstream URLs", async () => {
+    const storage = new FakeStorage();
+    const fetchMock = vi.fn(async () => {
+      throw new Error("health must not call upstream services");
+    });
+    vi.stubGlobal("fetch", fetchMock);
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS:
+        "wss://pnn.example.test/private/path?token=secret",
+    };
+
+    const health = await requestJson(env, "/health");
+
+    expect(health.status).toBe(200);
+    expect(JSON.stringify(health.body)).not.toContain("pnn.example.test");
+    expect(JSON.stringify(health.body)).not.toContain("token=secret");
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
   it("keeps supported and disabled responses independent of Kaspa REST", async () => {
     const storage = new FakeStorage();
     const fetchMock = vi.fn(async () => {
@@ -290,6 +312,19 @@ describe("gateway canary", () => {
       fakeContext(),
     );
     expect(unauthorized.status).toBe(401);
+
+    const cleartext = await handleGatewayRequest(
+      new Request("http://demo.kaspa-x402.org/admin/exact-heads", {
+        headers: { authorization: "Bearer admin-token" },
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(cleartext.status).toBe(400);
+    await expect(cleartext.json()).resolves.toMatchObject({
+      ok: false,
+      error: "https_required",
+    });
 
     const registered = await handleGatewayRequest(
       new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {

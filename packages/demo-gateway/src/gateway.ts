@@ -75,7 +75,7 @@ export async function handleGatewayRequest(
   if (url.pathname === "/" && request.method === "GET")
     return json(indexBody(url), { headers: corsHeaders(config) });
   if (url.pathname === "/health" && request.method === "GET")
-    return healthResponse(config, state);
+    return healthResponse(config);
   if (url.pathname === "/metrics" && request.method === "GET")
     return json(
       { ok: true, metrics: await state.metrics() },
@@ -721,36 +721,21 @@ class AddressRecordingStore implements ServerStateStore {
   }
 }
 
-async function healthResponse(
+function healthResponse(
   config: GatewayConfig,
-  state: GatewayStateClient,
-): Promise<Response> {
-  try {
-    const rest = new KaspaRestClient(config.chainApiBase);
-    const chain = await rest.health();
-    return json(
-      {
-        ok: true,
-        enabled: config.enabled,
-        gateway: "kaspa-x402-testnet",
-        hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
-        exactProfile: config.exactProfile,
-        chainBroadcastMode: config.chainBroadcastMode,
-        pnnEndpoints:
-          config.chainBroadcastMode === "pnn" ? config.pnnEndpoints : [],
-        chain,
-        metrics: await state.metrics(),
-        exactHeads: await exactHeadStats(state),
-        canary: await state.loadCanaryReport(),
-      },
-      { headers: corsHeaders(config) },
-    );
-  } catch (error) {
-    return json(
-      { ok: false, error: errorMessage(error) },
-      { status: 503, headers: corsHeaders(config) },
-    );
-  }
+): Response {
+  return json(
+    {
+      ok: true,
+      enabled: config.enabled,
+      gateway: "kaspa-x402-testnet",
+      releaseVersion: config.releaseVersion,
+      hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
+      exactProfile: config.exactProfile,
+      chainBroadcastMode: config.chainBroadcastMode,
+    },
+    { headers: corsHeaders(config) },
+  );
 }
 
 async function exactHeadsAdminResponse(
@@ -764,6 +749,12 @@ async function exactHeadsAdminResponse(
       { ok: false, error: "not_found" },
       { status: 404, headers: corsHeaders(config) },
     );
+  if (!secureAdminTransport(url)) {
+    return json(
+      { ok: false, error: "https_required" },
+      { status: 400, headers: corsHeaders(config) },
+    );
+  }
   if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`) {
     return json(
       { ok: false, error: "unauthorized" },
@@ -1267,10 +1258,18 @@ function profileMetric(profile: Profile): string {
 
 function rateScope(request: Request, profile: Profile): string {
   const ip =
-    request.headers.get("cf-connecting-ip") ??
-    request.headers.get("x-forwarded-for")?.split(",")[0]?.trim() ??
-    "unknown";
+    request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return `${ip}:${profile}`;
+}
+
+function secureAdminTransport(url: URL): boolean {
+  return (
+    url.protocol === "https:" ||
+    url.hostname === "127.0.0.1" ||
+    url.hostname === "localhost" ||
+    url.hostname === "[::1]" ||
+    url.hostname === "::1"
+  );
 }
 
 function indexBody(url: URL): unknown {

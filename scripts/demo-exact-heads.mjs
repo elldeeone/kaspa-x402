@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const MAX_RESPONSE_BYTES = 256 * 1024;
+const REQUEST_TIMEOUT_MS = 15_000;
 
 async function main() {
   if (
@@ -102,6 +103,7 @@ async function requestJson(baseUrl, path, adminToken, init = {}) {
       ...(init.body ? { "content-type": "application/json" } : {}),
       ...init.headers,
     },
+    signal: AbortSignal.timeout(REQUEST_TIMEOUT_MS),
   });
   const text = await readTextWithLimit(response);
   let body;
@@ -121,6 +123,9 @@ async function requestJson(baseUrl, path, adminToken, init = {}) {
 }
 
 async function readTextWithLimit(response) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES)
+    throw new Error("Gateway response is too large.");
   const reader = response.body?.getReader();
   if (!reader) return "";
   const decoder = new TextDecoder();
@@ -130,8 +135,10 @@ async function readTextWithLimit(response) {
     const chunk = await reader.read();
     if (chunk.done) return text + decoder.decode();
     bytes += chunk.value.byteLength;
-    if (bytes > MAX_RESPONSE_BYTES)
+    if (bytes > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
       throw new Error("Gateway response is too large.");
+    }
     text += decoder.decode(chunk.value, { stream: true });
   }
 }

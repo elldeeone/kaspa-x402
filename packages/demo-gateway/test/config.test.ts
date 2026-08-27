@@ -182,4 +182,28 @@ describe("gateway config", () => {
       }),
     ).toThrow("KASPA_X402_PNN_ENDPOINTS must use wss except for localhost");
   });
+
+  it("rejects credential-bearing and fragmented PNN endpoints", () => {
+    for (const endpoint of [
+      "wss://user:secret@pnn.example.test/wrpc/json",
+      "wss://pnn.example.test/wrpc/json#secret",
+    ]) {
+      expect(() =>
+        readGatewayConfig({
+          ...BASE_ENV,
+          KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+          KASPA_X402_PNN_ENDPOINTS: endpoint,
+        }),
+      ).toThrow("must not contain credentials or fragments");
+    }
+  });
+
+  it("rejects credentials in HTTP service URLs", () => {
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_CHAIN_API_BASE: "https://user:secret@api.example.test",
+      }),
+    ).toThrow("KASPA_X402_CHAIN_API_BASE must not contain credentials");
+  });
 });

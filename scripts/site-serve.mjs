@@ -4,6 +4,10 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { SITE_DIST } from "./site-config.mjs";
+import {
+  decodePreviewPathname,
+  parsePreviewRequestUrl,
+} from "./site-preview-inputs.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -33,7 +37,12 @@ function listen(port) {
 
 function createServer() {
   return http.createServer((request, response) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    const url = parsePreviewRequestUrl(request.url, request.headers.host);
+    if (!url) {
+      response.writeHead(400, { "Content-Type": "text/plain; charset=utf-8" });
+      response.end("Bad request\n");
+      return;
+    }
     const redirect = matchRedirect(url.pathname);
     if (redirect) {
       response.writeHead(redirect.status, { Location: redirect.location });
@@ -58,7 +67,9 @@ function createServer() {
 }
 
 function resolveFile(pathname) {
-  const clean = decodeURIComponent(pathname).replace(/^\/+/, "");
+  const decoded = decodePreviewPathname(pathname);
+  if (decoded === undefined) return undefined;
+  const clean = decoded.replace(/^\/+/, "");
   const candidate = path.join(outDir, clean);
   if (pathname.endsWith("/") || path.extname(candidate) === "") return path.join(candidate, "index.html");
   return candidate;

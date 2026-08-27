@@ -15,6 +15,7 @@ const port = Number(
 );
 const base = `http://127.0.0.1:${port}`;
 const output = [];
+const MAX_RESPONSE_BYTES = 256 * 1024;
 
 const child = spawn(
   "npx",
@@ -52,11 +53,11 @@ async function smokeGateway(baseUrl) {
   const health = await getJson(`${baseUrl}/health`);
   const canary = await getJson(`${baseUrl}/canary`);
   const supported = await getJson(`${baseUrl}/supported`);
-  const exact = await fetch(`${baseUrl}/exact`);
+  const exact = await smokeFetch(`${baseUrl}/exact`);
   const exactRequired = decodePaymentRequiredHeader(
     exact.headers.get("PAYMENT-REQUIRED"),
   );
-  const batch = await fetch(`${baseUrl}/batch`);
+  const batch = await smokeFetch(`${baseUrl}/batch`);
   const batchRequired = decodePaymentRequiredHeader(
     batch.headers.get("PAYMENT-REQUIRED"),
   );
@@ -70,7 +71,7 @@ async function smokeGateway(baseUrl) {
   const unsupported = await getJson(`${baseUrl}/batch`, {
     headers: { "PAYMENT-SIGNATURE": unsupportedHeader },
   });
-  const head = await fetch(`${baseUrl}/batch`, { method: "HEAD" });
+  const head = await smokeFetch(`${baseUrl}/batch`, { method: "HEAD" });
 
   assert(
     health.status === 200 && health.body.ok === true,
@@ -82,8 +83,8 @@ async function smokeGateway(baseUrl) {
     "canary endpoint failed",
   );
   assert(
-    health.body.chain?.networkName === "kaspa-testnet-10",
-    `unexpected network ${health.body.chain?.networkName}`,
+    health.body.releaseVersion === "0.1.0-alpha.11",
+    `unexpected release ${health.body.releaseVersion}`,
   );
   assert(
     exact.status === 402,
@@ -144,8 +145,8 @@ async function smokeGateway(baseUrl) {
   return {
     url: baseUrl,
     health: {
-      networkName: health.body.chain.networkName,
-      virtualDaaScore: health.body.chain.virtualDaaScore,
+      releaseVersion: health.body.releaseVersion,
+      chainBroadcastMode: health.body.chainBroadcastMode,
     },
     supported: supported.body.kinds.map(
       (kind) => `${kind.scheme}:${kind.network}`,
@@ -176,7 +177,7 @@ async function waitForReady() {
       );
     }
     try {
-      const health = await fetch(`${base}/health`);
+      const health = await smokeFetch(`${base}/health`);
       if (health.status === 200) return;
     } catch (error) {
       lastError = error;
@@ -189,11 +190,40 @@ async function waitForReady() {
 }
 
 async function getJson(url, init) {
-  const response = await fetch(url, init);
+  const response = await smokeFetch(url, init);
   return {
     status: response.status,
-    body: await response.json(),
+    body: JSON.parse(await readBoundedText(response)),
   };
+}
+
+async function smokeFetch(url, init = {}) {
+  return fetch(url, {
+    ...init,
+    redirect: "error",
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+}
+
+async function readBoundedText(response) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_RESPONSE_BYTES)
+    throw new Error("gateway smoke response exceeded the size limit");
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) return text + decoder.decode();
+    bytes += chunk.value.byteLength;
+    if (bytes > MAX_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("gateway smoke response exceeded the size limit");
+    }
+    text += decoder.decode(chunk.value, { stream: true });
+  }
 }
 
 async function openPort() {

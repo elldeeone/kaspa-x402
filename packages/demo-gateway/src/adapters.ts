@@ -57,6 +57,8 @@ const MAX_SAFE_TRANSACTION_INPUTS = 16;
 const MAX_SAFE_TRANSACTION_OUTPUTS = 64;
 const MAX_SAFE_TRANSACTION_FEE_SOMPI = 100_000_000n;
 const MAX_KASPA_REST_RESPONSE_BYTES = 512 * 1024;
+const MAX_PNN_MESSAGE_BYTES = 512 * 1024;
+const MAX_PNN_UTXO_ENTRIES = 4_096;
 const MAX_KASPA_REST_UTXOS_PER_ADDRESS = 512;
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
@@ -647,15 +649,16 @@ export class KaspaPnnClient {
     const errors: string[] = [];
     for (const endpoint of this.#endpoints) {
       const rpc = this.#rpcFactory(endpoint, this.#timeoutMs);
+      const endpointLabel = pnnEndpointLabel(endpoint);
       try {
         await withTimeout(
           rpc.connect(),
           this.#timeoutMs,
-          `pnn connect ${endpoint}`,
+          `pnn connect ${endpointLabel}`,
         );
-        return await fn({ rpc, endpoint });
+        return await fn({ rpc, endpoint: endpointLabel });
       } catch (error) {
-        errors.push(`${endpoint}: ${errorMessage(error)}`);
+        errors.push(`${endpointLabel}: ${errorMessage(error)}`);
       } finally {
         await rpc.disconnect().catch(() => undefined);
       }
@@ -716,6 +719,9 @@ export class KaspaPnnClient {
       "pnn getUtxosByAddresses",
     );
     const entries = Array.isArray(result.entries) ? result.entries : [];
+    if (entries.length > MAX_PNN_UTXO_ENTRIES) {
+      throw invalidTransaction("Kaspa PNN returned too many UTXO entries");
+    }
     return entries.some((entry) => {
       const utxo = pnnUtxo(entry);
       return (
@@ -865,6 +871,13 @@ class JsonPnnRpc implements PnnRpc {
       this.#rejectPending("pnn websocket returned a non-text message");
       return;
     }
+    if (
+      event.data.length > MAX_PNN_MESSAGE_BYTES ||
+      new TextEncoder().encode(event.data).byteLength > MAX_PNN_MESSAGE_BYTES
+    ) {
+      this.#rejectPending("pnn websocket response exceeded the size limit");
+      return;
+    }
     const message = parseJson(event.data);
     if (!isRecord(message)) {
       this.#rejectPending("pnn websocket returned malformed JSON");
@@ -889,6 +902,15 @@ class JsonPnnRpc implements PnnRpc {
       clearTimeout(pending.timeoutId);
       pending.reject(new Error(message));
     }
+  }
+}
+
+function pnnEndpointLabel(endpoint: string): string {
+  try {
+    const parsed = new URL(endpoint);
+    return `${parsed.protocol}//${parsed.host}`;
+  } catch {
+    return "pnn endpoint";
   }
 }
 

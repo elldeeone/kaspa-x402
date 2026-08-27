@@ -833,6 +833,41 @@ describe("KaspaPnnClient", () => {
       }).health(),
     ).rejects.toThrow("Kaspa PNN request failed");
   });
+
+  it("bounds PNN UTXO responses and redacts endpoint paths from errors", async () => {
+    const exact = exactTransactionFixture();
+    const book = new ScriptAddressBook();
+    book.record(exact.payToScriptPublicKey, exact.payTo);
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() {},
+      async getServerInfo() {
+        return { networkId: "testnet-10", isSynced: true };
+      },
+      async submitTransaction() {
+        return { transactionId: exact.txid };
+      },
+      async getUtxosByAddresses() {
+        return { entries: Array.from({ length: 4_097 }, () => ({})) };
+      },
+    }));
+
+    let message = "";
+    try {
+      await new KaspaPnnClient({
+        endpoints: ["wss://pnn.example.test/private/path?token=secret"],
+        timeoutMs: 5,
+        attempts: 1,
+        rpcFactory,
+        sleep: async () => undefined,
+      }).submitTransaction(exact.artifact, book);
+    } catch (error) {
+      message = error instanceof Error ? error.message : String(error);
+    }
+    expect(message).toContain("too many UTXO entries");
+    expect(message).not.toContain("private/path");
+    expect(message).not.toContain("token=secret");
+  });
 });
 
 describe("RestExactTransactionVerifier", () => {

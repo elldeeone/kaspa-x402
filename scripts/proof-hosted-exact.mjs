@@ -33,6 +33,7 @@ import {
   assertHostedOfferPinned,
   assertHostedSettlementHeadPinned,
 } from "./hosted-offer-pins.mjs";
+import { normalizedBaseUrl } from "./demo-exact-heads.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;
@@ -42,6 +43,8 @@ const DEFAULT_ADDITIVE_THRESHOLD = 10_000_000n;
 const EXACT_KIP10_COMPUTE_BUDGET = 10;
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const CONFIRMATION = "I_UNDERSTAND_THIS_USES_TESTNET_FUNDS";
+const GATEWAY_FETCH_TIMEOUT_MS = 15_000;
+const MAX_GATEWAY_RESPONSE_BYTES = 64 * 1024;
 
 const options = readOptions(process.argv.slice(2));
 const fileEnv = readOptionalEnv(options.configFile);
@@ -750,24 +753,24 @@ async function fundKip10Head(input) {
 }
 
 async function fetchPaymentRequired(url) {
-  const response = await fetch(url, { redirect: "error" });
+  const response = await gatewayFetch(url);
   if (response.status !== 402)
     throw new Error(
-      `${url} expected 402, got ${response.status}: ${await response.text()}`,
+      `${safeUrlLabel(url)} expected 402, got ${response.status}: ${await readBoundedResponseText(response)}`,
     );
   const header = response.headers.get(PAYMENT_REQUIRED_HEADER);
-  if (!header) throw new Error(`${url} missing PAYMENT-REQUIRED`);
+  if (!header) throw new Error(`${safeUrlLabel(url)} missing PAYMENT-REQUIRED`);
   return header;
 }
 
 async function submitPayment(url, paymentPayload, { expectStatus, label }) {
   const header = encodePaymentSignatureHeader(paymentPayload);
-  const response = await fetch(url, {
+  const response = await gatewayFetch(url, {
     method: "GET",
     redirect: "error",
     headers: { [PAYMENT_SIGNATURE_HEADER]: header },
   });
-  const text = await response.text();
+  const text = await readBoundedResponseText(response);
   const body = parseJson(text);
   if (response.status !== expectStatus) {
     throw new Error(
@@ -783,11 +786,12 @@ async function gatewayFetch(input, init = {}) {
     body: init.body,
     headers: init.headers,
     redirect: "error",
+    signal: AbortSignal.timeout(GATEWAY_FETCH_TIMEOUT_MS),
   });
 }
 
 async function gatewayAdminRequest(baseUrl, pathName, adminToken, init = {}) {
-  const response = await fetch(new URL(pathName, baseUrl), {
+  const response = await gatewayFetch(new URL(pathName, baseUrl), {
     ...init,
     redirect: "error",
     headers: {
@@ -797,7 +801,7 @@ async function gatewayAdminRequest(baseUrl, pathName, adminToken, init = {}) {
       ...init.headers,
     },
   });
-  const text = await response.text();
+  const text = await readBoundedResponseText(response);
   const body = parseJson(text);
   if (!response.ok || body?.ok === false)
     throw new Error(
@@ -1084,15 +1088,44 @@ function kaspaNetworkId(network) {
   throw new Error(`unsupported network ${network}`);
 }
 
-function normalizedBaseUrl(value) {
-  const url = new URL(value);
-  url.hash = "";
-  url.search = "";
-  return `${url.toString().replace(/\/$/, "")}/`;
+function redactRpc(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//<redacted>${url.port ? `:${url.port}` : ""}`;
+  } catch {
+    return "<redacted>";
+  }
 }
 
-function redactRpc(value) {
-  return value.replace(/\/\/([^:/]+)(?::\d+)?/, "//<redacted>");
+function safeUrlLabel(value) {
+  try {
+    const url = new URL(value);
+    return `${url.protocol}//${url.host}${url.pathname}`;
+  } catch {
+    return "gateway URL";
+  }
+}
+
+async function readBoundedResponseText(response) {
+  const contentLength = Number(response.headers.get("content-length"));
+  if (Number.isFinite(contentLength) && contentLength > MAX_GATEWAY_RESPONSE_BYTES) {
+    throw new Error("gateway response exceeded the size limit");
+  }
+  if (!response.body) return "";
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder();
+  let bytes = 0;
+  let text = "";
+  for (;;) {
+    const chunk = await reader.read();
+    if (chunk.done) return text + decoder.decode();
+    bytes += chunk.value.byteLength;
+    if (bytes > MAX_GATEWAY_RESPONSE_BYTES) {
+      await reader.cancel();
+      throw new Error("gateway response exceeded the size limit");
+    }
+    text += decoder.decode(chunk.value, { stream: true });
+  }
 }
 
 function markOutpointSpent(spentOutpoints, outpoint) {

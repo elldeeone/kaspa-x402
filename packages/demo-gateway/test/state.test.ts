@@ -500,7 +500,8 @@ describe("gateway durable ledger", () => {
   });
 
   it("rate limits by fixed windows", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
     await expect(
       ledger.checkRateLimit("ip:exact", 1_000, 2, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
@@ -513,6 +514,21 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
+    const windows = await storage.list({ prefix: "rate-window:" });
+    expect([...windows.keys()]).toEqual(["rate-window:120000"]);
+    expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
+  });
+
+  it("fails closed when a rate window reaches its bounded scope capacity", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    for (let index = 0; index < 1_024; index += 1) {
+      await expect(
+        ledger.checkRateLimit(`ip-${index}:exact`, 1_000, 1, 60_000),
+      ).resolves.toMatchObject({ allowed: true, count: 1 });
+    }
+    await expect(
+      ledger.checkRateLimit("overflow:exact", 1_000, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 2 });
   });
 
   it("persists the latest canary report", async () => {

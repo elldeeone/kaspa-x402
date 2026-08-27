@@ -58,10 +58,12 @@ type LockRecord = {
   expiresAt: number;
 };
 
-type RateRecord = {
-  count: number;
+type RateWindowRecord = {
   resetAt: number;
+  counts: Record<string, number>;
 };
+
+const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
 
 export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
 
@@ -816,12 +818,25 @@ export class GatewayLedger implements ServerStateStore {
     if (limit <= 0)
       return { allowed: true, count: 0, resetAt: nowMs + windowMs };
     const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
-    const key = rateKey(scope, resetAt);
+    const key = rateWindowKey(resetAt);
+    const scopeHash = sha256Hex(scope);
     return this.#storage.transaction(async (txn) => {
-      const current = (await txn.get<RateRecord>(key)) ?? { count: 0, resetAt };
-      const next = { count: current.count + 1, resetAt };
-      await txn.put(key, next);
-      return { allowed: next.count <= limit, count: next.count, resetAt };
+      await txn.delete(rateWindowKey(resetAt - windowMs));
+      const current = (await txn.get<RateWindowRecord>(key)) ?? {
+        resetAt,
+        counts: {},
+      };
+      const previous = current.counts[scopeHash];
+      if (
+        previous === undefined &&
+        Object.keys(current.counts).length >= MAX_RATE_SCOPES_PER_WINDOW
+      ) {
+        return { allowed: false, count: limit + 1, resetAt };
+      }
+      const count = (previous ?? 0) + 1;
+      current.counts[scopeHash] = count;
+      await txn.put(key, current);
+      return { allowed: count <= limit, count, resetAt };
     });
   }
 
@@ -1412,8 +1427,8 @@ function lockKey(key: string): string {
   return `lock:${key.toLowerCase()}`;
 }
 
-function rateKey(scope: string, resetAt: number): string {
-  return `rate:${scope}:${resetAt}`;
+function rateWindowKey(resetAt: number): string {
+  return `rate-window:${resetAt}`;
 }
 
 function canaryReportKey(): string {
