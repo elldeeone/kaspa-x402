@@ -6,8 +6,8 @@
   },
   {
     "path": "/vectors/batch/interop-v2.json",
-    "bytes": 11149,
-    "sha256": "1f97e17aaa665c5e4cfb0efb8cffc7e977166cfafc60521607f945a86910cab8"
+    "bytes": 12842,
+    "sha256": "365602af6cee7dcf02d0e1ac02cd6e3f20855f12652f948562ef7fd22c916394"
   },
   {
     "path": "/vectors/channel-id/base.json",
@@ -221,8 +221,8 @@
   },
   {
     "path": "/vectors/x402-http/batch-voucher.json",
-    "bytes": 8632,
-    "sha256": "3fd65ade1ea908220b2a863aafc9de86eaeb128c856319d5b742773ed17da14b"
+    "bytes": 9642,
+    "sha256": "0b7dd125f355f16c5e74397b6fb6f173a76aea8f386b0a18fa60fc15edd91e54"
   },
   {
     "path": "/vectors/x402-http/exact-transaction.json",

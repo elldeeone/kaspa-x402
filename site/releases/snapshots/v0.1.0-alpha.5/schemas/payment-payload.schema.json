@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kaspa-x402.org/schemas/payment-payload.schema.json",
+  "$id": "https://kaspa-x402.org/v0.1.0-alpha.5/schemas/payment-payload.schema.json",
   "title": "Kaspa x402 PaymentPayload",
   "type": "object",
   "required": ["x402Version", "accepted", "payload"],
@@ -9,13 +9,13 @@
       "const": 2
     },
     "accepted": {
-      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentRequirements"
+      "$ref": "https://kaspa-x402.org/v0.1.0-alpha.5/schemas/payment-required.schema.json#/$defs/paymentRequirements"
     },
     "payload": {
-      "$ref": "https://kaspa-x402.org/schemas/kaspa-payment-payload.schema.json"
+      "$ref": "https://kaspa-x402.org/v0.1.0-alpha.5/schemas/kaspa-payment-payload.schema.json"
     },
     "extensions": {
-      "$ref": "https://kaspa-x402.org/schemas/payment-required.schema.json#/$defs/paymentExtensions"
+      "$ref": "https://kaspa-x402.org/v0.1.0-alpha.5/schemas/payment-required.schema.json#/$defs/paymentExtensions"
     }
   },
   "allOf": [

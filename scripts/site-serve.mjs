@@ -7,12 +7,14 @@ import { SITE_DIST } from "./site-config.mjs";
 import {
   decodePreviewPathname,
   parsePreviewRequestUrl,
+  previewHostFromArgs,
 } from "./site-preview-inputs.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
 const preferredPort = Number(process.env.PORT ?? 4173);
 const explicitPort = process.env.PORT !== undefined;
+const previewHost = previewHostFromArgs(process.argv.slice(2));
 
 if (!fs.existsSync(outDir)) {
   console.error("site/dist is missing; run npm run site:build first");
@@ -30,8 +32,8 @@ function listen(port) {
     }
     throw error;
   });
-  server.listen(port, "0.0.0.0", () => {
-    console.log(`site preview: http://127.0.0.1:${port}`);
+  server.listen(port, previewHost, () => {
+    console.log(`site preview: http://${previewHost}:${port}`);
   });
 }
 

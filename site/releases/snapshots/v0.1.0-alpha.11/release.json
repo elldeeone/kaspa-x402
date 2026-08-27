@@ -23,50 +23,50 @@
     {
       "source": "schemas/payment-required.schema.json",
       "target": "v0.1.0-alpha.11/schemas/payment-required.schema.json",
-      "bytes": 4993,
-      "sha256": "b118faedc66a809d22437960920d0260fe718ed31b564706ec8e80b65be8f073"
+      "bytes": 5041,
+      "sha256": "ca828aa725a0d429bea80aba2f45e8f4b7a53f6abcbb21c1633d0833a3ce8050"
     },
     {
       "source": "schemas/payment-payload.schema.json",
       "target": "v0.1.0-alpha.11/schemas/payment-payload.schema.json",
-      "bytes": 3467,
-      "sha256": "6d0f649b7401625297927973573b19a875048a788d16fba364fc4e0c7ce2600b"
+      "bytes": 3531,
+      "sha256": "19b9e98e76deb84ca60dd6498d5a7441b00b978dd6435134252828a63452418f"
     },
     {
       "source": "schemas/settlement-response.schema.json",
       "target": "v0.1.0-alpha.11/schemas/settlement-response.schema.json",
-      "bytes": 7784,
-      "sha256": "9bcee5a76652390507dbc539c2f32a5a5f05c82df086553d9ca7341068f86378"
+      "bytes": 7816,
+      "sha256": "726db5fdb98e6cf46500eeef663a9cddece29378edb7dc28516b75045ee5efe1"
     },
     {
       "source": "schemas/kaspa-requirements-extra.schema.json",
       "target": "v0.1.0-alpha.11/schemas/kaspa-requirements-extra.schema.json",
-      "bytes": 9696,
-      "sha256": "01d99edf23d80fadfb030e6708248e2c0a0d90391b41846d79524aba31320b2f"
+      "bytes": 9712,
+      "sha256": "c467d7260bc71c02d7753d659f07163846715bcd17bb5917d7f02c7675c6e2d0"
     },
     {
       "source": "schemas/kaspa-payment-payload.schema.json",
       "target": "v0.1.0-alpha.11/schemas/kaspa-payment-payload.schema.json",
-      "bytes": 8087,
-      "sha256": "8666e060a90bd8a6ea18f49916e0a51c0d1cd218a46e188f997474cbc9594d5d"
+      "bytes": 8784,
+      "sha256": "014aed8460a97c3fd8dd8267d5e5cd425cc1feb4f4f775b6a5eb63052268f7e8"
     },
     {
       "source": "schemas/kaspa-batch-extra.schema.json",
       "target": "v0.1.0-alpha.11/schemas/kaspa-batch-extra.schema.json",
-      "bytes": 4146,
-      "sha256": "2e891e25e9172aff0232562aa4fdea79dc8d594e843785c9b0f78aad753e7064"
+      "bytes": 4162,
+      "sha256": "d0fdafd92ce591ba632cd4d1e90d081cbe569ee6c9a56272b3336bb1a3a24778"
     },
     {
       "source": "schemas/payment-identifier.schema.json",
       "target": "v0.1.0-alpha.11/schemas/payment-identifier.schema.json",
-      "bytes": 474,
-      "sha256": "2a918aa3da7563f81f1de7a264729dc00ca0bb77559933c201efcc060b947cdb"
+      "bytes": 490,
+      "sha256": "cdb8c3ca917b54a6e8590af7e29537969303cd693849eb43845ac1e0ab9246e0"
     },
     {
       "source": "schemas/channel-state.schema.json",
       "target": "v0.1.0-alpha.11/schemas/channel-state.schema.json",
-      "bytes": 2222,
-      "sha256": "d70d981844da1af4f377177c704fbe587efa39961d4eb02c89803ea96e670e01"
+      "bytes": 2238,
+      "sha256": "6e8eed6a638353ff5fd2b479c87bbe871f2dc2ddba071026c22fdd43c58f6cad"
     },
     {
       "source": "spec/kaspa-x402-v1.md",
@@ -197,8 +197,8 @@
     {
       "source": "vectors/batch/interop-v2.json",
       "target": "v0.1.0-alpha.11/vectors/batch/interop-v2.json",
-      "bytes": 11149,
-      "sha256": "1f97e17aaa665c5e4cfb0efb8cffc7e977166cfafc60521607f945a86910cab8"
+      "bytes": 12842,
+      "sha256": "365602af6cee7dcf02d0e1ac02cd6e3f20855f12652f948562ef7fd22c916394"
     },
     {
       "source": "vectors/channel-id/base.json",
@@ -455,8 +455,8 @@
     {
       "source": "vectors/x402-http/batch-voucher.json",
       "target": "v0.1.0-alpha.11/vectors/x402-http/batch-voucher.json",
-      "bytes": 8632,
-      "sha256": "3fd65ade1ea908220b2a863aafc9de86eaeb128c856319d5b742773ed17da14b"
+      "bytes": 9642,
+      "sha256": "0b7dd125f355f16c5e74397b6fb6f173a76aea8f386b0a18fa60fc15edd91e54"
     },
     {
       "source": "vectors/x402-http/exact-transaction.json",
@@ -465,5 +465,5 @@
       "sha256": "36564ac622863b7621f3d95fb1fa6c8a126d813d238919c3aa856c4a04cd0508"
     }
   ],
-  "contentSha256": "a9b795685e241abe7abaa6c1134a58592be52a31bea92e7c5fc1d6c6809f4325"
+  "contentSha256": "eaf38ef55f2dcf649938ddd4240e952f72c6a317d160c1873f1f89213bdb3dd6"
 }

@@ -1,6 +1,6 @@
 {
   "version": "0.1.0-alpha.9",
   "frozen": true,
-  "contentSha256": "04e12eae72b406b147d5634ed4d78b8283151558aa718fac51c727298407e256",
+  "contentSha256": "85725d024f3e5d4ed6b74e2785566a6176d1e7ea5432fbbbbaaa39a86f5a1d7d",
   "description": "Locks the immutable release snapshot content for this alpha version. If public artifacts change, bump the alpha version or intentionally update this lock."
 }

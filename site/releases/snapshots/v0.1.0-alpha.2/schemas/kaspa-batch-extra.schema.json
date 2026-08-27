@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kaspa-x402.org/schemas/kaspa-batch-extra.schema.json",
+  "$id": "https://kaspa-x402.org/v0.1.0-alpha.2/schemas/kaspa-batch-extra.schema.json",
   "title": "Kaspa x402 Batch Settlement Extra",
   "type": "object",
   "required": [

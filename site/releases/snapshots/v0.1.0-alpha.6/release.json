@@ -23,50 +23,50 @@
     {
       "source": "schemas/payment-required.schema.json",
       "target": "v0.1.0-alpha.6/schemas/payment-required.schema.json",
-      "bytes": 4135,
-      "sha256": "b1fd38bd85dfc3e81d6006c53776c3aaf72b5c74e93ca5fa65c72e0651212ad3"
+      "bytes": 4180,
+      "sha256": "379d9d03bb03149df2b54e591ae9aaba749881736879bdad3d5f7323e403149d"
     },
     {
       "source": "schemas/payment-payload.schema.json",
       "target": "v0.1.0-alpha.6/schemas/payment-payload.schema.json",
-      "bytes": 2965,
-      "sha256": "339b233c6d1381eb29428e59902f6e07ecf525123d716318b6746300f16b281c"
+      "bytes": 3025,
+      "sha256": "cdbcc7f13fba2c555308acddb038152512096da0f29825403868b0e79ea33fdb"
     },
     {
       "source": "schemas/settlement-response.schema.json",
       "target": "v0.1.0-alpha.6/schemas/settlement-response.schema.json",
-      "bytes": 6085,
-      "sha256": "9098f76c832d9a4c0eb04465033d52543c4ef2ec3be8fa576c549445b6e9ff3e"
+      "bytes": 6115,
+      "sha256": "4459ff61a24a22239f52ee16638f7af7f7110fd6ef1dd3b372bfe34d30dcd390"
     },
     {
       "source": "schemas/kaspa-requirements-extra.schema.json",
       "target": "v0.1.0-alpha.6/schemas/kaspa-requirements-extra.schema.json",
-      "bytes": 13321,
-      "sha256": "6e5c4b10fa1aeaf4f80be45f86dc7e3870b4c2d25008583cd5e40770592377db"
+      "bytes": 13336,
+      "sha256": "74ff9ae2bbc4c2b6d1fc6f2e1fd11733fdcf777d0d08119d035c28ac90da681f"
     },
     {
       "source": "schemas/kaspa-payment-payload.schema.json",
       "target": "v0.1.0-alpha.6/schemas/kaspa-payment-payload.schema.json",
-      "bytes": 6446,
-      "sha256": "de242ab46f942a1318421269a7cd38fb723f74519acbb104f6c0d29ccbc9cffe"
+      "bytes": 6461,
+      "sha256": "3ef0b5a2c75b0a91b69e53a80da52ef53b25f1773b9a5196c538266f00daa685"
     },
     {
       "source": "schemas/kaspa-batch-extra.schema.json",
       "target": "v0.1.0-alpha.6/schemas/kaspa-batch-extra.schema.json",
-      "bytes": 6704,
-      "sha256": "764f60a3a87d9bf0ca6e1a846eea7c2fd39f644f4bad4222c67b711c29f99bcc"
+      "bytes": 6719,
+      "sha256": "eafd063dc235d0e1b3ba46c63fba655b17fabee40e14e765651211cfa120dcf6"
     },
     {
       "source": "schemas/payment-identifier.schema.json",
       "target": "v0.1.0-alpha.6/schemas/payment-identifier.schema.json",
-      "bytes": 474,
-      "sha256": "2a918aa3da7563f81f1de7a264729dc00ca0bb77559933c201efcc060b947cdb"
+      "bytes": 489,
+      "sha256": "70afa3fabe9cd006629322a054d5188ad1d123ccc91a7ec29c85078d188002b1"
     },
     {
       "source": "schemas/channel-state.schema.json",
       "target": "v0.1.0-alpha.6/schemas/channel-state.schema.json",
-      "bytes": 3269,
-      "sha256": "fec2637619739ecf15a19723c65b18c28b80d4897d04b19b40502891ef971335"
+      "bytes": 3284,
+      "sha256": "9b7b8ffdb14736025cca3c109c16b39354745dd453485d9dffb811bf101d7ec0"
     },
     {
       "source": "spec/kaspa-x402-v1.md",
@@ -417,5 +417,5 @@
       "sha256": "15b5a878df6453d456b06b36bab3e17f872430bb744efd716a8008a0fbe17a9f"
     }
   ],
-  "contentSha256": "632bdd324496d6a98c2d9fe0f8f8fe8bef2438b90639b71d1f7cbff4146b2114"
+  "contentSha256": "8ae9ea9f0b270f67c71590ffde3321aceb51d9e71eb9765a50fd8994e89252a2"
 }

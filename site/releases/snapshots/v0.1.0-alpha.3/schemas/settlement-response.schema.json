@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "$id": "https://kaspa-x402.org/schemas/settlement-response.schema.json",
+  "$id": "https://kaspa-x402.org/v0.1.0-alpha.3/schemas/settlement-response.schema.json",
   "title": "Kaspa x402 SettlementResponse",
   "type": "object",
   "required": ["success", "transaction"],
@@ -179,7 +179,7 @@
           "$ref": "#/$defs/hash32"
         },
         "channelState": {
-          "$ref": "https://kaspa-x402.org/schemas/channel-state.schema.json"
+          "$ref": "https://kaspa-x402.org/v0.1.0-alpha.3/schemas/channel-state.schema.json"
         },
         "channelId": {
           "$ref": "#/$defs/hash32"

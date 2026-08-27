@@ -16,12 +16,14 @@ import {
   RELEASE_SNAPSHOT_DIR,
   SCHEMA_FILES,
   SITE_ASSET_FILES,
+  SITE_BASE_URL,
   SITE_DIST,
   SITE_PACKAGE_NAMES,
   SITE_SRC,
   SPEC_FILES,
   VENDORED_KASPA_WASM,
 } from "./site-config.mjs";
+import { releaseMetadataForHash } from "./release-metadata.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -115,11 +117,20 @@ function checkCopiedArtifacts() {
     assertSameBytes(path.join(root, source), path.join(outDir, source), source);
   }
   for (const source of releaseFiles) {
-    assertSameBytes(
-      path.join(root, source),
-      path.join(outDir, releasePath, source),
-      `${releasePath}/${source}`,
-    );
+    const target = path.join(outDir, releasePath, source);
+    if (source.startsWith("schemas/"))
+      assertVersionedSchemaBytes(
+        path.join(root, source),
+        target,
+        releasePath,
+        `${releasePath}/${source}`,
+      );
+    else
+      assertSameBytes(
+        path.join(root, source),
+        target,
+        `${releasePath}/${source}`,
+      );
   }
 }
 
@@ -138,7 +149,7 @@ function checkMetadataFreshness() {
   const releaseDirtyInputs = currentLock?.frozen === true ? [] : dirtyInputs;
   const expectedReleaseHash = releaseContentHash(
     manifest.releasePath,
-    lockedReleaseMetadata(release),
+    release,
   );
   const headersPath = path.join(outDir, "_headers");
 
@@ -240,7 +251,7 @@ function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
     const release = readJson(releaseJson);
     const expectedHash = releaseContentHash(
       releasePath,
-      lockedReleaseMetadata(release),
+      release,
     );
     if (release.version !== lock.version)
       fail(`${releasePath}/release.json version is stale`);
@@ -250,6 +261,7 @@ function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
       fail(`${releasePath}/release.json content lock path is stale`);
     if (expectedHash !== lock.contentSha256)
       fail(`${releasePath} bytes differ from ${lock.path}`);
+    checkVersionedSchemas(releasePath, lock.version);
 
     for (const route of [
       `/${releasePath}/`,
@@ -286,8 +298,8 @@ function checkUntrackedPublishableFiles() {
     .split(/\r?\n/)
     .filter((file) => /\.(?:json|md)$/.test(file));
   for (const file of untrackedVectors) {
-    if (!fs.existsSync(path.join(outDir, file)))
-      fail(`untracked vector-like file was not copied by site build: ${file}`);
+    if (fs.existsSync(path.join(outDir, file)))
+      fail(`untracked vector-like file was copied by site build: ${file}`);
   }
 }
 
@@ -643,6 +655,21 @@ function assertSameBytes(source, target, label) {
     fail(`stale copied artifact: ${label}`);
 }
 
+function assertVersionedSchemaBytes(source, target, releasePath, label) {
+  if (!fs.existsSync(target)) {
+    fail(`missing ${label}`);
+    return;
+  }
+  const expected = fs
+    .readFileSync(source, "utf8")
+    .replaceAll(
+      `${SITE_BASE_URL}/schemas/`,
+      `${SITE_BASE_URL}/${releasePath}/schemas/`,
+    );
+  if (sha256(expected) !== sha256File(target))
+    fail(`stale copied artifact: ${label}`);
+}
+
 function assertSameTree(sourceDir, targetDir, label) {
   if (!fs.existsSync(sourceDir)) {
     fail(
@@ -735,9 +762,6 @@ function dirtyPublishableInputs() {
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
-    ...listFiles(path.join(root, RELEASE_LOCK_DIR)).map((file) =>
-      path.relative(root, file).replaceAll(path.sep, "/"),
-    ),
     ...trackedFiles(RELEASE_LOCK_DIR),
   ]);
   return git(["status", "--porcelain=v1", "--untracked-files=all"])
@@ -773,8 +797,7 @@ function readReleaseLock(version) {
 }
 
 function readReleaseLocks() {
-  return listFiles(path.join(root, RELEASE_LOCK_DIR))
-    .map((file) => path.relative(root, file).replaceAll(path.sep, "/"))
+  return trackedFiles(RELEASE_LOCK_DIR)
     .filter((file) => /^site\/releases\/v[^/]+\.json$/.test(file))
     .map((file) => ({ ...readJson(path.join(root, file)), path: file }))
     .sort((a, b) => compareVersions(a.version, b.version));
@@ -789,12 +812,9 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
-  const files = new Set([
-    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
-    ...listFiles(path.join(root, relativeDir)).map((file) =>
-      path.relative(root, file).replaceAll(path.sep, "/"),
-    ),
-  ]);
+  const files = new Set(
+    git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
+  );
   return [...files]
     .filter((file) => fs.existsSync(path.join(root, file)))
     .sort();
@@ -829,22 +849,12 @@ function sha256File(file) {
     .digest("hex");
 }
 
-function releaseNpmInstall(version) {
-  return PUBLISHABLE_PACKAGES.map((name) => `${name}@${version}`);
+function sha256(value) {
+  return crypto.createHash("sha256").update(value).digest("hex");
 }
 
-function lockedReleaseMetadata(release) {
-  return {
-    version: release.version,
-    sourceState: "locked",
-    dirtyInputs: [],
-    contentLock: release.contentLock,
-    snapshotScope: release.snapshotScope,
-    activeAlphaOnlyRoutes: release.activeAlphaOnlyRoutes,
-    unversionedRoutes: release.unversionedRoutes,
-    npmInstall: release.npmInstall,
-    artifacts: release.artifacts,
-  };
+function releaseNpmInstall(version) {
+  return PUBLISHABLE_PACKAGES.map((name) => `${name}@${version}`);
 }
 
 function releaseContentHash(releasePath, lockedRelease) {
@@ -856,7 +866,10 @@ function releaseContentHash(releasePath, lockedRelease) {
     .filter(({ target }) => target !== `${releasePath}/release.json`)
     .map(({ file, target }) => fileRecord(target, file));
   records.push(
-    contentRecord(`${releasePath}/release.json`, jsonText(lockedRelease)),
+    contentRecord(
+      `${releasePath}/release.json`,
+      jsonText(releaseMetadataForHash(lockedRelease)),
+    ),
   );
   return crypto
     .createHash("sha256")
@@ -864,6 +877,22 @@ function releaseContentHash(releasePath, lockedRelease) {
       JSON.stringify(records.sort((a, b) => a.target.localeCompare(b.target))),
     )
     .digest("hex");
+}
+
+function checkVersionedSchemas(releasePath, version) {
+  const schemaDir = path.join(outDir, releasePath, "schemas");
+  for (const file of listFiles(schemaDir).filter((item) => item.endsWith(".json"))) {
+    const schema = readJson(file);
+    const expectedPrefix = `${SITE_BASE_URL}/v${version}/schemas/`;
+    if (schema.$id !== `${expectedPrefix}${path.basename(file)}`)
+      fail(
+        `${releasePath} schema id is not release-local: ${path.basename(file)}`,
+      );
+    if (JSON.stringify(schema).includes(`${SITE_BASE_URL}/schemas/`))
+      fail(
+        `${releasePath} schema reference escapes its release snapshot: ${path.basename(file)}`,
+      );
+  }
 }
 
 function fileRecord(target, file) {

@@ -25,6 +25,7 @@ import {
   VENDORED_KASPA_WASM,
   VECTOR_GROUPS,
 } from "./site-config.mjs";
+import { releaseMetadataForHash } from "./release-metadata.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -751,8 +752,15 @@ function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
   const releaseArtifacts = [];
   for (const artifact of copiedArtifacts) {
     const target = `${releasePath}/${artifact.target}`;
-    copyFile(artifact.source, target);
-    releaseArtifacts.push({ ...artifact, target });
+    if (artifact.source.startsWith("schemas/"))
+      copyVersionedSchema(artifact.source, target);
+    else copyFile(artifact.source, target);
+    releaseArtifacts.push({
+      source: artifact.source,
+      target,
+      bytes: fs.statSync(path.join(outDir, target)).size,
+      sha256: sha256File(path.join(outDir, target)),
+    });
   }
   const releasePackages = releasePackagesMetadata();
   writeJson(`${releasePath}/packages.json`, releasePackages);
@@ -771,11 +779,12 @@ function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
           sourceState: "locked",
           dirtyInputs: [],
         };
-  const lockedRelease = releaseMetadata(releaseLock, releaseArtifacts, {
-    sourceState: "locked",
-    dirtyInputs: [],
-  });
-  const contentSha256 = releaseContentHash(lockedRelease);
+  const releaseWithoutHash = releaseMetadata(
+    releaseLock,
+    releaseArtifacts,
+    releaseProvenance,
+  );
+  const contentSha256 = releaseContentHash(releaseWithoutHash);
   if (!releaseLock && (requireClean || dirtyInputs.length === 0)) {
     throw new Error(
       `release ${releaseVersion} is missing a content lock in ${RELEASE_LOCK_DIR}`,
@@ -792,7 +801,7 @@ function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
   }
 
   const release = {
-    ...releaseMetadata(releaseLock, releaseArtifacts, releaseProvenance),
+    ...releaseWithoutHash,
     contentSha256,
   };
 
@@ -1298,7 +1307,6 @@ function dirtyPublishableInputs() {
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
-    ...listFiles(RELEASE_LOCK_DIR),
     ...trackedFiles(RELEASE_LOCK_DIR),
   ]);
   return git(["status", "--porcelain=v1", "--untracked-files=all"])
@@ -1334,7 +1342,7 @@ function readReleaseLock(version) {
 }
 
 function readReleaseLocks() {
-  return listFiles(RELEASE_LOCK_DIR)
+  return trackedFiles(RELEASE_LOCK_DIR)
     .filter((file) => /^site\/releases\/v[^/]+\.json$/.test(file))
     .map((file) => ({ ...readJson(file), path: file }))
     .sort((a, b) => compareVersions(a.version, b.version));
@@ -1374,7 +1382,10 @@ function releaseContentHash(lockedRelease) {
     .filter(({ target }) => target !== `${releasePath}/release.json`)
     .map(({ file, target }) => fileRecord(target, file));
   records.push(
-    contentRecord(`${releasePath}/release.json`, jsonText(lockedRelease)),
+    contentRecord(
+      `${releasePath}/release.json`,
+      jsonText(releaseMetadataForHash(lockedRelease)),
+    ),
   );
   return crypto
     .createHash("sha256")
@@ -1382,6 +1393,18 @@ function releaseContentHash(lockedRelease) {
       JSON.stringify(records.sort((a, b) => a.target.localeCompare(b.target))),
     )
     .digest("hex");
+}
+
+function copyVersionedSchema(source, target) {
+  const activeBase = `${SITE_BASE_URL}/schemas/`;
+  const versionedBase = `${SITE_BASE_URL}/${releasePath}/schemas/`;
+  const rewritten = fs
+    .readFileSync(path.join(root, source), "utf8")
+    .replaceAll(activeBase, versionedBase);
+  const schema = JSON.parse(rewritten);
+  if (schema.$id !== `${versionedBase}${path.basename(source)}`)
+    throw new Error(`${source} does not have the expected schema id`);
+  writeText(target, rewritten);
 }
 
 function fileRecord(target, file) {
@@ -1410,10 +1433,9 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
-  const files = new Set([
-    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
-    ...listFiles(relativeDir),
-  ]);
+  const files = new Set(
+    git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
+  );
   return [...files]
     .filter((file) => fs.existsSync(path.join(root, file)))
     .sort();
