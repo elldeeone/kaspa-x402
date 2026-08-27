@@ -148,7 +148,27 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async saveChannel(channel: ServerChannelRecord): Promise<void> {
-    await this.#storage.put(channelKey(channel.channelId), clone(channel));
+    await this.#storage.transaction(async (txn) => {
+      const channelId = channel.channelId.toLowerCase();
+      const covenantId = channel.covenantId.toLowerCase();
+      const current = await txn.get<ServerChannelRecord>(channelKey(channelId));
+      if (current && current.covenantId.toLowerCase() !== covenantId) {
+        throw new Error("channel covenant lineage cannot change");
+      }
+      const registeredChannelId = await txn.get<string>(
+        covenantChannelKey(covenantId),
+      );
+      if (
+        registeredChannelId &&
+        registeredChannelId.toLowerCase() !== channelId
+      ) {
+        throw new Error(
+          "covenant lineage is already registered to another channel",
+        );
+      }
+      await txn.put(covenantChannelKey(covenantId), channelId);
+      await txn.put(channelKey(channelId), clone(channel));
+    });
   }
 
   async retireChannel(channelId: string): Promise<void> {
@@ -1240,6 +1260,10 @@ function matchesClaimSnapshot(
 
 function channelKey(channelId: string): string {
   return `channel:${channelId.toLowerCase()}`;
+}
+
+function covenantChannelKey(covenantId: string): string {
+  return `covenant-channel:${covenantId.toLowerCase()}`;
 }
 
 function commitmentKey(commitmentId: string): string {

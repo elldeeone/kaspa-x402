@@ -2406,6 +2406,69 @@ describe("direct-mode server", () => {
     expect(commitment?.response.status).toBe(200);
   });
 
+  it("rejects a salted channel alias for an already registered covenant", async () => {
+    const setup = makeServer();
+    const first = makeDepositPayment(setup, { salt: "31".repeat(32) });
+    const alias = makeDepositPayment(setup, { salt: "32".repeat(32) });
+    let handlerCalls = 0;
+    const handler = async () => {
+      handlerCalls += 1;
+      return { body: "secret", chargedAmount: "100" };
+    };
+
+    const accepted = await setup.server.handlePaidRequest(
+      requestWithPayment(first.payload),
+      handler,
+    );
+    const rejected = await setup.server.handlePaidRequest(
+      requestWithPayment(alias.payload),
+      handler,
+    );
+
+    expect(first.channelId).not.toBe(alias.channelId);
+    expect(accepted.status).toBe(200);
+    expect(rejected.status).toBe(503);
+    expect(handlerCalls).toBe(1);
+    await expect(
+      setup.store.loadChannel(first.channelId),
+    ).resolves.toBeDefined();
+    await expect(
+      setup.store.loadChannel(alias.channelId),
+    ).resolves.toBeUndefined();
+  });
+
+  it("allows only one concurrent salted alias to register a covenant", async () => {
+    const setup = makeServer();
+    const first = makeDepositPayment(setup, { salt: "33".repeat(32) });
+    const alias = makeDepositPayment(setup, { salt: "34".repeat(32) });
+    let handlerCalls = 0;
+    const handler = async () => {
+      handlerCalls += 1;
+      return { body: "secret", chargedAmount: "100" };
+    };
+
+    const responses = await Promise.all([
+      setup.server.handlePaidRequest(
+        requestWithPayment(first.payload),
+        handler,
+      ),
+      setup.server.handlePaidRequest(
+        requestWithPayment(alias.payload),
+        handler,
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 503,
+    ]);
+    expect(handlerCalls).toBe(1);
+    const channels = await setup.store.listChannels();
+    expect(channels).toHaveLength(1);
+    expect([first.channelId, alias.channelId]).toContain(
+      channels[0]?.channelId,
+    );
+  });
+
   it("accepts a voucher-only retry on an existing channel", async () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);

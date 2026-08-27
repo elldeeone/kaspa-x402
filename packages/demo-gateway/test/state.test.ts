@@ -37,6 +37,25 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("atomically binds one covenant lineage to one channel", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const first = channel();
+    const alias = channel({
+      channelId: "12".repeat(32),
+      channelConfig: {
+        ...first.channelConfig,
+        salt: "13".repeat(32),
+      },
+    });
+
+    await ledger.saveChannel(first);
+    await expect(ledger.saveChannel(alias)).rejects.toThrow(
+      "covenant lineage is already registered",
+    );
+    await expect(ledger.loadChannel(first.channelId)).resolves.toEqual(first);
+    await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
+  });
+
   it("commits exact transaction ids once while allowing identical retries", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = exactPayment({ paymentOutputIndex: 1 });

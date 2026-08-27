@@ -88,6 +88,28 @@ describe("exact head manifest", () => {
 });
 
 function defineStoreContract(factory: StoreFactory): void {
+  it("atomically binds one covenant lineage to one channel", async () => {
+    const store = await factory.create();
+    const first = channel();
+    const alias = channel({
+      channelId: "1c".repeat(32),
+      channelConfig: {
+        ...first.channelConfig,
+        salt: "1d".repeat(32),
+      },
+    });
+
+    await store.saveChannel(first);
+    await expect(store.saveChannel(alias)).rejects.toThrow(
+      "covenant lineage is already registered",
+    );
+    await expect(store.loadChannel(first.channelId)).resolves.toEqual(first);
+    await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
+    await expect(
+      store.saveChannel({ ...first, covenantId: "1e".repeat(32) }),
+    ).rejects.toThrow("lineage cannot change");
+  });
+
   it("consumes exact transaction ids once while allowing identical retries", async () => {
     const store = await factory.create();
     const first = exactPayment({ paymentOutputIndex: 1 });

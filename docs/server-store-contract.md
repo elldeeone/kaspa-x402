@@ -4,8 +4,8 @@ The reference `MemoryServerChannelStore` is for tests and examples. Production
 servers need a durable implementation of `ServerStateStore` with the semantics
 below.
 
-Alpha.10 supports `kaspa-escrow-v2` / `kaspa-x402-escrow-v2` as the active
-batch profile. Older alpha stores are not migrated or read by the Alpha.10
+Alpha.11 supports `kaspa-escrow-v2` / `kaspa-x402-escrow-v2` as the active
+batch profile. Older alpha stores are not migrated or read by the Alpha.11
 runtime; immutable release snapshots remain historical records only.
 
 ## Required Guarantees
@@ -15,6 +15,9 @@ runtime; immutable release snapshots remain historical records only.
   attempt state.
 - Compare-and-set checks and uniqueness checks happen in the same transaction as
   the write they protect.
+- `saveChannel` atomically binds each stable `covenantId` to exactly one channel
+  id for its lifetime. A different salted channel id must never register the
+  same covenant lineage, including after retirement.
 - Records survive process restart and are reloaded before retry recovery.
 - Every arithmetic value used by the batch covenant is between zero and signed
   int64 maximum (`9223372036854775807`).

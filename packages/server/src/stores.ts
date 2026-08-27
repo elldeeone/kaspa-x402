@@ -42,6 +42,7 @@ import type {
 
 export class MemoryServerChannelStore implements ServerStateStore {
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
+  readonly #channelByCovenantId = new Map<Hash32Hex, Hash32Hex>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
   readonly #batchAttempts = new Map<Hash32Hex, BatchSettlementAttemptRecord>();
   readonly #exactPayments = new Map<string, ExactPaymentRecord>();
@@ -51,8 +52,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
 
   constructor(channels: readonly ServerChannelRecord[] = []) {
-    for (const channel of channels)
-      this.#channels.set(channel.channelId, clone(channel));
+    for (const channel of channels) this.#setChannel(channel);
   }
 
   async loadChannel(
@@ -63,7 +63,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async saveChannel(channel: ServerChannelRecord): Promise<void> {
-    this.#channels.set(channel.channelId, clone(channel));
+    this.#setChannel(channel);
   }
 
   async retireChannel(channelId: Hash32Hex): Promise<void> {
@@ -74,6 +74,23 @@ export class MemoryServerChannelStore implements ServerStateStore {
 
   async listChannels(): Promise<ServerChannelRecord[]> {
     return Array.from(this.#channels.values()).map(clone);
+  }
+
+  #setChannel(channel: ServerChannelRecord): void {
+    const channelId = channel.channelId.toLowerCase() as Hash32Hex;
+    const covenantId = channel.covenantId.toLowerCase() as Hash32Hex;
+    const current = this.#channels.get(channelId);
+    if (current && current.covenantId.toLowerCase() !== covenantId) {
+      throw new Error("channel covenant lineage cannot change");
+    }
+    const registeredChannelId = this.#channelByCovenantId.get(covenantId);
+    if (registeredChannelId && registeredChannelId !== channelId) {
+      throw new Error(
+        "covenant lineage is already registered to another channel",
+      );
+    }
+    this.#channelByCovenantId.set(covenantId, channelId);
+    this.#channels.set(channelId, clone(channel));
   }
 
   async loadCommitment(

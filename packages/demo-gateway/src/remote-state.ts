@@ -26,7 +26,7 @@ import type {
 } from "./state.js";
 
 export type GatewayStateNamespace = Env["GATEWAY_STATE"];
-export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-alpha.10";
+export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-alpha.11";
 
 export class RemoteGatewayState implements GatewayStateClient {
   readonly #stub: DurableObjectStub;

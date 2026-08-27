@@ -318,6 +318,7 @@ export interface ServerChannelRecord {
 
 export interface ServerChannelStore {
   loadChannel(channelId: Hash32Hex): Promise<ServerChannelRecord | undefined>;
+  /** Atomically preserves the one-covenant-lineage-to-one-channel invariant. */
   saveChannel(channel: ServerChannelRecord): Promise<void>;
   retireChannel(channelId: Hash32Hex, reason?: string): Promise<void>;
   listChannels(): Promise<ServerChannelRecord[]>;
