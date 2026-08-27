@@ -667,6 +667,45 @@ function defineStoreContract(factory: StoreFactory): void {
     ).rejects.toThrow("channel state changed");
   });
 
+  it("prevents batch settlement and claim attempts from overlapping", async () => {
+    const batchFirst = await factory.create([channel()]);
+    await batchFirst.claimBatchSettlement(batchSettlementAttempt(channel()));
+    await expect(
+      batchFirst.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX })),
+    ).rejects.toThrow("batch settlement attempt is already pending");
+
+    const claimFirst = await factory.create([channel()]);
+    await claimFirst.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX }));
+    await expect(
+      claimFirst.claimBatchSettlement(batchSettlementAttempt(channel())),
+    ).rejects.toThrow("channel already has a pending claim attempt");
+  });
+
+  it("tombstones abandoned claims against stale lease holders", async () => {
+    let store = await factory.create([channel()]);
+    const stale = claimAttempt({ attemptId: ATTEMPT });
+    await store.saveClaimAttempt(stale);
+    await store.abandonClaimAttempt(stale.attemptId, "rejected by chain");
+    if (store instanceof DurableMockServerChannelStore) {
+      store = await store.restart();
+    }
+
+    await expect(store.loadOpenClaimAttempt(CHANNEL_ID)).resolves.toBeUndefined();
+    await expect(
+      store.saveClaimAttempt({
+        ...stale,
+        status: "broadcast",
+        finality: "broadcast",
+      }),
+    ).rejects.toThrow("execution epoch was abandoned");
+    await expect(
+      store.saveClaimAttempt({
+        ...stale,
+        attemptEpoch: "22222222-2222-4222-8222-222222222222",
+      }),
+    ).resolves.toBeUndefined();
+  });
+
   it("binds claim attempts to one immutable artifact and monotonic state", async () => {
     const store = await factory.create([channel()]);
     const pending = claimAttempt({ attemptId: ATTEMPT });
@@ -1486,6 +1525,7 @@ function claimAttempt(input: { attemptId: string }): ClaimAttemptRecord {
   const current = channel();
   return {
     attemptId: input.attemptId,
+    attemptEpoch: "11111111-1111-4111-8111-111111111111",
     channelId: current.channelId,
     covenantId: current.covenantId,
     activeOutpoint: current.activeOutpoint,

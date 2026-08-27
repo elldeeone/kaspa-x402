@@ -230,6 +230,16 @@ export class GatewayLedger implements ServerStateStore {
         }
         await txn.delete(openBatchAttemptKey(attempt.channelId));
       }
+      const openClaimAttemptId = await txn.get<string>(
+        openClaimKey(attempt.channelId),
+      );
+      if (openClaimAttemptId) {
+        const openClaim = await txn.get<ClaimAttemptRecord>(
+          claimAttemptKey(openClaimAttemptId),
+        );
+        if (openClaim && openClaim.status !== "applied")
+          throw new Error("channel already has a pending claim attempt");
+      }
       if (attempt.paymentIdentifier) {
         if (
           await txn.get<PaymentIdentifierRecord>(
@@ -750,10 +760,31 @@ export class GatewayLedger implements ServerStateStore {
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     await this.#storage.transaction(async (txn) => {
+      const abandonedEpoch = await txn.get<string>(
+        abandonedClaimAttemptKey(record.attemptId),
+      );
+      if (abandonedEpoch) {
+        if (
+          record.status !== "pending" ||
+          record.attemptEpoch === abandonedEpoch
+        ) {
+          throw new Error("claim attempt execution epoch was abandoned");
+        }
+      }
       const existing = await txn.get<ClaimAttemptRecord>(
         claimAttemptKey(record.attemptId),
       );
       const attempt = normalizeClaimAttempt(record, existing);
+      const openBatchAttemptId = await txn.get<string>(
+        openBatchAttemptKey(attempt.channelId),
+      );
+      if (openBatchAttemptId) {
+        const openBatch = await txn.get<BatchSettlementAttemptRecord>(
+          batchAttemptKey(openBatchAttemptId),
+        );
+        if (openBatch?.status === "pending")
+          throw new Error("batch settlement attempt is already pending");
+      }
       const openAttemptId = await txn.get<string>(
         openClaimKey(attempt.channelId),
       );
@@ -764,6 +795,8 @@ export class GatewayLedger implements ServerStateStore {
         if (open && open.status !== "applied")
           throw new Error("claim attempt is already pending");
       }
+      if (abandonedEpoch)
+        await txn.delete(abandonedClaimAttemptKey(attempt.attemptId));
       await txn.put(claimAttemptKey(attempt.attemptId), attempt);
       await txn.put(openClaimKey(attempt.channelId), attempt.attemptId);
     });
@@ -810,6 +843,10 @@ export class GatewayLedger implements ServerStateStore {
       if (!current || current.status === "applied") return;
       await txn.delete(claimAttemptKey(attemptId));
       await txn.delete(openClaimKey(current.channelId));
+      await txn.put(
+        abandonedClaimAttemptKey(attemptId),
+        current.attemptEpoch,
+      );
     });
   }
 
@@ -1543,6 +1580,10 @@ function paymentIdentifierReservationKey(id: string): string {
 
 function claimAttemptKey(attemptId: string): string {
   return `claim-attempt:${attemptId.toLowerCase()}`;
+}
+
+function abandonedClaimAttemptKey(attemptId: string): string {
+  return `claim-attempt-abandoned:${attemptId.toLowerCase()}`;
 }
 
 function openClaimKey(channelId: string): string {

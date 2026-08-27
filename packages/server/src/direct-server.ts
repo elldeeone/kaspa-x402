@@ -1116,6 +1116,7 @@ export class DirectModeServer {
           claim.transaction,
           claim.claimAmount,
         ),
+        attemptEpoch: crypto.randomUUID(),
         channelId: preview.channel.channelId,
         covenantId: preview.channel.covenantId,
         activeOutpoint: preview.channel.activeOutpoint,

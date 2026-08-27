@@ -3,6 +3,7 @@ import test from "node:test";
 
 import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { releaseMetadataForHash } from "./release-metadata.mjs";
+import { assertReleaseLocalSchema } from "./release-schema.mjs";
 import {
   decodePreviewPathname,
   parsePreviewRequestUrl,
@@ -47,6 +48,24 @@ test("release hashes bind every supported metadata field", () => {
     () => releaseMetadataForHash({ ...release, unboundField: true }),
     /unknown fields: unboundField/,
   );
+});
+
+test("release schemas reject cross-version and external references", () => {
+  const id =
+    "https://kaspa-x402.org/v0.1.0-alpha.11/schemas/example.schema.json";
+  assert.doesNotThrow(() =>
+    assertReleaseLocalSchema({ $id: id, $ref: "./other.schema.json" }, id),
+  );
+  for (const reference of [
+    "https://kaspa-x402.org/v0.1.0-alpha.10/schemas/other.schema.json",
+    "https://example.test/other.schema.json",
+    "../../schemas/other.schema.json",
+  ]) {
+    assert.throws(
+      () => assertReleaseLocalSchema({ $id: id, $ref: reference }, id),
+      /escapes release-local schemas/,
+    );
+  }
 });
 
 test("preview input parsing rejects malformed hosts and percent escapes", () => {

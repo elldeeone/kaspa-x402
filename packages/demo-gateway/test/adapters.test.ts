@@ -19,6 +19,7 @@ import {
   NativeAddressCodec,
   NativeChannelSignatureVerifier,
   QuorumExactTransactionVerifier,
+  QuorumKaspaChainProvider,
   RestExactHeadReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
@@ -1677,6 +1678,33 @@ describe("NativeChannelSignatureVerifier", () => {
 });
 
 describe("independent chain evidence quorum", () => {
+  it("uses the higher close DAA score and rejects excessive divergence", async () => {
+    const provider = (score: string) => ({
+      async getVirtualDaaScore() {
+        return score;
+      },
+    });
+    const close = new QuorumKaspaChainProvider(
+      provider("1000") as never,
+      provider("1050") as never,
+      {} as never,
+      {} as never,
+      "100",
+    );
+    const divergent = new QuorumKaspaChainProvider(
+      provider("1000") as never,
+      provider("1200") as never,
+      {} as never,
+      {} as never,
+      "100",
+    );
+
+    await expect(close.getVirtualDaaScore()).resolves.toBe("1050");
+    await expect(divergent.getVirtualDaaScore()).rejects.toThrow(
+      "independent chain evidence disagrees",
+    );
+  });
+
   it("fails closed when exact-payment providers disagree", async () => {
     const primary = {
       async verifyExactPayment() {

@@ -54,6 +54,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
     { attemptId: Hash32Hex; fingerprint: Hash32Hex; paymentEvidenceHash: Hash32Hex; channelId: Hash32Hex }
   >();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
+  readonly #abandonedClaimAttempts = new Map<Hash32Hex, string>();
 
   constructor(channels: readonly ServerChannelRecord[] = []) {
     for (const channel of channels) this.#setChannel(channel);
@@ -196,6 +197,14 @@ export class MemoryServerChannelStore implements ServerStateStore {
         current.status === "pending"
       ) {
         throw new Error("channel already has a pending batch settlement");
+      }
+    }
+    for (const current of this.#claimAttempts.values()) {
+      if (
+        current.channelId === attempt.channelId &&
+        current.status !== "applied"
+      ) {
+        throw new Error("channel already has a pending claim attempt");
       }
     }
     if (attempt.paymentIdentifier) {
@@ -610,8 +619,27 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
+    const abandonedEpoch = this.#abandonedClaimAttempts.get(
+      canonicalHash32(record.attemptId),
+    );
+    if (abandonedEpoch) {
+      if (
+        record.status !== "pending" ||
+        record.attemptEpoch === abandonedEpoch
+      ) {
+        throw new Error("claim attempt execution epoch was abandoned");
+      }
+    }
     const existing = this.#claimAttempts.get(record.attemptId);
     const attempt = normalizeClaimAttempt(record, existing);
+    for (const batchAttempt of this.#batchAttempts.values()) {
+      if (
+        batchAttempt.channelId === attempt.channelId &&
+        batchAttempt.status === "pending"
+      ) {
+        throw new Error("batch settlement attempt is already pending");
+      }
+    }
     for (const existing of this.#claimAttempts.values()) {
       if (
         existing.channelId === attempt.channelId &&
@@ -621,6 +649,8 @@ export class MemoryServerChannelStore implements ServerStateStore {
         throw new Error("claim attempt is already pending");
       }
     }
+    if (abandonedEpoch)
+      this.#abandonedClaimAttempts.delete(attempt.attemptId);
     this.#claimAttempts.set(attempt.attemptId, attempt);
   }
 
@@ -673,6 +703,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const currentAttempt = this.#claimAttempts.get(attemptId);
     if (!currentAttempt || currentAttempt.status === "applied") return;
     this.#claimAttempts.delete(attemptId);
+    this.#abandonedClaimAttempts.set(
+      canonicalHash32(attemptId),
+      currentAttempt.attemptEpoch,
+    );
   }
 }
 
@@ -861,6 +895,13 @@ function claimAttemptArtifactsMatch(
 }
 
 function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/.test(
+      attempt.attemptEpoch,
+    )
+  ) {
+    throw new Error("claim attempt execution epoch must be a lowercase UUID v4");
+  }
   if (
     attempt.requiredFinality !== "accepted" &&
     attempt.requiredFinality !== "confirmed"

@@ -24,6 +24,7 @@ import {
   VENDORED_KASPA_WASM,
 } from "./site-config.mjs";
 import { releaseMetadataForHash } from "./release-metadata.mjs";
+import { assertReleaseLocalSchema } from "./release-schema.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -289,17 +290,22 @@ function checkReleaseSnapshots(manifest, dirtyInputs, headersPath) {
 }
 
 function checkUntrackedPublishableFiles() {
-  const untrackedVectors = git([
+  const untrackedFiles = git([
     "ls-files",
     "--others",
     "--exclude-standard",
     "vectors",
+    RELEASE_SNAPSHOT_DIR,
   ])
     .split(/\r?\n/)
-    .filter((file) => /\.(?:json|md)$/.test(file));
-  for (const file of untrackedVectors) {
-    if (fs.existsSync(path.join(outDir, file)))
-      fail(`untracked vector-like file was copied by site build: ${file}`);
+    .filter(Boolean);
+  for (const file of untrackedFiles) {
+    const snapshotPrefix = `${RELEASE_SNAPSHOT_DIR}/`;
+    const outputPath = file.startsWith(snapshotPrefix)
+      ? file.slice(snapshotPrefix.length)
+      : file;
+    if (fs.existsSync(path.join(outDir, outputPath)))
+      fail(`untracked publishable file was copied by site build: ${file}`);
   }
 }
 
@@ -683,7 +689,9 @@ function assertSameTree(sourceDir, targetDir, label) {
     );
     return;
   }
-  const sourceFiles = listRelativeFiles(sourceDir);
+  const sourceFiles = trackedFiles(path.relative(root, sourceDir))
+    .map((file) => path.relative(sourceDir, path.join(root, file)))
+    .sort();
   const targetFiles = listRelativeFiles(targetDir);
   if (JSON.stringify(sourceFiles) !== JSON.stringify(targetFiles)) {
     fail(`stored release snapshot file list differs: ${label}`);
@@ -884,14 +892,17 @@ function checkVersionedSchemas(releasePath, version) {
   for (const file of listFiles(schemaDir).filter((item) => item.endsWith(".json"))) {
     const schema = readJson(file);
     const expectedPrefix = `${SITE_BASE_URL}/v${version}/schemas/`;
-    if (schema.$id !== `${expectedPrefix}${path.basename(file)}`)
-      fail(
-        `${releasePath} schema id is not release-local: ${path.basename(file)}`,
+    try {
+      assertReleaseLocalSchema(
+        schema,
+        `${expectedPrefix}${path.basename(file)}`,
       );
-    if (JSON.stringify(schema).includes(`${SITE_BASE_URL}/schemas/`))
+    } catch (error) {
+      const reason = error instanceof Error ? error.message : String(error);
       fail(
-        `${releasePath} schema reference escapes its release snapshot: ${path.basename(file)}`,
+        `${releasePath} schema is not release-local: ${path.basename(file)}: ${reason}`,
       );
+    }
   }
 }
 

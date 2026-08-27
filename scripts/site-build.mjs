@@ -26,6 +26,7 @@ import {
   VECTOR_GROUPS,
 } from "./site-config.mjs";
 import { releaseMetadataForHash } from "./release-metadata.mjs";
+import { assertReleaseLocalSchema } from "./release-schema.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -738,15 +739,13 @@ function copyStaticAssets() {
 function writeReleaseSnapshot(copiedArtifacts, vectorIndex) {
   const releaseLock = readReleaseLock(releaseVersion);
   if (releaseLock?.frozen === true) {
-    const source = path.join(root, RELEASE_SNAPSHOT_DIR, releasePath);
-    if (!fs.existsSync(source)) {
+    const source = `${RELEASE_SNAPSHOT_DIR}/${releasePath}`;
+    if (!fs.existsSync(path.join(root, source))) {
       throw new Error(
         `frozen release ${releaseVersion} is missing ${RELEASE_SNAPSHOT_DIR}/${releasePath}`,
       );
     }
-    const target = path.join(outDir, releasePath);
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.cpSync(source, target, { recursive: true });
+    copyTrackedSnapshot(source, releasePath);
     return;
   }
   const releaseArtifacts = [];
@@ -812,15 +811,24 @@ function copyStoredReleaseSnapshots() {
   for (const entry of releaseEntries) {
     const snapshotPath = `v${entry.version}`;
     if (snapshotPath === releasePath) continue;
-    const source = path.join(root, RELEASE_SNAPSHOT_DIR, snapshotPath);
-    if (!fs.existsSync(source)) {
+    const source = `${RELEASE_SNAPSHOT_DIR}/${snapshotPath}`;
+    if (!fs.existsSync(path.join(root, source))) {
       throw new Error(
         `release ${entry.version} is locked but missing ${RELEASE_SNAPSHOT_DIR}/${snapshotPath}`,
       );
     }
-    const target = path.join(outDir, snapshotPath);
-    fs.rmSync(target, { recursive: true, force: true });
-    fs.cpSync(source, target, { recursive: true });
+    copyTrackedSnapshot(source, snapshotPath);
+  }
+}
+
+function copyTrackedSnapshot(sourceDirectory, targetDirectory) {
+  const targetRoot = path.join(outDir, targetDirectory);
+  fs.rmSync(targetRoot, { recursive: true, force: true });
+  for (const source of trackedFiles(sourceDirectory)) {
+    const relative = path
+      .relative(sourceDirectory, source)
+      .replaceAll(path.sep, "/");
+    copyFile(source, `${targetDirectory}/${relative}`);
   }
 }
 
@@ -1402,8 +1410,10 @@ function copyVersionedSchema(source, target) {
     .readFileSync(path.join(root, source), "utf8")
     .replaceAll(activeBase, versionedBase);
   const schema = JSON.parse(rewritten);
-  if (schema.$id !== `${versionedBase}${path.basename(source)}`)
-    throw new Error(`${source} does not have the expected schema id`);
+  assertReleaseLocalSchema(
+    schema,
+    `${versionedBase}${path.basename(source)}`,
+  );
   writeText(target, rewritten);
 }
 

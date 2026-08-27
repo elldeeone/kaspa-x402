@@ -37,6 +37,7 @@ export function stableStringify(
   const output: string[] = [];
   const active = new WeakSet<object>();
   const stack: Frame[] = [{ kind: "value", value, path: "$", depth: 0 }];
+  let scheduledValues = 1;
   let nodes = 0;
   let outputBytes = 0;
 
@@ -58,6 +59,7 @@ export function stableStringify(
       continue;
     }
 
+    scheduledValues -= 1;
     nodes += 1;
     if (nodes > budget.maxNodes)
       throw new RangeError("stable JSON input exceeds the node limit");
@@ -85,6 +87,7 @@ export function stableStringify(
     active.add(current);
     stack.push({ kind: "leave", value: current });
     if (Array.isArray(current)) {
+      reserveValues(current.length, frame.path);
       stack.push({ kind: "text", text: "]" });
       for (let index = current.length - 1; index >= 0; index -= 1) {
         stack.push({
@@ -106,6 +109,7 @@ export function stableStringify(
     const keys = Object.keys(record).sort();
     if (keys.length > budget.maxObjectKeys)
       throw new RangeError(`${frame.path} exceeds the object-key limit`);
+    reserveValues(keys.length, frame.path);
     stack.push({ kind: "text", text: "}" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;
@@ -123,4 +127,10 @@ export function stableStringify(
   }
 
   return output.join("");
+
+  function reserveValues(count: number, path: string) {
+    if (nodes + scheduledValues + count > budget.maxNodes)
+      throw new RangeError(`${path} exceeds the stable JSON node limit`);
+    scheduledValues += count;
+  }
 }

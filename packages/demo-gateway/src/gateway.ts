@@ -467,6 +467,7 @@ async function createGateway(
     evidenceChainProvider,
     rest,
     evidenceRest,
+    config.minimumRefundLeadDaa,
   );
   const currentDaa = BigInt(await chainProvider.getVirtualDaaScore());
   if (

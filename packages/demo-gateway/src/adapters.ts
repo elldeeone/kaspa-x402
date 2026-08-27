@@ -406,17 +406,20 @@ export class QuorumKaspaChainProvider
   readonly #secondary: ServerChainProvider & TopUpVerifier;
   readonly #primaryClient: KaspaRestClient;
   readonly #secondaryClient: KaspaRestClient;
+  readonly #maxDaaScoreDivergence: bigint;
 
   constructor(
     primary: ServerChainProvider & TopUpVerifier,
     secondary: ServerChainProvider & TopUpVerifier,
     primaryClient: KaspaRestClient,
     secondaryClient: KaspaRestClient,
+    maxDaaScoreDivergence: SompiString,
   ) {
     this.#primary = primary;
     this.#secondary = secondary;
     this.#primaryClient = primaryClient;
     this.#secondaryClient = secondaryClient;
+    this.#maxDaaScoreDivergence = BigInt(maxDaaScoreDivergence);
   }
 
   async getUtxo(outpoint: FundingOutpoint, network: NetworkId) {
@@ -456,7 +459,19 @@ export class QuorumKaspaChainProvider
       this.#primary.getVirtualDaaScore(),
       this.#secondary.getVirtualDaaScore(),
     ]);
-    return (BigInt(primary) < BigInt(secondary) ? primary : secondary) as SompiString;
+    const primaryScore = BigInt(primary);
+    const secondaryScore = BigInt(secondary);
+    const divergence =
+      primaryScore >= secondaryScore
+        ? primaryScore - secondaryScore
+        : secondaryScore - primaryScore;
+    if (divergence > this.#maxDaaScoreDivergence)
+      throw invalidTransaction(
+        "independent chain evidence disagrees on virtual DAA score",
+      );
+    return String(
+      primaryScore >= secondaryScore ? primaryScore : secondaryScore,
+    ) as SompiString;
   }
 
   async estimateClaimFee(request: Parameters<ServerChainProvider["estimateClaimFee"]>[0]) {

@@ -1075,6 +1075,7 @@ function claimAttempt(
 ): ClaimAttemptRecord {
   return {
     attemptId: ATTEMPT,
+    attemptEpoch: "11111111-1111-4111-8111-111111111111",
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
     activeOutpoint: { txid: TX, index: 0 },

@@ -192,7 +192,12 @@ describe("stable JSON resource limits", () => {
   it("rejects excessive nesting, nodes, keys, and output", () => {
     expect(() => stableStringify([[[0]]], { maxDepth: 2 })).toThrow("depth");
     expect(() => stableStringify([1, 2, 3], { maxNodes: 3 })).toThrow("node");
-    expect(() => stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 })).toThrow("object-key");
+    expect(() =>
+      stableStringify(new Array(1_000_000).fill(null), { maxNodes: 100 }),
+    ).toThrow("node");
+    expect(() =>
+      stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 }),
+    ).toThrow("object-key");
     expect(() => stableStringify("large", { maxOutputBytes: 4 })).toThrow("byte");
   });
 });

@@ -613,6 +613,8 @@ export type ClaimAttemptStatus =
 
 export interface ClaimAttemptRecord {
   attemptId: Hash32Hex;
+  /** Unique execution epoch fencing stale holders after abandonment. */
+  attemptEpoch: string;
   channelId: Hash32Hex;
   covenantId: Hash32Hex;
   activeOutpoint: FundingOutpoint;
