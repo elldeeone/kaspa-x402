@@ -150,7 +150,7 @@
       "source": "docs/review-closure-ledger.md",
       "target": "v0.1.0-alpha.11/docs/review-closure-ledger.md",
       "bytes": 7145,
-      "sha256": "23ea2897a81af9a713f902d5248679ffc686bb03d3bdf52072c2daff25c919e5"
+      "sha256": "8f32ec2a800009fc824db7ad3c5e7c72c9f7a20f0d4cd1130a7070ed21f43dc0"
     },
     {
       "source": "docs/security-threat-model.md",
@@ -465,5 +465,5 @@
       "sha256": "36564ac622863b7621f3d95fb1fa6c8a126d813d238919c3aa856c4a04cd0508"
     }
   ],
-  "contentSha256": "013ebc5c1576a9e2fb2f7245e7f8bf2bcf8deed4c146ef30b7991361ff9baee9"
+  "contentSha256": "a9b795685e241abe7abaa6c1134a58592be52a31bea92e7c5fc1d6c6809f4325"
 }
