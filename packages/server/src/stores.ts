@@ -58,7 +58,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   async loadChannel(
     channelId: Hash32Hex,
   ): Promise<ServerChannelRecord | undefined> {
-    const channel = this.#channels.get(channelId);
+    const channel = this.#channels.get(canonicalHash32(channelId));
     return channel ? clone(channel) : undefined;
   }
 
@@ -67,9 +67,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async retireChannel(channelId: Hash32Hex): Promise<void> {
-    const channel = this.#channels.get(channelId);
+    const key = canonicalHash32(channelId);
+    const channel = this.#channels.get(key);
     if (!channel) return;
-    this.#channels.set(channelId, { ...channel, status: "retired" });
+    this.#channels.set(key, { ...channel, status: "retired" });
   }
 
   async listChannels(): Promise<ServerChannelRecord[]> {
@@ -79,15 +80,15 @@ export class MemoryServerChannelStore implements ServerStateStore {
   #setChannel(channel: ServerChannelRecord): void {
     const { channelId, covenantId } = this.#assertChannelBinding(channel);
     this.#channelByCovenantId.set(covenantId, channelId);
-    this.#channels.set(channelId, clone(channel));
+    this.#channels.set(channelId, canonicalChannelRecord(channel));
   }
 
   #assertChannelBinding(channel: ServerChannelRecord): {
     channelId: Hash32Hex;
     covenantId: Hash32Hex;
   } {
-    const channelId = channel.channelId.toLowerCase() as Hash32Hex;
-    const covenantId = channel.covenantId.toLowerCase() as Hash32Hex;
+    const channelId = canonicalHash32(channel.channelId);
+    const covenantId = canonicalHash32(channel.covenantId);
     const current = this.#channels.get(channelId);
     if (current && current.covenantId.toLowerCase() !== covenantId) {
       throw new Error("channel covenant lineage cannot change");
@@ -123,7 +124,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async commitSettlement(record: SettlementCommit): Promise<void> {
-    const current = this.#channels.get(record.expected.channelId);
+    const current = this.#channels.get(
+      canonicalHash32(record.expected.channelId),
+    );
     if (!matchesExpectedChannel(current, record.expected)) {
       throw new Error("channel state changed before settlement commit");
     }
@@ -164,7 +167,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
     }
     if (
       !matchesExpectedChannel(
-        this.#channels.get(attempt.channelId),
+        this.#channels.get(canonicalHash32(attempt.channelId)),
         attempt.expected,
       )
     ) {
@@ -555,8 +558,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
   async loadOpenClaimAttempt(
     channelId: Hash32Hex,
   ): Promise<ClaimAttemptRecord | undefined> {
+    const key = canonicalHash32(channelId);
     for (const record of this.#claimAttempts.values()) {
-      if (record.channelId === channelId && record.status !== "applied")
+      if (record.channelId === key && record.status !== "applied")
         return clone(record);
     }
     return undefined;
@@ -590,7 +594,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     ) {
       throw new Error("claim apply must match the persisted accepted attempt");
     }
-    const currentChannel = this.#channels.get(channel.channelId);
+    const currentChannel = this.#channels.get(
+      canonicalHash32(channel.channelId),
+    );
     if (
       !currentChannel ||
       currentChannel.channelId !== currentAttempt.channelId ||
@@ -634,19 +640,20 @@ export class MemoryChannelLockManager implements ChannelLockManager {
     channelId: Hash32Hex,
     fn: () => Promise<T>,
   ): Promise<T> {
-    const previous = this.#tails.get(channelId) ?? Promise.resolve();
+    const key = canonicalHash32(channelId);
+    const previous = this.#tails.get(key) ?? Promise.resolve();
     let release!: () => void;
     const next = new Promise<void>((resolve) => {
       release = resolve;
     });
     const tail = previous.catch(() => undefined).then(() => next);
-    this.#tails.set(channelId, tail);
+    this.#tails.set(key, tail);
     await previous.catch(() => undefined);
     try {
       return await fn();
     } finally {
       release();
-      if (this.#tails.get(channelId) === tail) this.#tails.delete(channelId);
+      if (this.#tails.get(key) === tail) this.#tails.delete(key);
     }
   }
 }
@@ -657,6 +664,20 @@ export function activeChargedAmount(channel: ServerChannelRecord): bigint {
 
 function clone<T>(value: T): T {
   return structuredClone(value);
+}
+
+function canonicalHash32(value: Hash32Hex): Hash32Hex {
+  return value.toLowerCase() as Hash32Hex;
+}
+
+function canonicalChannelRecord(
+  channel: ServerChannelRecord,
+): ServerChannelRecord {
+  const stored = clone(channel);
+  stored.channelId = canonicalHash32(stored.channelId);
+  stored.covenantId = canonicalHash32(stored.covenantId);
+  stored.genesisEvidence.covenantId = stored.covenantId;
+  return stored;
 }
 
 function exactPaymentKey(transactionId: Hash32Hex): string {

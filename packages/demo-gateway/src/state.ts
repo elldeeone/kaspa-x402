@@ -1224,7 +1224,11 @@ async function putChannel(
     );
   }
   await txn.put(covenantChannelKey(covenantId), channelId);
-  await txn.put(channelKey(channelId), clone(channel));
+  const stored = clone(channel);
+  stored.channelId = channelId;
+  stored.covenantId = covenantId;
+  stored.genesisEvidence.covenantId = covenantId;
+  await txn.put(channelKey(channelId), stored);
 }
 
 function matchesExpectedChannel(

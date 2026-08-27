@@ -37,6 +37,31 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("canonicalizes mixed-case channel identities at the store boundary", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const channelId = "ab".repeat(32);
+    const mixedCase = channel({
+      channelId: channelId.toUpperCase(),
+      covenantId: COVENANT_ID.toUpperCase(),
+      genesisEvidence: {
+        ...channel().genesisEvidence,
+        covenantId: COVENANT_ID.toUpperCase(),
+      },
+    });
+
+    await ledger.saveChannel(mixedCase);
+    await expect(ledger.loadChannel(mixedCase.channelId)).resolves.toMatchObject({
+      channelId,
+      covenantId: COVENANT_ID,
+      genesisEvidence: { covenantId: COVENANT_ID },
+    });
+    await ledger.retireChannel(mixedCase.channelId);
+    await expect(ledger.loadChannel(channelId)).resolves.toMatchObject({
+      channelId,
+      status: "retired",
+    });
+  });
+
   it("atomically binds one covenant lineage to one channel", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = channel();

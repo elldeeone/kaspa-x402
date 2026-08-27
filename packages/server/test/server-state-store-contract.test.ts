@@ -88,6 +88,30 @@ describe("exact head manifest", () => {
 });
 
 function defineStoreContract(factory: StoreFactory): void {
+  it("canonicalizes mixed-case channel identities at the store boundary", async () => {
+    const channelId = "ab".repeat(32);
+    const mixedCase = channel({
+      channelId: channelId.toUpperCase(),
+      covenantId: COVENANT_ID.toUpperCase(),
+      genesisEvidence: {
+        ...channel().genesisEvidence,
+        covenantId: COVENANT_ID.toUpperCase(),
+      },
+    });
+    const store = await factory.create([mixedCase]);
+
+    await expect(store.loadChannel(mixedCase.channelId)).resolves.toMatchObject({
+      channelId,
+      covenantId: COVENANT_ID,
+      genesisEvidence: { covenantId: COVENANT_ID },
+    });
+    await store.retireChannel(mixedCase.channelId);
+    await expect(store.loadChannel(channelId)).resolves.toMatchObject({
+      channelId,
+      status: "retired",
+    });
+  });
+
   it("atomically binds one covenant lineage to one channel", async () => {
     const store = await factory.create();
     const first = channel();
