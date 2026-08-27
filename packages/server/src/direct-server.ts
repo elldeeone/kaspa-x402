@@ -486,6 +486,12 @@ export class DirectModeServer {
           fingerprint,
         );
         if (batchReplay) return batchReplay;
+        const canRecoverExpiredBatch =
+          await this.#hasRecoverableBatchHandlerResult(
+            paymentPayload,
+            fingerprint,
+            paymentIdentifier,
+          );
 
         let verified: VerifiedPayment;
         try {
@@ -495,6 +501,7 @@ export class DirectModeServer {
             fingerprint,
             paymentAmount,
             requestedScheme,
+            canRecoverExpiredBatch,
           );
         } catch (error) {
           return this.#correctiveResponse(
@@ -1419,6 +1426,7 @@ export class DirectModeServer {
     requestFingerprint: Hash32Hex,
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
+    allowExpiredBatchAuthorization = false,
   ): Promise<VerifiedPayment> {
     const paymentRequired = await this.#expectedPaymentRequired(
       resource,
@@ -1430,6 +1438,7 @@ export class DirectModeServer {
       paymentRequired,
       paymentPayload,
       requestFingerprint,
+      allowExpiredBatchAuthorization,
     );
   }
 
@@ -1437,6 +1446,7 @@ export class DirectModeServer {
     paymentRequired: PaymentRequired,
     paymentPayload: PaymentPayload,
     requestFingerprint: Hash32Hex,
+    allowExpiredBatchAuthorization = false,
   ): Promise<VerifiedPayment> {
     const retry = validatePaymentRetry({ paymentRequired, paymentPayload });
     if (!retry.ok) throw retry.error;
@@ -1475,6 +1485,7 @@ export class DirectModeServer {
         accepted,
         payload,
         requestFingerprint,
+        allowExpiredBatchAuthorization,
       );
     }
     if (payload.type === "voucher") {
@@ -1484,6 +1495,7 @@ export class DirectModeServer {
         accepted,
         payload,
         requestFingerprint,
+        allowExpiredBatchAuthorization,
       );
     }
     throw new KaspaX402Error(
@@ -1764,6 +1776,7 @@ export class DirectModeServer {
     accepted: BatchPaymentRequirements,
     payload: DepositVoucherPayload,
     requestFingerprint: Hash32Hex,
+    allowExpiredBatchAuthorization = false,
   ): Promise<VerifiedPayment> {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
     await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
@@ -1929,6 +1942,7 @@ export class DirectModeServer {
       payload.voucher,
       payload.authorization,
       requestFingerprint,
+      allowExpiredBatchAuthorization,
     );
     return {
       scheme: "batch-settlement",
@@ -1948,6 +1962,7 @@ export class DirectModeServer {
     accepted: BatchPaymentRequirements,
     payload: VoucherPayload,
     requestFingerprint: Hash32Hex,
+    allowExpiredBatchAuthorization = false,
   ): Promise<VerifiedPayment> {
     const channel = await this.#requireChannel(payload.channelId);
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
@@ -1995,6 +2010,7 @@ export class DirectModeServer {
       payload.voucher,
       payload.authorization,
       requestFingerprint,
+      allowExpiredBatchAuthorization,
     );
     return {
       scheme: "batch-settlement",
@@ -2064,6 +2080,7 @@ export class DirectModeServer {
     voucher: Voucher,
     authorization: DepositVoucherPayload["authorization"],
     requestFingerprint: Hash32Hex,
+    allowExpired = false,
   ): Promise<void> {
     if (
       authorization.version !==
@@ -2074,10 +2091,16 @@ export class DirectModeServer {
         "batch request authorization version is invalid",
       );
     }
-    assertBatchAuthorizationExpiry({
-      expiresAt: authorization.expiresAt,
-      maxTimeoutSeconds: accepted.maxTimeoutSeconds,
-    });
+    try {
+      assertBatchAuthorizationExpiry({
+        expiresAt: authorization.expiresAt,
+        maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+      });
+    } catch (error) {
+      const expiresAt = Date.parse(authorization.expiresAt);
+      if (!allowExpired || !Number.isFinite(expiresAt) || expiresAt > Date.now())
+        throw error;
+    }
     const input = {
       network: accepted.network,
       channelId: channel.channelId,
@@ -2732,6 +2755,52 @@ export class DirectModeServer {
         error: toX402ErrorReason("exact_payment_replay"),
       },
     };
+  }
+
+  async #hasRecoverableBatchHandlerResult(
+    paymentPayload: PaymentPayload,
+    fingerprint: Hash32Hex,
+    paymentIdentifier?: string,
+  ): Promise<boolean> {
+    if (paymentPayload.accepted.scheme !== "batch-settlement") return false;
+    const payload = paymentPayload.payload;
+    if (payload.type !== "deposit-voucher" && payload.type !== "voucher")
+      return false;
+    try {
+      const paymentRequirementsHash = batchPaymentRequirementsHash(
+        paymentPayload.accepted,
+      );
+      const paymentEvidenceHash = batchPaymentEvidenceHash(paymentPayload);
+      const requestAuthorizationId = batchRequestAuthorizationId(
+        payload.authorization,
+      );
+      const attemptId = batchSettlementAttemptId({
+        channelId: payload.channelId,
+        covenantId: payload.voucher.covenantId,
+        requestFingerprint: fingerprint,
+        paymentRequirementsHash,
+        paymentEvidenceHash,
+      });
+      const attempt =
+        await this.#config.store.loadBatchSettlementAttempt(attemptId);
+      return Boolean(
+        attempt &&
+        attempt.status === "pending" &&
+        attempt.handlerStartedAt &&
+        attempt.handlerResult &&
+        attempt.attemptId === attemptId &&
+        attempt.channelId === payload.channelId.toLowerCase() &&
+        attempt.covenantId === payload.voucher.covenantId.toLowerCase() &&
+        attempt.requestFingerprint === fingerprint &&
+        attempt.paymentRequirementsHash === paymentRequirementsHash &&
+        attempt.paymentEvidenceHash === paymentEvidenceHash &&
+        attempt.requestAuthorizationId === requestAuthorizationId &&
+        attempt.paymentIdentifier === paymentIdentifier &&
+        attempt.maximumCharge === paymentPayload.accepted.amount,
+      );
+    } catch {
+      return false;
+    }
   }
 
   async #checkBatchReplay(

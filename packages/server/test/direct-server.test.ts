@@ -2892,31 +2892,104 @@ describe("direct-mode server", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("resumes a durable batch handler result without rerunning protected work after commit failure", async () => {
-    const store = new FailingBatchCommitStore(1);
-    const setup = makeServer({ store });
-    const payment = makeDepositPayment(setup);
-    let executions = 0;
-    const run = () =>
-      setup.server.handlePaidRequest(
-        requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
-        async () => {
+  it("resumes a durable batch handler result after its authorization expires", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const store = new FailingBatchCommitStore(1);
+      const setup = makeServer({ store });
+      const payment = makeDepositPayment(setup);
+      const request = requestWithPayment(payment.payload, {
+        requestHash: "aa".repeat(32),
+      });
+      let executions = 0;
+      const run = () =>
+        setup.server.handlePaidRequest(request, async () => {
           executions += 1;
           return { body: "durable", chargedAmount: "50" };
+        });
+
+      await expect(run()).resolves.toMatchObject({ status: 500 });
+      vi.setSystemTime(new Date("2026-01-01T00:00:31.000Z"));
+      const recovered = await run();
+
+      expect(recovered.status).toBe(200);
+      expect(recovered.body).toBe("durable");
+      expect(executions).toBe(1);
+      await expect(
+        setup.store.loadChannel(payment.channelId),
+      ).resolves.toMatchObject({
+        chargedCumulativeAmount: "50",
+      });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not let a fresh batch authorization adopt an expired staged result", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const store = new FailingBatchCommitStore(1);
+      const setup = makeServer({ store });
+      const payment = makeDepositPayment(setup);
+      const originalRequest = requestWithPayment(payment.payload, {
+        requestHash: "aa".repeat(32),
+      });
+      let executions = 0;
+      const handler = async () => {
+        executions += 1;
+        return { body: "durable", chargedAmount: "50" };
+      };
+
+      await expect(
+        setup.server.handlePaidRequest(originalRequest, handler),
+      ).resolves.toMatchObject({ status: 500 });
+      vi.setSystemTime(new Date("2026-01-01T00:00:31.000Z"));
+      const freshRequest = requestWithPayment(payment.payload, {
+        requestHash: "aa".repeat(32),
+      });
+      const conflicted = await setup.server.handlePaidRequest(
+        freshRequest,
+        handler,
+      );
+
+      expect(conflicted).toMatchObject({
+        status: 503,
+        body: { error: "batch_settlement_recovery_required" },
+      });
+      expect(executions).toBe(1);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("does not start batch work for an expired authorization without a staged result", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const setup = makeServer();
+      const payment = makeDepositPayment(setup);
+      const request = requestWithPayment(payment.payload);
+      vi.setSystemTime(new Date("2026-01-01T00:00:31.000Z"));
+      let executions = 0;
+
+      const response = await setup.server.handlePaidRequest(
+        request,
+        async () => {
+          executions += 1;
+          return { body: "must not run", chargedAmount: "50" };
         },
       );
 
-    await expect(run()).resolves.toMatchObject({ status: 500 });
-    const recovered = await run();
-
-    expect(recovered.status).toBe(200);
-    expect(recovered.body).toBe("durable");
-    expect(executions).toBe(1);
-    await expect(
-      setup.store.loadChannel(payment.channelId),
-    ).resolves.toMatchObject({
-      chargedCumulativeAmount: "50",
-    });
+      expect(response).toMatchObject({
+        status: 402,
+        body: { error: "invalid_payload" },
+      });
+      expect(executions).toBe(0);
+    } finally {
+      vi.useRealTimers();
+    }
   });
 
   it("does not preserve unclaimed genesis evidence after atomic adoption fails", async () => {
