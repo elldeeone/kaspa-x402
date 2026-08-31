@@ -680,7 +680,6 @@ Standard-native success:
   "extensions": {
     "kaspa": {
       "binding": "kaspa-exact-v2",
-      "paymentFlow": "upfront",
       "profile": "standard-native",
       "paymentOutputIndex": 0,
       "finality": "accepted",
@@ -697,7 +696,6 @@ Additive success additionally includes:
   "extensions": {
     "kaspa": {
       "binding": "kaspa-exact-v2",
-      "paymentFlow": "upfront",
       "profile": "additive",
       "templateId": "kaspa-x402-kip10-additive-v1",
       "headId": "<head id>",
