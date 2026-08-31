@@ -5,6 +5,7 @@ import {
   ESCROW_TEMPLATE_ID,
   KaspaX402Error,
   KASPA_LOCK_TIME_THRESHOLD,
+  stableStringify,
   toX402ErrorReason,
   X402_VERSION,
   type ResourceInfo,
@@ -48,6 +49,9 @@ type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
+const MAX_DECODED_PAYMENT_HEADER_BYTES = 256 * 1_024;
+const MAX_ENCODED_PAYMENT_HEADER_BYTES =
+  4 * Math.ceil(MAX_DECODED_PAYMENT_HEADER_BYTES / 3);
 
 export async function handleGatewayRequest(
   request: Request,
@@ -1133,7 +1137,7 @@ async function gatewayUnsupportedPaymentResponse(
 ): Promise<Response | undefined> {
   const header = request.headers.get(PAYMENT_SIGNATURE_HEADER);
   if (!header) return undefined;
-  const decoded = unsafeDecodePaymentHeader(header);
+  const decoded = inspectPaymentHeader(header);
   const scheme = decoded?.accepted?.scheme;
   if (
     scheme === undefined ||
@@ -1154,7 +1158,7 @@ async function gatewayUnsupportedPaymentResponse(
   );
 }
 
-function unsafeDecodePaymentHeader(
+function inspectPaymentHeader(
   header: string,
 ): { accepted?: { scheme?: unknown } } | undefined {
   try {
@@ -1163,7 +1167,24 @@ function unsafeDecodePaymentHeader(
     };
   } catch {
     try {
-      return JSON.parse(atob(header)) as { accepted?: { scheme?: unknown } };
+      if (header.length > MAX_ENCODED_PAYMENT_HEADER_BYTES) return undefined;
+      const binary = atob(header);
+      if (binary.length > MAX_DECODED_PAYMENT_HEADER_BYTES) return undefined;
+      const bytes = Uint8Array.from(binary, (character) =>
+        character.charCodeAt(0),
+      );
+      const decoded = JSON.parse(
+        new TextDecoder("utf-8", { fatal: true, ignoreBOM: false }).decode(
+          bytes,
+        ),
+      ) as { accepted?: { scheme?: unknown } };
+      stableStringify(decoded, {
+        maxDepth: 32,
+        maxNodes: 16_384,
+        maxObjectKeys: 1_024,
+        maxOutputBytes: MAX_DECODED_PAYMENT_HEADER_BYTES,
+      });
+      return decoded;
     } catch {
       return undefined;
     }

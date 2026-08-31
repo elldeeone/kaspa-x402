@@ -507,6 +507,51 @@ describe("gateway canary", () => {
     ]);
   });
 
+  it.each([
+    [
+      "oversized",
+      {
+        x402Version: 2,
+        accepted: { scheme: "evm", network: "eip155:1" },
+        payload: { padding: "x".repeat(256 * 1_024) },
+      },
+    ],
+    [
+      "too deeply nested",
+      {
+        x402Version: 2,
+        accepted: { scheme: "evm", network: "eip155:1" },
+        payload: Array.from({ length: 40 }).reduce<Record<string, unknown>>(
+          (nested) => ({ nested }),
+          {},
+        ),
+      },
+    ],
+  ])(
+    "does not bypass payment-header limits for %s foreign payloads",
+    async (_label, payload) => {
+      const storage = new FakeStorage();
+      const env: GatewayEnv = {
+        ...BASE_ENV,
+        GATEWAY_STATE: fakeNamespace(storage),
+      };
+      const encoded = btoa(JSON.stringify(payload));
+
+      const response = await handleGatewayRequest(
+        new Request("https://demo.kaspa-x402.org/exact", {
+          headers: { [PAYMENT_SIGNATURE_HEADER]: encoded },
+        }),
+        env,
+        fakeContext(),
+      );
+
+      expect(response.status).toBe(503);
+      await expect(response.json()).resolves.not.toEqual({
+        error: "unsupported_scheme",
+      });
+    },
+  );
+
   it("fails additive offers closed on a missing head and recovers only from proven lineage", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
