@@ -7,6 +7,7 @@
       "type": "object",
       "required": [
         "binding",
+        "paymentFlow",
         "profile",
         "finality",
         "transactionEncoding",
@@ -15,6 +16,9 @@
       "properties": {
         "binding": {
           "const": "kaspa-exact-v2"
+        },
+        "paymentFlow": {
+          "const": "upfront"
         },
         "profile": {
           "enum": ["standard-native", "additive"]

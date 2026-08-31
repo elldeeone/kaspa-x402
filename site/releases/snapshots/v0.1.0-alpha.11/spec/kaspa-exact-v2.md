@@ -33,6 +33,7 @@ Every v2 exact requirement uses:
   "asset": "KAS",
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "standard-native"
   }
 }
@@ -51,6 +52,10 @@ does not imply mainnet, custody, or production readiness.
 
 The binding settles native KAS only.
 
+Every exact requirement MUST set `extra.paymentFlow` to `upfront`. This is the
+upstream x402 v2 flow where settlement succeeds before the protected resource
+handler runs. A client that does not support `upfront` MUST skip the offer.
+
 ## Common PaymentRequirements
 
 Both profiles include:
@@ -65,6 +70,7 @@ Both profiles include:
   "maxTimeoutSeconds": 60,
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "standard-native",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
@@ -105,6 +111,7 @@ The common requirements are complete when:
 {
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "standard-native",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
@@ -169,6 +176,7 @@ An additive offer includes:
   "maxTimeoutSeconds": 60,
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "additive",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
@@ -672,6 +680,7 @@ Standard-native success:
   "extensions": {
     "kaspa": {
       "binding": "kaspa-exact-v2",
+      "paymentFlow": "upfront",
       "profile": "standard-native",
       "paymentOutputIndex": 0,
       "finality": "accepted",
@@ -688,6 +697,7 @@ Additive success additionally includes:
   "extensions": {
     "kaspa": {
       "binding": "kaspa-exact-v2",
+      "paymentFlow": "upfront",
       "profile": "additive",
       "templateId": "kaspa-x402-kip10-additive-v1",
       "headId": "<head id>",

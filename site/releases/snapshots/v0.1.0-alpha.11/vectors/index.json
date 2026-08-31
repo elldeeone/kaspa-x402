@@ -21,18 +21,18 @@
   },
   {
     "path": "/vectors/exact/interop-v1.json",
-    "bytes": 13229,
-    "sha256": "50e72df3c44edb8cce6b76bc8925c479eddcae8ff07eb6b8a0a65856874add94"
+    "bytes": 13291,
+    "sha256": "90fdc49d0b52d53dcae63d80ec6cf6f9a8df75bcaf16caebf4422e38d4cb7653"
   },
   {
     "path": "/vectors/negative/accepted-not-offered.json",
-    "bytes": 2334,
-    "sha256": "27bb5ffc98db16d6afa0e4b5d11a5fdb955d67af51afd894af723f55099e317e"
+    "bytes": 2404,
+    "sha256": "12dcddbdc16cbb22b852219730e740aced235ea8e4d791f91523a1dc71c0ac27"
   },
   {
     "path": "/vectors/negative/amount-overflow.json",
-    "bytes": 966,
-    "sha256": "4e23df3ccd9d39b3eac9f2615d243ed54375c411dad147bef1c4cacc1ebfb3a3"
+    "bytes": 1002,
+    "sha256": "19fff932f424c7de1da55f891d1896729092b5e5bb2e435931b2a6c63cf7ae69"
   },
   {
     "path": "/vectors/negative/batch-mainnet.json",
@@ -61,13 +61,13 @@
   },
   {
     "path": "/vectors/negative/exact-additive-missing-challenge.json",
-    "bytes": 2416,
-    "sha256": "32cf9e5f03dec0f7b10c42140e1964811c68cf8038cdb18a3b923cf590d1c02d"
+    "bytes": 2450,
+    "sha256": "ea9191af2ef36232efcc8d8de153818cf524accad980d6c9f67beb5bb16a1cc4"
   },
   {
     "path": "/vectors/negative/exact-additive-partial-head.json",
-    "bytes": 955,
-    "sha256": "2421869b5c963733f8c40a1fcf299d68d59e4f9686d97d0aa2c08653d6d16ec6"
+    "bytes": 991,
+    "sha256": "76d7b56af17bcd8039a678642406377717733b2d0698e3752115a13886987df3"
   },
   {
     "path": "/vectors/negative/exact-transaction-missing-transaction.json",
@@ -76,13 +76,13 @@
   },
   {
     "path": "/vectors/negative/exact-transfer-unsupported.json",
-    "bytes": 946,
-    "sha256": "873e4c6a972c9615856dd4039b105eae820dc940b1be35648bdadc4942832fd7"
+    "bytes": 980,
+    "sha256": "902831be6bc12eeda4ce04d1d43d12aab9f7543e32c16ace1317f65eb13b2e6b"
   },
   {
     "path": "/vectors/negative/float-amount.json",
-    "bytes": 960,
-    "sha256": "9331d6bd0191c168141151bb52694f62ebf7a976b7fa0e94a20a49637405e1fc"
+    "bytes": 996,
+    "sha256": "367cea7688ea743ff0e49ad7b00c4637fe5a0c1454c75be795f07842ca9dd978"
   },
   {
     "path": "/vectors/negative/hex-key-too-short.json",
@@ -91,8 +91,8 @@
   },
   {
     "path": "/vectors/negative/invalid-asset.json",
-    "bytes": 942,
-    "sha256": "3efeb97f2929221e8ef9c9a3b7e8c2b5ffc044e651c565d331def50d1efd57d5"
+    "bytes": 978,
+    "sha256": "9588fc26e6ab9f113b716ef9b208449b3e7c630def79529ca594c58ae4f17117"
   },
   {
     "path": "/vectors/negative/missing-batch-authorization.json",
@@ -101,13 +101,13 @@
   },
   {
     "path": "/vectors/negative/missing-payment-identifier.json",
-    "bytes": 2967,
-    "sha256": "96dd61f6e4afac7c656ea1cb01a11e907e049e73174cfe8e9482fe7f1459ec70"
+    "bytes": 3037,
+    "sha256": "b2a7408306b860120f13ba4e203d89857e685d22af8e88171f8bcb7baa6dbd85"
   },
   {
     "path": "/vectors/negative/non-colon-network.json",
-    "bytes": 978,
-    "sha256": "b0c59f2779fca08126cea2436d456f9bddf46b3d3cfb03373ed159d324b8c255"
+    "bytes": 1014,
+    "sha256": "d315580fb8a571505cf9669967c316a7128d74b1f002cfbd0d17605d100f60c3"
   },
   {
     "path": "/vectors/negative/outpoint-index-overflow.json",
@@ -121,8 +121,8 @@
   },
   {
     "path": "/vectors/negative/scheme-payload-mismatch.json",
-    "bytes": 1660,
-    "sha256": "2e6c3f6a0e5415194e8d9ea8da0711a80ab63945ddf297697ca740e8554647ac"
+    "bytes": 1694,
+    "sha256": "2f74985daed5f2b7b11915fe95e2d940386fdbc72ce19b9dac4bf683c5b11c36"
   },
   {
     "path": "/vectors/negative/settlement-success-missing-amount.json",
@@ -146,13 +146,13 @@
   },
   {
     "path": "/vectors/negative/wrong-scheme.json",
-    "bytes": 961,
-    "sha256": "a5cb9ae0717af72087401c6b6447c88325c2d9539cfe68798aab6d3a5e430a7f"
+    "bytes": 997,
+    "sha256": "c9f86481a69e5fbc0c7ca0ef289dbdbacd23114c59586ed691dd1e1ad8fd3e82"
   },
   {
     "path": "/vectors/negative/wrong-x402-version.json",
-    "bytes": 952,
-    "sha256": "934220963292e3618dba26d3de7c7a0f217829e2c634cb0d4f3008a2cb9f6975"
+    "bytes": 988,
+    "sha256": "a009a6b55896fb23e14a74e89ebbc4bc6847da112adc6cc0152e18bbe0413c9f"
   },
   {
     "path": "/vectors/negative/zero-covenant-id.json",
@@ -231,7 +231,7 @@
   },
   {
     "path": "/vectors/x402-http/exact-transaction.json",
-    "bytes": 13933,
-    "sha256": "36564ac622863b7621f3d95fb1fa6c8a126d813d238919c3aa856c4a04cd0508"
+    "bytes": 14067,
+    "sha256": "3166000d7d09982bf913d8b499ccd46399ba64d4f4d9c30db246129afbb201b5"
   }
 ]
