@@ -396,6 +396,36 @@ describe("x402 HTTP vectors", () => {
     ).toThrow("JSON-serializable");
   });
 
+  it("only encodes payment headers its decoder can accept", () => {
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    const emptyPadding: PaymentRequired = {
+      ...vector.paymentRequired,
+      extensions: { padding: "" },
+    };
+    const paddingLength =
+      256 * 1_024 - Buffer.byteLength(stableStringify(emptyPadding), "utf8");
+    const atLimit: PaymentRequired = {
+      ...emptyPadding,
+      extensions: { padding: "x".repeat(paddingLength) },
+    };
+
+    const encoded = encodePaymentRequiredHeader(atLimit);
+
+    expect(Buffer.byteLength(stableStringify(atLimit), "utf8")).toBe(
+      256 * 1_024,
+    );
+    expect(Buffer.byteLength(encoded, "utf8")).toBe(349_528);
+    expect(decodePaymentRequiredHeader(encoded)).toEqual(atLimit);
+    expect(() =>
+      encodePaymentRequiredHeader({
+        ...atLimit,
+        extensions: { padding: `${atLimit.extensions?.padding}x` },
+      }),
+    ).toThrow("JSON-serializable");
+  });
+
   it("accepts mixed exact and batch-settlement offers in one envelope", () => {
     const exact = readJson<HttpVector>(
       "vectors/x402-http/exact-transaction.json",
@@ -515,6 +545,27 @@ describe("x402 HTTP vectors", () => {
     ).toBe(true);
     expect(validateKaspaPaymentRequirement(foreignEvmEntry()).ok).toBe(false);
     expect(validateKaspaPaymentRequirement(foreignUptoEntry()).ok).toBe(false);
+  });
+
+  it("rejects exact offers that do not advertise upfront payment flow", () => {
+    const exact = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    const accepted = exact.paymentRequired.accepts[0]!;
+    const { paymentFlow: _paymentFlow, ...extraWithoutFlow } = accepted.extra;
+
+    expect(
+      validateKaspaPaymentRequirement({
+        ...accepted,
+        extra: extraWithoutFlow,
+      }).ok,
+    ).toBe(false);
+    expect(
+      validateKaspaPaymentRequirement({
+        ...accepted,
+        extra: { ...accepted.extra, paymentFlow: "authorization" },
+      }).ok,
+    ).toBe(false);
   });
 });
 
@@ -744,6 +795,7 @@ describe("full-consensus exact profile vectors", () => {
 describe("exact v2 profile schemas", () => {
   const standardExtra = {
     binding: "kaspa-exact-v2",
+    paymentFlow: "upfront",
     profile: "standard-native",
     finality: "accepted",
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -1537,6 +1589,7 @@ describe("schema dispatch", () => {
         "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json",
         {
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",

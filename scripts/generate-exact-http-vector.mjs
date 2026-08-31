@@ -59,6 +59,7 @@ const artifact = {
 };
 const extra = {
   binding: "kaspa-exact-v2",
+  paymentFlow: "upfront",
   profile: "additive",
   finality: "accepted",
   transactionEncoding,

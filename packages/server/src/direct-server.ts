@@ -291,6 +291,7 @@ export class DirectModeServer {
         extra: {
           asset: this.#config.asset,
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: this.#config.exactProfile,
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           ...(this.#config.exactProfile === "additive"
@@ -474,6 +475,26 @@ export class DirectModeServer {
             ...requiredOptions,
           });
         }
+        const canRecoverExpiredBatch =
+          await this.#hasRecoverableBatchHandlerResult(
+            paymentPayload,
+            fingerprint,
+            paymentIdentifier,
+          );
+        try {
+          this.#assertBatchRequestAuthorizationLive(
+            paymentPayload,
+            canRecoverExpiredBatch,
+          );
+        } catch (error) {
+          return this.#correctiveResponse(
+            resource,
+            paymentPayload,
+            error,
+            paymentAmount,
+            requestedScheme,
+          );
+        }
         const cached = await this.#checkIdempotency(
           paymentIdentifier,
           fingerprint,
@@ -486,12 +507,6 @@ export class DirectModeServer {
           fingerprint,
         );
         if (batchReplay) return batchReplay;
-        const canRecoverExpiredBatch =
-          await this.#hasRecoverableBatchHandlerResult(
-            paymentPayload,
-            fingerprint,
-            paymentIdentifier,
-          );
 
         let verified: VerifiedPayment;
         try {
@@ -2058,14 +2073,15 @@ export class DirectModeServer {
       covenantId: channel.covenantId,
       amount: voucher.amount,
     };
-    const verified = await this.#config.channelSignatureVerifier.verifySignature({
-      channelId: channel.channelId,
-      publicKey: channel.channelConfig.clientPublicKey,
-      digest: voucherDigest(input),
-      preimage: voucherPreimageHex(input),
-      signature: voucher.signature,
-      purpose: "voucher",
-    });
+    const verified =
+      await this.#config.channelSignatureVerifier.verifySignature({
+        channelId: channel.channelId,
+        publicKey: channel.channelConfig.clientPublicKey,
+        digest: voucherDigest(input),
+        preimage: voucherPreimageHex(input),
+        signature: voucher.signature,
+        purpose: "voucher",
+      });
     if (!verified)
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
@@ -2082,25 +2098,17 @@ export class DirectModeServer {
     requestFingerprint: Hash32Hex,
     allowExpired = false,
   ): Promise<void> {
-    if (
-      authorization.version !==
-      "kaspa-x402-batch-request-authorization-v1"
-    ) {
+    if (authorization.version !== "kaspa-x402-batch-request-authorization-v1") {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         "batch request authorization version is invalid",
       );
     }
-    try {
-      assertBatchAuthorizationExpiry({
-        expiresAt: authorization.expiresAt,
-        maxTimeoutSeconds: accepted.maxTimeoutSeconds,
-      });
-    } catch (error) {
-      const expiresAt = Date.parse(authorization.expiresAt);
-      if (!allowExpired || !Number.isFinite(expiresAt) || expiresAt > Date.now())
-        throw error;
-    }
+    this.#assertBatchAuthorizationExpiry(
+      authorization.expiresAt,
+      accepted.maxTimeoutSeconds,
+      allowExpired,
+    );
     const input = {
       network: accepted.network,
       channelId: channel.channelId,
@@ -2133,6 +2141,35 @@ export class DirectModeServer {
         "invalid_kaspa_signature",
         "batch request authorization signature was rejected",
       );
+    }
+  }
+
+  #assertBatchRequestAuthorizationLive(
+    paymentPayload: PaymentPayload,
+    allowExpired: boolean,
+  ): void {
+    if (paymentPayload.accepted.scheme !== "batch-settlement") return;
+    const payload = paymentPayload.payload;
+    if (payload.type !== "deposit-voucher" && payload.type !== "voucher")
+      return;
+    this.#assertBatchAuthorizationExpiry(
+      payload.authorization.expiresAt,
+      paymentPayload.accepted.maxTimeoutSeconds,
+      allowExpired,
+    );
+  }
+
+  #assertBatchAuthorizationExpiry(
+    expiresAt: string,
+    maxTimeoutSeconds: number,
+    allowExpired: boolean,
+  ): void {
+    try {
+      assertBatchAuthorizationExpiry({ expiresAt, maxTimeoutSeconds });
+    } catch (error) {
+      const expiry = Date.parse(expiresAt);
+      if (!allowExpired || !Number.isFinite(expiry) || expiry > Date.now())
+        throw error;
     }
   }
 
@@ -2269,9 +2306,7 @@ export class DirectModeServer {
               paymentIdentifier: {
                 id: paymentIdentifier,
                 fingerprint,
-                paymentPayloadHash: batchPaymentEvidenceHash(
-                  verified.paymentPayload,
-                ),
+                paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
                 response,
                 settlement,
                 paymentScopeId: channel.channelId,
@@ -2718,10 +2753,7 @@ export class DirectModeServer {
     const record =
       await this.#config.store.loadPaymentIdentifier(paymentIdentifier);
     if (!record) return undefined;
-    const currentPayloadHash =
-      paymentPayload.accepted.scheme === "batch-settlement"
-        ? batchPaymentEvidenceHash(paymentPayload)
-        : paymentPayloadHash(paymentPayload);
+    const currentPayloadHash = paymentPayloadHash(paymentPayload);
     const fingerprintMatches = record.fingerprint === fingerprint;
     const scopeMatches = paymentIdentifierScopeMatches(record, paymentScopeId);
     const payloadMatches = record.paymentPayloadHash === currentPayloadHash;
@@ -2826,8 +2858,11 @@ export class DirectModeServer {
       batchPaymentRequirementsHash(paymentPayload.accepted)
     )
       return undefined;
+    if (record.paymentEvidenceHash !== batchPaymentEvidenceHash(paymentPayload))
+      return undefined;
     if (
-      record.paymentEvidenceHash !== batchPaymentEvidenceHash(paymentPayload)
+      record.requestAuthorizationId !==
+      batchRequestAuthorizationId(payload.authorization)
     )
       return undefined;
     if (
@@ -3183,6 +3218,7 @@ function makeAcceptedRequirement(
       maxTimeoutSeconds: config.maxTimeoutSeconds,
       extra: {
         binding: "kaspa-exact-v2",
+        paymentFlow: "upfront",
         profile: config.exactProfile,
         finality: config.acceptedFinality,
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -3446,6 +3482,12 @@ function validateExactTerms(
       "exact binding does not match server config",
     );
   }
+  if (accepted.extra.paymentFlow !== "upfront") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "exact payment flow must be upfront",
+    );
+  }
   if (exactProfileFromAccepted(accepted) !== config.exactProfile) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
@@ -3514,6 +3556,7 @@ function exactRequirementMatchesRoute(
     accepted.amount === (paymentAmount ?? config.amount) &&
     accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
     accepted.extra.binding === "kaspa-exact-v2" &&
+    accepted.extra.paymentFlow === "upfront" &&
     accepted.extra.profile === config.exactProfile &&
     accepted.extra.finality === config.acceptedFinality
   );

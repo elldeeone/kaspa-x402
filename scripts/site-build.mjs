@@ -140,6 +140,7 @@ function writeHomePage() {
   "amount": "<sompi>",
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "standard-native"
   }
 }`;
@@ -1152,8 +1153,7 @@ function rewriteMarkdownHref(href, sourceDir) {
     return `/${normalized}${suffix}`;
   }
   const normalized = path.posix.normalize(`${sourceDir}/${target}`);
-  if (publishedArtifactFiles.has(normalized))
-    return `/${normalized}${suffix}`;
+  if (publishedArtifactFiles.has(normalized)) return `/${normalized}${suffix}`;
   return href;
 }
 
@@ -1410,10 +1410,7 @@ function copyVersionedSchema(source, target) {
     .readFileSync(path.join(root, source), "utf8")
     .replaceAll(activeBase, versionedBase);
   const schema = JSON.parse(rewritten);
-  assertReleaseLocalSchema(
-    schema,
-    `${versionedBase}${path.basename(source)}`,
-  );
+  assertReleaseLocalSchema(schema, `${versionedBase}${path.basename(source)}`);
   writeText(target, rewritten);
 }
 

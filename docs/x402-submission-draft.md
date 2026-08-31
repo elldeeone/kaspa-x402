@@ -57,7 +57,8 @@ gates.
 
 ### How the bindings work (short version)
 
-- `exact` (`extra.binding: "kaspa-exact-v2"`): fixed-price one-shot native KAS
+- `exact` (`extra.binding: "kaspa-exact-v2"`,
+  `extra.paymentFlow: "upfront"`): fixed-price one-shot native KAS
   transfer with an explicit profile. `standard-native` is the default ordinary
   transfer: the merchant receives exactly the advertised amount in the
   canonical payment output. Optional KIP-10 `additive` consumes a reusable

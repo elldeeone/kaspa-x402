@@ -23,6 +23,7 @@ const required = {
       maxTimeoutSeconds: 60,
       extra: {
         binding: "kaspa-exact-v2",
+        paymentFlow: "upfront",
         profile: "standard-native",
         finality: "accepted",
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",

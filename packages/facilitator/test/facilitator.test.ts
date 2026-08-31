@@ -469,6 +469,7 @@ describe("direct-mode facilitator", () => {
           network: "kaspa:testnet-10",
           extra: {
             binding: "kaspa-exact-v2",
+            paymentFlow: "upfront",
             profile: "standard-native",
             modes: ["verify"],
           },
@@ -503,6 +504,7 @@ describe("direct-mode facilitator", () => {
           network: "kaspa:testnet-10",
           extra: {
             binding: "kaspa-exact-v2",
+            paymentFlow: "upfront",
             profile: "standard-native",
           },
         },
@@ -547,6 +549,7 @@ describe("direct-mode facilitator", () => {
           network: "kaspa:testnet-10",
           extra: {
             binding: "kaspa-exact-v2",
+            paymentFlow: "upfront",
             profile: "standard-native",
             modes: ["verify", "withdraw"],
           },
@@ -570,6 +573,7 @@ describe("direct-mode facilitator", () => {
           network: "kaspa:testnet-10",
           extra: {
             binding: "kaspa-exact-v2",
+            paymentFlow: "upfront",
             profile: "standard-native",
             modes: ["verify", "settle"],
           },
@@ -602,6 +606,7 @@ describe("direct-mode facilitator", () => {
           network: "kaspa:testnet-10",
           extra: {
             binding: "kaspa-exact-v2",
+            paymentFlow: "upfront",
             profile: "standard-native",
             modes: ["verify", "claim", "refund"],
           },

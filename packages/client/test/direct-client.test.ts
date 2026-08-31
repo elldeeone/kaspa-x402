@@ -1168,8 +1168,7 @@ describe("direct-mode client", () => {
           covenantId: captured!.covenantId,
           spentOutpoint: captured!.activeOutpoint,
           successorOutpoint: attempt!.intendedSuccessor.outpoint,
-          successorScriptPublicKey:
-            attempt!.intendedSuccessor.scriptPublicKey,
+          successorScriptPublicKey: attempt!.intendedSuccessor.scriptPublicKey,
           successorAmount: attempt!.intendedSuccessor.amount,
           authorizedSuccessorCount: 1,
         },
@@ -1227,12 +1226,7 @@ describe("direct-mode client", () => {
       captured!.id,
     );
     expect(
-      () =>
-        new MemoryChannelStore(
-          [recovered.channel!],
-          [],
-          [appliedAttempt!],
-        ),
+      () => new MemoryChannelStore([recovered.channel!], [], [appliedAttempt!]),
     ).not.toThrow();
   });
 
@@ -2687,6 +2681,7 @@ function makeExactRequired(input: {
         maxTimeoutSeconds: 60,
         extra: {
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
           finality: input.finality ?? "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -2714,6 +2709,7 @@ function makeStandardExactRequired(input: {
         maxTimeoutSeconds: 60,
         extra: {
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -2742,6 +2738,7 @@ function makeAdditiveExactRequired(input: {
         maxTimeoutSeconds: 60,
         extra: {
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "additive",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",

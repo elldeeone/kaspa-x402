@@ -13,6 +13,7 @@
       "maxTimeoutSeconds": 60,
       "extra": {
         "binding": "kaspa-exact-v2",
+        "paymentFlow": "upfront",
         "profile": "additive",
         "finality": "accepted",
         "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",

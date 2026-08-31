@@ -28,6 +28,7 @@ The binding ships two x402 schemes:
   "amount": "<sompi>",
   "extra": {
     "binding": "kaspa-exact-v2",
+    "paymentFlow": "upfront",
     "profile": "standard-native"
   }
 }

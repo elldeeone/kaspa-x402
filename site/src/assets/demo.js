@@ -320,6 +320,7 @@ function exactExtra(payTo) {
   publicKey.free();
   return {
     binding: "kaspa-exact-v2",
+    paymentFlow: "upfront",
     profile: "standard-native",
     finality: ui.finality.value,
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -529,7 +530,9 @@ function batchLanePreview(accepted) {
     throw new Error("Batch lane invariant failed: A cannot exceed T.");
   }
   if (signedMaxClaimable - claimedCumulativeAmount + reserve > fundingAmount) {
-    throw new Error("Batch lane invariant failed: (T - S) + R cannot exceed V.");
+    throw new Error(
+      "Batch lane invariant failed: (T - S) + R cannot exceed V.",
+    );
   }
 
   const chargedAfterWork = chargedCumulativeAmount + maximumNewCharge;
@@ -545,10 +548,14 @@ function batchLanePreview(accepted) {
     );
   }
   if (claimAmount > signedMaxClaimable - claimedCumulativeAmount) {
-    throw new Error("Partial claim D exceeds the voucher's remaining authorization.");
+    throw new Error(
+      "Partial claim D exceeds the voucher's remaining authorization.",
+    );
   }
   if (claimAmount >= fundingAmount) {
-    throw new Error("Partial claim D must leave a positive covenant successor.");
+    throw new Error(
+      "Partial claim D must leave a positive covenant successor.",
+    );
   }
 
   const successorFundingAmount = fundingAmount - claimAmount;
@@ -631,7 +638,9 @@ function batchLanePreview(accepted) {
 
 function currentXOnlyPublicKey() {
   if (!state.privateKey) {
-    throw new Error("Generate or import a testnet key before building a voucher.");
+    throw new Error(
+      "Generate or import a testnet key before building a voucher.",
+    );
   }
   const publicKey = state.privateKey.toPublicKey();
   const xOnly = publicKey.toXOnlyPublicKey();
@@ -842,7 +851,8 @@ function isBatchExtra(extra) {
   )
     return false;
   if (extra.claimPolicy !== undefined) {
-    if (!extra.claimPolicy || typeof extra.claimPolicy !== "object") return false;
+    if (!extra.claimPolicy || typeof extra.claimPolicy !== "object")
+      return false;
     if (
       extra.claimPolicy.claimWhenUnclaimedAmountExceeds !== undefined &&
       !isBatchAmount(extra.claimPolicy.claimWhenUnclaimedAmountExceeds)
@@ -854,10 +864,7 @@ function isBatchExtra(extra) {
     )
       return false;
   }
-  if (
-    extra.channelState !== undefined &&
-    !isBatchLaneState(extra.channelState)
-  )
+  if (extra.channelState !== undefined && !isBatchLaneState(extra.channelState))
     return false;
   if (extra.voucherState !== undefined && !isBatchVoucher(extra.voucherState))
     return false;
@@ -897,11 +904,11 @@ function isBatchLaneState(value) {
 function isBatchVoucher(value) {
   return Boolean(
     value &&
-      typeof value === "object" &&
-      isNonZeroHash32(value.covenantId) &&
-      isBatchAmount(value.amount) &&
-      typeof value.signature === "string" &&
-      /^[0-9a-fA-F]{128}$/.test(value.signature),
+    typeof value === "object" &&
+    isNonZeroHash32(value.covenantId) &&
+    isBatchAmount(value.amount) &&
+    typeof value.signature === "string" &&
+    /^[0-9a-fA-F]{128}$/.test(value.signature),
   );
 }
 

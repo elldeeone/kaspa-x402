@@ -138,7 +138,10 @@ function isSupportedKaspaRequirement(
 ): requirement is ExactPaymentRequirements | BatchPaymentRequirements {
   if (requirement.asset !== "KAS") return false;
   if (requirement.scheme === "exact") {
-    return requirement.extra.binding === "kaspa-exact-v2";
+    return (
+      requirement.extra.binding === "kaspa-exact-v2" &&
+      requirement.extra.paymentFlow === "upfront"
+    );
   }
   return (
     requirement.scheme === "batch-settlement" &&
@@ -191,6 +194,12 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
     );
   }
   const extra = accepted.extra;
+  if (extra.paymentFlow !== "upfront") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "exact payment flow must be upfront",
+    );
+  }
   if (extra.profile !== "standard-native" && extra.profile !== "additive") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",

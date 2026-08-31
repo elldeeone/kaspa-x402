@@ -1,8 +1,8 @@
 # x402 v2 Upstream Compatibility Report
 
 Status: internal pre-submission report. The upstream comparison baseline was
-checked 2026-07-08 against `x402-foundation/x402` `main`; this Alpha.11 binding
-update was recorded 2026-08-09. Not published on the site.
+checked 2026-08-31 against `x402-foundation/x402` `main`. Not published on the
+site.
 
 Scope: line-level comparison of this repository's wire surface against the
 upstream v2 specification (`specs/x402-specification-v2.md`) and transports
@@ -11,7 +11,8 @@ upstream v2 specification (`specs/x402-specification-v2.md`) and transports
 ## Verdict
 
 The Kaspa binding remains wire-compatible with upstream x402 v2. Alpha.11
-leaves both exact profiles unchanged and replaces the active batch binding with
+labels both exact profiles with the required non-default
+`extra.paymentFlow: "upfront"` and replaces the active batch binding with
 `kaspa-escrow-v2` / `kaspa-x402-escrow-v3`. KIP-20 covenant identity, lifetime
 voucher accounting, and transaction-v1 evidence remain ecosystem-defined
 scheme payload details inside the upstream envelope.
@@ -23,19 +24,20 @@ filing is in review.
 
 ## Verified Matches
 
-| Surface | Upstream v2 | This repo | Result |
-| --- | --- | --- | --- |
-| 402 signaling | HTTP 402 + `PAYMENT-REQUIRED` header, base64 JSON | same | match |
-| Paid retry | `PAYMENT-SIGNATURE` header, base64 JSON | same | match |
-| Settlement | `PAYMENT-RESPONSE` header, base64 JSON | same | match |
-| Header encoding | standard base64 | standard base64 (`Buffer.toString("base64")`) | match |
-| `PaymentRequired` fields | `x402Version` (2), `resource` required, `accepts[]` required, `error` optional, `extensions` optional | same shape | match |
-| `PaymentPayload` fields | `x402Version`, `accepted` required, `payload` required, `resource` optional, `extensions` optional | same; we omit optional `resource` | match (omission permitted) |
-| `SettlementResponse` fields | `success`, `transaction`, `network` required; `errorReason`, `payer`, `amount`, `extensions` optional | same; Kaspa data under `extensions.kaspa` | match |
-| Network identifiers | CAIP-2 `namespace:reference` | `kaspa:testnet-10`, `kaspa:mainnet` (CAIP-2 syntax, namespace unregistered) | match pending CASA registration |
-| MCP transport | `_meta["x402/payment"]`, `_meta["x402/payment-response"]` | same keys | match |
-| Error vocabulary | `invalid_x402_version`, `invalid_scheme`, `invalid_network`, `invalid_payment_requirements`, `invalid_payload`, `unsupported_scheme`, `invalid_transaction_state`, `unexpected_settle_error` | same set | match |
-| Scheme names | `exact`, `batch-settlement`, `upto` are upstream scheme families with per-ecosystem bindings | `exact` and `batch-settlement`; `upto` evaluated and archived | match (binding-level contribution) |
+| Surface                     | Upstream v2                                                                                                                                                                                  | This repo                                                                   | Result                             |
+| --------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | --------------------------------------------------------------------------- | ---------------------------------- |
+| 402 signaling               | HTTP 402 + `PAYMENT-REQUIRED` header, base64 JSON                                                                                                                                            | same                                                                        | match                              |
+| Paid retry                  | `PAYMENT-SIGNATURE` header, base64 JSON                                                                                                                                                      | same                                                                        | match                              |
+| Settlement                  | `PAYMENT-RESPONSE` header, base64 JSON                                                                                                                                                       | same                                                                        | match                              |
+| Header encoding             | standard base64                                                                                                                                                                              | standard base64 (`Buffer.toString("base64")`)                               | match                              |
+| `PaymentRequired` fields    | `x402Version` (2), `resource` required, `accepts[]` required, `error` optional, `extensions` optional                                                                                        | same shape                                                                  | match                              |
+| `PaymentPayload` fields     | `x402Version`, `accepted` required, `payload` required, `resource` optional, `extensions` optional                                                                                           | same; we omit optional `resource`                                           | match (omission permitted)         |
+| `SettlementResponse` fields | `success`, `transaction`, `network` required; `errorReason`, `payer`, `amount`, `extensions` optional                                                                                        | same; Kaspa data under `extensions.kaspa`                                   | match                              |
+| Network identifiers         | CAIP-2 `namespace:reference`                                                                                                                                                                 | `kaspa:testnet-10`, `kaspa:mainnet` (CAIP-2 syntax, namespace unregistered) | match pending CASA registration    |
+| MCP transport               | `_meta["x402/payment"]`, `_meta["x402/payment-response"]`                                                                                                                                    | same keys                                                                   | match                              |
+| Error vocabulary            | `invalid_x402_version`, `invalid_scheme`, `invalid_network`, `invalid_payment_requirements`, `invalid_payload`, `unsupported_scheme`, `invalid_transaction_state`, `unexpected_settle_error` | same set                                                                    | match                              |
+| Scheme names                | `exact`, `batch-settlement`, `upto` are upstream scheme families with per-ecosystem bindings                                                                                                 | `exact` and `batch-settlement`; `upto` evaluated and archived               | match (binding-level contribution) |
+| Exact payment flow          | Non-authorization flows must advertise `extra.paymentFlow`; `upfront` means settle before resource execution                                                                                 | both Kaspa exact profiles require `upfront` and settle before the handler   | match                              |
 
 ## Deltas
 

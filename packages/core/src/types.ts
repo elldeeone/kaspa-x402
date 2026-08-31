@@ -52,6 +52,7 @@ export interface BasePaymentRequirements<
 
 export interface ExactRequirementsExtra extends JsonRecord {
   binding: "kaspa-exact-v2";
+  paymentFlow: "upfront";
   profile: ExactProfile;
   finality?: "mempool" | "accepted" | "confirmed";
   payToScriptPublicKey?: ByteHex;

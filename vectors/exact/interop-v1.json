@@ -127,6 +127,7 @@
       "maxTimeoutSeconds": 60,
       "extra": {
         "binding": "kaspa-exact-v2",
+        "paymentFlow": "upfront",
         "profile": "additive",
         "finality": "accepted",
         "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
@@ -149,8 +150,8 @@
         "assetDecimals": 8
       }
     },
-    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"asset\":\"KAS\",\"extra\":{\"additiveThresholdSompi\":\"10000000\",\"assetDecimals\":8,\"assetKind\":\"native\",\"binding\":\"kaspa-exact-v2\",\"challengeExpiresAt\":\"2099-01-01T00:00:00.000Z\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expectedHeadOutpoint\":{\"index\":0,\"txid\":\"7171717171717171717171717171717171717171717171717171717171717171\"},\"finality\":\"accepted\",\"headAmount\":\"100000000\",\"headId\":\"9090909090909090909090909090909090909090909090909090909090909090\",\"headRedeemScript\":\"632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268\",\"headScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"headVersion\":\"0\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentOutputIndex\":0,\"profile\":\"additive\",\"templateId\":\"kaspa-x402-kip10-additive-v1\",\"transactionEncoding\":\"kaspa-sdk-safe-json-v2.0.0\"},\"maxTimeoutSeconds\":60,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"scheme\":\"exact\"}",
-    "sha256": "dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c"
+    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"asset\":\"KAS\",\"extra\":{\"additiveThresholdSompi\":\"10000000\",\"assetDecimals\":8,\"assetKind\":\"native\",\"binding\":\"kaspa-exact-v2\",\"challengeExpiresAt\":\"2099-01-01T00:00:00.000Z\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expectedHeadOutpoint\":{\"index\":0,\"txid\":\"7171717171717171717171717171717171717171717171717171717171717171\"},\"finality\":\"accepted\",\"headAmount\":\"100000000\",\"headId\":\"9090909090909090909090909090909090909090909090909090909090909090\",\"headRedeemScript\":\"632056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac67b9bfb9c388b9c2048096980094b9bea268\",\"headScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"headVersion\":\"0\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentFlow\":\"upfront\",\"paymentOutputIndex\":0,\"profile\":\"additive\",\"templateId\":\"kaspa-x402-kip10-additive-v1\",\"transactionEncoding\":\"kaspa-sdk-safe-json-v2.0.0\"},\"maxTimeoutSeconds\":60,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"scheme\":\"exact\"}",
+    "sha256": "cb65bf5ec0bf33d8c9e4af76bdc409786580e619f3904732eb64bdde09259437"
   },
   "requestAuthorization": {
     "input": {
@@ -161,16 +162,16 @@
       "amount": "20000000",
       "payTo": "kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q",
       "payToScriptPublicKey": "0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87",
-      "paymentRequirementsHash": "dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c",
+      "paymentRequirementsHash": "cb65bf5ec0bf33d8c9e4af76bdc409786580e619f3904732eb64bdde09259437",
       "requestHash": "9999999999999999999999999999999999999999999999999999999999999999",
       "challengeId": "9191919191919191919191919191919191919191919191919191919191919191",
       "inputIndex": 1,
       "expiresAt": "2099-01-01T00:00:00.000Z"
     },
-    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\",\"inputIndex\":1,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentOutputIndex\":0,\"paymentRequirementsHash\":\"dd65d3e7bdb0ff3a2716ea924b6ca252cc9892ea72ea70f28b5f9aebbbfdb45c\",\"profile\":\"additive\",\"requestHash\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"scope\":\"kaspa-x402-exact-request-authorization-v1\",\"transactionId\":\"15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e\"}",
-    "sha256": "ce9e2f4d1270d7256665508a7758a57b9da934a8fe94131314eb1223edcc653f",
+    "canonicalJsonUtf8": "{\"amount\":\"20000000\",\"challengeId\":\"9191919191919191919191919191919191919191919191919191919191919191\",\"expiresAt\":\"2099-01-01T00:00:00.000Z\",\"inputIndex\":1,\"network\":\"kaspa:testnet-10\",\"payTo\":\"kaspatest:ppakk4efunamcdw5uqglluwam94r747ftxdcyw423rx8rdyx9w4r78eljka3q\",\"payToScriptPublicKey\":\"0000aa207b6b5729e4fbbc35d4e011fff1ddd96a3f57c9599b823aaa88cc71b4862baa3f87\",\"paymentOutputIndex\":0,\"paymentRequirementsHash\":\"cb65bf5ec0bf33d8c9e4af76bdc409786580e619f3904732eb64bdde09259437\",\"profile\":\"additive\",\"requestHash\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"scope\":\"kaspa-x402-exact-request-authorization-v1\",\"transactionId\":\"15876a8014e1787d432d062a49002b083d0289891b53f731a59c7758d84d2c7e\"}",
+    "sha256": "54f440de4b474cfc1b9abd580c0c552faff2778afd1bfc9339cce76633797fdd",
     "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
-    "signature": "ebc0b8e9a7044803cd7ed05cec7c6b9099de64d42c2773df7dfa0bfc7f9f437f5b4754cf6ae8a53f6bd3615faaeae1483bc714ccf89b6bea2c6ed1ea9ede12ee",
+    "signature": "7867fd3b0a439d7676208d92526964d47a4c508f5befba28f952da01a7c0741520fae7a83d6fa57c11635d0e31beed559e6c071152e1e6342d4c8bb4dc65b827",
     "expected": "valid-schnorr-signature"
   },
   "expiry": {

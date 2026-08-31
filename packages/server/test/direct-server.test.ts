@@ -7,6 +7,7 @@ import {
   batchRequestAuthorizationDigest,
   batchPaymentRequirementsHash,
   channelId,
+  decodePaymentSignatureHeader,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   encodePaymentResponseHeader,
@@ -263,6 +264,7 @@ describe("direct-mode server", () => {
       amount: "20000000",
       extra: {
         binding: "kaspa-exact-v2",
+        paymentFlow: "upfront",
         profile: "standard-native",
         finality: "accepted",
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
@@ -278,6 +280,7 @@ describe("direct-mode server", () => {
         scheme: "exact",
         extra: expect.objectContaining({
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
         }),
       }),
@@ -2773,6 +2776,89 @@ describe("direct-mode server", () => {
     expect(stored.signedMaxClaimable).toBe("100");
   });
 
+  it.each([
+    ["with a payment identifier", true],
+    ["without a payment identifier", false],
+  ])(
+    "rejects expired cached batch responses %s",
+    async (_label, withIdentifier) => {
+      vi.useFakeTimers();
+      vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+      try {
+        const setup = makeServer({ requirePaymentIdentifier: withIdentifier });
+        const payment = makeDepositPayment(setup, {
+          ...(withIdentifier
+            ? { paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0" }
+            : {}),
+        });
+        const request = requestWithPayment(payment.payload, {
+          requestHash: "aa".repeat(32),
+        });
+        let executions = 0;
+        const handler = async () => {
+          executions += 1;
+          return { body: "cached", chargedAmount: "50" };
+        };
+
+        await expect(
+          setup.server.handlePaidRequest(request, handler),
+        ).resolves.toMatchObject({ status: 200 });
+        vi.setSystemTime(new Date("2026-01-01T00:00:31.000Z"));
+        const expired = await setup.server.handlePaidRequest(request, handler);
+
+        expect(expired).toMatchObject({
+          status: 402,
+          body: { error: "invalid_payload" },
+        });
+        expect(executions).toBe(1);
+      } finally {
+        vi.useRealTimers();
+      }
+    },
+  );
+
+  it.each([
+    ["with a payment identifier", true],
+    ["without a payment identifier", false],
+  ])(
+    "does not authenticate cached batch responses with changed authorization %s",
+    async (_label, withIdentifier) => {
+      const setup = makeServer({ requirePaymentIdentifier: withIdentifier });
+      const payment = makeDepositPayment(setup, {
+        ...(withIdentifier
+          ? { paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0" }
+          : {}),
+      });
+      const requestHash = "aa".repeat(32) as Hash32Hex;
+      const request = requestWithPayment(payment.payload, { requestHash });
+      let executions = 0;
+      const handler = async () => {
+        executions += 1;
+        return { body: "cached", chargedAmount: "50" };
+      };
+      await expect(
+        setup.server.handlePaidRequest(request, handler),
+      ).resolves.toMatchObject({ status: 200 });
+      const changed = decodePaymentSignatureHeader(
+        request.headers[PAYMENT_SIGNATURE_HEADER],
+      );
+      if (
+        changed.payload.type !== "deposit-voucher" &&
+        changed.payload.type !== "voucher"
+      )
+        throw new Error("expected voucher payload");
+      changed.payload.authorization.signature = "ff".repeat(64);
+
+      const rejected = await setup.server.handlePaidRequest(
+        requestWithRawPaymentPayload(changed, { requestHash }),
+        handler,
+      );
+
+      expect(rejected.status).not.toBe(200);
+      expect(executions).toBe(1);
+    },
+  );
+
   it("keeps stale batch vouchers corrective after a later commitment", async () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
@@ -3425,6 +3511,7 @@ describe("direct-mode server", () => {
         maxTimeoutSeconds: 60,
         extra: {
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",

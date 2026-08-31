@@ -382,6 +382,7 @@ describe("gateway canary", () => {
         scheme: "exact",
         extra: expect.objectContaining({
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "standard-native",
         }),
       }),
@@ -445,6 +446,7 @@ describe("gateway canary", () => {
         scheme: "exact",
         extra: expect.objectContaining({
           binding: "kaspa-exact-v2",
+          paymentFlow: "upfront",
           profile: "additive",
         }),
       }),
@@ -589,7 +591,9 @@ function stubCanaryFetches(): void {
         $id: "https://kaspa-x402.org/schemas/payment-required.schema.json",
       });
     }
-    if (url.startsWith("https://kaspa-x402.org/v0.1.0-alpha.11/release.json?")) {
+    if (
+      url.startsWith("https://kaspa-x402.org/v0.1.0-alpha.11/release.json?")
+    ) {
       return Response.json({ version: "0.1.0-alpha.11" });
     }
     if (url === "https://kaspa-x402.org/docs/") {

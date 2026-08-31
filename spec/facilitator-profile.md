@@ -40,6 +40,7 @@ POST /settle
       "extra": {
         "asset": "KAS",
         "binding": "kaspa-exact-v2",
+        "paymentFlow": "upfront",
         "defaultProfile": "standard-native",
         "profiles": ["standard-native", "additive"],
         "modes": ["verify", "settle"]
@@ -120,6 +121,9 @@ Invalid verification returns:
   the voucher commitment before returning success; for partial claim, top-up,
   or refund, save a crash-safe attempt before broadcast and wait for accepted
   evidence before advancing the persisted current outpoint and covenant state.
+
+Exact requirements advertise `extra.paymentFlow: "upfront"`; the resource
+server MUST receive successful settlement before it executes protected work.
 
 For `batch-settlement`, `/verify` responses should include `extra.channelState` and `/settle` responses should include `extensions.kaspa.channelState` whenever the facilitator reads or changes channel state.
 

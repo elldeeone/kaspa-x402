@@ -35,10 +35,10 @@ gates in `docs/mainnet-readiness.md`.
 
 ## Scheme Selection
 
-| Scheme | Use when | Settlement |
-| ------ | -------- | ---------- |
-| `exact` | The price is known before the request. Example: buy a file or one fixed-price API result. | One immediate native KAS transfer using default `standard-native` or optional `additive`. |
-| `batch-settlement` | The client expects repeated or variable-cost requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later. |
+| Scheme             | Use when                                                                                                                 | Settlement                                                                                |
+| ------------------ | ------------------------------------------------------------------------------------------------------------------------ | ----------------------------------------------------------------------------------------- |
+| `exact`            | The price is known before the request. Example: buy a file or one fixed-price API result.                                | One immediate native KAS transfer using default `standard-native` or optional `additive`. |
+| `batch-settlement` | The client expects repeated or variable-cost requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later.                           |
 
 The active schemes are separate. `batch-settlement` can represent
 one request, but it does not have the same x402 contract as `exact`.
@@ -143,10 +143,13 @@ because each voucher does not create a new on-chain output.
 
 `extra.binding` identifies the concrete Kaspa binding:
 
-| Scheme | `extra.binding` |
-| ------ | --------------- |
-| `exact` | `kaspa-exact-v2` |
+| Scheme             | `extra.binding`   |
+| ------------------ | ----------------- |
+| `exact`            | `kaspa-exact-v2`  |
 | `batch-settlement` | `kaspa-escrow-v2` |
+
+Kaspa exact requirements additionally set `extra.paymentFlow` to `upfront`:
+the resource server settles the payment before running protected work.
 
 Unknown `extra` fields may be preserved by transports, but verifiers must ignore unknown fields unless the selected binding explicitly marks them as critical.
 
@@ -170,6 +173,7 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "maxTimeoutSeconds": 60,
       "extra": {
         "binding": "kaspa-exact-v2",
+        "paymentFlow": "upfront",
         "profile": "standard-native",
         "finality": "accepted",
         "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",

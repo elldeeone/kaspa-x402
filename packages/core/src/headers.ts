@@ -1,6 +1,11 @@
 import { KaspaX402Error } from "./errors.js";
 import { stableStringify } from "./stable-json.js";
-import type { PaymentPayload, PaymentRequired, PaymentRequiredEnvelope, SettlementResponse } from "./types.js";
+import type {
+  PaymentPayload,
+  PaymentRequired,
+  PaymentRequiredEnvelope,
+  SettlementResponse,
+} from "./types.js";
 import {
   validatePaymentPayload,
   validatePaymentRequired,
@@ -8,7 +13,15 @@ import {
   validateSettlementResponse,
 } from "./schema-validation.js";
 
-const MAX_PAYMENT_HEADER_BYTES = 256 * 1_024;
+const MAX_DECODED_PAYMENT_HEADER_BYTES = 256 * 1_024;
+const MAX_ENCODED_PAYMENT_HEADER_BYTES =
+  4 * Math.ceil(MAX_DECODED_PAYMENT_HEADER_BYTES / 3);
+const PAYMENT_HEADER_SERIALIZATION_LIMITS = {
+  maxDepth: 32,
+  maxNodes: 16_384,
+  maxObjectKeys: 1_024,
+  maxOutputBytes: MAX_DECODED_PAYMENT_HEADER_BYTES,
+} as const;
 
 export function encodePaymentRequiredHeader(value: PaymentRequired): string {
   return encodeHeader(value, validatePaymentRequired);
@@ -18,11 +31,15 @@ export function decodePaymentRequiredHeader(value: string): PaymentRequired {
   return decodeHeader(value, validatePaymentRequired);
 }
 
-export function encodePaymentRequiredEnvelopeHeader(value: PaymentRequiredEnvelope): string {
+export function encodePaymentRequiredEnvelopeHeader(
+  value: PaymentRequiredEnvelope,
+): string {
   return encodeHeader(value, validatePaymentRequiredEnvelope);
 }
 
-export function decodePaymentRequiredEnvelopeHeader(value: string): PaymentRequiredEnvelope {
+export function decodePaymentRequiredEnvelopeHeader(
+  value: string,
+): PaymentRequiredEnvelope {
   return decodeHeader(value, validatePaymentRequiredEnvelope);
 }
 
@@ -42,33 +59,55 @@ export function decodePaymentResponseHeader(value: string): SettlementResponse {
   return decodeHeader(value, validateSettlementResponse);
 }
 
-function encodeHeader<T>(value: T, validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: Error }): string {
+function encodeHeader<T>(
+  value: T,
+  validate: (
+    value: unknown,
+  ) => { ok: true; value: T } | { ok: false; error: Error },
+): string {
   const result = validate(value);
   if (!result.ok) throw result.error;
   try {
-    return Buffer.from(stableStringify(value), "utf8").toString("base64");
+    const bytes = Buffer.from(
+      stableStringify(value, PAYMENT_HEADER_SERIALIZATION_LIMITS),
+      "utf8",
+    );
+    if (bytes.byteLength > MAX_DECODED_PAYMENT_HEADER_BYTES)
+      throw new RangeError("decoded payment header exceeds the byte limit");
+    const encoded = bytes.toString("base64");
+    if (Buffer.byteLength(encoded, "utf8") > MAX_ENCODED_PAYMENT_HEADER_BYTES)
+      throw new RangeError("encoded payment header exceeds the byte limit");
+    return encoded;
   } catch (error) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "header value must be JSON-serializable", error);
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "header value must be JSON-serializable",
+      error,
+    );
   }
 }
 
-function decodeHeader<T>(value: string, validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: Error }): T {
+function decodeHeader<T>(
+  value: string,
+  validate: (
+    value: unknown,
+  ) => { ok: true; value: T } | { ok: false; error: Error },
+): T {
   let decoded: unknown;
   try {
-    if (Buffer.byteLength(value, "utf8") > MAX_PAYMENT_HEADER_BYTES)
+    if (Buffer.byteLength(value, "utf8") > MAX_ENCODED_PAYMENT_HEADER_BYTES)
       throw new RangeError("encoded payment header exceeds the byte limit");
     const bytes = Buffer.from(value, "base64");
-    if (bytes.byteLength > MAX_PAYMENT_HEADER_BYTES)
+    if (bytes.byteLength > MAX_DECODED_PAYMENT_HEADER_BYTES)
       throw new RangeError("decoded payment header exceeds the byte limit");
     decoded = JSON.parse(bytes.toString("utf8"));
-    stableStringify(decoded, {
-      maxDepth: 32,
-      maxNodes: 16_384,
-      maxObjectKeys: 1_024,
-      maxOutputBytes: MAX_PAYMENT_HEADER_BYTES,
-    });
+    stableStringify(decoded, PAYMENT_HEADER_SERIALIZATION_LIMITS);
   } catch (error) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "header must contain base64-encoded JSON", error);
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "header must contain base64-encoded JSON",
+      error,
+    );
   }
 
   const result = validate(decoded);

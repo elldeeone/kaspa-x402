@@ -394,6 +394,7 @@ function gatewaySupportedKinds(
       extra: {
         asset: "KAS",
         binding: "kaspa-exact-v2",
+        paymentFlow: "upfront",
         profile: config.exactProfile,
         ...(config.exactProfile === "additive"
           ? { templateId: "kaspa-x402-kip10-additive-v1" }
@@ -546,11 +547,7 @@ class AddressRecordingStore implements ServerStateStore {
     result: Parameters<ServerStateStore["recordBatchHandlerResult"]>[1],
     completedAt: string,
   ) {
-    return this.#inner.recordBatchHandlerResult(
-      attemptId,
-      result,
-      completedAt,
-    );
+    return this.#inner.recordBatchHandlerResult(attemptId, result, completedAt);
   }
 
   markBatchHandlerRecoveryRequired(
@@ -723,9 +720,7 @@ class AddressRecordingStore implements ServerStateStore {
   }
 }
 
-function healthResponse(
-  config: GatewayConfig,
-): Response {
+function healthResponse(config: GatewayConfig): Response {
   return json(
     {
       ok: true,
@@ -1259,8 +1254,7 @@ function profileMetric(profile: Profile): string {
 }
 
 function rateScope(request: Request, profile: Profile): string {
-  const ip =
-    request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+  const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return `${ip}:${profile}`;
 }
 
