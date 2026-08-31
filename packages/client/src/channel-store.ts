@@ -1,8 +1,9 @@
-import { channelId, parseSompiString } from "@kaspa-x402/core";
+import { channelId, parseSompiString, stableStringify } from "@kaspa-x402/core";
 import type {
   ChannelLookupScope,
   ChannelStore,
   DirectModeChannel,
+  ExactPaymentAttemptRecord,
   FundingSuccessorIntent,
   FundingTransitionAttemptApplyRequest,
   FundingTransitionAttemptApplyResult,
@@ -15,16 +16,15 @@ import type {
 
 export class MemoryChannelStore implements ChannelStore {
   readonly #channels = new Map<string, DirectModeChannel>();
-  readonly #fundingAttempts = new Map<
-    string,
-    FundingTransitionAttemptRecord
-  >();
+  readonly #fundingAttempts = new Map<string, FundingTransitionAttemptRecord>();
   readonly #refundAttempts = new Map<string, RefundAttemptRecord>();
+  readonly #exactPaymentAttempts = new Map<string, ExactPaymentAttemptRecord>();
 
   constructor(
     channels: readonly DirectModeChannel[] = [],
     refundAttempts: readonly RefundAttemptRecord[] = [],
     fundingAttempts: readonly FundingTransitionAttemptRecord[] = [],
+    exactPaymentAttempts: readonly ExactPaymentAttemptRecord[] = [],
   ) {
     for (const channel of channels) {
       const key = channelKey(channel.id);
@@ -66,6 +66,18 @@ export class MemoryChannelStore implements ChannelStore {
         );
       }
       this.#refundAttempts.set(key, cloneRefundAttempt(attempt));
+    }
+    for (const attempt of exactPaymentAttempts) {
+      const key = channelKey(attempt.attemptId);
+      if (
+        this.#exactPaymentAttempts.has(key) ||
+        !exactPaymentAttemptIsConsistent(attempt)
+      ) {
+        throw new Error(
+          "persisted exact payment attempt is invalid or duplicated",
+        );
+      }
+      this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(attempt));
     }
   }
 
@@ -207,9 +219,7 @@ export class MemoryChannelStore implements ChannelStore {
       throw new Error("funding transition kind does not match pending attempt");
     }
     if (!sameHex(attempt.transactionId, request.transactionId)) {
-      throw new Error(
-        "funding transaction id does not match pending attempt",
-      );
+      throw new Error("funding transaction id does not match pending attempt");
     }
     const current = this.#channels.get(key);
     if (attempt.status === "applied") {
@@ -259,9 +269,7 @@ export class MemoryChannelStore implements ChannelStore {
       throw new Error("funding transition attempt is not open");
     }
     if (!sameHex(attempt.transactionId, transactionId)) {
-      throw new Error(
-        "funding transaction id does not match pending attempt",
-      );
+      throw new Error("funding transaction id does not match pending attempt");
     }
     if (!openFundingAttemptMatchesChannel(this.#channels.get(key), attempt)) {
       throw new Error(
@@ -362,6 +370,46 @@ export class MemoryChannelStore implements ChannelStore {
     };
   }
 
+  async loadExactPaymentAttempt(
+    attemptId: string,
+  ): Promise<ExactPaymentAttemptRecord | undefined> {
+    const attempt = this.#exactPaymentAttempts.get(channelKey(attemptId));
+    return attempt ? cloneExactPaymentAttempt(attempt) : undefined;
+  }
+
+  async claimExactPaymentAttempt(
+    attempt: ExactPaymentAttemptRecord,
+  ): Promise<ExactPaymentAttemptRecord> {
+    if (!exactPaymentAttemptIsConsistent(attempt)) {
+      throw new Error("exact payment attempt is inconsistent");
+    }
+    const key = channelKey(attempt.attemptId);
+    const existing = this.#exactPaymentAttempts.get(key);
+    if (existing) {
+      if (!sameExactPaymentIntent(existing, attempt)) {
+        throw new Error(
+          "exact payment attempt conflicts with an unresolved payment",
+        );
+      }
+      return cloneExactPaymentAttempt(existing);
+    }
+    this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(attempt));
+    return cloneExactPaymentAttempt(attempt);
+  }
+
+  async releaseExactPaymentAttempt(
+    attemptId: string,
+    transactionId: string,
+  ): Promise<void> {
+    const key = channelKey(attemptId);
+    const attempt = this.#exactPaymentAttempts.get(key);
+    if (!attempt) return;
+    if (!sameHex(attempt.transactionId, transactionId)) {
+      throw new Error("exact transaction id does not match pending attempt");
+    }
+    this.#exactPaymentAttempts.delete(key);
+  }
+
   #assertChannelMutable(channelId: string): void {
     const key = channelKey(channelId);
     if (isOpenFundingAttempt(this.#fundingAttempts.get(key))) {
@@ -435,6 +483,48 @@ function cloneFundingAttempt(
 
 function cloneRefundAttempt(attempt: RefundAttemptRecord): RefundAttemptRecord {
   return structuredClone(attempt);
+}
+
+function cloneExactPaymentAttempt(
+  attempt: ExactPaymentAttemptRecord,
+): ExactPaymentAttemptRecord {
+  return structuredClone(attempt);
+}
+
+function exactPaymentAttemptIsConsistent(
+  attempt: ExactPaymentAttemptRecord,
+): boolean {
+  const payload = attempt.payment.paymentPayload.payload;
+  return (
+    /^[0-9a-f]{64}$/i.test(attempt.attemptId) &&
+    /^[0-9a-f]{64}$/i.test(attempt.requestHash) &&
+    attempt.origin.length > 0 &&
+    /^[0-9a-f]{64}$/i.test(attempt.transactionId) &&
+    attempt.payment.scheme === "exact" &&
+    sameHex(attempt.payment.exactAttemptId ?? "", attempt.attemptId) &&
+    sameHex(attempt.payment.transactionId ?? "", attempt.transactionId) &&
+    payload.type === "exact-transaction" &&
+    sameHex(payload.requestHash ?? "", attempt.requestHash)
+  );
+}
+
+function sameExactPaymentIntent(
+  left: ExactPaymentAttemptRecord,
+  right: ExactPaymentAttemptRecord,
+): boolean {
+  return (
+    sameHex(left.attemptId, right.attemptId) &&
+    sameHex(left.requestHash, right.requestHash) &&
+    left.origin === right.origin &&
+    left.paymentIdentifier === right.paymentIdentifier &&
+    sameHex(left.transactionId, right.transactionId) &&
+    stableStringify(left.payment.accepted) ===
+      stableStringify(right.payment.accepted) &&
+    stableStringify(left.payment.paymentPayload) ===
+      stableStringify(right.payment.paymentPayload) &&
+    left.payment.paymentRequired.resource.url ===
+      right.payment.paymentRequired.resource.url
+  );
 }
 
 function isOpenFundingAttempt(
@@ -511,8 +601,7 @@ function persistedFundingAttemptMatchesChannel(
       );
     case "applied":
       return (
-        (attempt.finality === "accepted" ||
-          attempt.finality === "confirmed") &&
+        (attempt.finality === "accepted" || attempt.finality === "confirmed") &&
         appliedFundingAttemptMatchesChannel(channel, attempt)
       );
     default:
@@ -743,8 +832,7 @@ function sameFundingArtifact(
     sameSuccessor(left.intendedSuccessor, right.intendedSuccessor) &&
     left.fundingSource === right.fundingSource &&
     (left.kind === "genesis"
-      ? right.kind === "genesis" &&
-        sameGenesisIntent(left.intent, right.intent)
+      ? right.kind === "genesis" && sameGenesisIntent(left.intent, right.intent)
       : right.kind === "top-up" &&
         sameChannelSnapshot(left.expectedChannel, right.expectedChannel))
   );

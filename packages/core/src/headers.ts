@@ -13,15 +13,19 @@ import {
   validateSettlementResponse,
 } from "./schema-validation.js";
 
-const MAX_DECODED_PAYMENT_HEADER_BYTES = 256 * 1_024;
+export const MAX_PAYMENT_REPRESENTATION_BYTES = 256 * 1_024;
 const MAX_ENCODED_PAYMENT_HEADER_BYTES =
-  4 * Math.ceil(MAX_DECODED_PAYMENT_HEADER_BYTES / 3);
+  4 * Math.ceil(MAX_PAYMENT_REPRESENTATION_BYTES / 3);
 const PAYMENT_HEADER_SERIALIZATION_LIMITS = {
   maxDepth: 32,
   maxNodes: 16_384,
   maxObjectKeys: 1_024,
-  maxOutputBytes: MAX_DECODED_PAYMENT_HEADER_BYTES,
+  maxOutputBytes: MAX_PAYMENT_REPRESENTATION_BYTES,
 } as const;
+
+export function assertPaymentRepresentationBudget(value: unknown): void {
+  stableStringify(value, PAYMENT_HEADER_SERIALIZATION_LIMITS);
+}
 
 export function encodePaymentRequiredHeader(value: PaymentRequired): string {
   return encodeHeader(value, validatePaymentRequired);
@@ -72,7 +76,7 @@ function encodeHeader<T>(
       stableStringify(value, PAYMENT_HEADER_SERIALIZATION_LIMITS),
       "utf8",
     );
-    if (bytes.byteLength > MAX_DECODED_PAYMENT_HEADER_BYTES)
+    if (bytes.byteLength > MAX_PAYMENT_REPRESENTATION_BYTES)
       throw new RangeError("decoded payment header exceeds the byte limit");
     const encoded = bytes.toString("base64");
     if (Buffer.byteLength(encoded, "utf8") > MAX_ENCODED_PAYMENT_HEADER_BYTES)
@@ -98,10 +102,10 @@ function decodeHeader<T>(
     if (Buffer.byteLength(value, "utf8") > MAX_ENCODED_PAYMENT_HEADER_BYTES)
       throw new RangeError("encoded payment header exceeds the byte limit");
     const bytes = Buffer.from(value, "base64");
-    if (bytes.byteLength > MAX_DECODED_PAYMENT_HEADER_BYTES)
+    if (bytes.byteLength > MAX_PAYMENT_REPRESENTATION_BYTES)
       throw new RangeError("decoded payment header exceeds the byte limit");
     decoded = JSON.parse(bytes.toString("utf8"));
-    stableStringify(decoded, PAYMENT_HEADER_SERIALIZATION_LIMITS);
+    assertPaymentRepresentationBudget(decoded);
   } catch (error) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",

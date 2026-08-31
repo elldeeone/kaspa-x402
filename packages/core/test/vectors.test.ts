@@ -643,6 +643,47 @@ describe("MCP helpers", () => {
     expect(narrowed.value.paymentRequired.accepts).toEqual([kaspaEntry]);
   });
 
+  it("refuses oversized MCP text before parsing it", () => {
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    expect(
+      readMcpPaymentRequired({
+        isError: true,
+        content: [
+          {
+            type: "text",
+            text: JSON.stringify({
+              ...vector.paymentRequired,
+              padding: "x".repeat(256 * 1_024),
+            }),
+          },
+        ],
+      }),
+    ).toBeUndefined();
+    expect(
+      readMcpPaymentRequired({
+        isError: true,
+        content: [{ type: "text", text: "x".repeat(256 * 1_024 + 1) }],
+      }),
+    ).toBeUndefined();
+  });
+
+  it("rejects oversized structured MCP payment representations", () => {
+    const vector = readJson<HttpVector>(
+      "vectors/x402-http/exact-transaction.json",
+    );
+    expect(() =>
+      readMcpPaymentRequired({
+        isError: true,
+        structuredContent: {
+          ...vector.paymentRequired,
+          accepts: new Array(17_000).fill(vector.paymentRequired.accepts[0]),
+        },
+      }),
+    ).toThrow("representation limits");
+  });
+
   it("emits settlement failures as payment challenges with settlement metadata", () => {
     const vector = readJson<HttpVector>(
       "vectors/x402-http/exact-transaction.json",

@@ -50,7 +50,9 @@ describe("gateway durable ledger", () => {
     });
 
     await ledger.saveChannel(mixedCase);
-    await expect(ledger.loadChannel(mixedCase.channelId)).resolves.toMatchObject({
+    await expect(
+      ledger.loadChannel(mixedCase.channelId),
+    ).resolves.toMatchObject({
       channelId,
       covenantId: COVENANT_ID,
       genesisEvidence: { covenantId: COVENANT_ID },
@@ -577,7 +579,7 @@ describe("gateway durable ledger", () => {
     expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
   });
 
-  it("evicts the least-recently-used scope instead of denying a new client", async () => {
+  it("buckets overflow scopes without resetting active counters", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     for (let index = 0; index < 1_024; index += 1) {
       await expect(
@@ -588,7 +590,13 @@ describe("gateway durable ledger", () => {
       ledger.checkRateLimit("overflow:exact", 2_000, 1, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
     await expect(
-      ledger.checkRateLimit("ip-0:exact", 2_001, 1, 60_000),
+      ledger.checkRateLimit("another-overflow:exact", 2_001, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 2 });
+    await expect(
+      ledger.checkRateLimit("ip-0:exact", 2_002, 1, 60_000),
+    ).resolves.toMatchObject({ allowed: false, count: 2 });
+    await expect(
+      ledger.checkRateLimit("overflow:exact", 60_001, 1, 60_000),
     ).resolves.toMatchObject({ allowed: true, count: 1 });
   });
 

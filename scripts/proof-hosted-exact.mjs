@@ -19,6 +19,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  exactPaymentAttemptIntentHash,
 } from "@kaspa-x402/client";
 import {
   KIP10_ADDITIVE_TEMPLATE_ID,
@@ -205,6 +206,7 @@ async function runHostedExactProof(input) {
       fundingAddress,
       schnorr,
       spentOutpoints,
+      dataDir: input.dataDir,
     });
     const expectedPayTo =
       input.expectedExactPayTo || additiveHead?.record.payTo || "";
@@ -443,6 +445,19 @@ async function createHostedHead(input) {
 }
 
 function makeFundingProvider(input) {
+  const exactAttempts = loadExactPaymentAttempts(
+    input.dataDir,
+    input.spentOutpoints,
+  );
+  let exactQueue = Promise.resolve();
+  const runExact = (operation) => {
+    const result = exactQueue.then(operation, operation);
+    exactQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
   return {
     networkId: input.network,
     sourceKind: "hot-wallet",
@@ -461,12 +476,28 @@ function makeFundingProvider(input) {
         ),
       };
     },
-    async authorizeExactPayment() {},
     async authorizeBatchPayment() {
       throw new Error("batch settlement is not supported by this provider");
     },
     async payExactTransaction(request) {
-      return buildExactTransaction({
+      return runExact(() =>
+        withExactPaymentStoreLock(input.dataDir, async () => {
+          const persisted = loadExactPaymentAttempts(
+            input.dataDir,
+            input.spentOutpoints,
+          );
+          exactAttempts.clear();
+          for (const [attemptId, attempt] of persisted)
+            exactAttempts.set(attemptId, attempt);
+          const key = request.attemptId.toLowerCase();
+          const intentHash = exactPaymentAttemptIntentHash(request);
+          const existing = exactAttempts.get(key);
+          if (existing) {
+            if (existing.intentHash !== intentHash)
+              throw new Error("exact payment attempt intent changed");
+            return structuredClone(existing.result);
+          }
+          const prepared = await buildExactTransaction({
         rpc: input.rpc,
         sdk: input.sdk,
         networkId: input.networkId,
@@ -477,6 +508,50 @@ function makeFundingProvider(input) {
         request,
         spentOutpoints: input.spentOutpoints,
       });
+          const record = {
+            format: "kaspa-x402-exact-provider-attempt-v1",
+            attemptId: key,
+            intentHash,
+            result: prepared.result,
+            reservedOutpoints: prepared.reservedOutpoints,
+          };
+          persistExactPaymentAttempt(input.dataDir, record);
+          for (const outpoint of record.reservedOutpoints)
+            markOutpointSpent(input.spentOutpoints, outpoint);
+          exactAttempts.set(key, structuredClone(record));
+          return prepared.result;
+        }),
+      );
+    },
+    async finalizeExactPaymentAttempt(request) {
+      return runExact(() =>
+        withExactPaymentStoreLock(input.dataDir, async () => {
+          const persisted = loadExactPaymentAttempts(
+            input.dataDir,
+            input.spentOutpoints,
+          );
+          exactAttempts.clear();
+          for (const [attemptId, attempt] of persisted)
+            exactAttempts.set(attemptId, attempt);
+          const key = request.attemptId.toLowerCase();
+          const existing = exactAttempts.get(key);
+          if (!existing) return;
+          if (
+            existing.result.transactionId.toLowerCase() !==
+            request.transactionId.toLowerCase()
+          ) {
+            throw new Error(
+              "exact transaction id does not match provider attempt",
+            );
+          }
+          removeExactPaymentAttempt(input.dataDir, key);
+          exactAttempts.delete(key);
+          if (request.outcome === "absent") {
+            for (const outpoint of existing.reservedOutpoints)
+              input.spentOutpoints.delete(outpointKey(outpoint));
+          }
+        }),
+      );
     },
     async getUtxos(addresses) {
       const utxos = [];
@@ -558,15 +633,17 @@ async function buildStandardExactTransaction(input) {
     ...txShape,
     inputs: [{ ...inputBase, signatureScript }],
   });
-  markOutpointSpent(input.spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(
+  return {
+    result: exactPaymentArtifact(
     signed,
     input.fundingAddress,
     input.request,
     0,
     input.schnorr,
     input.fundingPrivateKeyHex,
-  );
+    ),
+    reservedOutpoints: [fundingUtxo.outpoint],
+  };
 }
 
 async function buildKip10ExactTransaction(input) {
@@ -656,15 +733,17 @@ async function buildKip10ExactTransaction(input) {
       { ...fundingInput, signatureScript: fundingSignature },
     ],
   });
-  markOutpointSpent(input.spentOutpoints, fundingUtxo.outpoint);
-  return exactPaymentArtifact(
+  return {
+    result: exactPaymentArtifact(
     signed,
     input.fundingAddress,
     input.request,
     1,
     input.schnorr,
     input.fundingPrivateKeyHex,
-  );
+    ),
+    reservedOutpoints: [fundingUtxo.outpoint],
+  };
 }
 
 function exactPaymentArtifact(
@@ -1159,6 +1238,100 @@ function sha256Hex(value) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function loadExactPaymentAttempts(dataDir, spentOutpoints) {
+  const attempts = new Map();
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  if (!fs.existsSync(directory)) return attempts;
+  for (const name of fs.readdirSync(directory).sort()) {
+    if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+    const record = JSON.parse(
+      fs.readFileSync(path.join(directory, name), "utf8"),
+    );
+    if (
+      record.format !== "kaspa-x402-exact-provider-attempt-v1" ||
+      `${record.attemptId}.json` !== name ||
+      !/^[0-9a-f]{64}$/.test(record.intentHash ?? "") ||
+      !/^[0-9a-f]{64}$/i.test(record.result?.transactionId ?? "") ||
+      !Array.isArray(record.reservedOutpoints) ||
+      !record.reservedOutpoints.every(
+        (outpoint) =>
+          /^[0-9a-f]{64}$/i.test(outpoint?.txid ?? "") &&
+          Number.isInteger(outpoint?.index) &&
+          outpoint.index >= 0,
+      )
+    ) {
+      throw new Error(`invalid persisted exact payment attempt ${name}`);
+    }
+    for (const outpoint of record.reservedOutpoints)
+      markOutpointSpent(spentOutpoints, outpoint);
+    attempts.set(record.attemptId, record);
+  }
+  return attempts;
+}
+
+function persistExactPaymentAttempt(dataDir, record) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const name = `${record.attemptId}.json`;
+  const file = path.join(directory, name);
+  const temporary = path.join(
+    directory,
+    `.${name}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`,
+  );
+  let handle;
+  try {
+    handle = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`);
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = undefined;
+    fs.linkSync(temporary, file);
+    fs.rmSync(temporary);
+    fsyncDirectory(directory);
+  } catch (error) {
+    if (handle !== undefined) fs.closeSync(handle);
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+function removeExactPaymentAttempt(dataDir, attemptId) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.rmSync(path.join(directory, `${attemptId}.json`), { force: true });
+  fsyncDirectory(directory);
+}
+
+async function withExactPaymentStoreLock(dataDir, operation) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const lock = path.join(directory, ".provider.lock");
+  let handle;
+  try {
+    handle = fs.openSync(lock, "wx", 0o600);
+  } catch (error) {
+    if (error?.code === "EEXIST")
+      throw new Error(
+        `exact payment store is locked at ${lock}; remove it only after confirming the previous provider stopped`,
+      );
+    throw error;
+  }
+  try {
+    return await operation();
+  } finally {
+    fs.closeSync(handle);
+    fs.rmSync(lock, { force: true });
+  }
+}
+
+function fsyncDirectory(directory) {
+  const handle = fs.openSync(directory, "r");
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
 }
 
 function writeJson(file, value) {

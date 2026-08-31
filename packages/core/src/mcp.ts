@@ -1,8 +1,16 @@
 import { X402_VERSION } from "./constants.js";
 import { KaspaX402Error } from "./errors.js";
 import { sha256Hex } from "./binary.js";
-import { validatePaymentPayload, validatePaymentRequiredEnvelope, validateSettlementResponse } from "./schema-validation.js";
+import {
+  validatePaymentPayload,
+  validatePaymentRequiredEnvelope,
+  validateSettlementResponse,
+} from "./schema-validation.js";
 import { stableStringify } from "./stable-json.js";
+import {
+  assertPaymentRepresentationBudget,
+  MAX_PAYMENT_REPRESENTATION_BYTES,
+} from "./headers.js";
 import type {
   Hash32Hex,
   JsonRecord,
@@ -48,6 +56,11 @@ export interface McpToolCallFingerprintInput {
   accepted: PaymentRequirements;
 }
 
+export type McpToolCallIntentFingerprintInput = Omit<
+  McpToolCallFingerprintInput,
+  "accepted"
+> & { paymentIdentifier?: string };
+
 export interface McpToolPaymentFingerprintInput extends McpToolCallFingerprintInput {
   paymentPayload: PaymentPayload;
 }
@@ -82,6 +95,26 @@ export function mcpToolCallFingerprint(
   );
 }
 
+export function mcpToolCallIntentFingerprint(
+  input: McpToolCallIntentFingerprintInput,
+): Hash32Hex {
+  if (input.audience.length === 0 || input.audience.length > 2_048) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "MCP payment audience must be a non-empty string of at most 2048 characters",
+    );
+  }
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:mcp-tool-call-intent:v1",
+      audience: input.audience,
+      toolName: input.toolName,
+      arguments: input.arguments ?? null,
+      paymentIdentifier: input.paymentIdentifier ?? null,
+    }),
+  );
+}
+
 export function mcpToolPaymentFingerprint(
   input: McpToolPaymentFingerprintInput,
 ): Hash32Hex {
@@ -94,7 +127,9 @@ export function mcpToolPaymentFingerprint(
   );
 }
 
-export function mcpPaymentRequiredResult(paymentRequired: PaymentRequired): McpToolResult {
+export function mcpPaymentRequiredResult(
+  paymentRequired: PaymentRequired,
+): McpToolResult {
   return {
     isError: true,
     structuredContent: paymentRequired,
@@ -107,17 +142,30 @@ export function mcpPaymentRequiredResult(paymentRequired: PaymentRequired): McpT
   };
 }
 
-export function mcpSettlementFailureResult(paymentRequired: PaymentRequired, settlement: SettlementResponse): McpToolResult {
-  const error = settlement.errorReason ?? paymentRequired.error ?? "unexpected_settle_error";
-  return withMcpPaymentResponse(mcpPaymentRequiredResult({ ...paymentRequired, error }), settlement);
+export function mcpSettlementFailureResult(
+  paymentRequired: PaymentRequired,
+  settlement: SettlementResponse,
+): McpToolResult {
+  const error =
+    settlement.errorReason ??
+    paymentRequired.error ??
+    "unexpected_settle_error";
+  return withMcpPaymentResponse(
+    mcpPaymentRequiredResult({ ...paymentRequired, error }),
+    settlement,
+  );
 }
 
-export function readMcpPaymentRequired(result: McpToolResult): PaymentRequiredEnvelope | undefined {
+export function readMcpPaymentRequired(
+  result: McpToolResult,
+): PaymentRequiredEnvelope | undefined {
   if (result.isError !== true) return undefined;
   const structured = readPaymentRequiredCandidate(result.structuredContent);
   if (structured) return structured;
   const text = result.content?.[0]?.text;
   if (typeof text !== "string") return undefined;
+  if (Buffer.byteLength(text, "utf8") > MAX_PAYMENT_REPRESENTATION_BYTES)
+    return undefined;
   let parsed: unknown;
   try {
     parsed = JSON.parse(text);
@@ -127,7 +175,9 @@ export function readMcpPaymentRequired(result: McpToolResult): PaymentRequiredEn
   return readPaymentRequiredCandidate(parsed);
 }
 
-export function readMcpPaymentPayload(params: McpToolCallParams): PaymentPayload | undefined {
+export function readMcpPaymentPayload(
+  params: McpToolCallParams,
+): PaymentPayload | undefined {
   const value = params._meta?.[MCP_PAYMENT_META_KEY];
   if (value === undefined) return undefined;
   const result = validatePaymentPayload(value);
@@ -135,7 +185,10 @@ export function readMcpPaymentPayload(params: McpToolCallParams): PaymentPayload
   return result.value;
 }
 
-export function withMcpPaymentPayload(params: McpToolCallParams, paymentPayload: PaymentPayload): McpToolCallParams {
+export function withMcpPaymentPayload(
+  params: McpToolCallParams,
+  paymentPayload: PaymentPayload,
+): McpToolCallParams {
   return {
     ...params,
     _meta: {
@@ -145,7 +198,9 @@ export function withMcpPaymentPayload(params: McpToolCallParams, paymentPayload:
   };
 }
 
-export function readMcpPaymentResponse(result: McpToolResult): SettlementResponse | undefined {
+export function readMcpPaymentResponse(
+  result: McpToolResult,
+): SettlementResponse | undefined {
   const value = result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY];
   if (value === undefined) return undefined;
   const validation = validateSettlementResponse(value);
@@ -153,7 +208,10 @@ export function readMcpPaymentResponse(result: McpToolResult): SettlementRespons
   return validation.value;
 }
 
-export function withMcpPaymentResponse(result: McpToolResult, settlement: SettlementResponse): McpToolResult {
+export function withMcpPaymentResponse(
+  result: McpToolResult,
+  settlement: SettlementResponse,
+): McpToolResult {
   return {
     ...result,
     _meta: {
@@ -163,8 +221,24 @@ export function withMcpPaymentResponse(result: McpToolResult, settlement: Settle
   };
 }
 
-function readPaymentRequiredCandidate(value: unknown): PaymentRequiredEnvelope | undefined {
-  if (!isRecord(value) || value.x402Version !== X402_VERSION || !Array.isArray(value.accepts)) return undefined;
+function readPaymentRequiredCandidate(
+  value: unknown,
+): PaymentRequiredEnvelope | undefined {
+  if (
+    !isRecord(value) ||
+    value.x402Version !== X402_VERSION ||
+    !Array.isArray(value.accepts)
+  )
+    return undefined;
+  try {
+    assertPaymentRepresentationBudget(value);
+  } catch (error) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "MCP payment requirement exceeds representation limits",
+      error,
+    );
+  }
   const result = validatePaymentRequiredEnvelope(value);
   if (!result.ok) throw result.error;
   return result.value;
@@ -208,7 +282,10 @@ function mcpPaymentIdentity(paymentPayload: PaymentPayload): JsonRecord {
         payloadType: payload.type,
       };
     default:
-      throw new KaspaX402Error("invalid_kaspa_payment_payload_type", "unsupported MCP payment payload type");
+      throw new KaspaX402Error(
+        "invalid_kaspa_payment_payload_type",
+        "unsupported MCP payment payload type",
+      );
   }
 }
 

@@ -8,6 +8,7 @@ import {
   batchRequestAuthorizationDigest,
   batchRequestAuthorizationPreimage,
   channelId,
+  decodePaymentRequiredEnvelopeHeader,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
   exactAuthorizationExpiresAt,
@@ -45,6 +46,8 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   parsePaymentRequiredHeaderValue,
+  narrowKaspaPaymentRequired,
+  selectPaymentRequirement as selectPaymentRequirementValue,
   type ParsePaymentRequiredOptions,
 } from "./payment-required.js";
 import {
@@ -57,6 +60,10 @@ import {
   type DirectModeChannel,
   type DirectModeClientOptions,
   type ExactPaymentRequest,
+  type ExactPaymentAttemptRecord,
+  type ExactPaymentAttemptFinalizeRequest,
+  type ExactPaymentReconcileResult,
+  type ExactTransactionPaymentRequest,
   type ExactTransactionPaymentResult,
   type FetchLike,
   type FundingProviderUtxo,
@@ -75,10 +82,38 @@ import {
   type RefundResult,
 } from "./types.js";
 
+export class PendingExactPaymentError extends KaspaX402Error {
+  readonly payment: CreatePaymentResult;
+
+  constructor(payment: CreatePaymentResult, cause: unknown) {
+    const source = cause instanceof KaspaX402Error ? cause : undefined;
+    super(
+      source?.code ?? "invalid_kaspa_settlement_response",
+      source?.message ?? "exact payment completion is ambiguous",
+      {
+        attemptId: payment.exactAttemptId,
+        transactionId: payment.transactionId,
+        cause,
+      },
+    );
+    this.name = "PendingExactPaymentError";
+    this.payment = payment;
+  }
+}
+
 export class DirectModeClient {
   readonly #options: DirectModeClientOptions;
 
   constructor(options: DirectModeClientOptions) {
+    if (
+      Boolean(options.fundingProvider.payExactTransaction) !==
+      Boolean(options.fundingProvider.finalizeExactPaymentAttempt)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact funding providers must implement both idempotent preparation and finalization",
+      );
+    }
     assertMainnetAllowed(
       options.fundingProvider.networkId,
       options.allowMainnet,
@@ -125,14 +160,57 @@ export class DirectModeClient {
     context: PaymentRequestContext,
   ): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
-    const parsed = this.selectPaymentRequirement(header);
+    const paymentRequired = narrowKaspaPaymentRequired(
+      decodePaymentRequiredEnvelopeHeader(header),
+    );
+    const attemptId = exactPaymentAttemptId(context);
+    const existingExact =
+      await this.#options.store.loadExactPaymentAttempt(attemptId);
+    if (existingExact) {
+      if (existingExact.payment.accepted.scheme !== "exact") {
+        throw new KaspaX402Error(
+          "invalid_kaspa_exact_replay",
+          "persisted exact payment attempt has invalid scheme state",
+        );
+      }
+      const authorizedContext = contextWithRequestHash(
+        context,
+        existingExact.payment.accepted,
+      );
+      assertProviderNetwork(
+        this.#options,
+        existingExact.payment.accepted.network,
+      );
+      assertMatchingExactAttempt(
+        existingExact,
+        existingExact.payment.accepted,
+        paymentRequired.resource.url,
+        authorizedContext,
+      );
+      const retryValidation = validatePaymentRetry({
+        paymentRequired,
+        paymentPayload: existingExact.payment.paymentPayload,
+      });
+      if (!retryValidation.ok) throw retryValidation.error;
+      return {
+        ...existingExact.payment,
+        paymentRequired: retryValidation.value.paymentRequired,
+      };
+    }
+    const parsed = selectPaymentRequirementValue(
+      paymentRequired,
+      paymentRequiredParseOptionsForClient(this.#options),
+    );
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
-      return this.#createExactPayment(
+      const authorizedContext = contextWithRequestHash(
+        context,
         parsed.accepted,
-        parsed.paymentRequired,
-        contextWithRequestHash(context, parsed.accepted),
       );
+      return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, {
+        ...authorizedContext,
+        paymentAttemptId: attemptId,
+      });
     }
     if (parsed.accepted.scheme !== "batch-settlement") {
       throw new KaspaX402Error(
@@ -240,6 +318,7 @@ export class DirectModeClient {
         encodePaymentSignatureHeader(payment.paymentPayload),
       ),
     };
+    try {
     const retryResponse = await fetch(input, retryInit);
     assertPaidFetchResponseTarget(retryResponse, input, "paid retry");
     if (retryResponse.status === 402) {
@@ -262,6 +341,11 @@ export class DirectModeClient {
       decodePaymentResponseHeader(responseHeader),
     );
     return { response: retryResponse, payment, settlement };
+    } catch (error) {
+      if (payment.scheme === "exact")
+        throw pendingExactPaymentError(payment, error);
+      throw error;
+    }
   }
 
   async applySettlement(
@@ -613,20 +697,14 @@ export class DirectModeClient {
       );
       if (
         !channel ||
-        (attempt.finality !== "accepted" &&
-          attempt.finality !== "confirmed")
+        (attempt.finality !== "accepted" && attempt.finality !== "confirmed")
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "applied funding transition has inconsistent channel state",
         );
       }
-      return fundingTransitionResult(
-        attempt,
-        attempt.finality,
-        true,
-        channel,
-      );
+      return fundingTransitionResult(attempt, attempt.finality, true, channel);
     }
     if (!this.#options.fundingTransitionReconciler) {
       throw new KaspaX402Error(
@@ -683,6 +761,68 @@ export class DirectModeClient {
     );
   }
 
+  async reconcileExactPayment(
+    attemptId: string,
+  ): Promise<ExactPaymentReconcileResult> {
+    const attempt =
+      await this.#options.store.loadExactPaymentAttempt(attemptId);
+    if (!attempt) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact payment attempt was not found",
+      );
+    }
+    assertProviderNetwork(this.#options, attempt.payment.accepted.network);
+    if (!this.#options.exactPaymentReconciler) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "trusted exact payment reconciliation adapter is required",
+      );
+    }
+    const observed =
+      await this.#options.exactPaymentReconciler.reconcileExactPayment(attempt);
+    assertTransactionId(observed.transactionId, "reconciled exact payment");
+    if (!sameHash32(observed.transactionId, attempt.transactionId)) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "reconciled exact transaction id does not match the persisted signed transaction",
+      );
+    }
+    if (
+      observed.status !== "unknown" &&
+      observed.status !== "absent" &&
+      observed.status !== "accepted"
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact payment reconciler returned an unsupported status",
+      );
+    }
+    if (observed.status === "unknown") {
+      return exactPaymentReconcileResult(attempt, "unknown", false);
+    }
+    if (
+      observed.status === "accepted" &&
+      observed.finality !== "accepted" &&
+      observed.finality !== "confirmed"
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "accepted exact payment reconciliation is missing accepted finality",
+      );
+    }
+    await this.#finalizeExactPaymentAttempt(
+      attempt.attemptId,
+      attempt.transactionId,
+      observed.status,
+    );
+    return exactPaymentReconcileResult(
+      attempt,
+      observed.status === "accepted" ? observed.finality : "absent",
+      observed.status === "accepted",
+    );
+  }
+
   async #selectExistingChannel(
     accepted: BatchPaymentRequirements,
     origin: string,
@@ -706,8 +846,9 @@ export class DirectModeClient {
           `funding transition ${channel.id} is unresolved; reconcile it before reusing this payment lane`,
         );
       }
-      const openRefundAttempt =
-        await this.#options.store.loadRefundAttempt(channel.id);
+      const openRefundAttempt = await this.#options.store.loadRefundAttempt(
+        channel.id,
+      );
       if (openRefundAttempt) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
@@ -994,7 +1135,9 @@ export class DirectModeClient {
       );
     }
     assertPreparedFundingTransition(prepared, "genesis");
-    if (!sameHash32(prepared.successor.scriptPublicKey, activeScriptPublicKey)) {
+    if (
+      !sameHash32(prepared.successor.scriptPublicKey, activeScriptPublicKey)
+    ) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_binding",
         "prepared genesis successor does not match the escrow script",
@@ -1009,10 +1152,7 @@ export class DirectModeClient {
         "prepared genesis amount is below the required funding target",
       );
     }
-    assertBatchChannelFundingPolicy(
-      this.#options,
-      prepared.successor.amount,
-    );
+    assertBatchChannelFundingPolicy(this.#options, prepared.successor.amount);
     const attempt: FundingTransitionAttemptRecord = {
       kind: "genesis",
       channelId: id,
@@ -1122,6 +1262,12 @@ export class DirectModeClient {
         "exact request authorization requires a canonical request hash",
       );
     }
+    if (!context.paymentAttemptId) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "exact payment requires a stable payment attempt identity",
+      );
+    }
     const head = exactHeadHint(accepted);
     if (profile === "additive" && !head) {
       throw new KaspaX402Error(
@@ -1130,6 +1276,7 @@ export class DirectModeClient {
       );
     }
     const exactRequest: ExactPaymentRequest = {
+      attemptId: context.paymentAttemptId,
       network: accepted.network,
       profile,
       origin: context.origin ?? originForUrl(context.url),
@@ -1146,8 +1293,12 @@ export class DirectModeClient {
         accepted.maxTimeoutSeconds,
         head?.challengeExpiresAt,
       ),
-      requiredFinality: accepted.extra.finality,
-      fundingSource: this.#options.fundingPolicy?.requiredSource,
+      ...(accepted.extra.finality
+        ? { requiredFinality: accepted.extra.finality }
+        : {}),
+      ...(this.#options.fundingPolicy?.requiredSource
+        ? { fundingSource: this.#options.fundingPolicy.requiredSource }
+        : {}),
     };
     let exact: ExactTransactionPaymentResult;
     let payload: PaymentPayload["payload"];
@@ -1156,6 +1307,23 @@ export class DirectModeClient {
       ...exactRequest,
       ...(head ? { head } : {}),
     };
+    const existing = await this.#options.store.loadExactPaymentAttempt(
+      context.paymentAttemptId,
+    );
+    if (existing) {
+      assertMatchingExactAttempt(
+        existing,
+        accepted,
+        paymentRequired.resource.url,
+        context,
+      );
+      const retryValidation = validatePaymentRetry({
+        paymentRequired,
+        paymentPayload: existing.payment.paymentPayload,
+      });
+      if (!retryValidation.ok) throw retryValidation.error;
+      return existing.payment;
+    }
     const transactionExact =
       await this.#createExactTransaction(transactionRequest);
     this.#assertExactResult(transactionExact, transactionRequest);
@@ -1186,18 +1354,28 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    return {
+    const payment: CreatePaymentResult = {
       paymentRequired,
       accepted,
       paymentPayload,
       scheme: "exact",
       openedChannel: false,
-      ...("transactionId" in exact && exact.transactionId
-        ? { transactionId: exact.transactionId }
-        : {}),
+      transactionId: exact.transactionId,
+      exactAttemptId: context.paymentAttemptId,
       paymentOutputIndex: exact.paymentOutputIndex,
       payerAddress,
     };
+    const attempt = await this.#options.store.claimExactPaymentAttempt({
+      attemptId: context.paymentAttemptId,
+      requestHash: context.requestHash,
+      origin: context.origin ?? originForUrl(context.url),
+      ...(context.paymentIdentifier
+        ? { paymentIdentifier: context.paymentIdentifier }
+        : {}),
+      transactionId: exact.transactionId,
+      payment,
+    });
+    return attempt.payment;
   }
 
   #assertExactResult(
@@ -1230,7 +1408,7 @@ export class DirectModeClient {
       !Number.isInteger(exact.authorization.inputIndex) ||
       exact.authorization.inputIndex < 0 ||
       !Number.isFinite(expiresAt) ||
-      exact.authorization.expiresAt !== request.authorizationExpiresAt ||
+      expiresAt > Date.parse(request.authorizationExpiresAt) ||
       !/^[0-9a-fA-F]{128}$/.test(exact.authorization.signature)
     ) {
       throw new KaspaX402Error(
@@ -1270,7 +1448,6 @@ export class DirectModeClient {
       );
     }
     assertExactFundingPolicy(this.#options, request);
-    await this.#options.fundingProvider.authorizeExactPayment(request);
     const exact =
       await this.#options.fundingProvider.payExactTransaction(request);
     if (!isExactTransactionPaymentResult(exact)) {
@@ -1301,6 +1478,30 @@ export class DirectModeClient {
       );
     }
     return exact;
+  }
+
+  async #finalizeExactPaymentAttempt(
+    attemptId: Hash32Hex,
+    transactionId: Hash32Hex,
+    outcome: ExactPaymentAttemptFinalizeRequest["outcome"],
+  ): Promise<void> {
+    const finalize = this.#options.fundingProvider.finalizeExactPaymentAttempt;
+    if (!finalize) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact offers require an idempotent exact attempt finalizer",
+      );
+    }
+    const request: ExactPaymentAttemptFinalizeRequest = {
+      attemptId,
+      transactionId,
+      outcome,
+    };
+    await finalize.call(this.#options.fundingProvider, request);
+    await this.#options.store.releaseExactPaymentAttempt(
+      attemptId,
+      transactionId,
+    );
   }
 
   async #buildVoucherPayload(
@@ -1456,8 +1657,7 @@ export class DirectModeClient {
     };
     const digest = batchRequestAuthorizationDigest(input);
     const preimage = batchRequestAuthorizationPreimage(input);
-    const signature =
-      await this.#options.signer.signBatchRequestAuthorization({
+    const signature = await this.#options.signer.signBatchRequestAuthorization({
         digest,
         preimage,
         channel,
@@ -1790,10 +1990,7 @@ function assertPreparedFundingTransition(
     `prepared ${kind} successor`,
   );
   if (
-    !sameHash32(
-      prepared.transactionId,
-      prepared.successor.outpoint.txid,
-    ) ||
+    !sameHash32(prepared.transactionId, prepared.successor.outpoint.txid) ||
     !Number.isInteger(prepared.successor.outpoint.index) ||
     prepared.successor.outpoint.index < 0
   ) {
@@ -1846,10 +2043,7 @@ function successorMatchesIntent(
     successor !== null &&
     sameOutpoint(successor.outpoint, attempt.intendedSuccessor.outpoint) &&
     successor.covenantId !== undefined &&
-    sameHash32(
-      successor.covenantId,
-      attempt.intendedSuccessor.covenantId,
-    ) &&
+    sameHash32(successor.covenantId, attempt.intendedSuccessor.covenantId) &&
     sameHash32(
       successor.scriptPublicKey,
       attempt.intendedSuccessor.scriptPublicKey,
@@ -2018,7 +2212,11 @@ function supportedSchemesForClient(
 ): readonly ("exact" | "batch-settlement")[] {
   if (options.supportedSchemes) return options.supportedSchemes;
   const schemes: ("exact" | "batch-settlement")[] = [];
-  if (options.fundingProvider.payExactTransaction) schemes.push("exact");
+  if (
+    options.fundingProvider.payExactTransaction &&
+    options.fundingProvider.finalizeExactPaymentAttempt
+  )
+    schemes.push("exact");
   schemes.push("batch-settlement");
   return schemes;
 }
@@ -2039,7 +2237,11 @@ function supportsRequirementForClient(
   requirement: PaymentRequirements,
 ): boolean {
   if (requirement.scheme !== "exact") return true;
-  if (!options.fundingProvider.payExactTransaction) return false;
+  if (
+    !options.fundingProvider.payExactTransaction ||
+    !options.fundingProvider.finalizeExactPaymentAttempt
+  )
+    return false;
   const profile = exactProfile(requirement);
   return profile === "standard-native" || Boolean(exactHeadHint(requirement));
 }
@@ -2068,6 +2270,8 @@ function applyExactSettlement(
     return {
       chargedAmount: "0",
       response,
+      pending: true,
+      transactionId: payment.transactionId,
     };
   }
   const payload = payment.paymentPayload.payload;
@@ -2156,6 +2360,87 @@ function applyExactSettlement(
   };
 }
 
+function pendingExactPaymentError(
+  payment: CreatePaymentResult,
+  error: unknown,
+): PendingExactPaymentError {
+  return error instanceof PendingExactPaymentError
+    ? error
+    : new PendingExactPaymentError(payment, error);
+}
+
+function assertMatchingExactAttempt(
+  attempt: ExactPaymentAttemptRecord,
+  accepted: ExactPaymentRequirements,
+  resourceUrl: string,
+  context: PaymentRequestContext,
+): void {
+  if (
+    attempt.requestHash.toLowerCase() !== context.requestHash?.toLowerCase() ||
+    attempt.origin !== (context.origin ?? originForUrl(context.url)) ||
+    attempt.paymentIdentifier !== context.paymentIdentifier ||
+    attempt.payment.paymentRequired.resource.url !== resourceUrl ||
+    stableStringify(attempt.payment.accepted) !== stableStringify(accepted)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_exact_replay",
+      "an unresolved exact payment already owns this logical request; reconcile it before accepting changed payment terms",
+    );
+  }
+}
+
+function exactPaymentAttemptId(context: PaymentRequestContext): Hash32Hex {
+  if (context.paymentAttemptId) {
+    if (!/^[0-9a-fA-F]{64}$/.test(context.paymentAttemptId)) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_exact_replay",
+        "exact payment attempt id must be 32-byte hex",
+      );
+    }
+    return context.paymentAttemptId.toLowerCase() as Hash32Hex;
+  }
+  let requestIdentity = context.requestHash;
+  if (!requestIdentity) {
+    try {
+      requestIdentity = sha256Hex(
+        stableStringify({
+          method: context.method ?? "GET",
+          url: context.url,
+          body: context.body ?? null,
+        }),
+      );
+    } catch (error) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "requestHash is required when the request body is outside the JSON canonicalization profile",
+        error,
+      );
+    }
+  }
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:exact-payment-attempt:v1",
+      origin: context.origin ?? originForUrl(context.url),
+      url: context.url,
+      requestIdentity,
+      paymentIdentifier: context.paymentIdentifier ?? null,
+    }),
+  );
+}
+
+function exactPaymentReconcileResult(
+  attempt: ExactPaymentAttemptRecord,
+  finality: ExactPaymentReconcileResult["finality"],
+  accepted: boolean,
+): ExactPaymentReconcileResult {
+  return {
+    attemptId: attempt.attemptId,
+    transactionId: attempt.transactionId,
+    finality,
+    accepted,
+  };
+}
+
 function exactFinalityMeets(
   actual: "mempool" | "accepted" | "confirmed",
   required: "mempool" | "accepted" | "confirmed",
@@ -2230,6 +2515,19 @@ function isExactTransactionPaymentResult(
     typeof exact.transaction === "string" &&
     exact.transactionEncoding === "kaspa-sdk-safe-json-v2.0.0" &&
     isRecord(exact.authorization)
+  );
+}
+
+export function exactPaymentAttemptIntentHash(
+  request: ExactTransactionPaymentRequest,
+): Hash32Hex {
+  const { authorizationExpiresAt: _authorizationExpiresAt, ...intent } =
+    request;
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:exact-payment-provider-intent:v1",
+      ...intent,
+    }),
   );
 }
 

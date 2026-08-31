@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   BATCH_SCRIPT_INT_MAX,
@@ -158,9 +158,21 @@ describe("batch request authorization", () => {
 
   it("binds the request, audience, payment terms, and nonce", () => {
     const digest = batchRequestAuthorizationDigest(input);
-    expect(batchRequestAuthorizationDigest({ ...input, requestHash: "66".repeat(32) })).not.toBe(digest);
-    expect(batchRequestAuthorizationDigest({ ...input, audience: "https://relay.example.test/resource" })).not.toBe(digest);
-    expect(batchRequestAuthorizationDigest({ ...input, nonce: "77".repeat(32) })).not.toBe(digest);
+    expect(
+      batchRequestAuthorizationDigest({
+        ...input,
+        requestHash: "66".repeat(32),
+      }),
+    ).not.toBe(digest);
+    expect(
+      batchRequestAuthorizationDigest({
+        ...input,
+        audience: "https://relay.example.test/resource",
+      }),
+    ).not.toBe(digest);
+    expect(
+      batchRequestAuthorizationDigest({ ...input, nonce: "77".repeat(32) }),
+    ).not.toBe(digest);
   });
 
   it("rejects expired and overlong authorizations", () => {
@@ -195,10 +207,24 @@ describe("stable JSON resource limits", () => {
     expect(() =>
       stableStringify(new Array(1_000_000).fill(null), { maxNodes: 100 }),
     ).toThrow("node");
-    expect(() =>
-      stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 }),
-    ).toThrow("object-key");
-    expect(() => stableStringify("large", { maxOutputBytes: 4 })).toThrow("byte");
+    expect(() => stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 })).toThrow(
+      "object-key",
+    );
+    expect(() => stableStringify("large", { maxOutputBytes: 4 })).toThrow(
+      "byte",
+    );
+  });
+
+  it("rejects over-budget objects before sorting their keys", () => {
+    const sort = vi.spyOn(Array.prototype, "sort");
+    try {
+      expect(() =>
+        stableStringify({ a: 1, b: 2 }, { maxObjectKeys: 1 }),
+      ).toThrow("object-key");
+      expect(sort).not.toHaveBeenCalled();
+    } finally {
+      sort.mockRestore();
+    }
   });
 });
 
@@ -212,9 +238,9 @@ describe("Alpha.11 voucher identity", () => {
   it("binds network, stable covenant id, and lifetime ceiling", () => {
     expect(voucherPreimageHex(input)).toHaveLength(208);
     expect(voucherDigest(input)).toHaveLength(64);
-    expect(
-      voucherDigest({ ...input, covenantId: "22".repeat(32) }),
-    ).not.toBe(voucherDigest(input));
+    expect(voucherDigest({ ...input, covenantId: "22".repeat(32) })).not.toBe(
+      voucherDigest(input),
+    );
     expect(voucherDigest({ ...input, amount: "5000001" })).not.toBe(
       voucherDigest(input),
     );

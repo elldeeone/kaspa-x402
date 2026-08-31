@@ -118,7 +118,7 @@ export function selectBatchPaymentRequired(
   };
 }
 
-function narrowKaspaPaymentRequired(
+export function narrowKaspaPaymentRequired(
   paymentRequired: PaymentRequired | PaymentRequiredEnvelope,
 ): PaymentRequired {
   if (paymentRequired.x402Version !== X402_VERSION) {

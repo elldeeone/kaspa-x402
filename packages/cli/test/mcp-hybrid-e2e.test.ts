@@ -15,6 +15,7 @@ import {
 } from "@kaspa-x402/core";
 import {
   DirectModeClient,
+  exactPaymentAttemptIntentHash,
   MemoryChannelStore,
   paidMcpToolCall,
   type AddressCodec,
@@ -153,13 +154,16 @@ function makeExactRequired(): PaymentRequired {
 }
 
 function exactFundingProvider(): FundingProvider {
+  const attempts = new Map<
+    string,
+    { intentHash: string; transactionId: string; result: unknown }
+  >();
   return {
     networkId: "kaspa:testnet-10",
     sourceKind: "hot-wallet",
     async getPublicIdentity() {
       return { address: "kaspatest:refund" };
     },
-    async authorizeExactPayment() {},
     async authorizeBatchPayment() {
       throw new Error("batch settlement is not supported by this provider");
     },
@@ -170,6 +174,16 @@ function exactFundingProvider(): FundingProvider {
       throw new Error("not used");
     },
     async payExactTransaction(request) {
+      const key = request.attemptId.toLowerCase();
+      const intentHash = exactPaymentAttemptIntentHash(request);
+      const existing = attempts.get(key);
+      if (existing) {
+        if (existing.intentHash !== intentHash)
+          throw new Error("exact payment attempt intent changed");
+        return existing.result as Awaited<
+          ReturnType<NonNullable<FundingProvider["payExactTransaction"]>>
+        >;
+      }
       const transactionId = "77".repeat(32);
       const paymentOutputIndex = request.paymentOutputIndex ?? 0;
       const digest = exactRequestAuthorizationDigest({
@@ -185,7 +199,7 @@ function exactFundingProvider(): FundingProvider {
         inputIndex: 0,
         expiresAt: request.authorizationExpiresAt,
       });
-      return {
+      const result = {
         transaction: '{"transaction":"signed-kip10-exact"}',
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
         transactionId,
@@ -199,6 +213,16 @@ function exactFundingProvider(): FundingProvider {
         },
         payerAddress: "kaspatest:refund",
       };
+      attempts.set(key, { intentHash, transactionId, result });
+      return result;
+    },
+    async finalizeExactPaymentAttempt(request) {
+      const key = request.attemptId.toLowerCase();
+      const existing = attempts.get(key);
+      if (!existing) return;
+      if (existing.transactionId !== request.transactionId.toLowerCase())
+        throw new Error("exact transaction id does not match provider attempt");
+      attempts.delete(key);
     },
     async getUtxos() {
       return [];

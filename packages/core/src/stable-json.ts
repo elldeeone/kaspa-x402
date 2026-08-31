@@ -106,10 +106,11 @@ export function stableStringify(
     if (prototype !== Object.prototype && prototype !== null)
       throw new TypeError(`${frame.path} must be a plain JSON object`);
     const record = current as Record<string, unknown>;
-    const keys = Object.keys(record).sort();
+    const keys = Object.keys(record);
     if (keys.length > budget.maxObjectKeys)
       throw new RangeError(`${frame.path} exceeds the object-key limit`);
     reserveValues(keys.length, frame.path);
+    keys.sort();
     stack.push({ kind: "text", text: "}" });
     for (let index = keys.length - 1; index >= 0; index -= 1) {
       const key = keys[index]!;

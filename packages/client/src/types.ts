@@ -111,6 +111,8 @@ export interface CovenantTopUpEvidence {
 }
 
 export interface ExactPaymentRequest {
+  /** Stable key for idempotent authorization, UTXO reservation, and signing. */
+  attemptId: Hash32Hex;
   network: NetworkId;
   profile: ExactProfile;
   origin: string;
@@ -185,12 +187,16 @@ export interface SendTransactionResult {
   finality?: "broadcast" | "accepted" | "confirmed";
 }
 
+export interface ExactPaymentAttemptFinalizeRequest {
+  attemptId: Hash32Hex;
+  transactionId: Hash32Hex;
+  outcome: "accepted" | "absent";
+}
+
 export interface FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
-  /** Explicit policy boundary invoked before any exact signing operation. */
-  authorizeExactPayment(request: ExactTransactionPaymentRequest): Promise<void>;
   /** Explicit policy boundary invoked before any batch funding or signing operation. */
   authorizeBatchPayment(
     request: BatchPaymentAuthorizationRequest,
@@ -199,9 +205,18 @@ export interface FundingProvider {
     request: EscrowDepositRequest,
   ): Promise<PreparedEscrowDeposit>;
   prepareEscrowTopUp(request: EscrowTopUpRequest): Promise<PreparedEscrowTopUp>;
+  /**
+   * Atomically authorizes, constructs, signs, and durably caches one artifact per attemptId.
+   * The same attempt and intent must return the identical artifact; changed intent
+   * must fail. It must not broadcast or disclose the artifact.
+   */
   payExactTransaction?(
     request: ExactTransactionPaymentRequest,
   ): Promise<ExactTransactionPaymentResult>;
+  /** Finalizes only the matching cached artifact after trusted terminal evidence. */
+  finalizeExactPaymentAttempt?(
+    request: ExactPaymentAttemptFinalizeRequest,
+  ): Promise<void>;
   getUtxos(addresses: readonly string[]): Promise<FundingProviderUtxo[]>;
   /** Authoritative active-head lookup; successor covenant scripts may rotate addresses. */
   getUtxo(outpoint: FundingOutpoint): Promise<FundingProviderUtxo | null>;
@@ -313,9 +328,7 @@ export interface GenesisChannelIntent {
 }
 
 export type FundingTransitionAttemptStatus =
-  | "pending"
-  | "broadcast"
-  | "applied";
+  "pending" | "broadcast" | "applied";
 
 interface FundingTransitionAttemptBase {
   channelId: Hash32Hex;
@@ -328,22 +341,19 @@ interface FundingTransitionAttemptBase {
 }
 
 /** Genesis is reserved before a channel or covenant head exists. */
-export interface GenesisFundingTransitionAttempt
-  extends FundingTransitionAttemptBase {
+export interface GenesisFundingTransitionAttempt extends FundingTransitionAttemptBase {
   kind: "genesis";
   intent: GenesisChannelIntent;
 }
 
 /** Top-up owns the exact persisted lane head until it is reconciled. */
-export interface TopUpFundingTransitionAttempt
-  extends FundingTransitionAttemptBase {
+export interface TopUpFundingTransitionAttempt extends FundingTransitionAttemptBase {
   kind: "top-up";
   expectedChannel: DirectModeChannel;
 }
 
 export type FundingTransitionAttemptRecord =
-  | GenesisFundingTransitionAttempt
-  | TopUpFundingTransitionAttempt;
+  GenesisFundingTransitionAttempt | TopUpFundingTransitionAttempt;
 
 export type FundingTransitionAttemptApplyRequest =
   | {
@@ -394,6 +404,16 @@ export interface RefundAttemptApplyResult {
   attempt: RefundAttemptRecord;
 }
 
+/** Durable exact artifact reserved before it can be disclosed to a merchant. */
+export interface ExactPaymentAttemptRecord {
+  attemptId: Hash32Hex;
+  requestHash: Hash32Hex;
+  origin: string;
+  paymentIdentifier?: string;
+  transactionId: Hash32Hex;
+  payment: CreatePaymentResult;
+}
+
 export interface ChannelStore {
   loadChannels(scope: ChannelLookupScope): Promise<DirectModeChannel[]>;
   saveChannel(channel: DirectModeChannel): Promise<void>;
@@ -435,6 +455,18 @@ export interface ChannelStore {
   applyRefundAttempt(
     request: RefundAttemptApplyRequest,
   ): Promise<RefundAttemptApplyResult>;
+  loadExactPaymentAttempt(
+    attemptId: Hash32Hex,
+  ): Promise<ExactPaymentAttemptRecord | undefined>;
+  /** Atomically reserves an exact artifact, returning the existing artifact on a matching retry. */
+  claimExactPaymentAttempt(
+    attempt: ExactPaymentAttemptRecord,
+  ): Promise<ExactPaymentAttemptRecord>;
+  /** Clears only the matching artifact after authoritative acceptance or trusted absence proof. */
+  releaseExactPaymentAttempt(
+    attemptId: Hash32Hex,
+    transactionId: Hash32Hex,
+  ): Promise<void>;
 }
 
 export interface ChannelLookupScope {
@@ -451,6 +483,8 @@ export interface PaymentRequestContext {
   origin?: string;
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
+  /** Stable logical request identity used to recover one exact artifact across retries. */
+  paymentAttemptId?: Hash32Hex;
 }
 
 export interface ParsedPaymentRequired {
@@ -466,6 +500,7 @@ export interface CreatePaymentResult {
   channel?: DirectModeChannel;
   openedChannel: boolean;
   transactionId?: Hash32Hex;
+  exactAttemptId?: Hash32Hex;
   paymentOutputIndex?: number;
   payerAddress?: string;
 }
@@ -552,6 +587,7 @@ export type RefundReconciliation =
       reason?: string;
     }
   | {
+      /** Authoritative chain evidence that the exact artifact was accepted. */
       status: "accepted";
       transactionId: Hash32Hex;
       finality: "accepted" | "confirmed";
@@ -604,6 +640,37 @@ export interface FundingTransitionReconcileResult {
   channel?: DirectModeChannel;
 }
 
+export type ExactPaymentReconciliation =
+  | {
+      status: "unknown";
+      transactionId: Hash32Hex;
+      reason?: string;
+    }
+  | {
+      /** Trusted proof that the exact artifact cannot become accepted. */
+      status: "absent";
+      transactionId: Hash32Hex;
+      reason?: string;
+    }
+  | {
+      status: "accepted";
+      transactionId: Hash32Hex;
+      finality: "accepted" | "confirmed";
+    };
+
+export interface ExactPaymentReconciler {
+  reconcileExactPayment(
+    attempt: ExactPaymentAttemptRecord,
+  ): Promise<ExactPaymentReconciliation>;
+}
+
+export interface ExactPaymentReconcileResult {
+  attemptId: Hash32Hex;
+  transactionId: Hash32Hex;
+  finality: "unknown" | "absent" | "accepted" | "confirmed";
+  accepted: boolean;
+}
+
 export interface DirectModeClientOptions {
   fundingProvider: FundingProvider;
   signer: ChannelSigner;
@@ -617,6 +684,7 @@ export interface DirectModeClientOptions {
   refundBuilder?: RefundTransactionBuilder;
   refundReconciler?: RefundReconciler;
   fundingTransitionReconciler?: FundingTransitionReconciler;
+  exactPaymentReconciler?: ExactPaymentReconciler;
   verifyVoucherSignature?: (
     voucher: Voucher,
     channel: DirectModeChannel,

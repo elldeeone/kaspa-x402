@@ -34,7 +34,9 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   DirectModeClient,
+  exactPaymentAttemptIntentHash,
   MemoryChannelStore,
+  PendingExactPaymentError,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   paidMcpToolCall,
@@ -44,6 +46,8 @@ import {
   type DirectModeChannel,
   type EscrowDepositRequest,
   type ExactPaymentRequest,
+  type ExactPaymentAttemptFinalizeRequest,
+  type ExactPaymentReconciler,
   type ExactTransactionPaymentRequest,
   type ExactTransactionPaymentResult,
   type FeeEstimateRequest,
@@ -288,6 +292,7 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments).toEqual([
       {
         profile: "standard-native",
+        attemptId: payment.exactAttemptId,
         amount: "250",
         payTo: "kaspatest:payout",
         payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
@@ -725,6 +730,9 @@ describe("direct-mode client", () => {
     Object.defineProperty(provider, "payExactTransaction", {
       value: undefined,
     });
+    Object.defineProperty(provider, "finalizeExactPaymentAttempt", {
+      value: undefined,
+    });
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     await expect(
@@ -745,6 +753,7 @@ describe("direct-mode client", () => {
     Object.defineProperty(provider, "payExactTransaction", {
       value: async (request: ExactTransactionPaymentRequest) => {
         provider.exactPayments.push({
+          attemptId: request.attemptId,
           profile: request.profile,
           amount: request.amount,
           payTo: request.payTo,
@@ -807,6 +816,9 @@ describe("direct-mode client", () => {
     Object.defineProperty(provider, "payExactTransaction", {
       value: undefined,
     });
+    Object.defineProperty(provider, "finalizeExactPaymentAttempt", {
+      value: undefined,
+    });
     const client = makeClient({ provider, store: new MemoryChannelStore() });
 
     const payment = await client.createPayment(
@@ -865,7 +877,8 @@ describe("direct-mode client", () => {
 
   it("applies successful exact settlement without channel state", async () => {
     const provider = new FakeFundingProvider();
-    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
     const payment = await client.createPayment(
       encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
       {
@@ -889,6 +902,16 @@ describe("direct-mode client", () => {
     expect(settlement.channel).toBeUndefined();
     expect(settlement.chargedAmount).toBe("250");
     expect(settlement.transactionId).toBe(EXACT_TX_ID);
+    expect(
+      await store.loadExactPaymentAttempt(payment.exactAttemptId!),
+    ).toBeDefined();
+    expect(
+      await client.createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+        { url: "https://api.example.test/file" },
+      ),
+    ).toEqual(payment);
+    expect(provider.exactPayments).toHaveLength(1);
   });
 
   it("requires standard-native settlement evidence to echo the exact profile", async () => {
@@ -1797,11 +1820,15 @@ describe("direct-mode client", () => {
         attempts += 1;
         expect(init?.redirect).toBe("error");
         if (attempts === 1) {
-          return response(402, {
+          return response(
+            402,
+            {
             "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
               makeExactRequired({ amount: "100" }),
             ),
-          });
+            },
+            "https://api.example.test/data",
+          );
         }
         return response(200, {}, "https://attacker.example/payment", true);
       },
@@ -1812,6 +1839,286 @@ describe("direct-mode client", () => {
     ).rejects.toThrow("redirected away from the authorized request URL");
     expect(attempts).toBe(2);
     expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("reuses one persisted exact artifact after ambiguous HTTP completion", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactMode = "transaction";
+    const store = new MemoryChannelStore();
+    let calls = 0;
+    const fetch: FetchLike = async () => {
+      calls += 1;
+      if (calls % 2 === 1) {
+        return response(
+          402,
+          {
+            "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
+              makeExactRequired({ amount: "100" }),
+            ),
+          },
+          "https://api.example.test/file",
+        );
+      }
+      throw new Error("connection lost after disclosure");
+    };
+    let client = makeClient({
+      provider,
+      store,
+      fetch,
+    });
+
+    const failures: PendingExactPaymentError[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await client.paidFetch("https://api.example.test/file");
+      } catch (error) {
+        expect(error).toBeInstanceOf(PendingExactPaymentError);
+        failures.push(error as PendingExactPaymentError);
+        if (attempt === 0) {
+          const persisted = await store.loadExactPaymentAttempt(
+            (error as PendingExactPaymentError).payment.exactAttemptId!,
+          );
+          client = makeClient({
+            provider,
+            store: new MemoryChannelStore([], [], [], [persisted!]),
+            fetch,
+          });
+        }
+      }
+    }
+
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(failures[1]?.payment.paymentPayload).toEqual(
+      failures[0]?.payment.paymentPayload,
+    );
+    await expect(
+      store.loadExactPaymentAttempt(failures[0]!.payment.exactAttemptId!),
+    ).resolves.toMatchObject({ transactionId: EXACT_TX_ID });
+  });
+
+  it("revalidates a persisted exact artifact against the current challenge", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+    });
+    const context = {
+      url: "https://api.example.test/file",
+      requestHash: "91".repeat(32) as Hash32Hex,
+    };
+    const first = makeExactRequired({ amount: "100" });
+    await client.createPayment(encodePaymentRequiredHeader(first), context);
+    const changed = {
+      ...first,
+      extensions: {
+        "payment-identifier": paymentIdentifierExtension({ required: true }),
+      },
+    };
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(changed), context),
+    ).rejects.toMatchObject({ code: "missing_kaspa_payment_identifier" });
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("recovers an exact artifact before selecting a reordered batch offer", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+    });
+    const context = {
+      url: "https://api.example.test/file",
+      requestHash: "94".repeat(32) as Hash32Hex,
+    };
+    const exact = makeExactRequired({ amount: "100" });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(exact),
+      context,
+    );
+    const batch = makeRequired({ amount: "100" }).accepts[0]!;
+    const reordered = {
+      ...exact,
+      accepts: [
+        {
+          scheme: "exact",
+          network: "eip155:8453",
+          amount: "1000",
+          asset: "0x833589fCD6eDb6E08f4c7C32D4f71b54bdA02913",
+          payTo: "0x0000000000000000000000000000000000000001",
+          maxTimeoutSeconds: 60,
+          extra: {},
+        } as never,
+        batch,
+        exact.accepts[0]!,
+      ],
+    };
+
+    const recovered = await client.createPayment(
+      encodePaymentRequiredEnvelopeHeader(reordered),
+      context,
+    );
+
+    expect(recovered.scheme).toBe("exact");
+    expect(recovered.paymentPayload).toEqual(first.paymentPayload);
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(provider.deposits).toHaveLength(0);
+  });
+
+  it("constructs one exact artifact for concurrent calls with the same attempt", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+    });
+    const header = encodePaymentRequiredHeader(
+      makeExactRequired({ amount: "100" }),
+    );
+    const context = {
+      url: "https://api.example.test/file",
+      requestHash: "92".repeat(32) as Hash32Hex,
+    };
+
+    const [first, second] = await Promise.all([
+      client.createPayment(header, context),
+      client.createPayment(header, context),
+    ]);
+
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(second.paymentPayload).toEqual(first.paymentPayload);
+  });
+
+  it("rejects a second artifact for an already claimed exact attempt", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const payment = await makeClient({ provider, store }).createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "100" })),
+      { url: "https://api.example.test/file" },
+    );
+    const attempt = await store.loadExactPaymentAttempt(
+      payment.exactAttemptId!,
+    );
+    const conflicting = structuredClone(attempt!);
+    conflicting.transactionId = "95".repeat(32) as Hash32Hex;
+    conflicting.payment.transactionId = conflicting.transactionId;
+    conflicting.payment.paymentPayload.payload.transaction =
+      '{"transaction":"different-signed-exact"}';
+
+    await expect(store.claimExactPaymentAttempt(conflicting)).rejects.toThrow(
+      "conflicts with an unresolved payment",
+    );
+  });
+
+  it("rejects malformed exact attempt ids before invoking the provider", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "100" })),
+        {
+          url: "https://api.example.test/file",
+          paymentAttemptId: "../not-a-hash" as Hash32Hex,
+        },
+      ),
+    ).rejects.toThrow("attempt id must be 32-byte hex");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("reuses the provider artifact when client persistence fails", async () => {
+    const provider = new FakeFundingProvider();
+    const firstStore = new MemoryChannelStore();
+    vi.spyOn(firstStore, "claimExactPaymentAttempt").mockRejectedValueOnce(
+      new Error("simulated client persistence failure"),
+    );
+    const header = encodePaymentRequiredHeader(
+      makeExactRequired({ amount: "100" }),
+    );
+    const context = {
+      url: "https://api.example.test/file",
+      requestHash: "93".repeat(32) as Hash32Hex,
+    };
+
+    await expect(
+      makeClient({ provider, store: firstStore }).createPayment(
+        header,
+        context,
+      ),
+    ).rejects.toThrow("simulated client persistence failure");
+    const recovered = await makeClient({
+      provider,
+      store: new MemoryChannelStore(),
+    }).createPayment(header, context);
+
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(recovered.transactionId).toBe(EXACT_TX_ID);
+  });
+
+  it("rejects changed intent after provider preparation but before client persistence", async () => {
+    const provider = new FakeFundingProvider();
+    const firstStore = new MemoryChannelStore();
+    vi.spyOn(firstStore, "claimExactPaymentAttempt").mockRejectedValueOnce(
+      new Error("simulated client persistence failure"),
+    );
+    const context = {
+      url: "https://api.example.test/file",
+      requestHash: "97".repeat(32) as Hash32Hex,
+      paymentAttemptId: "96".repeat(32) as Hash32Hex,
+    };
+
+    await expect(
+      makeClient({ provider, store: firstStore }).createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "100" })),
+        context,
+      ),
+    ).rejects.toThrow("simulated client persistence failure");
+    await expect(
+      makeClient({ provider, store: new MemoryChannelStore() }).createPayment(
+        encodePaymentRequiredHeader(makeExactRequired({ amount: "101" })),
+        context,
+      ),
+    ).rejects.toThrow("exact payment attempt intent changed");
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("keeps rejected exact settlement pending until trusted absence", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactMode = "transaction";
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      exactPaymentReconciler: {
+        async reconcileExactPayment(attempt) {
+          return {
+            status: "absent",
+            transactionId: attempt.transactionId,
+          };
+        },
+      },
+    });
+    const header = encodePaymentRequiredHeader(
+      makeExactRequired({ amount: "100" }),
+    );
+    const context = { url: "https://api.example.test/file" };
+    const payment = await client.createPayment(header, context);
+    const settlement = await client.applySettlement(payment, {
+      success: false,
+      transaction: "",
+      network: "kaspa:testnet-10",
+    });
+
+    expect(settlement).toMatchObject({
+      pending: true,
+      transactionId: EXACT_TX_ID,
+    });
+    expect(await client.createPayment(header, context)).toEqual(payment);
+    expect(provider.exactPayments).toHaveLength(1);
+    await expect(
+      client.reconcileExactPayment(payment.exactAttemptId!),
+    ).resolves.toMatchObject({ finality: "absent", accepted: false });
+    await client.createPayment(header, context);
+    expect(provider.exactPayments).toHaveLength(2);
   });
 
   it("requires explicit requestHash for paidFetch bodies outside the JSON canonicalization profile", async () => {
@@ -1874,6 +2181,70 @@ describe("direct-mode client", () => {
     expect(result.result.content?.[0]?.text).toBe("paid data");
     expect(result.settlement?.chargedAmount).toBe("100");
     expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
+  });
+
+  it("reuses one persisted exact artifact after ambiguous MCP completion", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactMode = "transaction";
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+    let calls = 0;
+    const callTool = async (params: { _meta?: Record<string, unknown> }) => {
+      calls += 1;
+      if (!params._meta?.["x402/payment"])
+        return mcpPaymentRequiredResult(required);
+      throw new Error("MCP transport closed after disclosure");
+    };
+
+    const failures: PendingExactPaymentError[] = [];
+    for (let attempt = 0; attempt < 2; attempt += 1) {
+      try {
+        await paidMcpToolCall(
+          client,
+          callTool,
+          { name: "download", arguments: { id: "alpha" } },
+          { audience: MCP_AUDIENCE },
+        );
+      } catch (error) {
+        expect(error).toBeInstanceOf(PendingExactPaymentError);
+        failures.push(error as PendingExactPaymentError);
+      }
+    }
+
+    expect(calls).toBe(4);
+    expect(provider.exactPayments).toHaveLength(1);
+    expect(failures[1]?.payment.paymentPayload).toEqual(
+      failures[0]?.payment.paymentPayload,
+    );
+  });
+
+  it("blocks changed MCP resource terms from escaping an exact reservation", async () => {
+    const provider = new FakeFundingProvider();
+    provider.exactMode = "transaction";
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    let required = makeExactRequired({ amount: "100" });
+    const callTool = async (params: { _meta?: Record<string, unknown> }) => {
+      if (!params._meta?.["x402/payment"])
+        return mcpPaymentRequiredResult(required);
+      throw new Error("MCP transport closed after disclosure");
+    };
+    const invoke = () =>
+      paidMcpToolCall(
+        client,
+        callTool,
+        { name: "download", arguments: { id: "alpha" } },
+        { audience: MCP_AUDIENCE },
+      );
+
+    await expect(invoke()).rejects.toBeInstanceOf(PendingExactPaymentError);
+    required = {
+      ...required,
+      resource: { url: "https://changed.example.test/file" },
+    };
+    await expect(invoke()).rejects.toMatchObject({
+      code: "invalid_kaspa_exact_replay",
+    });
+    expect(provider.exactPayments).toHaveLength(1);
   });
 
   it("uses client mainnet opt-in for paid MCP tool calls", async () => {
@@ -2585,6 +2956,7 @@ function makeClient(options: {
   refundBuilder?: RefundTransactionBuilder;
   refundReconciler?: RefundReconciler;
   fundingTransitionReconciler?: FundingTransitionReconciler;
+  exactPaymentReconciler?: ExactPaymentReconciler;
   allowMainnet?: boolean;
   supportedNetworks?: readonly NetworkId[];
   supportedSchemes?: readonly PaymentScheme[];
@@ -2607,6 +2979,7 @@ function makeClient(options: {
     refundBuilder: options.refundBuilder,
     refundReconciler: options.refundReconciler,
     fundingTransitionReconciler: options.fundingTransitionReconciler,
+    exactPaymentReconciler: options.exactPaymentReconciler,
     allowMainnet: options.allowMainnet,
     supportedNetworks: options.supportedNetworks,
     supportedSchemes: options.supportedSchemes,
@@ -2937,6 +3310,7 @@ class FakeFundingProvider implements FundingProvider {
   readonly topUps: Array<{ targetFundingAmount: string }> = [];
   readonly batchAuthorizations: BatchPaymentAuthorizationRequest[] = [];
   readonly exactPayments: Array<{
+    attemptId: Hash32Hex;
     profile: ExactPaymentRequest["profile"];
     amount: string;
     payTo: string;
@@ -2949,6 +3323,13 @@ class FakeFundingProvider implements FundingProvider {
   readonly pendingFunding = new Map<
     string,
     { transactionId: string; successor: FundingProviderUtxo }
+  >();
+  readonly exactPaymentAttempts = new Map<
+    string,
+    {
+      intentHash: Hash32Hex;
+      result: Promise<ExactTransactionPaymentResult>;
+    }
   >();
   depositMode:
     | "outpoint"
@@ -2979,8 +3360,6 @@ class FakeFundingProvider implements FundingProvider {
   async getPublicIdentity() {
     return { address: "kaspatest:refund", publicKey: CLIENT_KEY };
   }
-
-  async authorizeExactPayment(_request: ExactTransactionPaymentRequest) {}
 
   async authorizeBatchPayment(request: BatchPaymentAuthorizationRequest) {
     this.batchAuthorizations.push(request);
@@ -3030,7 +3409,18 @@ class FakeFundingProvider implements FundingProvider {
   }
 
   async payExactTransaction(request: ExactTransactionPaymentRequest) {
+    const key = request.attemptId.toLowerCase();
+    const intentHash = exactPaymentAttemptIntentHash(request);
+    const existing = this.exactPaymentAttempts.get(key);
+    if (existing) {
+      if (existing.intentHash !== intentHash) {
+        throw new Error("exact payment attempt intent changed");
+      }
+      return existing.result;
+    }
+    const result = Promise.resolve().then(() => {
     this.exactPayments.push({
+        attemptId: request.attemptId,
       profile: request.profile,
       amount: request.amount,
       payTo: request.payTo,
@@ -3080,6 +3470,31 @@ class FakeFundingProvider implements FundingProvider {
       payerAddress: "kaspatest:refund",
       fundingSource: this.sourceKind,
     } as ExactTransactionPaymentResult;
+    });
+    this.exactPaymentAttempts.set(key, { intentHash, result });
+    try {
+      return await result;
+    } catch (error) {
+      if (this.exactPaymentAttempts.get(key)?.result === result) {
+        this.exactPaymentAttempts.delete(key);
+      }
+      throw error;
+    }
+  }
+
+  async finalizeExactPaymentAttempt(
+    request: ExactPaymentAttemptFinalizeRequest,
+  ) {
+    const key = request.attemptId.toLowerCase();
+    const existing = this.exactPaymentAttempts.get(key);
+    if (!existing) return;
+    const result = await existing.result;
+    if (
+      result.transactionId.toLowerCase() !== request.transactionId.toLowerCase()
+    ) {
+      throw new Error("exact transaction id does not match provider attempt");
+    }
+    this.exactPaymentAttempts.delete(key);
   }
 
   async prepareEscrowTopUp(request: {

@@ -68,6 +68,7 @@ type PaymentIdentifierReservation = {
 type RateWindowRecord = {
   resetAt: number;
   counts: Record<string, { count: number; lastSeenAt: number }>;
+  overflowCount?: number;
 };
 
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
@@ -213,7 +214,8 @@ export class GatewayLedger implements ServerStateStore {
       );
       if (
         attempt.prior
-          ? !currentChannel || !matchesExpectedChannel(currentChannel, attempt.prior)
+          ? !currentChannel ||
+            !matchesExpectedChannel(currentChannel, attempt.prior)
           : currentChannel !== undefined
       ) {
         throw new Error("channel state changed before batch settlement claim");
@@ -675,7 +677,9 @@ export class GatewayLedger implements ServerStateStore {
           paymentIdentifierReservationKey(record.paymentIdentifier.id),
         );
         if (!reserved || reserved.attemptId !== attempt.attemptId)
-          throw new Error("payment identifier is not reserved by this batch attempt");
+          throw new Error(
+            "payment identifier is not reserved by this batch attempt",
+          );
       }
       await putChannel(txn, record.channel);
       await txn.put(
@@ -843,10 +847,7 @@ export class GatewayLedger implements ServerStateStore {
       if (!current || current.status === "applied") return;
       await txn.delete(claimAttemptKey(attemptId));
       await txn.delete(openClaimKey(current.channelId));
-      await txn.put(
-        abandonedClaimAttemptKey(attemptId),
-        current.attemptEpoch,
-      );
+      await txn.put(abandonedClaimAttemptKey(attemptId), current.attemptEpoch);
     });
   }
 
@@ -901,20 +902,16 @@ export class GatewayLedger implements ServerStateStore {
     return this.#storage.transaction(async (txn) => {
       const stored = await txn.get<RateWindowRecord>(key);
       const current =
-        stored && stored.resetAt >= resetAt
-          ? stored
-          : { resetAt, counts: {} };
+        stored && stored.resetAt >= resetAt ? stored : { resetAt, counts: {} };
       const previous = current.counts[scopeHash];
       if (
         previous === undefined &&
         Object.keys(current.counts).length >= MAX_RATE_SCOPES_PER_WINDOW
       ) {
-        const oldest = Object.entries(current.counts).sort(
-          ([leftHash, left], [rightHash, right]) =>
-            left.lastSeenAt - right.lastSeenAt ||
-            leftHash.localeCompare(rightHash),
-        )[0];
-        if (oldest) delete current.counts[oldest[0]];
+        const count = (current.overflowCount ?? 0) + 1;
+        current.overflowCount = count;
+        await txn.put(key, current);
+        return { allowed: count <= limit, count, resetAt: current.resetAt };
       }
       const count = (previous?.count ?? 0) + 1;
       current.counts[scopeHash] = { count, lastSeenAt: nowMs };
@@ -997,24 +994,28 @@ export class DurableGatewayLockManager implements ChannelLockManager {
     }
     let lost = false;
     let renewal = Promise.resolve();
-    const heartbeat = setInterval(() => {
-      renewal = renewal.then(async () => {
-        if (
-          !(await this.#state.renewLock(
-            channelId,
-            token,
-            Date.now(),
-            this.#ttlMs,
-          ))
-        )
-          lost = true;
-      });
-    }, Math.max(10, Math.floor(this.#ttlMs / 3)));
+    const heartbeat = setInterval(
+      () => {
+        renewal = renewal.then(async () => {
+          if (
+            !(await this.#state.renewLock(
+              channelId,
+              token,
+              Date.now(),
+              this.#ttlMs,
+            ))
+          )
+            lost = true;
+        });
+      },
+      Math.max(10, Math.floor(this.#ttlMs / 3)),
+    );
     try {
       const result = await fn();
       clearInterval(heartbeat);
       await renewal;
-      if (lost) throw new Error("gateway lock lease was lost during protected work");
+      if (lost)
+        throw new Error("gateway lock lease was lost during protected work");
       return result;
     } finally {
       clearInterval(heartbeat);
@@ -1366,10 +1367,7 @@ async function putChannel(
   const registeredChannelId = await txn.get<string>(
     covenantChannelKey(covenantId),
   );
-  if (
-    registeredChannelId &&
-    registeredChannelId.toLowerCase() !== channelId
-  ) {
+  if (registeredChannelId && registeredChannelId.toLowerCase() !== channelId) {
     throw new Error(
       "covenant lineage is already registered to another channel",
     );

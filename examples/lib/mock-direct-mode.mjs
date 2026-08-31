@@ -1,4 +1,8 @@
-import { DirectModeClient, MemoryChannelStore } from "@kaspa-x402/client";
+import {
+  DirectModeClient,
+  MemoryChannelStore,
+  exactPaymentAttemptIntentHash,
+} from "@kaspa-x402/client";
 import {
   X402_VERSION,
   encodePaymentRequiredHeader,
@@ -21,7 +25,9 @@ export const CLIENT_PUBLIC_KEY = "22".repeat(32);
 export const REFUND_ADDRESS = "kaspatest:refund";
 export const PAYOUT_ADDRESS = "kaspatest:payout";
 
-export function createMockDirectModeEnvironment({ requirePaymentIdentifier = false } = {}) {
+export function createMockDirectModeEnvironment({
+  requirePaymentIdentifier = false,
+} = {}) {
   const chainProvider = new MockChainProvider();
   const fundingProvider = new MockFundingProvider(chainProvider);
   const addressCodec = new MockAddressCodec();
@@ -259,6 +265,7 @@ class MockFundingProvider {
 
   constructor(chainProvider) {
     this.chainProvider = chainProvider;
+    this.exactPaymentAttempts = new Map();
   }
 
   async getPublicIdentity() {
@@ -267,8 +274,6 @@ class MockFundingProvider {
       publicKey: CLIENT_PUBLIC_KEY,
     };
   }
-
-  async authorizeExactPayment() {}
 
   async authorizeBatchPayment() {}
 
@@ -370,6 +375,14 @@ class MockFundingProvider {
   }
 
   async payExactTransaction(request) {
+    const key = request.attemptId.toLowerCase();
+    const intentHash = exactPaymentAttemptIntentHash(request);
+    const existing = this.exactPaymentAttempts.get(key);
+    if (existing) {
+      if (existing.intentHash !== intentHash)
+        throw new Error("exact payment attempt intent changed");
+      return structuredClone(existing.result);
+    }
     const paymentIdentity =
       request.profile === "additive"
         ? request.head?.challengeId
@@ -395,7 +408,7 @@ class MockFundingProvider {
       inputIndex,
       expiresAt: request.authorizationExpiresAt,
     });
-    return {
+    const result = {
       transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       transactionId,
@@ -410,6 +423,24 @@ class MockFundingProvider {
       payerAddress: REFUND_ADDRESS,
       fundingSource: this.sourceKind,
     };
+    this.exactPaymentAttempts.set(key, {
+      intentHash,
+      result: structuredClone(result),
+    });
+    return result;
+  }
+
+  async finalizeExactPaymentAttempt(request) {
+    const key = request.attemptId.toLowerCase();
+    const existing = this.exactPaymentAttempts.get(key);
+    if (!existing) return;
+    if (
+      existing.result.transactionId.toLowerCase() !==
+      request.transactionId.toLowerCase()
+    ) {
+      throw new Error("exact transaction id does not match provider attempt");
+    }
+    this.exactPaymentAttempts.delete(key);
   }
 
   async getUtxos(addresses) {
