@@ -603,10 +603,16 @@ referenced by the bounded result.
 
 A corrective 402 is a new offer, not permission for a wallet to sign another
 payment automatically. The Alpha.11 clients accept `maxPaymentRetries: 0` only.
-Every replacement exact transaction requires a fresh explicit caller or wallet
-authorization. Funding providers MUST expose an `authorizeExactPayment`
-boundary, and deployments SHOULD pin allowed origins, profiles, recipients,
-and a maximum amount before signing.
+Every replacement exact transaction requires fresh explicit caller or wallet
+authorization. Funding providers MUST atomically authorize, reserve inputs,
+sign, and durably persist one artifact for each stable payment attempt id. A
+retry with the same id and immutable intent MUST return that artifact; changed
+intent MUST fail. The matching provider attempt is finalized before client
+recovery state is released, and only validated acceptance or trusted absence
+from authoritative chain reconciliation permits finalization. Merchant
+`PAYMENT-RESPONSE` fields alone are not finalization evidence. Deployments
+SHOULD pin allowed origins, profiles,
+recipients, and a maximum amount before signing.
 
 ## Additive concurrency and head recovery
 

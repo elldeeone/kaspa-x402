@@ -77,8 +77,8 @@
     {
       "source": "spec/kaspa-exact-v2.md",
       "target": "v0.1.0-alpha.11/spec/kaspa-exact-v2.md",
-      "bytes": 32943,
-      "sha256": "fe95c47ccb158112f6701a0296e7f8cad862f3aba02ee68728233e685dd2efe2"
+      "bytes": 33373,
+      "sha256": "e02b7d8bbd191a1f189bc74a5de8e5ffbe6f553cae511a8fa29f4b675a42fd42"
     },
     {
       "source": "spec/kaspa-batch-settlement-v2.md",
@@ -471,5 +471,5 @@
       "sha256": "3166000d7d09982bf913d8b499ccd46399ba64d4f4d9c30db246129afbb201b5"
     }
   ],
-  "contentSha256": "8cd8d00f3768f0bb4c554c77caf924f3254c75f2d0087b58ab9aceca7c370740"
+  "contentSha256": "c3805d32646412f2b72e4cccfdc7e35961a0056c4c43436f5d39998eafeb3c52"
 }
