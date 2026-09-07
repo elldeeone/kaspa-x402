@@ -1,3 +1,4 @@
+import { isLocalEndpointHost } from "./endpoint-host.js";
 import init, {
   ConnectStrategy,
   Encoding,
@@ -1120,10 +1121,7 @@ async function resetDemo() {
 }
 
 function isLocalPreview() {
-  return (
-    ["localhost", "127.0.0.1", "::1", ""].includes(location.hostname) ||
-    /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(location.hostname)
-  );
+  return location.hostname === "" || isLocalEndpointHost(location.hostname);
 }
 
 function customEndpointsEnabled() {
@@ -1134,14 +1132,6 @@ function customEndpointsEnabled() {
 
 function customEndpointFromQuery() {
   return new URLSearchParams(location.search).get("endpoint")?.trim() ?? "";
-}
-
-function isLocalEndpointHost(hostname) {
-  const clean = hostname.replace(/^\[|\]$/g, "");
-  return (
-    ["localhost", "127.0.0.1", "::1"].includes(clean) ||
-    /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(clean)
-  );
 }
 
 function disposePrivateKey() {

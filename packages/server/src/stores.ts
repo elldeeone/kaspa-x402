@@ -33,6 +33,7 @@ import type {
   ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
+  ExactSettlementClaimRequest,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ServerChannelRecord,
@@ -51,7 +52,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
   readonly #paymentIdentifierReservations = new Map<
     string,
-    { attemptId: Hash32Hex; fingerprint: Hash32Hex; paymentEvidenceHash: Hash32Hex; channelId: Hash32Hex }
+    { attemptId: Hash32Hex; scheme?: "exact" | "batch" }
   >();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
   readonly #abandonedClaimAttempts = new Map<Hash32Hex, string>();
@@ -152,7 +153,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
       const reservation = this.#paymentIdentifierReservations.get(
         paymentIdentifier.id,
       );
-      if (!reservation || reservation.attemptId !== attempt.attemptId)
+      if (!reservation || (reservation.attemptId !== attempt.attemptId || reservation.scheme === "exact"))
         throw new Error("payment identifier is not reserved by this batch attempt");
     }
     this.#assertChannelBinding(channel);
@@ -214,16 +215,14 @@ export class MemoryServerChannelStore implements ServerStateStore {
       const reserved = this.#paymentIdentifierReservations.get(
         attempt.paymentIdentifier,
       );
-      if (reserved && reserved.attemptId !== attempt.attemptId)
+      if (reserved && (reserved.attemptId !== attempt.attemptId || reserved.scheme === "exact"))
         throw new Error("payment identifier is already reserved");
     }
     this.#assertChannelBinding(attempt.adoptedChannel);
     if (attempt.paymentIdentifier) {
       this.#paymentIdentifierReservations.set(attempt.paymentIdentifier, {
         attemptId: attempt.attemptId,
-        fingerprint: attempt.requestFingerprint,
-        paymentEvidenceHash: attempt.paymentEvidenceHash,
-        channelId: attempt.channelId,
+        scheme: "batch",
       });
     }
     this.#setChannel(attempt.adoptedChannel);
@@ -308,30 +307,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
       return;
     }
     if (record.paymentIdentifier) {
-      const existingIdentifier = this.#paymentIdentifiers.get(
-        record.paymentIdentifier.id,
-      );
-      if (
-        existingIdentifier &&
-        (existingIdentifier.fingerprint !==
-          record.paymentIdentifier.fingerprint ||
-          existingIdentifier.paymentPayloadHash !==
-            record.paymentIdentifier.paymentPayloadHash ||
-          existingIdentifier.paymentScopeId !==
-            record.paymentIdentifier.paymentScopeId)
-      ) {
-        throw new Error(
-          "payment identifier was already committed for a different payment",
-        );
-      }
-      this.#paymentIdentifiers.set(
-        record.paymentIdentifier.id,
-        clone(record.paymentIdentifier),
-      );
+      this.#assertPaymentIdentifierAvailable(record.paymentIdentifier, payment.transactionId, "exact");
     }
     const attempt = this.#exactAttempts.get(
       payment.transactionId.toLowerCase(),
     );
+    if (attempt?.paymentIdentifier !== record.paymentIdentifier?.id && attempt)
+      throw new Error("exact payment identifier differs from claimed attempt");
     if (attempt) {
       if (
         attempt.status !== "accepted" ||
@@ -345,6 +327,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
         status: "applied",
         updatedAt: new Date().toISOString(),
       });
+    }
+    if (record.paymentIdentifier) {
+      this.#paymentIdentifiers.set(record.paymentIdentifier.id, clone(record.paymentIdentifier));
+      this.#paymentIdentifierReservations.delete(record.paymentIdentifier.id);
     }
     this.#exactPayments.set(key, payment);
   }
@@ -393,16 +379,33 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   async claimExactSettlement(
-    input: ExactSettlementAttemptRecord,
+    input: ExactSettlementClaimRequest,
   ): Promise<ExactSettlementClaimResult> {
-    const attempt = normalizeExactSettlementAttempt(input);
+    const { existingOnly, ...record } = input;
+    const attempt = normalizeExactSettlementAttempt(record);
     const existing = this.#exactAttempts.get(attempt.transactionId);
     if (existing) {
       if (!exactSettlementAttemptsMatch(existing, attempt))
         throw new Error(
           "exact transaction is already claimed for a different request",
         );
+      if (!existing.identifierAdmissionVersion) {
+        if (attempt.paymentIdentifier && existing.status !== "applied") {
+          if (this.#paymentIdentifiers.has(attempt.paymentIdentifier) || this.#paymentIdentifierReservations.has(attempt.paymentIdentifier))
+            throw new Error("legacy exact identifier conflicts with existing payment work");
+          this.#paymentIdentifierReservations.set(attempt.paymentIdentifier, { scheme: "exact", attemptId: attempt.transactionId });
+        }
+        existing.identifierAdmissionVersion = 1;
+        if (attempt.paymentIdentifier) existing.paymentIdentifier = attempt.paymentIdentifier;
+      }
       return { attempt: clone(existing), created: false };
+    }
+    if (existingOnly) throw new Error("first-seen accepted exact transactions cannot authorise new work");
+    if (attempt.paymentIdentifier) {
+      if (this.#paymentIdentifiers.has(attempt.paymentIdentifier))
+        throw new Error("payment identifier was already committed");
+      if (this.#paymentIdentifierReservations.has(attempt.paymentIdentifier))
+        throw new Error("payment identifier is already reserved");
     }
     if (attempt.profile === "additive") {
       if (!attempt.head)
@@ -413,6 +416,8 @@ export class MemoryServerChannelStore implements ServerStateStore {
     } else if (attempt.head) {
       throw new Error("standard-native exact settlement cannot claim a head");
     }
+    if (attempt.paymentIdentifier)
+      this.#paymentIdentifierReservations.set(attempt.paymentIdentifier, { scheme: "exact", attemptId: attempt.transactionId });
     this.#exactAttempts.set(attempt.transactionId, clone(attempt));
     return { attempt: clone(attempt), created: true };
   }
@@ -536,6 +541,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
           releaseExactHeadClaim(head, attempt, observedAt),
         );
     }
+    if (attempt.paymentIdentifier) this.#paymentIdentifierReservations.delete(attempt.paymentIdentifier);
     this.#exactAttempts.delete(attempt.transactionId);
     void reason;
   }
@@ -585,12 +591,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
   #assertPaymentIdentifierAvailable(
     paymentIdentifier: PaymentIdentifierRecord,
     reservedAttemptId?: Hash32Hex,
+    scheme: "batch" | "exact" = "batch",
   ): void {
     const reserved = this.#paymentIdentifierReservations.get(
       paymentIdentifier.id,
     );
-    if (reserved && reserved.attemptId !== reservedAttemptId)
-      throw new Error("payment identifier is reserved by pending batch work");
+    if (reserved && (reserved.attemptId !== reservedAttemptId || (reserved.scheme ?? "batch") !== scheme))
+      throw new Error("payment identifier is reserved by pending work");
     const existingIdentifier = this.#paymentIdentifiers.get(
       paymentIdentifier.id,
     );

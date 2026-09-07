@@ -292,7 +292,8 @@ export class DirectModeServer {
           asset: this.#config.asset,
           binding: "kaspa-exact-v2",
           paymentFlow: "upfront",
-          profile: this.#config.exactProfile,
+          defaultProfile: this.#config.exactProfile,
+          profiles: [this.#config.exactProfile],
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           ...(this.#config.exactProfile === "additive"
             ? {
@@ -568,7 +569,7 @@ export class DirectModeServer {
             const replay = await this.#checkExactReplay(verified, fingerprint);
             if (replay) return replay;
             try {
-              this.#assertExactAuthorizationLive(verified);
+              await this.#assertExactAuthorizationLive(verified);
             } catch (error) {
               return this.#correctiveResponse(
                 resource,
@@ -582,6 +583,7 @@ export class DirectModeServer {
               const claim = await this.#claimExactSettlement(
                 verified,
                 fingerprint,
+                paymentIdentifier,
               );
               verified = await this.#settleExactIfNeeded(verified, claim);
               const durableAttempt =
@@ -768,12 +770,7 @@ export class DirectModeServer {
             }
           }
           return this.#commitBatchResponse(
-            verified,
-            handlerResult,
-            chargedAmount,
-            fingerprint,
-            batchAttemptId,
-            paymentIdentifier,
+            verified, handlerResult, chargedAmount, batchAttemptId,
           );
         };
 
@@ -914,6 +911,75 @@ export class DirectModeServer {
     return (await this.#config.store.loadExactSettlementAttempt(
       transactionId,
     ))!;
+  }
+
+  /** Complete an accepted payment from durable evidence and an operator-confirmed outcome. */
+  async completeExactSettlement(transactionId: Hash32Hex, handlerResult?: ProtectedHandlerResult): Promise<ServerResponse> {
+    const committed = await this.#config.store.loadExactPayment(transactionId);
+    if (committed) return committed.response;
+    const attempt = await this.#config.store.loadExactSettlementAttempt(transactionId);
+    if (!attempt || attempt.status !== "accepted" || !isExactFinality(attempt.finality))
+      throw new Error("exact settlement must be accepted before completion");
+    if (attempt.identifierAdmissionVersion !== 1)
+      throw new Error("legacy exact settlement must bind its original payment identifier before completion");
+    const result = handlerResult ?? attempt.handlerResult;
+    if (!result) throw new Error("exact completion requires an operator-confirmed outcome");
+    const chargedAmount = result.chargedAmount ?? attempt.amount;
+    if (chargedAmount !== attempt.amount) throw new Error("exact completion amount must equal the accepted amount");
+    if (!attempt.handlerStartedAt) await this.#config.store.beginExactHandler(transactionId, new Date().toISOString());
+    await this.#config.store.recordExactHandlerResult(transactionId, result, new Date().toISOString());
+    const settlement: SettlementResponse = {
+      success: true, transaction: transactionId, network: this.#config.network, amount: chargedAmount,
+      extensions: kaspaSettlementExtensions({
+        exactProfile: attempt.profile, paymentOutputIndex: attempt.paymentOutputIndex,
+        finality: attempt.finality, requestHash: attempt.requestFingerprint,
+        ...(attempt.head ? { templateId: "kaspa-x402-kip10-additive-v1", headId: attempt.head.headId,
+          headVersion: attempt.head.expectedVersion, headOutpoint: attempt.head.expectedOutpoint } : {}),
+      }),
+    };
+    const response: ServerResponse = { status: result.status ?? 200,
+      headers: { ...(result.headers ?? {}), [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement) }, body: result.body };
+    await this.#config.store.commitExactPayment({
+      payment: { profile: attempt.profile, transactionId, paymentOutputIndex: attempt.paymentOutputIndex,
+        requestFingerprint: attempt.requestFingerprint, paymentRequirementsHash: attempt.paymentRequirementsHash,
+        paymentPayloadHash: attempt.paymentPayloadHash, requestAuthorizationId: attempt.requestAuthorizationId,
+        amount: chargedAmount, finality: attempt.finality, settlement, response },
+      ...(attempt.paymentIdentifier ? { paymentIdentifier: { id: attempt.paymentIdentifier,
+        fingerprint: attempt.requestFingerprint, paymentPayloadHash: attempt.paymentPayloadHash,
+        paymentScopeId: exactTransactionArtifactScopeId(attempt.transaction), transactionId,
+        paymentOutputIndex: attempt.paymentOutputIndex, settlement, response } } : {}),
+    });
+    return response;
+  }
+
+  /** Commit an operator-confirmed batch outcome; never infer failure from a thrown handler. */
+  async recoverBatchHandler(
+    attemptId: Hash32Hex,
+    handlerResult?: ProtectedHandlerResult,
+    originalPayment?: PaymentPayload,
+  ): Promise<ServerResponse> {
+    const stored = await this.#config.store.loadBatchSettlementAttempt(attemptId);
+    if (!stored || stored.status !== "pending")
+      throw new Error("batch handler is not awaiting operator recovery");
+    let attempt = stored;
+    if (originalPayment) {
+      if (originalPayment.accepted.scheme !== "batch-settlement" ||
+          (originalPayment.payload.type !== "deposit-voucher" && originalPayment.payload.type !== "voucher") ||
+          batchPaymentRequirementsHash(originalPayment.accepted) !== attempt.paymentRequirementsHash ||
+          batchPaymentEvidenceHash(originalPayment) !== attempt.paymentEvidenceHash ||
+          batchRequestAuthorizationId(batchAuthorization(originalPayment)) !== attempt.requestAuthorizationId ||
+          readPaymentIdentifier(originalPayment) !== attempt.paymentIdentifier)
+        throw new Error("batch recovery payload differs from the admitted payment");
+      attempt = { ...attempt, paymentRequirements: originalPayment.accepted,
+        paymentPayloadHash: paymentPayloadHash(originalPayment), paymentType: originalPayment.payload.type };
+    }
+    if (!attempt.paymentRequirements || !attempt.paymentPayloadHash || !attempt.paymentType)
+      throw new Error("legacy batch recovery requires the original payment payload");
+    const result = handlerResult ?? attempt.handlerResult;
+    if (!result) throw new Error("batch recovery requires an operator-confirmed outcome");
+    if (!attempt.handlerStartedAt) await this.#config.store.beginBatchHandler(attemptId, new Date().toISOString());
+    await this.#config.store.recordBatchHandlerResult(attemptId, result, new Date().toISOString());
+    return this.#commitBatchAttempt(attempt, result, result.chargedAmount ?? attempt.maximumCharge);
   }
 
   async reconcileExactHead(
@@ -1581,6 +1647,8 @@ export class DirectModeServer {
     );
     const verification =
       await this.#config.exactTransactionVerifier.verifyExactPayment({
+        // Verify signatures even after expiry; only matching durable recovery may proceed below.
+        allowExpiredAuthorization: true,
         network: accepted.network,
         profile,
         transaction: payload.transaction,
@@ -1653,7 +1721,7 @@ export class DirectModeServer {
         currentExpiryError === "expired_challenge";
       if (
         !currentlyExpiredEvidence ||
-        !(await this.#config.store.loadExactPayment(verification.transactionId))
+        !(await this.#hasDurableExactRecovery(verification.transactionId, paymentPayload, requestFingerprint))
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_signature",
@@ -1701,14 +1769,35 @@ export class DirectModeServer {
     };
   }
 
-  #assertExactAuthorizationLive(verified: VerifiedExactPayment): void {
+  async #hasDurableExactRecovery(
+    transactionId: Hash32Hex,
+    payload: PaymentPayload & { payload: ExactTransactionPayload; accepted: ExactPaymentRequirements },
+    fingerprint: Hash32Hex,
+  ): Promise<boolean> {
+    const attempt = await this.#config.store.loadExactSettlementAttempt(transactionId);
+    const record = attempt && (attempt.status === "accepted" || attempt.status === "applied")
+      ? attempt
+      : await this.#config.store.loadExactPayment(transactionId);
+    return !!record &&
+      record.requestFingerprint === fingerprint.toLowerCase() &&
+      record.paymentPayloadHash === paymentPayloadHash(payload) &&
+      record.paymentRequirementsHash === sha256Hex(stableStringify(payload.accepted)) &&
+      record.requestAuthorizationId === exactRequestAuthorizationId(payload.payload.authorization) &&
+      record.paymentOutputIndex === payload.payload.paymentOutputIndex &&
+      record.amount === payload.accepted.amount;
+  }
+
+  async #assertExactAuthorizationLive(verified: VerifiedExactPayment): Promise<void> {
     const expiryError = exactAuthorizationExpiryError({
       maxTimeoutSeconds: verified.accepted.maxTimeoutSeconds,
       authorizationExpiresAt:
         verified.paymentPayload.payload.authorization.expiresAt,
       ...(verified.head ? { challengeExpiresAt: verified.head.expiresAt } : {}),
     });
-    if (expiryError) {
+    if (expiryError && !(
+      (expiryError === "expired_authorization" || expiryError === "expired_challenge") &&
+      await this.#hasDurableExactRecovery(verified.transactionId, verified.paymentPayload, verified.paymentPayload.payload.requestHash)
+    )) {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         `exact request authorization expiry is invalid: ${expiryError}`,
@@ -1873,7 +1962,14 @@ export class DirectModeServer {
       channelId: payload.channelId,
       covenantId: utxo.covenantId,
       genesisEvidence: genesisEvidence!,
-      channelConfig: payload.channelConfig,
+      channelConfig: {
+        network: payload.channelConfig.network, asset: payload.channelConfig.asset,
+        templateId: payload.channelConfig.templateId,
+        clientPublicKey: payload.channelConfig.clientPublicKey,
+        serverPublicKey: payload.channelConfig.serverPublicKey,
+        payTo: payload.channelConfig.payTo, refundAddress: payload.channelConfig.refundAddress,
+        refundTimeoutDaa: payload.channelConfig.refundTimeoutDaa, salt: payload.channelConfig.salt,
+      },
       escrowAddress: payload.escrowAddress,
       activeOutpoint: payload.fundingOutpoint,
       activeScriptPublicKey: payload.activeScriptPublicKey,
@@ -2271,59 +2367,47 @@ export class DirectModeServer {
     verified: VerifiedBatchPayment,
     handlerResult: ProtectedHandlerResult,
     chargedAmount: SompiString,
-    fingerprint: Hash32Hex,
     batchAttemptId: Hash32Hex,
-    paymentIdentifier?: string,
+  ): Promise<ServerResponse> {
+    const attempt = await this.#config.store.loadBatchSettlementAttempt(batchAttemptId);
+    if (!attempt) return batchSettlementRecoveryRequiredResponse(500);
+    return this.#commitBatchAttempt({
+      ...attempt,
+      // Complete older journals using the authenticated payer retry.
+      paymentRequirements: verified.accepted,
+      paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+      paymentType: verified.paymentPayload.payload.type === "deposit-voucher" ? "deposit-voucher" : "voucher",
+    }, handlerResult, chargedAmount);
+  }
+
+  async #commitBatchAttempt(
+    attempt: BatchSettlementAttemptRecord,
+    handlerResult: ProtectedHandlerResult,
+    chargedAmount: SompiString,
   ): Promise<ServerResponse> {
     let pending: PendingSettlement;
-    try {
-      pending = this.#buildSuccessfulSettlement(
-        verified,
-        chargedAmount,
-        fingerprint,
-        paymentIdentifier,
-      );
-    } catch (error) {
-      void error;
-      return batchSettlementRecoveryRequiredResponse(500);
-    }
+    try { pending = this.#buildSuccessfulSettlement(attempt, chargedAmount); }
+    catch { return batchSettlementRecoveryRequiredResponse(500); }
     const { channel, settlement } = pending;
     const response: ServerResponse = {
       status: handlerResult.status ?? 200,
-      headers: {
-        ...(handlerResult.headers ?? {}),
-        [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement),
-      },
+      headers: { ...(handlerResult.headers ?? {}), [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement) },
       body: handlerResult.body,
     };
     try {
       await this.#config.store.commitSettlement({
-        batchAttemptId,
-        channel,
+        batchAttemptId: attempt.attemptId, channel,
         commitment: { ...pending.commitment, response },
-        ...(paymentIdentifier
-          ? {
-              paymentIdentifier: {
-                id: paymentIdentifier,
-                fingerprint,
-                paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
-                response,
-                settlement,
-                paymentScopeId: channel.channelId,
-                channelId: channel.channelId,
-              },
-            }
-          : {}),
-        expected: expectedSettlementChannelState(
-          verified.commitExpectedChannel,
-        ),
+        ...(attempt.paymentIdentifier ? {
+          paymentIdentifier: {
+            id: attempt.paymentIdentifier, fingerprint: attempt.requestFingerprint,
+            paymentPayloadHash: attempt.paymentPayloadHash!, response, settlement,
+            paymentScopeId: channel.channelId, channelId: channel.channelId,
+          },
+        } : {}),
+        expected: attempt.expected,
       });
-    } catch {
-      return {
-        status: 500,
-        headers: {},
-      };
-    }
+    } catch { return { status: 500, headers: {} }; }
     return response;
   }
 
@@ -2400,6 +2484,9 @@ export class DirectModeServer {
       batchAuthorization(verified.paymentPayload),
     );
     const attempt: BatchSettlementAttemptRecord = {
+      paymentRequirements: verified.accepted,
+      paymentPayloadHash: paymentPayloadHash(verified.paymentPayload),
+      paymentType: verified.paymentPayload.payload.type === "deposit-voucher" ? "deposit-voucher" : "voucher",
       attemptId: batchSettlementAttemptId({
         channelId: verified.channel.channelId,
         covenantId: verified.channel.covenantId,
@@ -2434,6 +2521,7 @@ export class DirectModeServer {
   async #claimExactSettlement(
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
+    paymentIdentifier?: string,
   ): Promise<ExactSettlementClaimResult> {
     if (!verified.transaction) {
       throw new KaspaX402Error(
@@ -2443,6 +2531,7 @@ export class DirectModeServer {
     }
     const now = new Date().toISOString();
     const attempt: ExactSettlementAttemptRecord = {
+      ...(paymentIdentifier ? { paymentIdentifier } : {}),
       transactionId: verified.transactionId,
       profile: verified.profile,
       amount: verified.accepted.amount,
@@ -2479,7 +2568,10 @@ export class DirectModeServer {
       );
     }
     try {
-      return await this.#config.store.claimExactSettlement(attempt);
+      return await this.#config.store.claimExactSettlement({
+        ...attempt,
+        existingOnly: verified.observedFinality === "accepted" || verified.observedFinality === "confirmed",
+      });
     } catch (error) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
@@ -2621,31 +2713,35 @@ export class DirectModeServer {
   }
 
   #buildSuccessfulSettlement(
-    verified: VerifiedBatchPayment,
+    attempt: BatchSettlementAttemptRecord,
     chargedAmount: SompiString,
-    fingerprint: Hash32Hex,
-    paymentIdentifier?: string,
   ): PendingSettlement {
+    if (!attempt.paymentRequirements || !attempt.paymentPayloadHash || !attempt.paymentType)
+      throw new Error("legacy batch recovery requires the original payer retry");
+    const voucher = latestVoucher(attempt.adoptedChannel);
+    if (!voucher) throw new Error("batch recovery is missing its admitted voucher");
+    const fingerprint = attempt.requestFingerprint;
+    const paymentIdentifier = attempt.paymentIdentifier;
     const chargedCumulativeAmount = formatSompiString(
-      parseSompiString(verified.channel.chargedCumulativeAmount) +
+      parseSompiString(attempt.adoptedChannel.chargedCumulativeAmount) +
         parseSompiString(chargedAmount),
     );
     const commitmentId = batchCommitmentId({
-      accepted: verified.accepted,
-      channelId: verified.channel.channelId,
+      accepted: attempt.paymentRequirements,
+      channelId: attempt.adoptedChannel.channelId,
       requestFingerprint: fingerprint,
-      activeOutpoint: verified.channel.activeOutpoint,
-      voucher: verified.voucher,
+      activeOutpoint: attempt.adoptedChannel.activeOutpoint,
+      voucher: voucher,
       chargedAmount,
-      chargedCumulativeBefore: verified.channel.chargedCumulativeAmount,
+      chargedCumulativeBefore: attempt.adoptedChannel.chargedCumulativeAmount,
       chargedCumulativeAfter: chargedCumulativeAmount,
-      claimedCumulativeAmount: verified.channel.claimedCumulativeAmount,
+      claimedCumulativeAmount: attempt.adoptedChannel.claimedCumulativeAmount,
     });
     const channel: ServerChannelRecord = {
-      ...verified.channel,
+      ...attempt.adoptedChannel,
       chargedCumulativeAmount,
-      signedMaxClaimable: verified.voucher.amount,
-      voucherSignature: verified.voucher.signature,
+      signedMaxClaimable: voucher.amount,
+      voucherSignature: voucher.signature,
       lastCommitmentId: commitmentId,
       status: "active",
     };
@@ -2654,12 +2750,12 @@ export class DirectModeServer {
       success: true,
       transaction: commitmentId,
       network: this.#config.network,
-      payer: verified.channel.channelConfig.refundAddress,
+      payer: attempt.adoptedChannel.channelConfig.refundAddress,
       amount: chargedAmount,
       extensions: kaspaSettlementExtensions({
         commitmentId,
         covenantId: channel.covenantId,
-        ...(verified.paymentPayload.payload.type === "deposit-voucher"
+        ...(attempt.paymentType === "deposit-voucher"
           ? { fundingAmount: channel.fundingAmount }
           : {}),
         chargedAmount,
@@ -2674,18 +2770,14 @@ export class DirectModeServer {
         channelId: channel.channelId,
         covenantId: channel.covenantId,
         requestFingerprint: fingerprint,
-        paymentRequirementsHash: batchPaymentRequirementsHash(
-          verified.accepted,
-        ),
-        paymentEvidenceHash: batchPaymentEvidenceHash(verified.paymentPayload),
-        requestAuthorizationId: batchRequestAuthorizationId(
-          batchAuthorization(verified.paymentPayload),
-        ),
+        paymentRequirementsHash: attempt.paymentRequirementsHash,
+        paymentEvidenceHash: attempt.paymentEvidenceHash,
+        requestAuthorizationId: attempt.requestAuthorizationId,
         activeOutpoint: channel.activeOutpoint,
         activeScriptPublicKey: channel.activeScriptPublicKey,
-        voucher: verified.voucher,
+        voucher: voucher,
         chargedAmount,
-        chargedCumulativeBefore: verified.channel.chargedCumulativeAmount,
+        chargedCumulativeBefore: attempt.adoptedChannel.chargedCumulativeAmount,
         chargedCumulativeAfter: chargedCumulativeAmount,
         claimedCumulativeAmount: channel.claimedCumulativeAmount,
         ...(paymentIdentifier ? { paymentIdentifier } : {}),
@@ -2931,12 +3023,15 @@ export class DirectModeServer {
           body: { error: "exact_settlement_recovery_required" },
         };
       }
-      const paymentRequired = await this.#buildRuntimePaymentRequired({
-        resource,
-        amount: paymentAmount,
-        scheme: "exact",
-        error: errorReason,
-      });
+      let paymentRequired: PaymentRequired;
+      try {
+        paymentRequired = await this.#buildRuntimePaymentRequired({
+          resource, amount: paymentAmount, scheme: "exact", error: errorReason,
+        });
+      } catch (challengeError) {
+        if (!(challengeError instanceof KaspaX402Error) || challengeError.message !== "additive exact head is unavailable") throw challengeError;
+        return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } };
+      }
       return {
         status: 402,
         headers: {

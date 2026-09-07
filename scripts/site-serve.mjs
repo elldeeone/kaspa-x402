@@ -1,3 +1,4 @@
+import { isLocalEndpointHost } from "../site/src/assets/endpoint-host.js";
 import fs from "node:fs";
 import http from "node:http";
 import path from "node:path";
@@ -132,11 +133,6 @@ function cspSourceForCustomEndpoint(value) {
   } catch {
     return undefined;
   }
-}
-
-function isLocalEndpointHost(hostname) {
-  const clean = hostname.replace(/^\[|\]$/g, "");
-  return ["localhost", "127.0.0.1", "::1"].includes(clean) || /^10\.|^192\.168\.|^172\.(?:1[6-9]|2\d|3[01])\./.test(clean);
 }
 
 function matchRedirect(pathname) {

@@ -8,7 +8,13 @@ export class GatewayState extends DurableObject<GatewayEnv> {
 
   constructor(ctx: DurableObjectState, env: GatewayEnv) {
     super(ctx, env);
-    this.#ledger = new GatewayLedger(ctx.storage as GatewayStorage);
+    this.#ledger = new GatewayLedger(ctx.storage as GatewayStorage, {
+      // Hosted policy: leave space for admitted completion and operator recovery.
+      assertCapacity() {
+        if (ctx.storage.sql.databaseSize >= 512 * 1024 * 1024)
+          throw new Error("settlement storage admission limit reached; operator maintenance required");
+      },
+    });
   }
 
   async fetch(request: Request): Promise<Response> {

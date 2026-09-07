@@ -334,6 +334,33 @@ function defineStoreContract(factory: StoreFactory): void {
     });
   });
 
+  it("rejects first-seen accepted artifacts atomically but permits admitted recovery", async () => {
+    const store = await factory.create();
+    const attempt = exactSettlementAttempt({ profile: "standard-native", head: undefined });
+    for (let retry = 0; retry < 2; retry++) {
+      await expect(store.claimExactSettlement({ ...attempt, existingOnly: true })).rejects.toThrow(/first-seen/);
+      expect(await store.loadExactSettlementAttempt(TX)).toBeUndefined();
+    }
+    await store.claimExactSettlement(attempt);
+    await expect(store.claimExactSettlement({ ...attempt, existingOnly: true })).resolves.toMatchObject({ created: false });
+  });
+
+  it("reserves exact identifiers across transactions and batch work until trusted abandonment", async () => {
+    let store = await factory.create([channel()]);
+    const id = paymentIdentifier().id;
+    const attempt = exactSettlementAttempt({ profile: "standard-native", head: undefined, paymentIdentifier: id });
+    await store.claimExactSettlement(attempt);
+    if (store instanceof DurableMockServerChannelStore) store = await store.restart();
+    await expect(store.claimExactSettlement({ ...attempt, transactionId: OTHER_TX })).rejects.toThrow(/reserved/);
+    await expect(store.claimBatchSettlement(batchSettlementAttempt(channel(), { paymentIdentifier: id }))).rejects.toThrow(/reserved/);
+    await expect(store.claimExactSettlement({ ...attempt, paymentIdentifier: "another_payment_identifier" })).rejects.toThrow(/different request/);
+    await expect(store.commitExactPayment({ payment: exactPayment(), paymentIdentifier: paymentIdentifier() })).rejects.toThrow(/not ready/);
+    expect(await store.loadPaymentIdentifier(id)).toBeUndefined();
+    await store.abandonExactSettlement(TX, "trusted rejection", "2026-07-07T00:00:03.000Z");
+    await store.claimBatchSettlement(batchSettlementAttempt(channel(), { paymentIdentifier: id }));
+    await expect(store.claimExactSettlement(attempt)).rejects.toThrow(/reserved/);
+  });
+
   it("claims one additive head winner, advances by compare-and-swap, and prevents handler replay", async () => {
     let store = await factory.create();
     await store.registerExactHead(exactHead());

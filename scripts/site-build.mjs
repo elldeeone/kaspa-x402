@@ -2,7 +2,7 @@ import crypto from "node:crypto";
 import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
-import { isPublishableDirtyPath } from "./site-inputs.mjs";
+import { isPublishableDirtyPath, containedRegularFile } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
@@ -1344,7 +1344,7 @@ function readReleaseLock(version) {
   const fullPath = path.join(root, relativePath);
   if (!fs.existsSync(fullPath)) return undefined;
   return {
-    ...JSON.parse(fs.readFileSync(fullPath, "utf8")),
+    ...JSON.parse(fs.readFileSync(containedRegularFile(root, fullPath), "utf8")),
     path: relativePath,
   };
 }
@@ -1441,7 +1441,7 @@ function siteSourceInputs() {
 
 function trackedFiles(relativeDir) {
   const files = new Set(
-    git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
+    git(["ls-files", "-z", relativeDir]).split("\0").filter(Boolean),
   );
   return [...files]
     .filter((file) => fs.existsSync(path.join(root, file)))
@@ -1465,7 +1465,7 @@ function listFiles(relativeDir) {
 function copyFile(source, target) {
   const targetPath = path.join(outDir, target);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.copyFileSync(path.join(root, source), targetPath);
+  fs.copyFileSync(containedRegularFile(root, source), targetPath);
 }
 
 function writeHtml(target, html) {
@@ -1483,7 +1483,7 @@ function writeText(target, value) {
 }
 
 function readText(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), "utf8");
+  return fs.readFileSync(containedRegularFile(root, relativePath), "utf8");
 }
 
 function readJson(relativePath) {
@@ -1506,7 +1506,7 @@ function htmlRoute(file) {
 function sha256File(file) {
   return crypto
     .createHash("sha256")
-    .update(fs.readFileSync(file))
+    .update(fs.readFileSync(containedRegularFile(root, file)))
     .digest("hex");
 }
 

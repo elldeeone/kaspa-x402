@@ -113,7 +113,9 @@ export async function handlePaidMcpToolCall(
       });
       return {
         body: result.result,
-        chargedAmount: result.chargedAmount,
+        chargedAmount: context.payment.scheme === "batch-settlement" && result.result.isError
+          ? "0"
+          : result.chargedAmount,
       };
     },
   );

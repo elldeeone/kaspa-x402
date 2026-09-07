@@ -11,6 +11,7 @@ import type {
   ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
+  ExactSettlementClaimRequest,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ProtectedHandlerResult,
@@ -135,7 +136,7 @@ export class RemoteGatewayState implements GatewayStateClient {
   }
 
   claimExactSettlement(
-    record: ExactSettlementAttemptRecord,
+    record: ExactSettlementClaimRequest,
   ): Promise<ExactSettlementClaimResult> {
     return this.#call("claimExactSettlement", { record });
   }
@@ -286,15 +287,6 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   releaseLock(key: string, token: string): Promise<void> {
     return this.#call("releaseLock", { key, token });
-  }
-
-  checkRateLimit(
-    scope: string,
-    nowMs: number,
-    limit: number,
-    windowMs: number,
-  ): Promise<{ allowed: boolean; count: number; resetAt: number }> {
-    return this.#call("checkRateLimit", { scope, nowMs, limit, windowMs });
   }
 
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {

@@ -25,7 +25,7 @@ Important non-secret variables:
 | Variable                                     | Purpose                                                                                                                                                        |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_GATEWAY_ENABLED`                 | Set to `false` to stop protected exact and batch endpoints with HTTP `503`. `/health`, `/canary`, `/metrics`, and `/supported` remain visible.                 |
-| `KASPA_X402_CHAIN_API_BASE`                  | Operator-controlled authoritative Kaspa REST node used for chain reads and acceptance evidence. Current value: `https://api-tn10.kaspa.org`.                  |
+| `KASPA_X402_CHAIN_API_BASE`                  | Configured authoritative REST service for chain reads and acceptance evidence. Checked-in default: `https://api-tn10.kaspa.org`; ownership is not established.                  |
 | `KASPA_X402_PAY_TO`                          | Testnet address receiving exact payments.                                                                                                                      |
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
@@ -49,7 +49,7 @@ Secret variables:
 
 | Variable                 | Purpose                                                                                                                                   |
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
-| `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration, reconciliation, and stats endpoints. Set with `wrangler secret put`; do not commit it. |
+| `KASPA_X402_ADMIN_TOKEN` | 32 cryptographically random bytes encoded as 64 hex characters, for head administration and settlement recovery. Set with `wrangler secret put`; do not commit it. |
 
 ## Alpha.11 Cutover
 
@@ -377,3 +377,26 @@ Follow-up:
 ```
 
 Keep incident notes factual and testnet-scoped.
+
+## Admission and recovery policy
+
+The Worker uses native `GATEWAY_RATE_LIMIT` (60 requests per 60 seconds per IP and profile/status scope) and `ADMIN_RATE_LIMIT` (10 per 60 seconds per IP). Missing or failed bindings fail closed. These are per-location abuse controls, not global accounting quotas. Public status responses are cached for 15 seconds with query-independent keys; canary timestamps retain their original observation time.
+
+New settlement admission is atomic and stops at 64 unresolved exact/batch attempts or a SQLite database size of 512 MiB. Existing replay, completion and operator recovery remain available. This is a hosted operating policy with recovery headroom, not a protocol storage limit. Retained financial and replay records are not deleted on a timer. At the storage threshold, pause new business and plan an audited archive/cutover that preserves outstanding economic state and replay protections; do not delete journals to regain space.
+
+The following POST routes require the admin bearer token and HTTPS (loopback is allowed for local checks). The JSON body is capped at 64 KiB:
+
+| Route | Body and effect |
+| --- | --- |
+| `/admin/exact-settlements/reconcile` | `{transactionId}` checks the stored transaction against the configured REST authority. Missing or inconclusive evidence remains unknown and retains its slot. |
+| `/admin/exact-settlements/complete` | `{transactionId, handlerResult?}` completes an accepted attempt from its stored result or an operator-confirmed application outcome. It commits replay state and releases admission without a payer retry or a chain call. |
+| `/admin/exact-settlements/reject` | `{transactionId, confirmedFinalRejection: true, reason}` releases an unaccepted attempt only on an operator's attestation of final rejection evidence, such as a confirmed conflicting input spend. A timeout, transaction absence or elapsed lease is insufficient. The route trusts this operator attestation; it does not prove it. Accepted attempts cannot be abandoned. |
+| `/admin/batch-settlements/complete` | `{attemptId, handlerResult?, originalPayment?}` commits a stored or operator-confirmed outcome and releases the lane. A confirmed failed batch operation can use `chargedAmount: "0"`; uncertain work must remain pending. Older attempts missing completion metadata require their matching original payment payload. |
+
+Confirm application effects before supplying a result: these routes do not rerun protected work. `handlerResult` uses the SDK's `{status?, headers?, body?, chargedAmount?}` shape. Exact completion must charge the accepted amount; it cannot reverse an on-chain payment. An unfinished legacy exact attempt must bind its original identifier through its matching original retry before operator completion. New admission remains quarantined while unresolved legacy identifier state exists.
+
+Admin token validation enforces the 64-hex format, not randomness. Generate the token with a cryptographic random generator (for example `openssl rand -hex 32`) and provision it through the secret mechanism. No deployed token was inspected or rotated during the local remediation.
+
+## Chain evidence authority
+
+The configured REST service is trusted to report UTXOs, accepted transactions, outputs and additive lineage truthfully. This one authority covers batch funding, exact acceptance, broadcast reconciliation and head recovery. PNN transaction submission does not independently verify REST acceptance. The public default endpoint's ownership and deployed overrides have not been verified. Deploy only with an explicitly accepted evidence authority; deployments requiring reduced trust need independent node verification. The six REST findings are variants of this shared operational assumption, not six independent verification mechanisms.

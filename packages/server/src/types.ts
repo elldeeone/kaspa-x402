@@ -241,6 +241,8 @@ export interface ExactHeadUnavailableResult {
 }
 
 export interface ExactTransactionVerificationRequest {
+  /** Authenticate expired evidence for durable recovery; caller must enforce expiry before new work. */
+  allowExpiredAuthorization?: boolean;
   network: NetworkId;
   profile: ExactProfile;
   transaction: PreparedTransaction;
@@ -400,6 +402,9 @@ export interface ExactSettlementHeadClaim {
  * broadcast or invoke protected application work.
  */
 export interface ExactSettlementAttemptRecord {
+  /** Marks identifier admission performed by this store version, including absent identifiers. */
+  identifierAdmissionVersion?: 1;
+  paymentIdentifier?: string;
   transactionId: Hash32Hex;
   profile: ExactProfile;
   amount: SompiString;
@@ -421,6 +426,11 @@ export interface ExactSettlementAttemptRecord {
   handlerCompletedAt?: string;
   head?: ExactSettlementHeadClaim;
   recoveryReason?: string;
+}
+
+export interface ExactSettlementClaimRequest extends ExactSettlementAttemptRecord {
+  /** Atomically reject first-seen artifacts already accepted on chain. */
+  existingOnly?: boolean;
 }
 
 export interface ExactSettlementClaimResult {
@@ -469,6 +479,10 @@ export type BatchSettlementAttemptStatus = "pending" | "applied";
 
 /** Durable evidence written before protected batch work can begin. */
 export interface BatchSettlementAttemptRecord {
+  /** Persisted completion terms permit trusted recovery without a payer retry. */
+  paymentRequirements?: BatchPaymentRequirements;
+  paymentPayloadHash?: Hash32Hex;
+  paymentType?: "deposit-voucher" | "voucher";
   attemptId: Hash32Hex;
   channelId: Hash32Hex;
   covenantId: Hash32Hex;
@@ -561,7 +575,7 @@ export interface ExactHeadStore {
   ): Promise<ExactHeadRecord | undefined>;
   /** Atomically claims a transaction and, for additive exact, its expected head snapshot. */
   claimExactSettlement(
-    attempt: ExactSettlementAttemptRecord,
+    attempt: ExactSettlementClaimRequest,
   ): Promise<ExactSettlementClaimResult>;
   loadExactSettlementAttempt(
     transactionId: Hash32Hex,

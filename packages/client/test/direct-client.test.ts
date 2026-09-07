@@ -404,6 +404,9 @@ describe("direct-mode client", () => {
     expect(signer.requestAuthorizationSignCount).toBe(1);
     expect(provider.batchAuthorizations).toEqual([
       {
+        currentDaaScore: "1000",
+        refundTimeoutDaa: "1000",
+        refundHorizonDaa: "0",
         network: "kaspa:testnet-10",
         origin: "https://api.example.test",
         resourceUrl: "https://api.example.test/data",
@@ -420,6 +423,9 @@ describe("direct-mode client", () => {
         fundingSource: undefined,
       },
       {
+        currentDaaScore: "1000",
+        refundTimeoutDaa: "1000",
+        refundHorizonDaa: "0",
         network: "kaspa:testnet-10",
         origin: "https://api.example.test",
         resourceUrl: "https://api.example.test/data",
@@ -466,6 +472,36 @@ describe("direct-mode client", () => {
       resultingFundingAmount: "2000",
       resultingVoucherAmount: "1050",
     });
+  });
+
+  it("bounds the refund horizon before funding and exposes the approved horizon", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "0";
+    const signer = new FakeSigner();
+    const required = makeRequired({ amount: "100" });
+    (required.accepts[0] as BatchPaymentRequirements).extra.refundTimeoutDaa = "36001";
+    const client = makeClient({ provider, signer });
+    await expect(client.createPayment(encodePaymentRequiredHeader(required), { url: "https://api.example.test/data" })).rejects.toThrow("refund horizon exceeds");
+    expect(provider.deposits).toHaveLength(0);
+    expect(signer.voucherSignCount).toBe(0);
+    const approved = makeClient({ provider, signer, fundingPolicy: { maximumBatchRefundHorizonDaa: "36001" } });
+    await approved.createPayment(encodePaymentRequiredHeader(required), { url: "https://api.example.test/data" });
+    expect(provider.batchAuthorizations[0]).toMatchObject({ currentDaaScore: "0", refundTimeoutDaa: "36001", refundHorizonDaa: "36001" });
+  });
+
+  it.each(["100", "950"])("enforces the refund horizon on channel reuse/top-up for amount %s", async (amount) => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "0";
+    const signer = new FakeSigner();
+    const policy = { maximumBatchRefundHorizonDaa: "1000" };
+    const client = makeClient({ provider, signer, fundingPolicy: policy });
+    const first = await client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), { url: "https://api.example.test/data" });
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+    policy.maximumBatchRefundHorizonDaa = "999";
+    await expect(client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount })), { url: "https://api.example.test/data" })).rejects.toThrow("refund horizon exceeds");
+    expect(provider.deposits).toHaveLength(1);
+    expect(provider.topUps).toHaveLength(0);
+    expect(signer.voucherSignCount).toBe(1);
   });
 
   it("rejects batch charges above the funding policy before authorization", async () => {
@@ -1035,7 +1071,7 @@ describe("direct-mode client", () => {
           url: "https://api.example.test/data",
         },
       ),
-    ).rejects.toThrow("below the required funding target");
+    ).rejects.toThrow("differs from the approved funding target");
   });
 
   it("applies the channel funding cap to the provider's actual deposit", async () => {
@@ -1052,11 +1088,11 @@ describe("direct-mode client", () => {
         encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
         { url: "https://api.example.test/data" },
       ),
-    ).rejects.toThrow("batch channel funding exceeds funding policy");
+    ).rejects.toThrow("differs from the approved funding target");
     expect(provider.sendCount).toBe(0);
   });
 
-  it("accepts a provider-selected larger deposit within the channel funding cap", async () => {
+  it("rejects a provider-selected larger deposit even within the channel funding cap", async () => {
     const provider = new FakeFundingProvider();
     provider.depositMode = "outpoint-overfunded";
     const client = makeClient({
@@ -1065,13 +1101,11 @@ describe("direct-mode client", () => {
       fundingPolicy: { maximumBatchChannelFundingSompi: "1001" },
     });
 
-    const payment = await client.createPayment(
+    await expect(client.createPayment(
       encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
       { url: "https://api.example.test/data" },
-    );
-
-    expect(payment.channel?.fundingAmount).toBe("1001");
-    expect(provider.sendCount).toBe(1);
+    )).rejects.toThrow("differs from the approved funding target");
+    expect(provider.sendCount).toBe(0);
   });
 
   it("recovers a prepared genesis after transport uncertainty without rebuilding it", async () => {
@@ -1701,7 +1735,9 @@ describe("direct-mode client", () => {
     );
   });
 
-  it("drives paid HTTP fetch with PAYMENT headers", async () => {
+  it.each(["https://api.example.test/data", "/data"])("drives paid HTTP fetch with canonical origin policy for %s", async (url) => {
+    vi.stubGlobal("location", { href: "https://api.example.test/application" });
+    try {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const requiredHeader = encodePaymentRequiredHeader(
@@ -1711,7 +1747,9 @@ describe("direct-mode client", () => {
     const client = makeClient({
       provider,
       store,
+      fundingPolicy: { allowedOrigins: ["https://api.example.test"] },
       fetch: async (_input, init) => {
+        expect(_input).toBe("https://api.example.test/data");
         const paymentHeader =
           init?.headers && !Array.isArray(init.headers)
             ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER]
@@ -1734,11 +1772,12 @@ describe("direct-mode client", () => {
       },
     });
 
-    const result = await client.paidFetch("https://api.example.test/data");
+    const result = await client.paidFetch(url);
 
     expect(result.response.status).toBe(200);
     expect(capturedPayment?.payload.type).toBe("deposit-voucher");
     expect(result.settlement?.channel!.chargedCumulativeAmount).toBe("100");
+    } finally { vi.unstubAllGlobals(); }
   });
 
   it("rejects redirected payment challenges before signing", async () => {
@@ -1776,7 +1815,7 @@ describe("direct-mode client", () => {
         provider: new FakeFundingProvider(),
         store: new MemoryChannelStore(),
         fetch: async (input, init) => {
-          expect(input).toBe("/data");
+          expect(input).toBe("https://api.example.test/data");
           expect(init?.redirect).toBe("error");
           return response(200, {}, "https://api.example.test/data");
         },

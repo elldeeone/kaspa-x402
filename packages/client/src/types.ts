@@ -154,6 +154,9 @@ export interface ExactTransactionPaymentResult {
 }
 
 export interface BatchPaymentAuthorizationRequest {
+  currentDaaScore: SompiString;
+  refundTimeoutDaa: SompiString;
+  refundHorizonDaa: SompiString;
   network: NetworkId;
   origin: string;
   resourceUrl: string;
@@ -242,6 +245,8 @@ export interface FundingPolicy {
   maximumExactAmountSompi?: SompiString;
   maximumBatchAmountSompi?: SompiString;
   maximumBatchChannelFundingSompi?: SompiString;
+  /** Maximum remaining refund lock in DAA scores; defaults to 36,000. */
+  maximumBatchRefundHorizonDaa?: SompiString;
 }
 
 export interface ChannelKey {

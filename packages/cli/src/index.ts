@@ -566,13 +566,28 @@ function readCovenantFixture(
   name: string,
 ): { fixture: unknown; source: Uint8Array } {
   const fixturePath = path.join(root, "contracts", "fixtures", name);
-  const fixture = JSON.parse(fs.readFileSync(fixturePath, "utf8"));
+  const fixture = JSON.parse(readFixtureFile(root, fixturePath).toString("utf8"));
   if (!isRecord(fixture) || typeof fixture.source !== "string")
     throw new CliError(`${name} covenant fixture is missing source`);
   return {
     fixture,
-    source: fs.readFileSync(path.join(root, fixture.source)),
+    source: readFixtureFile(root, path.resolve(root, fixture.source)),
   };
+}
+
+function readFixtureFile(root: string, filename: string): Buffer {
+  const base = fs.realpathSync(root);
+  const resolved = fs.realpathSync(filename);
+  const relative = path.relative(base, resolved);
+  if (relative === ".." || relative.startsWith(`..${path.sep}`) || path.isAbsolute(relative))
+    throw new CliError("covenant fixture input escapes the validation root");
+  const fd = fs.openSync(resolved, fs.constants.O_RDONLY | fs.constants.O_NOFOLLOW | fs.constants.O_NONBLOCK);
+  try {
+    const stat = fs.fstatSync(fd);
+    if (!stat.isFile() || stat.size > 2 * 1024 * 1024)
+      throw new CliError("covenant fixture input must be a regular file at most 2 MiB");
+    return fs.readFileSync(fd);
+  } finally { fs.closeSync(fd); }
 }
 
 function parseArgs(argv: string[]): ParsedArgs {

@@ -16,6 +16,10 @@
   "triggers": {
     "crons": ["*/15 * * * *"],
   },
+  "ratelimits": [
+    { "name": "GATEWAY_RATE_LIMIT", "namespace_id": "4021101", "simple": { "limit": 60, "period": 60 } },
+    { "name": "ADMIN_RATE_LIMIT", "namespace_id": "4021102", "simple": { "limit": 10, "period": 60 } },
+  ],
   "durable_objects": {
     "bindings": [
       {
@@ -45,7 +49,6 @@
     "KASPA_X402_MINIMUM_REFUND_LEAD_DAA": "1000",
     "KASPA_X402_MAX_TIMEOUT_SECONDS": "60",
     "KASPA_X402_CLAIM_FEE_SOMPI": "10000",
-    "KASPA_X402_RATE_LIMIT_PER_MINUTE": "60",
     "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org",
     "KASPA_X402_SITE_BASE_URL": "https://kaspa-x402.org",
     "KASPA_X402_RELEASE_VERSION": "0.1.0-alpha.11",

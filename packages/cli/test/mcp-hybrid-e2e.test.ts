@@ -44,7 +44,7 @@ describe("MCP hybrid settlement failure E2E", () => {
       buildPaymentRequired: () => required,
       async handlePaidRequest(
         request: { headers?: Record<string, string> },
-        handler: () => Promise<unknown>,
+        handler: (context: { payment: { scheme: "exact" } }) => Promise<unknown>,
       ) {
         serverCalls += 1;
         if (!request.headers?.["PAYMENT-SIGNATURE"]) {
@@ -58,7 +58,7 @@ describe("MCP hybrid settlement failure E2E", () => {
         }
 
         protectedExecutions += 1;
-        await handler();
+        await handler({ payment: { scheme: "exact" } });
         return {
           status: 500,
           headers: {

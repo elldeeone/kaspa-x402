@@ -130,7 +130,7 @@ describe("direct-mode facilitator", () => {
   });
 
   it("verifies exact payments with the same payer and metadata as direct verification", async () => {
-    const { server, facilitator } = makeFacilitator();
+    const { server, facilitator } = makeFacilitator({}, { exactFinality: "accepted" });
     const paymentPayload = makeExactPayment(server);
     const paymentRequirements = paymentPayload.accepted;
 
@@ -265,7 +265,7 @@ describe("direct-mode facilitator", () => {
     });
   });
 
-  it("verifies and settles standard-native exact without head state", async () => {
+  it("rejects unsettled exact verification and then settles without head state", async () => {
     const { facilitator, server, store } = makeFacilitator({
       exactProfile: "standard-native",
     });
@@ -286,7 +286,7 @@ describe("direct-mode facilitator", () => {
       requestHash: REQUEST_HASH,
     });
 
-    expect(verify).toMatchObject({ isValid: true, payer: "kaspatest:refund" });
+    expect(verify).toMatchObject({ isValid: false });
     expect(settlement).toMatchObject({
       success: true,
       transaction: EXACT_TX_ID,
@@ -1035,7 +1035,7 @@ describe("direct-mode facilitator", () => {
 
 function makeFacilitator(
   overrides: Partial<DirectModeServerConfig> = {},
-  facilitatorOptions: { allowMainnet?: boolean } = {},
+  facilitatorOptions: { allowMainnet?: boolean; exactFinality?: "mempool" | "accepted" } = {},
 ) {
   const {
     exactTransactionVerifier: suppliedExactVerifier,
@@ -1057,7 +1057,7 @@ function makeFacilitator(
           amount: request.amount,
           scriptPublicKey: request.payToScriptPublicKey,
         },
-        finality: "accepted" as const,
+        finality: facilitatorOptions.exactFinality ?? "mempool" as const,
         payerAddress: "kaspatest:refund",
         requestAuthorization: fakeAuthorizationEvidence(request.authorization),
       };

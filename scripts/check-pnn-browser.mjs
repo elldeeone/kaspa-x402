@@ -1,3 +1,4 @@
+import { sanitizeProofOutputText } from "./proof-output-security.mjs";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -8,6 +9,12 @@ const timeoutMs = Number(process.env.KASPA_X402_PNN_TIMEOUT_MS ?? 15_000);
 const attempts = Number(process.env.KASPA_X402_PNN_ATTEMPTS ?? 3);
 const networkId = "testnet-10";
 
+try { await main(); process.exit(0); } catch (error) {
+  console.error(sanitizeProofOutputText(error instanceof Error ? error.message : String(error)));
+  process.exit(1);
+}
+
+async function main() {
 const sdk = await import(pathToFileUrl(path.join(sdkDir, "kaspa.js")));
 const wasm = fs.readFileSync(path.join(sdkDir, "kaspa_bg.wasm"));
 sdk.initSync(wasm);
@@ -45,7 +52,7 @@ try {
     ),
   ]);
   console.log(
-    JSON.stringify(
+    sanitizeProofOutputText(JSON.stringify(
       {
         ok: true,
         sdk: { package: "kaspa-wasm", version: sdk.version() },
@@ -60,7 +67,7 @@ try {
       },
       bigintReplacer,
       2,
-    ),
+    )),
   );
 } finally {
   try {
@@ -73,7 +80,9 @@ try {
 // The vendored WASM SDK may retain background websocket handles after a clean
 // disconnect. This is a standalone diagnostic, so terminate once its bounded
 // work and cleanup have completed.
-process.exit(0);
+
+
+}
 
 function withTimeout(promise, label) {
   let timer;
@@ -99,7 +108,7 @@ async function withRetries(label, task) {
     }
   }
   throw new Error(
-    `${label} failed after ${attempts} attempts: ${lastError?.message ?? lastError}`,
+    sanitizeProofOutputText(`${label} failed after ${attempts} attempts: ${lastError?.message ?? lastError}`),
   );
 }
 

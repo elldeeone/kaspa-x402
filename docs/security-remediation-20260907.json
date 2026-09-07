@@ -1,0 +1,541 @@
+{
+  "revision": "3cb623a39f5228587cfba015bf3aec629db8b2f6",
+  "scope": "Existing reconciliation only; local fixes and validation. No publication, deployment, funded transactions or new broad scan.",
+  "findings": [
+    {
+      "id": "occ_043e53a93b03f512fc2dbbc1",
+      "title": "Failed MCP tool results are committed as successful batch charges",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/direct-server.test.ts"
+      ],
+      "theme": "mcp-error-charge",
+      "resolution": "Returned MCP batch isError settles zero; successful batch and exact charging controls remain intact."
+    },
+    {
+      "id": "occ_0599e95eb361baa3589b77e2",
+      "title": "First-seen accepted transaction can authorize a fresh exact request",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/server-state-store-contract.test.ts",
+        "packages/server/test/direct-server.test.ts"
+      ],
+      "theme": "exact-first-admission",
+      "resolution": "Both stores reject first-seen accepted artifacts atomically before creating a retry-adoptable attempt."
+    },
+    {
+      "id": "occ_25f4d678ef58520b22b64e31",
+      "title": "Batch escrow can be locked until an attacker-chosen distant DAA score",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/client/test/direct-client.test.ts"
+      ],
+      "theme": "batch-refund-horizon",
+      "resolution": "Shared client authorization enforces default 36000 DAA horizon for deposit, top-up and reuse and exposes the terms to the payer."
+    },
+    {
+      "id": "occ_27d7a2a62e503e7da2fb6c26",
+      "title": "Rate-scope overflow and profile-key collapse let distributed callers throttle new clients",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts",
+        "packages/demo-gateway/wrangler.jsonc"
+      ],
+      "theme": "native-rate-admission",
+      "resolution": "Native Worker bindings replace stateful overflow buckets, preserve canonical profile keys, and reject before payment-state calls."
+    },
+    {
+      "id": "occ_482e066e24e8309b8382288c",
+      "title": "One REST source can fabricate a funded batch covenant",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_59000ffb9f57591e9cb85885",
+      "title": "One REST upstream can forge all accepted-chain evidence",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_7061e1080920043ceba35500",
+      "title": "Exact payment identifiers are not durably reserved before protected work",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/server-state-store-contract.test.ts",
+        "packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/test/state.test.ts"
+      ],
+      "theme": "durable-exact-identifiers",
+      "resolution": "Atomic cross-scheme reservations, immutable identifier terms, failed-commit ordering and legacy admission quarantine prevent duplicate protected execution."
+    },
+    {
+      "id": "occ_733c75bae8ef04dc0707e9a7",
+      "title": "Relative paidFetch URLs misidentify the payment origin",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/client/test/direct-client.test.ts"
+      ],
+      "theme": "browser-relative-origin",
+      "resolution": "Relative URLs resolve against browser location once; real 402/retry and origin-policy checks cover the canonical URL."
+    },
+    {
+      "id": "occ_7da4f43472a01850f569c788",
+      "title": "Shared overflow quota lets distributed callers deny new clients",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts",
+        "packages/demo-gateway/wrangler.jsonc"
+      ],
+      "theme": "native-rate-admission",
+      "resolution": "Native Worker bindings replace stateful overflow buckets, preserve canonical profile keys, and reject before payment-state calls."
+    },
+    {
+      "id": "occ_8abbd6787feb7c4db24586f8",
+      "title": "Hosted exact-payment expiry blocks durable replay and response recovery",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/test/adapters.test.ts"
+      ],
+      "theme": "exact-expiry-recovery",
+      "resolution": "Authenticated fully matching durable accepted/staged recovery crosses expiry gates; fresh expired requests still fail."
+    },
+    {
+      "id": "occ_8b601593bec71997bce709af",
+      "title": "Prepared escrow deposits can exceed the amount approved by the payer",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/client/test/direct-client.test.ts"
+      ],
+      "theme": "approved-genesis-amount",
+      "resolution": "Prepared genesis amount must equal the payer-approved amount before funding or persistence."
+    },
+    {
+      "id": "occ_9eb7183c16b91d3e13a0a04d",
+      "title": "REST-asserted lineage can corrupt the durable additive exact head",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_9f37e364da036318ab4dd51c",
+      "title": "Failed batch handlers can permanently block merchant claims",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/src/gateway.ts"
+      ],
+      "theme": "batch-handler-recovery",
+      "resolution": "Trusted operator-confirmed outcomes commit without payer retry; ambiguous throws remain pending and charge limits/staged-result immutability remain enforced."
+    },
+    {
+      "id": "occ_bec5a92a64aff63536ddfded",
+      "title": "One REST source can attest a nonexistent exact payment",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_d4e4f6cfb3c684f649d62c4b",
+      "title": "Lost identifier leases can execute two exact handlers",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/server-state-store-contract.test.ts",
+        "packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/test/state.test.ts"
+      ],
+      "theme": "durable-exact-identifiers",
+      "resolution": "Atomic cross-scheme reservations, immutable identifier terms, failed-commit ordering and legacy admission quarantine prevent duplicate protected execution."
+    },
+    {
+      "id": "occ_ea9f0b483e639cf7e6c711fe",
+      "title": "A compromised chain API can forge settlement evidence",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_ec466da2ec336ecd4222fb12",
+      "title": "One REST source can attest nonexistent exact and batch payments",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/demo-operations.md",
+        "packages/demo-gateway/src/adapters.ts"
+      ],
+      "theme": "rest-evidence-authority",
+      "resolution": "The configured REST service remains trusted chain-evidence authority. Corrected the unsupported ownership claim; independent node verification remains a deployment trust decision. No deployed authority was verified."
+    },
+    {
+      "id": "occ_f9cb0c9f67a808c76a3aeaa7",
+      "title": "Conflicting standard-native payments can leave unbounded pending settlement attempts",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/state.test.ts",
+        "packages/demo-gateway/test/gateway.test.ts"
+      ],
+      "theme": "pending-settlement-bound",
+      "resolution": "Transactional cap of 64 pending exact/batch attempts, trusted rejection and accepted completion paths prevent unbounded admission while preserving ambiguity evidence."
+    },
+    {
+      "id": "occ_f9e8318c9b8d59604553e9e8",
+      "title": "Low-value batch charges can permanently duplicate attacker-inflated channel state",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/server/test/direct-server.test.ts"
+      ],
+      "theme": "channel-state-normalization",
+      "resolution": "Stored channel state includes explicit protocol fields only; large unknown payer fields are excluded from channels and journals."
+    },
+    {
+      "id": "occ_116ce5b2603715dd304f8b08",
+      "title": "Vendored SDK verifier accepts an unbounded upstream response",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "scripts/tooling-boundaries.test.mjs",
+        "scripts/archive-download.mjs"
+      ],
+      "theme": "bounded-sdk-archive",
+      "resolution": "Streaming hashing and download enforce 256 MiB, overall deadline, HTTPS redirects and cleanup on failure."
+    },
+    {
+      "id": "occ_14a058a146bbfd9af0d77f4e",
+      "title": "Rate-scope overflow and profile-key collapse let distributed callers throttle new clients",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts",
+        "packages/demo-gateway/wrangler.jsonc"
+      ],
+      "theme": "native-rate-admission",
+      "resolution": "Native Worker bindings replace stateful overflow buckets, preserve canonical profile keys, and reject before payment-state calls."
+    },
+    {
+      "id": "occ_1714c78d32953f51001d9dca",
+      "title": "Live-proof key files trust unsafe pre-existing paths",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "scripts/tooling-boundaries.test.mjs",
+        "scripts/private-key-files.mjs",
+        "scripts/live-adapter-reference.mjs"
+      ],
+      "theme": "private-key-file-boundary",
+      "resolution": "Key reads enforce private owner/mode, regular file, size and no-follow checks; private directory and exclusive creation cover all reference key paths."
+    },
+    {
+      "id": "occ_188f92ec7c17e8e53138d15d",
+      "title": "Site build follows publishable symlinks outside the repository",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "scripts/site-inputs.test.mjs",
+        "scripts/site-build.mjs"
+      ],
+      "theme": "publication-input-containment",
+      "resolution": "All site file reads/copies/hashes resolve to regular inputs contained in the repository."
+    },
+    {
+      "id": "occ_3f0506732cc9878652b58974",
+      "title": "Admin bearer token permits unrestricted online guessing",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/config.test.ts",
+        "packages/demo-gateway/test/gateway.test.ts",
+        "docs/demo-operations.md"
+      ],
+      "theme": "admin-secret-and-admission",
+      "resolution": "Configured tokens require 64 hex characters and native admin rate admission precedes authentication. Random generation is documented; format does not prove entropy and no deployed secret was checked."
+    },
+    {
+      "id": "occ_4dca53c68f0c2eb478359ca8",
+      "title": "Historical release schemas resolve dependencies from the mutable active release",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/historical-release-erratum.md",
+        "scripts/site-inputs.test.mjs"
+      ],
+      "theme": "historical-schema-dependencies",
+      "resolution": "Historical schema dependency mutability is documented in an external erratum; immutable historical bytes are preserved. Alpha.11 uses release-local schemas."
+    },
+    {
+      "id": "occ_62b707428f160828bb261e1e",
+      "title": "A predictable shared temporary path lets a local attacker redirect release output",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        "package.json",
+        "scripts/pack-public-workspaces.mjs"
+      ],
+      "theme": "release-output-temp",
+      "resolution": "Removed unused predictable shared temporary output redirection; dry-run output goes to stdout."
+    },
+    {
+      "id": "occ_68a7e43bb7ed93c95820d136",
+      "title": "Raw channel private key is propagated to unrelated client adapters",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/security-remediation-20260907.md",
+        "scripts/live-adapter-reference.mjs"
+      ],
+      "theme": "reference-channel-key-custody",
+      "resolution": "Raw key custody is intentional for same-process reference adapters; key removal would break their signer/top-up paths. Untrusted adapters require signer-owned custody and no raw key."
+    },
+    {
+      "id": "occ_6f1f96a31e3150bc990e0090",
+      "title": "Private-endpoint checks accept public DNS names with numeric prefixes",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "scripts/site-inputs.test.mjs",
+        "site/src/assets/endpoint-host.js"
+      ],
+      "theme": "private-host-parser",
+      "resolution": "Shared complete IPv4 parsing rejects numeric-prefix DNS names and invalid octets in all browser/preview checks."
+    },
+    {
+      "id": "occ_a5dc2b451c70c84c2931ee78",
+      "title": "PNN browser check logs credential-bearing endpoint URLs",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "scripts/check-pnn-browser.mjs",
+        "scripts/proof-output-security.test.mjs"
+      ],
+      "theme": "pnn-output-redaction",
+      "resolution": "Final JSON, retry errors and top-level failures use the shared sanitizer; independent review exercised credential-bearing failure output."
+    },
+    {
+      "id": "occ_a75a72a6340630981566252b",
+      "title": "Paid callers can exhaust durable storage with permanent exact settlement journals",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/src/index.ts",
+        "packages/demo-gateway/test/state.test.ts"
+      ],
+      "theme": "durable-storage-admission",
+      "resolution": "Native SQLite size stops new admission at 512 MiB with recovery headroom; replay and admitted completion remain available. Journals are retained rather than unsafely pruned."
+    },
+    {
+      "id": "occ_b58521c0691232daa9468f8b",
+      "title": "Public status routes can saturate the settlement Durable Object",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts"
+      ],
+      "theme": "status-cache-and-admission",
+      "resolution": "Native pre-state admission plus query-independent 15 second cache protects status routes."
+    },
+    {
+      "id": "occ_b7f09b514ca76fbb1e03707b",
+      "title": "Alpha.1\u201310 release locks do not bind source provenance fields",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/historical-release-erratum.md",
+        "scripts/site-inputs.test.mjs"
+      ],
+      "theme": "historical-provenance-projection",
+      "resolution": "External erratum explains that old content hashes do not authenticate excluded provenance; historical lock bytes preserved."
+    },
+    {
+      "id": "occ_ba26bc266bcf2b2ed40661ea",
+      "title": "Frozen Alpha.1\u201310 schemas resolve dependencies through mutable active routes",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/historical-release-erratum.md",
+        "scripts/site-inputs.test.mjs"
+      ],
+      "theme": "historical-schema-dependencies",
+      "resolution": "Historical schema dependency mutability is documented in an external erratum; immutable historical bytes are preserved. Alpha.11 uses release-local schemas."
+    },
+    {
+      "id": "occ_c6f921333915a56e9191d332",
+      "title": "Covenant fixture source escapes the validation root",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/cli/test/cli.test.ts"
+      ],
+      "theme": "fixture-file-containment",
+      "resolution": "Fixture JSON and source reads enforce root containment, regular files and a 2 MiB cap; traversal/link/size and valid-root controls pass."
+    },
+    {
+      "id": "occ_c7738881b7d38bc1ce9afd48",
+      "title": "Proof tooling loads executable modules from configuration",
+      "triage": "not_actionable",
+      "status": "non_actionable",
+      "evidence": [
+        "docs/security-remediation-20260907.md"
+      ],
+      "theme": "executable-operator-config",
+      "resolution": "Operator-selected proof adapter modules are executable configuration by design; no untrusted configuration authority was established."
+    },
+    {
+      "id": "occ_d4b9db20fe3fc62543adf802",
+      "title": "Monitoring routes bypass limits and load payment state",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts"
+      ],
+      "theme": "status-cache-and-admission",
+      "resolution": "Native pre-state admission plus query-independent 15 second cache protects status routes."
+    },
+    {
+      "id": "occ_dec65f683dd9a86bc1d66795",
+      "title": "Historical immutable release metadata installs mutable current-alpha packages",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/historical-release-erratum.md"
+      ],
+      "theme": "historical-install-selector",
+      "resolution": "External erratum directs reproducible installation to exact versions in historical packages.json; historical alpha selector strings remain unchanged."
+    },
+    {
+      "id": "occ_e899d00715b9fa3223055a93",
+      "title": "CI executes mutable GitHub Action tags with implicit token permissions",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/scheduled-checks.yml"
+      ],
+      "theme": "ci-action-authority",
+      "resolution": "Both workflows pin official version-tag commits, set contents:read and disable persisted checkout credentials."
+    },
+    {
+      "id": "occ_e930906872d1f5597b582087",
+      "title": "CI executes mutable GitHub Action tags",
+      "triage": "needs_review",
+      "status": "fixed_verified",
+      "evidence": [
+        ".github/workflows/ci.yml",
+        ".github/workflows/scheduled-checks.yml"
+      ],
+      "theme": "ci-action-authority",
+      "resolution": "Both workflows pin official version-tag commits, set contents:read and disable persisted checkout credentials."
+    },
+    {
+      "id": "occ_e931270534a6f674e46df879",
+      "title": "Refund signer can authorize an unchecked high-fee transaction",
+      "triage": "needs_review",
+      "status": "conditional",
+      "evidence": [
+        "docs/security-remediation-20260907.md",
+        "scripts/live-adapter-reference.mjs"
+      ],
+      "theme": "refund-builder-authority",
+      "resolution": "Custom refund builders are trusted signing authority; the reference builder enforces its fixed-fee construction. An untrusted-builder API would require transaction-intent verification."
+    },
+    {
+      "id": "occ_f802da5ccbf29a3c97c117b3",
+      "title": "Rate-scope overflow lets distributed callers throttle unrelated new clients",
+      "triage": "confirmed",
+      "status": "fixed_verified",
+      "evidence": [
+        "packages/demo-gateway/test/gateway.test.ts",
+        "packages/demo-gateway/wrangler.jsonc"
+      ],
+      "theme": "native-rate-admission",
+      "resolution": "Native Worker bindings replace stateful overflow buckets, preserve canonical profile keys, and reject before payment-state calls."
+    }
+  ],
+  "summary": {
+    "occurrences": 41,
+    "themes": 29,
+    "fixed_verified_occurrences": 28,
+    "conditional_occurrences": 12,
+    "non_actionable_occurrences": 1,
+    "remaining_actionable_occurrences": 0
+  },
+  "validation": {
+    "status": "local_checks_passed_with_documented_release_and_network_limits",
+    "packageTestsInFullRun": 517,
+    "toolingTestsInFullRun": 25,
+    "laterGatewayTestFile": {
+      "tests": 21,
+      "newTests": 2,
+      "status": "passed"
+    },
+    "checksPassed": [
+      "seven workspace builds and Worker dry run",
+      "schemas and vectors",
+      "generated schema validator drift",
+      "74 covenant fixture checks",
+      "23 offline proof checks",
+      "HTTP, exact and batch interoperability vectors",
+      "pinned consensus oracle and exact vectors",
+      "site build and site check",
+      "headless browser flow",
+      "local Worker smoke",
+      "Worker binding drift",
+      "admin CLI security",
+      "hosted offer pins",
+      "public package pack dry run",
+      "pinned SDK archive and five assets",
+      "git diff --check",
+      "explicit-endpoint PNN RPC read-only check"
+    ],
+    "consensusSource": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+    "limits": [
+      "Default PNN resolver timed out after three 15-second attempts; browser and explicit-endpoint PNN RPC connections succeeded.",
+      "Live funded proof was not attempted; check-only preflight reports missing live configuration.",
+      "Working tree is intentionally uncommitted; frozen candidate snapshots and locks remain unchanged and predate the fixes. Clean publication gate is not claimed.",
+      "Current deployed secrets and chain authority were not verified."
+    ],
+    "preserved": [
+      "four pre-existing profile metadata edits (saved patch reverse-check passed)",
+      "all frozen release snapshots and locks"
+    ],
+    "scope": "Existing reconciliation only; local code/tests and non-spending validation. No publication, deployment, mainnet, live funded transaction or new broad scan."
+  }
+}

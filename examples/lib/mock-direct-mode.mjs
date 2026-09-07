@@ -62,7 +62,7 @@ export function createMockDirectModeEnvironment({
             scriptPublicKey: request.payToScriptPublicKey,
           },
           payerAddress: REFUND_ADDRESS,
-          finality: "accepted",
+          finality: chainProvider.acceptedTransactions.has(request.transaction) ? "accepted" : "mempool",
           requestAuthorization: {
             authorizationId: exactRequestAuthorizationId(request.authorization),
             digest: request.authorization.digest,
@@ -518,6 +518,7 @@ class MockFundingProvider {
 }
 
 class MockChainProvider {
+  acceptedTransactions = new Set();
   utxos = new Map();
   genesisEvidence = new Map();
   topUpEvidence = new Map();
@@ -586,6 +587,7 @@ class MockChainProvider {
   }
 
   async sendTransaction(transaction) {
+    this.acceptedTransactions.add(transaction);
     const apply = this.preparedTransactions.get(transaction);
     if (apply) {
       apply();

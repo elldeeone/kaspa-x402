@@ -56,6 +56,7 @@ export const VENDORED_KASPA_WASM = {
 export const SITE_ASSET_FILES = [
   "site/src/assets/demo.css",
   "site/src/assets/demo.js",
+  "site/src/assets/endpoint-host.js",
   "site/src/assets/og.png",
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/LICENSE",
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.d.ts",
@@ -105,6 +106,9 @@ export const RELEASE_DOC_FILES = [
 ];
 
 export const PUBLIC_DOC_FILES = [
+  "docs/security-remediation-20260907.md",
+  "docs/security-remediation-20260907.json",
+  "docs/historical-release-erratum.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
   "docs/demo-operations.md",
@@ -226,6 +230,7 @@ export const DOC_GROUPS = [
       "docs/live-testnet-report.md",
       "docs/live-testnet-proof.md",
       "docs/review-closure-ledger.md",
+      "docs/security-remediation-20260907.md",
     ],
   },
   {
@@ -234,7 +239,7 @@ export const DOC_GROUPS = [
   },
   {
     title: "Policy",
-    files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md"],
+    files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md", "docs/historical-release-erratum.md"],
   },
 ];
 

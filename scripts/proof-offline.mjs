@@ -132,9 +132,10 @@ async function runExactProof() {
     resource,
     requestHash,
   });
-  assert.equal(verification.isValid, true);
-  check("standard-native exact server verification", {
-    payer: verification.payer,
+  assert.equal(verification.isValid, false);
+  assert.equal(verification.invalidReason, "invalid_transaction_state");
+  check("standard-native exact rejects pre-acceptance facilitator verification", {
+    invalidReason: verification.invalidReason,
   });
 
   let executions = 0;

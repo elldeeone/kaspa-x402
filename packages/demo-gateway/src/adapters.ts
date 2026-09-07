@@ -15,6 +15,9 @@ import type {
   ExactHeadRecord,
   PreparedTransaction,
   ExactTransactionVerification,
+  ExactSettlementAttemptRecord,
+  ExactSettlementReconciler,
+  ExactSettlementReconciliation,
   ExactTransactionVerificationRequest,
   ExactTransactionVerifier,
   ServerChainProvider,
@@ -395,6 +398,27 @@ export class RestKaspaChainProvider
     }
     await this.#client.waitForTransactionAccepted(parsed);
     return { transactionId: parsed.id, finality: "accepted" };
+  }
+}
+
+export class RestExactSettlementReconciler implements ExactSettlementReconciler {
+  constructor(private readonly client: KaspaRestClient) {}
+
+  async reconcileExactSettlement(attempt: ExactSettlementAttemptRecord): Promise<ExactSettlementReconciliation> {
+    const transaction = await this.client.getTransaction(attempt.transactionId);
+    const output = transactionOutputAt(transaction, { txid: attempt.transactionId, index: attempt.paymentOutputIndex });
+    if (!output) return { status: "unknown", transactionId: attempt.transactionId, reason: "transaction acceptance is not proven" };
+    const amount = String(output.amount);
+    const scriptPublicKey = normalizeRestScript(requiredRestScript(output));
+    if (attempt.head) {
+      if (amount !== attempt.head.successor.amount || scriptPublicKey !== attempt.head.successor.scriptPublicKey)
+        return { status: "unknown", transactionId: attempt.transactionId, reason: "accepted successor differs from admitted transaction" };
+      return { status: "accepted", transactionId: attempt.transactionId, finality: "accepted",
+        paymentOutput: { amount: attempt.amount, scriptPublicKey },
+        continuation: { outpoint: { txid: attempt.transactionId, index: attempt.paymentOutputIndex }, amount, scriptPublicKey },
+      };
+    }
+    return { status: "accepted", transactionId: attempt.transactionId, finality: "accepted", paymentOutput: { amount, scriptPublicKey } };
   }
 }
 
@@ -1351,7 +1375,7 @@ function verifyExactRequestAuthorization(
   const expiresAt = Date.parse(authorization.expiresAt);
   if (!Number.isFinite(expiresAt))
     throw invalidTransaction("exact request authorization expiry is invalid");
-  if (expiresAt <= Date.now())
+  if (expiresAt <= Date.now() && !request.allowExpiredAuthorization)
     throw invalidTransaction("exact request authorization has expired");
   const digest = exactRequestAuthorizationDigest({
     network: request.network,

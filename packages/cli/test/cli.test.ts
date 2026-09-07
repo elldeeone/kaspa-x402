@@ -45,7 +45,7 @@ describe("kaspa-x402 CLI", () => {
       `import fs from "node:fs"; fs.writeFileSync(${JSON.stringify(marker)}, "executed");`,
     );
     for (const name of ["schemas", "vectors", "contracts"]) {
-      fs.symlinkSync(path.join(root, name), path.join(dir, name), "dir");
+      fs.cpSync(path.join(root, name), path.join(dir, name), { recursive: true });
     }
 
     const report = JSON.parse(
@@ -53,6 +53,31 @@ describe("kaspa-x402 CLI", () => {
     ) as { ok: boolean };
     expect(report.ok).toBe(true);
     expect(fs.existsSync(marker)).toBe(false);
+  });
+
+  it.each(["traversal", "source-link", "fixture-link", "oversized"])("rejects unsafe covenant fixture inputs: %s", (kind) => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-fixture-"));
+    try {
+      const selectedRoot = path.join(dir, "root");
+      fs.mkdirSync(selectedRoot);
+      for (const name of ["schemas", "vectors", "contracts"])
+        fs.cpSync(path.join(root, name), path.join(selectedRoot, name), { recursive: true });
+      const fixtureFile = path.join(selectedRoot, "contracts/fixtures/kaspa-x402-escrow-v3.json");
+      const fixture = JSON.parse(fs.readFileSync(fixtureFile, "utf8"));
+      const outside = path.join(dir, "outside");
+      fs.writeFileSync(outside, "outside");
+      if (kind === "fixture-link") {
+        fs.unlinkSync(fixtureFile);
+        fs.symlinkSync(outside, fixtureFile);
+      } else if (kind === "oversized") {
+        fs.writeFileSync(fixtureFile, Buffer.alloc(2 * 1024 * 1024 + 1));
+      } else {
+        fixture.source = kind === "traversal" ? "../outside" : "linked-source";
+        if (kind === "source-link") fs.symlinkSync(outside, path.join(selectedRoot, fixture.source));
+        fs.writeFileSync(fixtureFile, JSON.stringify(fixture));
+      }
+      expect(() => run("vectors", "verify", "--root", selectedRoot, "--json")).toThrow(/escapes the validation root|regular file at most 2 MiB/);
+    } finally { fs.rmSync(dir, { recursive: true, force: true }); }
   });
 
   it("inspects and verifies exact payloads", () => {

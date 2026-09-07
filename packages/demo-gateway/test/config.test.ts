@@ -16,6 +16,10 @@ const BASE_ENV: GatewayEnv = {
 };
 
 describe("gateway config", () => {
+  it("rejects short admin secrets and accepts the documented 32-byte hex format", () => {
+    expect(() => readGatewayConfig({ ...BASE_ENV, KASPA_X402_ADMIN_TOKEN: "password" })).toThrow("32 random bytes");
+    expect(readGatewayConfig({ ...BASE_ENV, KASPA_X402_ADMIN_TOKEN: "ab".repeat(32) }).adminToken).toBe("ab".repeat(32));
+  });
   it("accepts one authoritative chain API when enabled", () => {
     expect(
       readGatewayConfig({

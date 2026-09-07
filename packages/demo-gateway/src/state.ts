@@ -13,6 +13,7 @@ import type {
   ExactHeadUnavailableResult,
   ExactHeadSelectionRequest,
   ExactSettlementAttemptRecord,
+  ExactSettlementClaimRequest,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
   ProtectedHandlerResult,
@@ -60,18 +61,10 @@ type LockRecord = {
 
 type PaymentIdentifierReservation = {
   attemptId: string;
-  fingerprint: string;
-  paymentEvidenceHash: string;
-  channelId: string;
+  scheme?: "batch" | "exact";
 };
 
-type RateWindowRecord = {
-  resetAt: number;
-  counts: Record<string, { count: number; lastSeenAt: number }>;
-  overflowCount?: number;
-};
 
-const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
 
 export type GatewayCanaryCheckStatus = "ok" | "failed" | "skipped";
 
@@ -132,7 +125,6 @@ export type GatewayStateMethod =
   | "acquireLock"
   | "renewLock"
   | "releaseLock"
-  | "checkRateLimit"
   | "loadCanaryReport"
   | "saveCanaryReport"
   | "incrementMetric"
@@ -146,8 +138,19 @@ export interface GatewayStateRequest {
 export class GatewayLedger implements ServerStateStore {
   readonly #storage: GatewayStorage;
 
-  constructor(storage: GatewayStorage) {
+  constructor(
+    storage: GatewayStorage,
+    private readonly admission: { assertCapacity?: () => void; maximumPending?: number } = {},
+  ) {
     this.#storage = storage;
+  }
+
+  async #admitSettlement(txn: GatewayTransaction): Promise<void> {
+    this.admission.assertCapacity?.();
+    const pending = await pendingSettlementCount(txn);
+    if (pending >= (this.admission.maximumPending ?? 64))
+      throw new Error("pending settlement capacity requires trusted recovery");
+    await txn.put("settlement-admission:pending", pending + 1);
   }
 
   async loadChannel(
@@ -209,6 +212,8 @@ export class GatewayLedger implements ServerStateStore {
         }
         return { attempt: clone(existing), created: false };
       }
+      await assertLegacyExactAdmissionComplete(txn);
+      await this.#admitSettlement(txn);
       const currentChannel = await txn.get<ServerChannelRecord>(
         channelKey(attempt.channelId),
       );
@@ -252,15 +257,13 @@ export class GatewayLedger implements ServerStateStore {
         const reserved = await txn.get<PaymentIdentifierReservation>(
           paymentIdentifierReservationKey(attempt.paymentIdentifier),
         );
-        if (reserved && reserved.attemptId !== attempt.attemptId)
+        if (reserved && (reserved.attemptId !== attempt.attemptId || reserved.scheme === "exact"))
           throw new Error("payment identifier is already reserved");
         await txn.put(
           paymentIdentifierReservationKey(attempt.paymentIdentifier),
           {
             attemptId: attempt.attemptId,
-            fingerprint: attempt.requestFingerprint,
-            paymentEvidenceHash: attempt.paymentEvidenceHash,
-            channelId: attempt.channelId,
+            scheme: "batch",
           },
         );
       }
@@ -438,9 +441,10 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async claimExactSettlement(
-    input: ExactSettlementAttemptRecord,
+    input: ExactSettlementClaimRequest,
   ): Promise<ExactSettlementClaimResult> {
-    const attempt = normalizeExactSettlementAttempt(input);
+    const { existingOnly, ...record } = input;
+    const attempt = normalizeExactSettlementAttempt(record);
     return this.#storage.transaction(async (txn) => {
       const existing = await txn.get<ExactSettlementAttemptRecord>(
         exactAttemptKey(attempt.transactionId),
@@ -450,7 +454,27 @@ export class GatewayLedger implements ServerStateStore {
           throw new Error(
             "exact transaction is already claimed for a different request",
           );
+        if (!existing.identifierAdmissionVersion) {
+          if (attempt.paymentIdentifier && existing.status !== "applied") {
+            if (await txn.get(paymentIdentifierKey(attempt.paymentIdentifier)) || await txn.get(paymentIdentifierReservationKey(attempt.paymentIdentifier)))
+              throw new Error("legacy exact identifier conflicts with existing payment work");
+            await txn.put(paymentIdentifierReservationKey(attempt.paymentIdentifier), { scheme: "exact", attemptId: attempt.transactionId });
+          }
+          existing.identifierAdmissionVersion = 1;
+          if (attempt.paymentIdentifier) existing.paymentIdentifier = attempt.paymentIdentifier;
+          await txn.put(exactAttemptKey(attempt.transactionId), existing);
+        }
         return { attempt: clone(existing), created: false };
+      }
+      if (existingOnly) throw new Error("first-seen accepted exact transactions cannot authorise new work");
+      await assertLegacyExactAdmissionComplete(txn);
+      await this.#admitSettlement(txn);
+      if (attempt.paymentIdentifier) {
+        if (await txn.get(paymentIdentifierKey(attempt.paymentIdentifier)))
+          throw new Error("payment identifier was already committed");
+        if (await txn.get(paymentIdentifierReservationKey(attempt.paymentIdentifier)))
+          throw new Error("payment identifier is already reserved");
+        await txn.put(paymentIdentifierReservationKey(attempt.paymentIdentifier), { scheme: "exact", attemptId: attempt.transactionId });
       }
       if (attempt.profile === "additive") {
         if (!attempt.head)
@@ -609,6 +633,8 @@ export class GatewayLedger implements ServerStateStore {
             releaseExactHeadClaim(head, attempt, observedAt),
           );
       }
+      if (attempt.paymentIdentifier) await txn.delete(paymentIdentifierReservationKey(attempt.paymentIdentifier));
+      await releaseSettlementAdmission(txn);
       await txn.delete(exactAttemptKey(attempt.transactionId));
       void reason;
     });
@@ -676,7 +702,7 @@ export class GatewayLedger implements ServerStateStore {
         const reserved = await txn.get<PaymentIdentifierReservation>(
           paymentIdentifierReservationKey(record.paymentIdentifier.id),
         );
-        if (!reserved || reserved.attemptId !== attempt.attemptId)
+        if (!reserved || reserved.attemptId !== attempt.attemptId || reserved.scheme === "exact")
           throw new Error(
             "payment identifier is not reserved by this batch attempt",
           );
@@ -695,6 +721,7 @@ export class GatewayLedger implements ServerStateStore {
           paymentIdentifierReservationKey(record.paymentIdentifier.id),
         );
       }
+      await releaseSettlementAdmission(txn);
       await txn.put(batchAttemptKey(attempt.attemptId), {
         ...attempt,
         status: "applied",
@@ -723,10 +750,12 @@ export class GatewayLedger implements ServerStateStore {
         return;
       }
       if (record.paymentIdentifier)
-        await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier);
+        await assertPaymentIdentifierAvailable(txn, record.paymentIdentifier, payment.transactionId, "exact");
       const attempt = await txn.get<ExactSettlementAttemptRecord>(
         exactAttemptKey(payment.transactionId),
       );
+      if (attempt && attempt.paymentIdentifier !== record.paymentIdentifier?.id)
+        throw new Error("exact payment identifier differs from claimed attempt");
       if (attempt) {
         if (
           attempt.status !== "accepted" ||
@@ -734,6 +763,7 @@ export class GatewayLedger implements ServerStateStore {
           !attempt.handlerResult
         )
           throw new Error("exact settlement attempt is not ready to apply");
+        await releaseSettlementAdmission(txn);
         await txn.put(exactAttemptKey(payment.transactionId), {
           ...attempt,
           status: "applied",
@@ -745,6 +775,7 @@ export class GatewayLedger implements ServerStateStore {
           paymentIdentifierKey(record.paymentIdentifier.id),
           clone(record.paymentIdentifier),
         );
+      if (record.paymentIdentifier) await txn.delete(paymentIdentifierReservationKey(record.paymentIdentifier.id));
       await txn.put(exactPaymentKey(payment.transactionId), payment);
     });
   }
@@ -888,38 +919,6 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
-  async checkRateLimit(
-    scope: string,
-    nowMs: number,
-    limit: number,
-    windowMs: number,
-  ): Promise<{ allowed: boolean; count: number; resetAt: number }> {
-    if (limit <= 0)
-      return { allowed: true, count: 0, resetAt: nowMs + windowMs };
-    const resetAt = Math.floor(nowMs / windowMs) * windowMs + windowMs;
-    const key = rateWindowKey(scope);
-    const scopeHash = sha256Hex(scope);
-    return this.#storage.transaction(async (txn) => {
-      const stored = await txn.get<RateWindowRecord>(key);
-      const current =
-        stored && stored.resetAt >= resetAt ? stored : { resetAt, counts: {} };
-      const previous = current.counts[scopeHash];
-      if (
-        previous === undefined &&
-        Object.keys(current.counts).length >= MAX_RATE_SCOPES_PER_WINDOW
-      ) {
-        const count = (current.overflowCount ?? 0) + 1;
-        current.overflowCount = count;
-        await txn.put(key, current);
-        return { allowed: count <= limit, count, resetAt: current.resetAt };
-      }
-      const count = (previous?.count ?? 0) + 1;
-      current.counts[scopeHash] = { count, lastSeenAt: nowMs };
-      await txn.put(key, current);
-      return { allowed: count <= limit, count, resetAt: current.resetAt };
-    });
-  }
-
   async resolveBatchRefundTimeoutDaa(
     currentDaa: string,
     refundDeltaDaa: string,
@@ -1040,12 +1039,6 @@ export type GatewayStateClient = ServerStateStore & {
     ttlMs: number,
   ): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;
-  checkRateLimit(
-    scope: string,
-    nowMs: number,
-    limit: number,
-    windowMs: number,
-  ): Promise<{ allowed: boolean; count: number; resetAt: number }>;
   resolveBatchRefundTimeoutDaa(
     currentDaa: string,
     refundDeltaDaa: string,
@@ -1144,7 +1137,7 @@ export async function dispatchGatewayState(
       );
     case "claimExactSettlement":
       return ledger.claimExactSettlement(
-        readPayload<{ record: ExactSettlementAttemptRecord }>(request).record,
+        readPayload<{ record: ExactSettlementClaimRequest }>(request).record,
       );
     case "loadExactSettlementAttempt":
       return ledger.loadExactSettlementAttempt(
@@ -1296,20 +1289,6 @@ export async function dispatchGatewayState(
         payload.ttlMs,
       );
     }
-    case "checkRateLimit": {
-      const payload = readPayload<{
-        scope: string;
-        nowMs: number;
-        limit: number;
-        windowMs: number;
-      }>(request);
-      return ledger.checkRateLimit(
-        payload.scope,
-        payload.nowMs,
-        payload.limit,
-        payload.windowMs,
-      );
-    }
     case "loadCanaryReport":
       return ledger.loadCanaryReport();
     case "saveCanaryReport":
@@ -1329,16 +1308,55 @@ function readPayload<T>(request: GatewayStateRequest): T {
   return (request.payload ?? {}) as T;
 }
 
+async function pendingSettlementCount(txn: GatewayTransaction): Promise<number> {
+  const stored = await txn.get<number>("settlement-admission:pending");
+  if (stored !== undefined) return stored;
+  let count = 0;
+  for (const prefix of ["exact-attempt:", "batch-attempt:"]) {
+    let start: string | undefined;
+    for (;;) {
+      const page = await txn.list<{ status: string }>({ prefix, start, limit: 128 });
+      for (const attempt of page.values()) if (attempt.status !== "applied") count++;
+      if (page.size < 128) break;
+      start = [...page.keys()].at(-1)! + "\0";
+    }
+  }
+  return count;
+}
+
+async function releaseSettlementAdmission(txn: GatewayTransaction): Promise<void> {
+  const pending = await pendingSettlementCount(txn);
+  if (pending < 1) throw new Error("settlement admission accounting is inconsistent");
+  await txn.put("settlement-admission:pending", pending - 1);
+}
+
+// Older exact journals omit identifiers. Fail closed until each pending record
+// is rebound by its original authenticated payload or explicitly reconciled.
+async function assertLegacyExactAdmissionComplete(txn: GatewayTransaction): Promise<void> {
+  const key = "exact-identifier-admission:v1";
+  if (await txn.get(key)) return;
+  let start: string | undefined;
+  for (;;) {
+    const page = await txn.list<ExactSettlementAttemptRecord>({ prefix: "exact-attempt:", start, limit: 128 });
+    if ([...page.values()].some(attempt => !attempt.identifierAdmissionVersion && attempt.status !== "applied"))
+      throw new Error("legacy exact attempts require identifier recovery before new payment admission");
+    if (page.size < 128) break;
+    start = [...page.keys()].at(-1)! + "\0";
+  }
+  await txn.put(key, true);
+}
+
 async function assertPaymentIdentifierAvailable(
   txn: GatewayTransaction,
   paymentIdentifier: PaymentIdentifierRecord,
   reservedAttemptId?: string,
+  scheme: "batch" | "exact" = "batch",
 ): Promise<void> {
   const reserved = await txn.get<PaymentIdentifierReservation>(
     paymentIdentifierReservationKey(paymentIdentifier.id),
   );
-  if (reserved && reserved.attemptId !== reservedAttemptId)
-    throw new Error("payment identifier is reserved by pending batch work");
+  if (reserved && (reserved.attemptId !== reservedAttemptId || (reserved.scheme ?? "batch") !== scheme))
+    throw new Error("payment identifier is reserved by pending work");
   const existing = await txn.get<PaymentIdentifierRecord>(
     paymentIdentifierKey(paymentIdentifier.id),
   );
@@ -1590,11 +1608,6 @@ function openClaimKey(channelId: string): string {
 
 function lockKey(key: string): string {
   return `lock:${key.toLowerCase()}`;
-}
-
-function rateWindowKey(scope: string): string {
-  const profile = scope.slice(scope.lastIndexOf(":") + 1);
-  return `rate-window:${profile === "batch" ? "batch" : "exact"}`;
 }
 
 function canaryReportKey(): string {

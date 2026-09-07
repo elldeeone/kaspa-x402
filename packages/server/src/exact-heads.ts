@@ -115,6 +115,8 @@ export function normalizeExactHeadRecord(
 export function normalizeExactSettlementAttempt(
   input: ExactSettlementAttemptRecord,
 ): ExactSettlementAttemptRecord {
+  if (input.paymentIdentifier !== undefined && !/^[A-Za-z0-9_-]{16,128}$/.test(input.paymentIdentifier))
+    throw new Error("invalid exact payment identifier");
   if (!/^[0-9a-fA-F]{64}$/.test(input.transactionId))
     throw new Error("exact settlement transaction id must be 32-byte hex");
   if (!/^[0-9a-fA-F]{64}$/.test(input.requestFingerprint))
@@ -161,6 +163,7 @@ export function normalizeExactSettlementAttempt(
   }
   const attempt: ExactSettlementAttemptRecord = {
     ...structuredClone(input),
+    identifierAdmissionVersion: 1,
     transactionId: input.transactionId.toLowerCase(),
     requestFingerprint: input.requestFingerprint.toLowerCase(),
     paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
@@ -238,7 +241,7 @@ export function exactSettlementAttemptsMatch(
   expected: ExactSettlementAttemptRecord,
 ): boolean {
   return (
-    stableJson(exactAttemptTerms(current)) ===
+    stableJson(exactAttemptTerms(current.identifierAdmissionVersion ? current : { ...current, paymentIdentifier: expected.paymentIdentifier, identifierAdmissionVersion: 1 })) ===
     stableJson(exactAttemptTerms(expected))
   );
 }

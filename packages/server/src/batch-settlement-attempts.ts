@@ -1,5 +1,6 @@
 import {
   batchLaneAccounting,
+  batchPaymentRequirementsHash,
   parseBatchLaneAmount,
   type Hash32Hex,
 } from "@kaspa-x402/core";
@@ -37,6 +38,12 @@ export function normalizeBatchSettlementAttempt(
     if (!isLowerHash32(value))
       throw new Error(`${label} must be canonical lowercase hash hex`);
   }
+  if (input.paymentRequirements && (
+    batchPaymentRequirementsHash(input.paymentRequirements) !== input.paymentRequirementsHash ||
+    input.paymentRequirements.amount !== input.maximumCharge
+  )) throw new Error("batch completion requirements differ from admission");
+  if (input.paymentPayloadHash !== undefined && !isLowerHash32(input.paymentPayloadHash))
+    throw new Error("batch payment payload hash must be canonical lowercase hash hex");
   parseBatchLaneAmount(input.maximumCharge, "maximum batch charge");
   if (input.adoptedChannel.channelId !== input.channelId)
     throw new Error("adopted channel does not match the batch attempt");

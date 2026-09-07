@@ -1,7 +1,11 @@
+import { isLocalEndpointHost } from "../site/src/assets/endpoint-host.js";
 import assert from "node:assert/strict";
+import fs from "node:fs";
+import os from "node:os";
+import path from "node:path";
 import test from "node:test";
 
-import { isPublishableDirtyPath } from "./site-inputs.mjs";
+import { isPublishableDirtyPath, containedRegularFile } from "./site-inputs.mjs";
 import {
   releaseMetadataForHash,
   usesCompleteMetadataHash,
@@ -117,4 +121,25 @@ test("preview input parsing rejects malformed hosts and percent escapes", () => 
     "/demo/",
   );
   assert.equal(decodePreviewPathname("/docs%20index"), "/docs index");
+});
+
+test("private endpoint admission requires an actual private IP or loopback host", () => {
+  for (const host of ["localhost", "127.0.0.1", "[::1]", "10.0.3.141", "192.168.1.1", "172.16.0.1", "172.31.255.255"])
+    assert.equal(isLocalEndpointHost(host), true, host);
+  for (const host of ["10.attacker.test", "192.168.evil.test", "172.16.evil.test", "10.0.0.256", "10.1", "172.32.0.1", "8.8.8.8", ""])
+    assert.equal(isLocalEndpointHost(host), false, host);
+});
+
+test("publication input rejects traversal, escaping links and non-files", () => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), "site-input-"));
+  try {
+    const root = path.join(dir, "root");
+    fs.mkdirSync(root);
+    fs.writeFileSync(path.join(root, "safe"), "safe");
+    fs.writeFileSync(path.join(dir, "outside"), "outside");
+    fs.symlinkSync(path.join(dir, "outside"), path.join(root, "escape"));
+    fs.symlinkSync(path.join(root, "safe"), path.join(root, "inside"));
+    assert.equal(fs.readFileSync(containedRegularFile(root, "inside"), "utf8"), "safe");
+    for (const file of ["../outside", "escape", "."]) assert.throws(() => containedRegularFile(root, file));
+  } finally { fs.rmSync(dir, { recursive: true, force: true }); }
 });

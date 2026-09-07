@@ -37,6 +37,60 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("bounds pending admission atomically and preserves admitted recovery above the storage limit", async () => {
+    const storage = new FakeStorage();
+    let full = false;
+    const ledger = new GatewayLedger(storage, { maximumPending: 1, assertCapacity() { if (full) throw new Error("storage limit"); } });
+    const attempt = exactSettlementAttempt({ profile: "standard-native", head: undefined });
+    const results = await Promise.allSettled([
+      ledger.claimExactSettlement(attempt),
+      ledger.claimExactSettlement({ ...attempt, transactionId: OTHER_TX }),
+    ]);
+    expect(results.map(result => result.status)).toEqual(["fulfilled", "rejected"]);
+    await ledger.saveChannel(channel());
+    await expect(ledger.claimBatchSettlement(batchSettlementAttempt(channel()))).rejects.toThrow(/capacity/);
+    full = true;
+    await expect(ledger.claimExactSettlement(attempt)).resolves.toMatchObject({ created: false });
+    await ledger.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:01.000Z");
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await ledger.recordExactHandlerResult(TX, { body: "saved" }, "2026-07-07T00:00:03.000Z");
+    await ledger.commitExactPayment({ payment: exactPayment() });
+    expect(await storage.get("settlement-admission:pending")).toBe(0);
+    await expect(ledger.claimExactSettlement({ ...attempt, transactionId: OTHER_TX })).rejects.toThrow(/storage limit/);
+    expect(await ledger.loadExactSettlementAttempt(OTHER_TX)).toBeUndefined();
+    full = false;
+    await ledger.claimExactSettlement({ ...attempt, transactionId: OTHER_TX });
+    await ledger.abandonExactSettlement(OTHER_TX, "trusted rejection", "2026-07-07T00:00:04.000Z");
+    await expect(ledger.claimBatchSettlement(batchSettlementAttempt(channel()))).resolves.toMatchObject({ created: true });
+  });
+
+  it("blocks new work until a legacy exact journal is rebound by its original payload", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const id = "pay_7d5d747be160e280504c099d984bcfe0";
+    const legacy = exactSettlementAttempt({ profile: "standard-native", head: undefined });
+    await storage.put(`exact-attempt:${TX}`, legacy);
+    await expect(ledger.claimExactSettlement({ ...legacy, transactionId: OTHER_TX, paymentIdentifier: id })).rejects.toThrow(/legacy exact/);
+    await expect(ledger.claimExactSettlement({ ...legacy, paymentPayloadHash: "ab".repeat(32), paymentIdentifier: id })).rejects.toThrow(/different request/);
+    await expect(ledger.claimExactSettlement({ ...legacy, paymentIdentifier: id })).resolves.toMatchObject({ created: false, attempt: { paymentIdentifier: id } });
+    await expect(ledger.claimExactSettlement({ ...legacy, transactionId: OTHER_TX, paymentIdentifier: id })).rejects.toThrow(/reserved/);
+  });
+
+  it("keeps exact identifier reservations across ledger restarts and releases only rejected work", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const id = "pay_7d5d747be160e280504c099d984bcfe0";
+    const attempt = exactSettlementAttempt({ profile: "standard-native", head: undefined, paymentIdentifier: id });
+    await ledger.claimExactSettlement(attempt);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.claimExactSettlement({ ...attempt, transactionId: OTHER_TX })).rejects.toThrow(/reserved/);
+    await expect(ledger.claimExactSettlement({ ...attempt, paymentIdentifier: "another_payment_identifier" })).rejects.toThrow(/different request/);
+    await expect(ledger.commitExactPayment({ payment: exactPayment(), paymentIdentifier: paymentIdentifier({ id }) })).rejects.toThrow(/not ready/);
+    expect(await ledger.loadPaymentIdentifier(id)).toBeUndefined();
+    await ledger.abandonExactSettlement(TX, "trusted rejection", "2026-07-07T00:00:03.000Z");
+    await expect(ledger.claimExactSettlement({ ...attempt, transactionId: OTHER_TX })).resolves.toMatchObject({ created: true });
+  });
+
   it("canonicalizes mixed-case channel identities at the store boundary", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const channelId = "ab".repeat(32);
@@ -556,78 +610,6 @@ describe("gateway durable ledger", () => {
     ).resolves.toBe(true);
   });
 
-  it("rate limits by fixed windows", async () => {
-    const storage = new FakeStorage();
-    const ledger = new GatewayLedger(storage);
-    await expect(
-      ledger.checkRateLimit("ip:exact", 1_000, 2, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 1_100, 2, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 2 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 1_200, 2, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 3 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 60_001, 2, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 180_001, 2, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1 });
-    const windows = await storage.list({ prefix: "rate-window:" });
-    expect([...windows.keys()]).toEqual(["rate-window:exact"]);
-    expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
-  });
-
-  it("buckets overflow scopes without resetting active counters", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    for (let index = 0; index < 1_024; index += 1) {
-      await expect(
-        ledger.checkRateLimit(`ip-${index}:exact`, index, 1, 60_000),
-      ).resolves.toMatchObject({ allowed: true, count: 1 });
-    }
-    await expect(
-      ledger.checkRateLimit("overflow:exact", 2_000, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1 });
-    await expect(
-      ledger.checkRateLimit("another-overflow:exact", 2_001, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 2 });
-    await expect(
-      ledger.checkRateLimit("ip-0:exact", 2_002, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 2 });
-    await expect(
-      ledger.checkRateLimit("overflow:exact", 60_001, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1 });
-  });
-
-  it("isolates exact and batch rate windows", async () => {
-    const storage = new FakeStorage();
-    const ledger = new GatewayLedger(storage);
-    await ledger.checkRateLimit("ip:exact", 1_000, 1, 60_000);
-    await ledger.checkRateLimit("ip:batch", 1_000, 1, 60_000);
-    const windows = await storage.list({ prefix: "rate-window:" });
-    expect([...windows.keys()].sort()).toEqual([
-      "rate-window:batch",
-      "rate-window:exact",
-    ]);
-  });
-
-  it("does not reopen a rate window when wall-clock time moves backward", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await expect(
-      ledger.checkRateLimit("ip:exact", 61_000, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: true, count: 1, resetAt: 120_000 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 61_001, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 2, resetAt: 120_000 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 59_999, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 3, resetAt: 120_000 });
-    await expect(
-      ledger.checkRateLimit("ip:exact", 61_002, 1, 60_000),
-    ).resolves.toMatchObject({ allowed: false, count: 4, resetAt: 120_000 });
-  });
-
   it("persists the latest canary report", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const report = {
@@ -783,6 +765,7 @@ describe("gateway durable ledger", () => {
 });
 
 class FakeStorage implements GatewayStorage {
+  #transactionQueue: Promise<unknown> = Promise.resolve();
   #values = new Map<string, unknown>();
   readonly listRequests: Array<{
     prefix?: string;
@@ -827,13 +810,13 @@ class FakeStorage implements GatewayStorage {
   async transaction<T>(
     closure: (txn: GatewayStorage) => Promise<T>,
   ): Promise<T> {
-    const snapshot = structuredClone(Array.from(this.#values.entries()));
-    try {
-      return await closure(this);
-    } catch (error) {
-      this.#values = new Map(snapshot);
-      throw error;
-    }
+    const result = this.#transactionQueue.then(async () => {
+      const snapshot = structuredClone(Array.from(this.#values.entries()));
+      try { return await closure(this); }
+      catch (error) { this.#values = new Map(snapshot); throw error; }
+    });
+    this.#transactionQueue = result.catch(() => {});
+    return result;
   }
 }
 

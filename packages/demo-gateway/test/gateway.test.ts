@@ -11,6 +11,7 @@ import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   type ExactHeadRecord,
+  type ExactSettlementAttemptRecord,
 } from "@kaspa-x402/server";
 import {
   dispatchGatewayState,
@@ -34,7 +35,11 @@ const KIP10_ADDRESS = addressForScriptPublicKey(
   "kaspa:testnet-10",
 );
 
+const ADMIN_TOKEN = "ab".repeat(32);
+
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
+  GATEWAY_RATE_LIMIT: { limit: async () => ({ success: true }) },
+  ADMIN_RATE_LIMIT: { limit: async () => ({ success: true }) },
   KASPA_X402_GATEWAY_ENABLED: "true",
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
@@ -232,7 +237,7 @@ describe("gateway canary", () => {
     const env: GatewayEnv = {
       ...BASE_ENV,
       GATEWAY_STATE: fakeNamespace(storage),
-      KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
+      GATEWAY_RATE_LIMIT: { limit: vi.fn().mockResolvedValueOnce({ success: true }).mockResolvedValue({ success: false }) },
     };
     const fetchMock = vi.fn(async (input: RequestInfo | URL) => {
       const url =
@@ -295,12 +300,100 @@ describe("gateway canary", () => {
     expect(fetchMock).toHaveBeenCalledTimes(fetchesAfterAllowedRequest);
   });
 
+  it("keeps rate keys independent beyond the old overflow capacity and rejects before state access", async () => {
+    const storage = new FakeStorage();
+    const stateReads = vi.fn();
+    const namespace = fakeNamespace(storage, stateReads);
+    const keys = new Set<string>();
+    const limiter = { limit: vi.fn(async ({ key }: { key: string }) => {
+      const success = !keys.has(key); keys.add(key); return { success };
+    }) };
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: namespace, GATEWAY_RATE_LIMIT: limiter };
+    for (let i = 0; i < 1026; i++) {
+      const result = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/supported", { headers: { "cf-connecting-ip": `203.0.${Math.floor(i / 256)}.${i % 256}` } }), env, fakeContext());
+      expect(result.status).toBe(200);
+    }
+    expect(keys.size).toBe(1026);
+    const blocked = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/metrics", { headers: { "cf-connecting-ip": "203.0.0.0" } }), env, fakeContext());
+    expect(blocked.status).toBe(429);
+    expect(stateReads).not.toHaveBeenCalled();
+    const missing = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/metrics"), { ...env, GATEWAY_RATE_LIMIT: undefined }, fakeContext());
+    expect(missing.status).toBe(503);
+  });
+
+  it("recovers saturated exact admission through authenticated completion and trusted rejection without chain calls", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage, { maximumPending: 1 });
+    const now = new Date().toISOString();
+    const attempt: ExactSettlementAttemptRecord = { transactionId: "55".repeat(32), profile: "standard-native", amount: "10000000",
+      paymentOutputIndex: 0, requestFingerprint: "11".repeat(32), paymentRequirementsHash: "22".repeat(32),
+      paymentPayloadHash: "33".repeat(32), requestAuthorizationId: "44".repeat(32), payToScriptPublicKey: SCRIPT,
+      transaction: "durable-transaction", requiredFinality: "accepted", status: "pending", createdAt: now, updatedAt: now };
+    await ledger.claimExactSettlement(attempt);
+    const next = { ...attempt, transactionId: "66".repeat(32) };
+    await expect(ledger.claimExactSettlement(next)).rejects.toThrow(/capacity/);
+    const env = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage), KASPA_X402_ADMIN_TOKEN: ADMIN_TOKEN };
+    const fetchMock = vi.fn(() => { throw new Error("chain must not be called"); });
+    vi.stubGlobal("fetch", fetchMock);
+    const post = (route: string, body: unknown, token = ADMIN_TOKEN) => handleGatewayRequest(new Request(`https://demo.kaspa-x402.org/admin/exact-settlements/${route}`, {
+      method: "POST", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" }, body: JSON.stringify(body),
+    }), env, fakeContext());
+    expect((await post("reject", { transactionId: attempt.transactionId, reason: "not found" })).status).toBe(400);
+    expect((await post("reject", { transactionId: attempt.transactionId, reason: "confirmed conflicting spend", confirmedFinalRejection: true }, "wrong")).status).toBe(401);
+    expect((await post("reject", { transactionId: attempt.transactionId, reason: "confirmed conflicting spend", confirmedFinalRejection: true })).status).toBe(200);
+    await ledger.claimExactSettlement(next);
+    await ledger.acceptExactSettlement(next.transactionId, "accepted", now);
+    expect((await post("complete", { transactionId: next.transactionId, handlerResult: { body: "operator confirmed" } })).status).toBe(200);
+    expect((await ledger.loadExactSettlementAttempt(next.transactionId))?.status).toBe("applied");
+    expect(await storage.get("settlement-admission:pending")).toBe(0);
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it("limits admin authentication attempts before payment-state calls", async () => {
+    const stateCalls = vi.fn();
+    const env = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(new FakeStorage(), stateCalls),
+      KASPA_X402_ADMIN_TOKEN: ADMIN_TOKEN, ADMIN_RATE_LIMIT: { limit: async () => ({ success: false }) } };
+    const result = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/admin/exact-settlements/reconcile", { method: "POST", headers: { authorization: "Bearer wrong" } }), env, fakeContext());
+    expect(result.status).toBe(429);
+    expect(stateCalls).not.toHaveBeenCalled();
+  });
+
+  it("keeps exact and batch-settlement admission scopes distinct before state access", async () => {
+    const limit = vi.fn(async () => ({ success: false }));
+    const reads = vi.fn();
+    const env = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(new FakeStorage(), reads), GATEWAY_RATE_LIMIT: { limit } };
+    for (const path of ["/exact", "/batch"]) {
+      expect((await handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}`, { headers: { "cf-connecting-ip": "203.0.113.7" } }), env, fakeContext())).status).toBe(429);
+    }
+    expect(limit.mock.calls).toEqual([[{ key: "203.0.113.7:exact" }], [{ key: "203.0.113.7:batch-settlement" }]]);
+    expect(reads).not.toHaveBeenCalled();
+  });
+
+  it.each(["/metrics", "/canary", "/supported"])("caches %s independently of caller query strings", async (path) => {
+    const reads = vi.fn();
+    const namespace = fakeNamespace(new FakeStorage(), reads);
+    const cached = new Map<string, Response>();
+    vi.stubGlobal("caches", { default: {
+      match: async (key: string) => cached.get(key)?.clone(),
+      put: async (key: string, value: Response) => { cached.set(key, value); },
+    } });
+    const env = { ...BASE_ENV, GATEWAY_STATE: namespace,
+      KASPA_X402_EXACT_PROFILE: "additive", KASPA_X402_PAY_TO: KIP10_ADDRESS,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true", KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+      KASPA_X402_PNN_ENDPOINTS: "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json" };
+    expect((await handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}?a=1`), env, fakeContext())).status).toBe(200);
+    const firstReads = reads.mock.calls.length;
+    expect(firstReads).toBeGreaterThan(0);
+    expect((await handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}?a=2`), env, fakeContext())).status).toBe(200);
+    expect(reads).toHaveBeenCalledTimes(firstReads);
+  });
+
   it("requires operator auth and keeps hosted exact disabled unless settlement is enabled", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
       ...BASE_ENV,
       GATEWAY_STATE: fakeNamespace(storage),
-      KASPA_X402_ADMIN_TOKEN: "admin-token",
+      KASPA_X402_ADMIN_TOKEN: ADMIN_TOKEN,
     };
 
     const unauthorized = await handleGatewayRequest(
@@ -315,7 +408,7 @@ describe("gateway canary", () => {
 
     const cleartext = await handleGatewayRequest(
       new Request("http://demo.kaspa-x402.org/admin/exact-heads", {
-        headers: { authorization: "Bearer admin-token" },
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
       }),
       env,
       fakeContext(),
@@ -329,7 +422,7 @@ describe("gateway canary", () => {
     const registered = await handleGatewayRequest(
       new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
-        headers: { authorization: "Bearer admin-token" },
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
         body: JSON.stringify({ record: exactHead() }),
       }),
       env,
@@ -383,7 +476,8 @@ describe("gateway canary", () => {
         extra: expect.objectContaining({
           binding: "kaspa-exact-v2",
           paymentFlow: "upfront",
-          profile: "standard-native",
+          defaultProfile: "standard-native",
+          profiles: ["standard-native"],
         }),
       }),
     );
@@ -427,10 +521,10 @@ describe("gateway canary", () => {
     const registration = await handleGatewayRequest(
       new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
-        headers: { authorization: "Bearer admin-token" },
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
         body: JSON.stringify({ record: exactHead() }),
       }),
-      { ...env, KASPA_X402_ADMIN_TOKEN: "admin-token" },
+      { ...env, KASPA_X402_ADMIN_TOKEN: ADMIN_TOKEN },
       fakeContext(),
     );
     expect(registration.status).toBe(200);
@@ -447,7 +541,8 @@ describe("gateway canary", () => {
         extra: expect.objectContaining({
           binding: "kaspa-exact-v2",
           paymentFlow: "upfront",
-          profile: "additive",
+          defaultProfile: "additive",
+          profiles: ["additive"],
         }),
       }),
     );
@@ -563,7 +658,7 @@ describe("gateway canary", () => {
       KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
       KASPA_X402_PNN_ENDPOINTS:
         "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
-      KASPA_X402_ADMIN_TOKEN: "admin-token",
+      KASPA_X402_ADMIN_TOKEN: ADMIN_TOKEN,
     };
     await new GatewayLedger(storage).registerExactHead(exactHead());
 
@@ -580,7 +675,7 @@ describe("gateway canary", () => {
     const recovered = await handleGatewayRequest(
       new Request("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
         method: "POST",
-        headers: { authorization: "Bearer admin-token" },
+        headers: { authorization: `Bearer ${ADMIN_TOKEN}` },
         body: JSON.stringify({
           headId: "90".repeat(32),
           candidateTransactionIds: ["11".repeat(32)],
@@ -719,7 +814,7 @@ function fakeContext(): Pick<ExecutionContext, "waitUntil"> {
   };
 }
 
-function fakeNamespace(storage: GatewayStorage): GatewayEnv["GATEWAY_STATE"] {
+function fakeNamespace(storage: GatewayStorage, onCall?: () => void): GatewayEnv["GATEWAY_STATE"] {
   const ledger = new GatewayLedger(storage);
   return {
     idFromName(name: string) {
@@ -728,6 +823,7 @@ function fakeNamespace(storage: GatewayStorage): GatewayEnv["GATEWAY_STATE"] {
     get() {
       return {
         async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+          onCall?.();
           const request = JSON.parse(
             String(init?.body ?? "{}"),
           ) as GatewayStateRequest;

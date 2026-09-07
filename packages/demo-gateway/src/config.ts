@@ -35,7 +35,6 @@ export interface GatewayConfig {
   minimumRefundLeadDaa: SompiString;
   maxTimeoutSeconds: number;
   claimFeeSompi: SompiString;
-  rateLimitPerMinute: number;
   corsOrigin: string;
   siteBaseUrl: string;
   releaseVersion: string;
@@ -49,6 +48,8 @@ export interface GatewayConfig {
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
+  if (env.KASPA_X402_ADMIN_TOKEN?.trim() && !/^[0-9a-fA-F]{64}$/.test(env.KASPA_X402_ADMIN_TOKEN.trim()))
+    throw new Error("KASPA_X402_ADMIN_TOKEN must encode 32 random bytes as 64 hex characters");
   const network = env.KASPA_X402_NETWORK ?? "kaspa:testnet-10";
   if (network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
@@ -155,12 +156,6 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     claimFeeSompi: sompi(
       env.KASPA_X402_CLAIM_FEE_SOMPI ?? "10000",
       "KASPA_X402_CLAIM_FEE_SOMPI",
-    ),
-    rateLimitPerMinute: uint(
-      env.KASPA_X402_RATE_LIMIT_PER_MINUTE ?? "60",
-      "KASPA_X402_RATE_LIMIT_PER_MINUTE",
-      1,
-      600,
     ),
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(

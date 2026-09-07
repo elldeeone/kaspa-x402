@@ -287,6 +287,7 @@ export class DirectModeClient {
     input: string,
     init: HttpRequestInitLike = {},
   ): Promise<PaidFetchResult> {
+    input = new URL(input, (globalThis as { location?: { href?: string } }).location?.href).href;
     const fetch = this.#options.fetch ?? globalFetchLike();
     const requestInit = { ...init, redirect: "error" as const };
     const firstResponse = await fetch(input, requestInit);
@@ -1144,12 +1145,12 @@ export class DirectModeClient {
       );
     }
     if (
-      parseSompiString(prepared.successor.amount) <
+      parseSompiString(prepared.successor.amount) !==
       parseSompiString(initialFundingAmount)
     ) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_amount",
-        "prepared genesis amount is below the required funding target",
+        "prepared genesis amount differs from the approved funding target",
       );
     }
     assertBatchChannelFundingPolicy(this.#options, prepared.successor.amount);
@@ -1576,6 +1577,9 @@ export class DirectModeClient {
   async #authorizeBatchPayment(
     input: Omit<
       BatchPaymentAuthorizationRequest,
+      | "currentDaaScore"
+      | "refundTimeoutDaa"
+      | "refundHorizonDaa"
       | "additionalFundingAmount"
       | "network"
       | "amount"
@@ -1599,6 +1603,13 @@ export class DirectModeClient {
       this.#options,
       input.resultingFundingAmount,
     );
+    const currentDaaScore = await this.#options.fundingProvider.getVirtualDaaScore();
+    const current = parseSompiString(currentDaaScore);
+    const timeout = parseSompiString(input.accepted.extra.refundTimeoutDaa);
+    const horizon = timeout > current ? timeout - current : 0n;
+    const maximumHorizon = parseSompiString(this.#options.fundingPolicy?.maximumBatchRefundHorizonDaa ?? "36000");
+    if (horizon > maximumHorizon)
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "batch refund horizon exceeds funding policy");
     const additionalFundingAmount = formatSompiString(
       parseSompiString(input.resultingFundingAmount) -
         parseSompiString(input.currentFundingAmount),
@@ -1606,6 +1617,9 @@ export class DirectModeClient {
     const { accepted, context, ...authorization } = input;
     await this.#options.fundingProvider.authorizeBatchPayment({
       ...authorization,
+      currentDaaScore,
+      refundTimeoutDaa: accepted.extra.refundTimeoutDaa,
+      refundHorizonDaa: formatSompiString(horizon),
       network: accepted.network,
       amount: accepted.amount,
       payTo: accepted.payTo,
@@ -2823,9 +2837,9 @@ function scriptPublicKeyHash(scriptPublicKey: string): string {
 
 function originForUrl(url: string): string {
   try {
-    return new URL(url).origin;
+    return new URL(url, (globalThis as { location?: { href?: string } }).location?.href).origin;
   } catch {
-    return url;
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "payment origin requires an absolute URL or browser location");
   }
 }
 

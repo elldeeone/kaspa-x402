@@ -9,6 +9,7 @@ import {
   toX402ErrorReason,
   X402_VERSION,
   type ResourceInfo,
+  type PaymentPayload,
   type SupportedKind,
 } from "@kaspa-x402/core";
 import {
@@ -18,6 +19,7 @@ import {
   PAYMENT_SIGNATURE_HEADER,
   type ExactHeadRecord,
   type ServerStateStore,
+  type ProtectedHandlerResult,
 } from "@kaspa-x402/server";
 import {
   KaspaPnnClient,
@@ -26,6 +28,7 @@ import {
   NativeChannelSignatureVerifier,
   PnnBroadcastChainProvider,
   RestExactHeadReconciler,
+  RestExactSettlementReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -73,31 +76,30 @@ export async function handleGatewayRequest(
     return new Response(null, { status: 204, headers: corsHeaders(config) });
 
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
-  if (url.pathname.startsWith("/admin/exact-heads")) {
+  if (url.pathname.startsWith("/admin/")) {
+    const limited = await gatewayRateResponse(request, env.ADMIN_RATE_LIMIT, config, "admin");
+    if (limited) return limited;
     return exactHeadsAdminResponse(request, url, config, state);
   }
   if (url.pathname === "/" && request.method === "GET")
     return json(indexBody(url), { headers: corsHeaders(config) });
   if (url.pathname === "/health" && request.method === "GET")
     return healthResponse(config);
-  if (url.pathname === "/metrics" && request.method === "GET")
-    return json(
-      { ok: true, metrics: await state.metrics() },
-      { headers: corsHeaders(config) },
-    );
-  if (url.pathname === "/canary" && request.method === "GET")
-    return canaryResponse(config, state);
-
-  if (url.pathname === "/supported" && request.method === "GET") {
-    const exactAvailable = await hostedExactAvailable(config, state);
-    return json(
-      {
-        ok: true,
-        enabled: config.enabled,
-        kinds: gatewaySupportedKinds(config, exactAvailable),
-      },
-      { headers: corsHeaders(config) },
-    );
+  if (["/metrics", "/canary", "/supported"].includes(url.pathname) && request.method === "GET") {
+    const limited = await gatewayRateResponse(request, env.GATEWAY_RATE_LIMIT, config, "status");
+    if (limited) return limited;
+    const cache = typeof caches === "undefined" ? undefined : caches.default;
+    const cacheUrl = new URL(`/__gateway_status/${config.releaseVersion}${url.pathname}`, url.origin);
+    const cached = await cache?.match(cacheUrl.href);
+    if (cached) return cached;
+    const result = url.pathname === "/metrics"
+      ? json({ ok: true, metrics: await state.metrics() }, { headers: corsHeaders(config) })
+      : url.pathname === "/canary"
+        ? await canaryResponse(config, state)
+        : json({ ok: true, enabled: config.enabled, kinds: gatewaySupportedKinds(config, await hostedExactAvailable(config, state)) }, { headers: corsHeaders(config) });
+    result.headers.set("cache-control", "public, max-age=15");
+    if (cache) context.waitUntil(cache.put(cacheUrl.href, result.clone()));
+    return result;
   }
 
   const profile = routeProfile(url.pathname);
@@ -118,30 +120,8 @@ export async function handleGatewayRequest(
       { status: 503, headers: corsHeaders(config) },
     );
   }
-  const rate = await state.checkRateLimit(
-    rateScope(request, profile),
-    Date.now(),
-    config.rateLimitPerMinute,
-    60_000,
-  );
-  if (!rate.allowed) {
-    return json(
-      {
-        ok: false,
-        error: "rate_limited",
-        resetAt: new Date(rate.resetAt).toISOString(),
-      },
-      {
-        status: 429,
-        headers: {
-          ...corsHeaders(config),
-          "retry-after": String(
-            Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)),
-          ),
-        },
-      },
-    );
-  }
+  const limited = await gatewayRateResponse(request, env.GATEWAY_RATE_LIMIT, config, profile);
+  if (limited) return limited;
 
   if (profile === "exact" && !hostedExactConfigured(config)) {
     return json(
@@ -399,7 +379,8 @@ function gatewaySupportedKinds(
         asset: "KAS",
         binding: "kaspa-exact-v2",
         paymentFlow: "upfront",
-        profile: config.exactProfile,
+        defaultProfile: config.exactProfile,
+        profiles: [config.exactProfile],
         ...(config.exactProfile === "additive"
           ? { templateId: "kaspa-x402-kip10-additive-v1" }
           : {}),
@@ -425,6 +406,7 @@ function gatewaySupportedKinds(
 async function createGateway(
   config: GatewayConfig,
   state: GatewayStateClient,
+  forRecovery = false,
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
@@ -447,7 +429,7 @@ async function createGateway(
           rest,
         )
       : restChainProvider;
-  const currentDaa = BigInt(await rest.getVirtualDaaScore());
+  const currentDaa = forRecovery ? 0n : BigInt(await rest.getVirtualDaaScore());
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -457,7 +439,7 @@ async function createGateway(
     );
   }
   const refundTimeoutDaa = BigInt(
-    await state.resolveBatchRefundTimeoutDaa(
+    forRecovery ? config.refundTimeoutDaaDelta : await state.resolveBatchRefundTimeoutDaa(
       currentDaa.toString(),
       config.refundTimeoutDaaDelta,
       config.minimumRefundLeadDaa,
@@ -489,6 +471,7 @@ async function createGateway(
     channelSignatureVerifier: new NativeChannelSignatureVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
     exactHeadReconciler: new RestExactHeadReconciler(rest),
+    exactSettlementReconciler: new RestExactSettlementReconciler(rest),
     topUpVerifier: restChainProvider,
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
@@ -761,6 +744,39 @@ async function exactHeadsAdminResponse(
       { ok: false, error: "unauthorized" },
       { status: 401, headers: corsHeaders(config) },
     );
+  }
+  if (["/admin/exact-settlements/complete", "/admin/exact-settlements/reject", "/admin/batch-settlements/complete"].includes(url.pathname) && request.method === "POST") {
+    try {
+      const body = await readRequestJsonWithLimit<{ transactionId?: string; attemptId?: string; reason?: string;
+        confirmedFinalRejection?: boolean; handlerResult?: ProtectedHandlerResult; originalPayment?: PaymentPayload }>(request, MAX_ADMIN_JSON_BYTES, "settlement recovery");
+      const id = url.pathname.includes("batch-settlements") ? body.attemptId : body.transactionId;
+      if (typeof id !== "string" || !/^[0-9a-fA-F]{64}$/.test(id)) throw new Error("settlement recovery requires an attempt or transaction id");
+      if (url.pathname.endsWith("/reject")) {
+        if (body.confirmedFinalRejection !== true || typeof body.reason !== "string" || !body.reason.trim())
+          throw new Error("rejection requires operator-confirmed final rejection evidence; absence or timeout is insufficient");
+        await state.abandonExactSettlement(id, body.reason, new Date().toISOString());
+        return json({ ok: true }, { headers: corsHeaders(config) });
+      }
+      const { server } = await createGateway(config, state, true);
+      const response = url.pathname.includes("batch-settlements")
+        ? await server.recoverBatchHandler(id, body.handlerResult, body.originalPayment)
+        : await server.completeExactSettlement(id, body.handlerResult);
+      return json({ ok: true, response }, { headers: corsHeaders(config) });
+    } catch (error) {
+      return json({ ok: false, error: errorMessage(error) }, { status: 400, headers: corsHeaders(config) });
+    }
+  }
+  if (url.pathname === "/admin/exact-settlements/reconcile" && request.method === "POST") {
+    try {
+      const body = await readRequestJsonWithLimit<{ transactionId?: unknown }>(request, MAX_ADMIN_JSON_BYTES, "exact settlement reconciliation");
+      if (typeof body.transactionId !== "string" || !/^[0-9a-fA-F]{64}$/.test(body.transactionId))
+        throw new Error("exact settlement reconciliation requires a transaction id");
+      const { server } = await createGateway(config, state);
+      const attempt = await server.reconcileExactSettlement(body.transactionId);
+      return json({ ok: true, attempt }, { headers: corsHeaders(config) });
+    } catch (error) {
+      return json({ ok: false, error: errorMessage(error) }, { status: 400, headers: corsHeaders(config) });
+    }
   }
   if (url.pathname === "/admin/exact-heads" && request.method === "GET") {
     return json(
@@ -1274,7 +1290,22 @@ function profileMetric(profile: Profile): string {
   return profile === "exact" ? "exact" : "batch";
 }
 
-function rateScope(request: Request, profile: Profile): string {
+async function gatewayRateResponse(
+  request: Request,
+  limiter: RateLimit | undefined,
+  config: GatewayConfig,
+  scope: string,
+): Promise<Response | undefined> {
+  if (!limiter) return json({ ok: false, error: "rate_limit_unavailable" }, { status: 503, headers: corsHeaders(config) });
+  try {
+    if ((await limiter.limit({ key: rateScope(request, scope) })).success) return;
+  } catch {
+    return json({ ok: false, error: "rate_limit_unavailable" }, { status: 503, headers: corsHeaders(config) });
+  }
+  return json({ ok: false, error: "rate_limited" }, { status: 429, headers: { ...corsHeaders(config), "retry-after": "60" } });
+}
+
+function rateScope(request: Request, profile: string): string {
   const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return `${ip}:${profile}`;
 }

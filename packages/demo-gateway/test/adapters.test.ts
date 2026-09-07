@@ -1,3 +1,4 @@
+import type { ExactSettlementAttemptRecord } from "@kaspa-x402/server";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -20,6 +21,7 @@ import {
   NativeChannelSignatureVerifier,
   PnnBroadcastChainProvider,
   RestExactHeadReconciler,
+  RestExactSettlementReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -548,6 +550,24 @@ describe("RestKaspaChainProvider", () => {
         scriptPublicKey: exact.headScriptPublicKey.slice(4),
       },
     });
+  });
+});
+
+describe("RestExactSettlementReconciler", () => {
+  it("preserves absent transactions as unknown and proves accepted output evidence", async () => {
+    const attempt: ExactSettlementAttemptRecord = {
+      transactionId: "11".repeat(32), profile: "standard-native", amount: "100", paymentOutputIndex: 0,
+      requestFingerprint: "22".repeat(32), paymentRequirementsHash: "33".repeat(32),
+      paymentPayloadHash: "44".repeat(32), requestAuthorizationId: "55".repeat(32),
+      payToScriptPublicKey: "000051", transaction: "stored artifact", requiredFinality: "accepted",
+      status: "broadcast", createdAt: "2026-01-01T00:00:00.000Z", updatedAt: "2026-01-01T00:00:00.000Z",
+    };
+    const fetchMock = vi.fn()
+      .mockResolvedValueOnce(new Response("missing", { status: 404 }))
+      .mockResolvedValueOnce(Response.json({ transaction_id: attempt.transactionId, is_accepted: true, outputs: [{ index: 0, amount: "100", script_public_key: "51" }] }));
+    const reconciler = new RestExactSettlementReconciler(new KaspaRestClient("https://api.example.test", { fetch: fetchMock }));
+    expect((await reconciler.reconcileExactSettlement(attempt)).status).toBe("unknown");
+    expect(await reconciler.reconcileExactSettlement(attempt)).toMatchObject({ status: "accepted", transactionId: attempt.transactionId, finality: "accepted", paymentOutput: { amount: "100", scriptPublicKey: "000051" } });
   });
 });
 
@@ -1245,6 +1265,7 @@ describe("RestExactTransactionVerifier", () => {
       await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
         "exact request authorization has expired",
       );
+      await expect(verifier.verifyExactPayment({ ...request, allowExpiredAuthorization: true })).resolves.toHaveProperty("transactionId");
     } finally {
       vi.useRealTimers();
     }
@@ -1588,6 +1609,7 @@ describe("RestExactTransactionVerifier", () => {
       await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
         "exact request authorization has expired",
       );
+      await expect(verifier.verifyExactPayment({ ...request, allowExpiredAuthorization: true })).resolves.toHaveProperty("transactionId");
     } finally {
       vi.useRealTimers();
     }

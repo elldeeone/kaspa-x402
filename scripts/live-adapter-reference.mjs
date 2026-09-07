@@ -1,4 +1,5 @@
 import crypto from "node:crypto";
+import { assertPrivateKeyDirectory, readPrivateKeyFile, writePrivateKeyFile } from "./private-key-files.mjs";
 import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
@@ -91,6 +92,7 @@ export async function runLiveProof(context) {
   const networkId = kaspaNetworkId(context.network);
   const dataDir = path.resolve(context.dataDir);
   fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
+  assertPrivateKeyDirectory(dataDir);
 
   const fundingPrivateKeyHex = loadFundingPrivateKey(context.fundingWallet);
   const fundingPrivateKey = new sdk.PrivateKey(fundingPrivateKeyHex);
@@ -3210,10 +3212,9 @@ function makeSigner({
         dataDir,
         `client-channel-key-${Date.now()}-${publicKey.slice(0, 12)}.json`,
       );
-      fs.writeFileSync(
+      writePrivateKeyFile(
         file,
         `${JSON.stringify({ createdAt: new Date().toISOString(), publicKey, privateKey }, null, 2)}\n`,
-        { mode: 0o600 },
       );
       return { privateKey, publicKey };
     },
@@ -4690,9 +4691,7 @@ function optionalNonzeroCovenantId(value) {
 function loadFundingPrivateKey(specifier) {
   if (!specifier) throw new Error("KASPA_X402_FUNDING_WALLET is required");
   if (specifier.startsWith("wallet-key:")) {
-    return fs
-      .readFileSync(path.resolve(specifier.slice("wallet-key:".length)), "utf8")
-      .trim();
+    return readPrivateKeyFile(path.resolve(specifier.slice("wallet-key:".length)));
   }
   if (/^[0-9a-fA-F]{64}$/.test(specifier)) return specifier.toLowerCase();
   throw new Error(
@@ -4702,7 +4701,7 @@ function loadFundingPrivateKey(specifier) {
 
 function loadOrCreateChannelKey(file, schnorr) {
   if (fs.existsSync(file)) {
-    const privateKey = fs.readFileSync(file, "utf8").trim();
+    const privateKey = readPrivateKeyFile(file);
     return {
       privateKey,
       publicKey: bytesToHex(
@@ -4711,7 +4710,7 @@ function loadOrCreateChannelKey(file, schnorr) {
     };
   }
   const privateKey = bytesToHex(schnorr.utils.randomSecretKey());
-  fs.writeFileSync(file, `${privateKey}\n`, { mode: 0o600 });
+  writePrivateKeyFile(file, `${privateKey}\n`);
   return {
     privateKey,
     publicKey: bytesToHex(
@@ -4722,9 +4721,9 @@ function loadOrCreateChannelKey(file, schnorr) {
 
 function loadOrCreateWalletKey(file, sdk) {
   if (fs.existsSync(file))
-    return new sdk.PrivateKey(fs.readFileSync(file, "utf8").trim());
+    return new sdk.PrivateKey(readPrivateKeyFile(file));
   const keypair = sdk.Keypair.random();
-  fs.writeFileSync(file, `${keypair.privateKey}\n`, { mode: 0o600 });
+  writePrivateKeyFile(file, `${keypair.privateKey}\n`);
   return new sdk.PrivateKey(keypair.privateKey);
 }
 
