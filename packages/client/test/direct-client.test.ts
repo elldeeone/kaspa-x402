@@ -13,6 +13,7 @@ import {
   mcpToolCallFingerprint,
   paymentIdentifierExtension,
   sha256Hex,
+  validatePaymentRetry,
 } from "@kaspa-x402/core";
 import type {
   BatchPaymentRequirements,
@@ -2160,6 +2161,36 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments).toHaveLength(2);
   });
 
+  it("requires trusted absence before replacing an additive artifact with refreshed head terms", async () => {
+    const provider = new FakeFundingProvider();
+    let absent = false;
+    const client = makeClient({
+      provider,
+      exactPaymentReconciler: {
+        async reconcileExactPayment(attempt) {
+          return { status: absent ? "absent" : "unknown", transactionId: attempt.transactionId };
+        },
+      },
+    });
+    const required = makeAdditiveExactRequired({ amount: "20000000" });
+    const context = { url: "https://api.example.test/file", requestHash: "97".repeat(32) };
+    const first = await client.createPayment(encodePaymentRequiredHeader(required), context);
+    const refreshed = structuredClone(required);
+    const accepted = refreshed.accepts[0] as ExactPaymentRequirements;
+    accepted.extra.headVersion = "8";
+    accepted.extra.expectedHeadOutpoint = { txid: "98".repeat(32), index: 0 };
+    const header = encodePaymentRequiredHeader(refreshed);
+    await expect(client.createPayment(header, context)).rejects.toThrow("accepted PaymentRequirements");
+    expect(await client.reconcileExactPayment(first.exactAttemptId!)).toMatchObject({ finality: "unknown" });
+    await expect(client.createPayment(header, context)).rejects.toThrow("accepted PaymentRequirements");
+    expect(provider.exactPayments).toHaveLength(1);
+    absent = true;
+    expect(await client.reconcileExactPayment(first.exactAttemptId!)).toMatchObject({ finality: "absent" });
+    const replacement = await client.createPayment(header, context);
+    expect(replacement.accepted.extra.headVersion).toBe("8");
+    expect(provider.exactPayments).toHaveLength(2);
+  });
+
   it("requires explicit requestHash for paidFetch bodies outside the JSON canonicalization profile", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({
@@ -2510,6 +2541,18 @@ describe("direct-mode client", () => {
 
     expect(calls).toBe(2);
     expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("keeps optional payment identifiers valid without an advertised extension", async () => {
+    const required = makeRequired({ amount: "100" });
+    const payment = await makeClient({}).createPayment(encodePaymentRequiredHeader(required), {
+      url: "https://api.example.test/data",
+      paymentIdentifier: "optional-payment-0001",
+    });
+    expect(payment.paymentPayload.extensions?.["payment-identifier"]).toEqual(
+      paymentIdentifierExtension({ required: false, id: "optional-payment-0001" }),
+    );
+    expect(validatePaymentRetry({ paymentRequired: required, paymentPayload: payment.paymentPayload }).ok).toBe(true);
   });
 
   it("passes payment identifiers through paidFetch retries", async () => {

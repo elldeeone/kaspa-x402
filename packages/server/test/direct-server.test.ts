@@ -683,15 +683,50 @@ describe("direct-mode server", () => {
     const call = () => handlePaidMcpToolCall(setup.server,
       { audience: MCP_AUDIENCE, name: "download", resource: RESOURCE, scheme },
       { name: "download", arguments: {}, _meta: { [MCP_PAYMENT_META_KEY]: payment } },
-      () => { executions++; return { result: { isError, content: [{ type: "text", text: "tool result" }] } }; },
+      () => { executions++; return { chargedAmount: accepted.amount, result: { isError, content: [{ type: "text", text: "tool result" }] } }; },
     );
     const result = await call();
     expect(result.isError).toBe(isError);
     expect(result.content?.[0]?.text).toBe("tool result");
     expect(readMcpPaymentResponse(result)?.amount).toBe(amount);
-    await call();
+    expect(await call()).toEqual(result);
     expect(executions).toBe(1);
     if (batchChannelId) expect((await setup.store.loadChannel(batchChannelId))?.chargedCumulativeAmount).toBe(amount);
+  });
+
+  it("keeps a thrown MCP batch handler pending and blocks retries without charging again", async () => {
+    const setup = makeServer();
+    const claims = vi.spyOn(setup.store, "claimBatchSettlement");
+    const accepted = setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "batch-settlement" }).accepts[0] as BatchPaymentRequirements;
+    const requestHash = mcpToolCallFingerprint({ audience: MCP_AUDIENCE, toolName: "download", arguments: {}, accepted });
+    const payment = makeDepositPayment(setup, { accepted });
+    if (payment.payload.payload.type !== "deposit-voucher") throw new Error("expected batch fixture");
+    payment.payload.payload.authorization = fakeBatchRequestAuthorization(accepted, payment.channelId, COVENANT_ID, accepted.amount, requestHash);
+    let executions = 0;
+    const call = () => handlePaidMcpToolCall(setup.server,
+      { audience: MCP_AUDIENCE, name: "download", resource: RESOURCE, scheme: "batch-settlement" },
+      { name: "download", arguments: {}, _meta: { [MCP_PAYMENT_META_KEY]: payment.payload } },
+      () => { executions++; throw new Error("tool side effect may already have happened"); },
+    );
+
+    const first = await call();
+    expect(first.isError).toBe(true);
+    expect(readMcpPaymentResponse(first)).toBeUndefined();
+    const attemptId = claims.mock.calls[0]![0].attemptId;
+    for (let retry = 0; retry < 2; retry++) {
+      const result = await call();
+      expect(result.isError).toBe(true);
+      expect(result.content?.[0]?.text).toBe("batch_settlement_recovery_required");
+      expect(readMcpPaymentResponse(result)).toBeUndefined();
+    }
+    expect(executions).toBe(1);
+    expect(await setup.store.loadBatchSettlementAttempt(attemptId)).toMatchObject({
+      status: "pending",
+      handlerStartedAt: expect.any(String),
+      recoveryReason: expect.stringContaining("handler threw"),
+    });
+    expect((await setup.store.loadBatchSettlementAttempt(attemptId))?.handlerResult).toBeUndefined();
+    expect((await setup.store.loadChannel(payment.channelId))?.chargedCumulativeAmount).toBe("0");
   });
 
   it("returns cached MCP paid results for idempotent retries", async () => {

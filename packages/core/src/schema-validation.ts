@@ -355,7 +355,8 @@ export function validatePaymentRetry(input: {
   if (
     payloadPaymentIdentifier.present &&
     !paymentIdentifier.present &&
-    payloadPaymentIdentifier.value.schema !== undefined
+    payloadPaymentIdentifier.value.schema !== undefined &&
+    stableStringify(payloadPaymentIdentifier.value.schema) !== TRUSTED_PAYMENT_IDENTIFIER_SCHEMA
   ) {
     return fail(
       "invalid_kaspa_payment_identifier",

@@ -686,7 +686,7 @@ async function buildKip10ExactTransaction(input) {
     headAmount,
     headScriptPublicKey,
     0n,
-    EXACT_KIP10_COMPUTE_BUDGET,
+    0,
   );
   const fundingInput = p2pkInputBase(
     fundingUtxo.outpoint,

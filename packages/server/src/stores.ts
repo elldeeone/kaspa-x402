@@ -292,6 +292,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
     const payment = clone(record.payment);
+    payment.transactionId = canonicalHash32(payment.transactionId);
     const key = exactPaymentKey(payment.transactionId);
     const existing = this.#exactPayments.get(key);
     if (existing) {

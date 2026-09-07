@@ -734,6 +734,7 @@ export class GatewayLedger implements ServerStateStore {
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const payment = clone(record.payment);
+      payment.transactionId = payment.transactionId.toLowerCase();
       const existing = await txn.get<ExactPaymentRecord>(
         exactPaymentKey(payment.transactionId),
       );

@@ -1153,6 +1153,20 @@ describe("negative vectors", () => {
 });
 
 describe("payment-identifier semantic validation", () => {
+  it("accepts only the trusted default schema for unadvertised optional identifiers", () => {
+    const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
+    const input = {
+      paymentRequired: { ...vector.paymentRequired, extensions: {} },
+      paymentPayload: {
+        ...vector.paymentPayload,
+        extensions: { "payment-identifier": paymentIdentifierExtension({ required: false, id: "optional-payment-0001" }) },
+      },
+    };
+    expect(validatePaymentRetry(input).ok).toBe(true);
+    input.paymentPayload.extensions["payment-identifier"].schema = { type: "object" };
+    expectFailureCode(validatePaymentRetry(input), "invalid_kaspa_payment_identifier");
+  });
+
   it("treats request hashes as case-insensitive hex", () => {
     const first: PaymentIdentifierObservation = {
       extensionInfo: {

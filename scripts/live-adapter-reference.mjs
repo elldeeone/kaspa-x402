@@ -14,6 +14,9 @@ import {
   exactPaymentAttemptIntentHash,
 } from "@kaspa-x402/client";
 import {
+  batchPaymentRequirementsHash,
+  batchRequestAuthorizationDigest,
+  MCP_PAYMENT_META_KEY,
   bytesToHex,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -23,8 +26,12 @@ import {
   exactRequestAuthorizationId,
   hexToBytes,
   readKaspaSettlementExtension,
+  mcpToolCallFingerprint,
+  readMcpPaymentRequired,
+  readMcpPaymentResponse,
   sha256Hex,
   stableStringify,
+  toX402ErrorReason,
   voucherDigest,
 } from "@kaspa-x402/core";
 import {
@@ -44,7 +51,7 @@ import {
   serializedScriptPublicKey,
   transactionV1CovenantId,
 } from "@kaspa-x402/covenant";
-import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
+import { DirectModeServer, MemoryServerChannelStore, handlePaidMcpToolCall } from "@kaspa-x402/server";
 import { sanitizeProofOutputText } from "./proof-output-security.mjs";
 
 // Reference adapter for scripts/proof-live-testnet.mjs. It is testnet-only,
@@ -57,7 +64,7 @@ const EXACT_AMOUNT = "100000000";
 const EXACT_TINY_AMOUNT = "10000000";
 const EXACT_KIP10_HEAD_AMOUNT = "100000000";
 const EXACT_KIP10_ADDITIVE_THRESHOLD = "10000000";
-const EXACT_KIP10_COMPUTE_BUDGET = 10;
+const EXACT_KIP10_COMPUTE_BUDGET = 0;
 const P2PK_COMPUTE_BUDGET = 10;
 const BATCH_REQUEST_AMOUNT = "100000000";
 const BATCH_DEPOSIT_AMOUNT = "400000000";
@@ -70,6 +77,8 @@ const REPO_ROOT = path.resolve(
   path.dirname(fileURLToPath(import.meta.url)),
   "..",
 );
+
+export { buildPreparedGenesis, buildPreparedClaim, buildPreparedRefund, submitBatchArtifact, waitForAddressOutpoint, waitForDaa, getAddressUtxos, makeAddressCodec, escrowParamsFromChannelConfig };
 
 export async function runLiveProof(context) {
   const sdkPath = process.env.KASPA_X402_KASPA_WASM_MODULE;
@@ -114,6 +123,7 @@ export async function runLiveProof(context) {
 
   const rpc = new sdk.RpcClient({ url: context.rpcUrl, networkId });
   const pendingBroadcasts = new Map();
+  const provenConflictingExactTransactions = new Set();
   const knownUtxos = new Map();
   const spentOutpoints = new Set();
   const fundingVersionByTxid = new Map();
@@ -152,6 +162,7 @@ export async function runLiveProof(context) {
       addressCodec,
       networkId,
       network: context.network,
+      proofSecrets: [context.rpcUrl, context.fundingWallet],
       pendingBroadcasts,
       knownUtxos,
       spentOutpoints,
@@ -306,6 +317,14 @@ export async function runLiveProof(context) {
       signer,
       store: clientStore,
       addressCodec,
+      exactPaymentReconciler: {
+        async reconcileExactPayment(attempt) {
+          return {
+            status: provenConflictingExactTransactions.has(attempt.transactionId.toLowerCase()) ? "absent" : "unknown",
+            transactionId: attempt.transactionId,
+          };
+        },
+      },
       refundAddress: fundingAddress,
       refundBuilder: {
         async buildRefundTransaction(request) {
@@ -400,6 +419,9 @@ export async function runLiveProof(context) {
       };
       report.exact.conflict = await runAdditiveConflict({
         client,
+        rpc,
+        pendingBroadcasts,
+        provenConflictingExactTransactions,
         server: additiveServer,
         preferredHeadId: additiveHeads[1].record.headId,
         sdk,
@@ -436,6 +458,7 @@ export async function runLiveProof(context) {
       flow = "batch";
       report.batch = await runBatch({
         client,
+        signer,
         server: standardServer,
         serverStore,
         clientStore,
@@ -803,6 +826,9 @@ async function exactChallenge({
 
 async function runAdditiveConflict({
   client,
+  rpc,
+  pendingBroadcasts,
+  provenConflictingExactTransactions,
   server,
   preferredHeadId,
   sdk,
@@ -820,6 +846,7 @@ async function runAdditiveConflict({
     payments.push(
       await client.createPayment(paymentRequired, {
         url: resource.url,
+        requestHash: hash({ flow: "additive-conflict", contender }),
       }),
     );
   }
@@ -881,6 +908,23 @@ async function runAdditiveConflict({
       "additive loser did not receive an advanced or alternate head",
     );
   }
+  const contestedOutpoint = accepted.extra.expectedHeadOutpoint;
+  const winnerBroadcast = pendingBroadcasts.get(payments[winnerIndex].paymentPayload.payload.transaction);
+  const bothSpendHead = payments.every((payment) =>
+    sdk.Transaction.deserializeFromSafeJSON(payment.paymentPayload.payload.transaction).serializeToObject().inputs.some((input) => {
+      const outpoint = transactionInputOutpoint(input);
+      return outpoint && outpointKey(outpoint) === outpointKey(contestedOutpoint);
+    }),
+  );
+  const liveHeadAbsent = !(await getAddressUtxos(rpc, accepted.payTo)).some(
+    (utxo) => outpointKey(utxo.outpoint) === outpointKey(contestedOutpoint),
+  );
+  if (!winnerBroadcast?.accepted || winnerBroadcast.txid !== transactionIds[winnerIndex] || !bothSpendHead || !liveHeadAbsent) {
+    throw new Error("additive loser lacks accepted conflicting-spend evidence for safe replacement");
+  }
+  provenConflictingExactTransactions.add(transactionIds[loserIndex].toLowerCase());
+  const loserReconciliation = await client.reconcileExactPayment(payments[loserIndex].exactAttemptId);
+  if (loserReconciliation.finality !== "absent") throw new Error("additive loser reservation was not released after proven conflict");
   const retryPayment = await client.createPayment(refreshedHeader, {
     url: resource.url,
     requestHash: requestHashes[loserIndex],
@@ -909,6 +953,7 @@ async function runAdditiveConflict({
     winnerTransactionId: winnerSettlement.transaction,
     winnerStatus: responses[winnerIndex].status,
     loserStatus: responses[loserIndex].status,
+    loserReconciliation: { ...loserReconciliation, evidence: "accepted winner spends the same head input; live UTXO read confirms head absent", bothSpendHead, liveHeadAbsent },
     refreshedHeadId: refreshed.extra.headId,
     refreshedHeadVersion: refreshed.extra.headVersion,
     retryTransactionId: retrySettlement.transaction,
@@ -1775,6 +1820,8 @@ function verifyRequestAuthorization({
 async function runBatch(input) {
   const {
     client,
+    signer,
+    pendingBroadcasts,
     server,
     serverStore,
     clientStore,
@@ -1851,6 +1898,57 @@ async function runBatch(input) {
   );
   if (second.openedChannel)
     throw new Error("batch voucher-only request opened a second channel");
+  const admissionNegatives = {};
+  const beforeAdmission = await serverStore.loadChannel(second.channel.id);
+  for (const scenario of ["invalidVoucherSignature", "signedOverspend"]) {
+    const forged = structuredClone(second.paymentPayload);
+    let amount = BATCH_REQUEST_AMOUNT;
+    if (scenario === "invalidVoucherSignature") {
+      const signature = forged.payload.voucher.signature;
+      forged.payload.voucher.signature = `${signature[0] === "0" ? "1" : "0"}${signature.slice(1)}`;
+    } else {
+      const ceiling = BigInt(beforeAdmission.fundingAmount) + BigInt(beforeAdmission.claimedCumulativeAmount) + 1n;
+      amount = (ceiling - BigInt(beforeAdmission.chargedCumulativeAmount)).toString();
+      forged.accepted = server.buildPaymentRequired({ resource: secondResource, amount, scheme: "batch-settlement" }).accepts[0];
+      forged.payload.voucher.amount = ceiling.toString();
+      forged.payload.voucher.signature = await signer.signVoucher({
+        channel: second.channel,
+        digest: voucherDigest({ network: forged.accepted.network, covenantId: second.channel.covenantId, amount: ceiling.toString() }),
+      });
+      const authorization = forged.payload.authorization;
+      authorization.digest = batchRequestAuthorizationDigest({
+        network: forged.accepted.network,
+        channelId: second.channel.id,
+        covenantId: second.channel.covenantId,
+        amount: ceiling.toString(),
+        paymentRequirementsHash: batchPaymentRequirementsHash(forged.accepted),
+        requestHash: secondHash,
+        audience: secondResource.url,
+        expiresAt: authorization.expiresAt,
+        nonce: authorization.nonce,
+      });
+      authorization.signature = await signer.signBatchRequestAuthorization({ channel: second.channel, digest: authorization.digest });
+    }
+    let handlerExecutions = 0;
+    const broadcastsBefore = pendingBroadcasts.size;
+    const expectedError = scenario === "invalidVoucherSignature" ? "invalid_kaspa_signature" : "invalid_kaspa_x402_amount";
+    let verificationError;
+    try {
+      await server.verifyPayment({ resource: secondResource, paymentRequirements: forged.accepted, paymentPayload: forged, requestHash: secondHash });
+    } catch (error) {
+      verificationError = error.code;
+    }
+    const response = await server.handlePaidRequest(
+      requestWithPayment(forged, { url: secondResource.url, resource: secondResource, scheme: "batch-settlement", amount, requestHash: secondHash }),
+      () => { handlerExecutions++; return { body: { unexpected: true } }; },
+    );
+    const broadcasts = pendingBroadcasts.size - broadcastsBefore;
+    const channelUnchanged = stableStringify(await serverStore.loadChannel(second.channel.id)) === stableStringify(beforeAdmission);
+    if (verificationError !== expectedError || response.status !== 402 || response.body?.error !== toX402ErrorReason(expectedError) || handlerExecutions !== 0 || broadcasts !== 0 || !channelUnchanged) {
+      throw new Error(`batch ${scenario} did not reject cleanly before protected work: ${JSON.stringify({ verificationError, status: response.status, error: response.body?.error, handlerExecutions, broadcasts, channelUnchanged })}`);
+    }
+    admissionNegatives[scenario] = { evidence: "server admission against live funded channel; no consensus broadcast", verificationError, status: response.status, error: response.body?.error, handlerExecutions, broadcasts, channelUnchanged };
+  }
   const secondResponse = await server.handlePaidRequest(
     requestWithPayment(second.paymentPayload, {
       url: secondResource.url,
@@ -1987,6 +2085,8 @@ async function runBatch(input) {
     expectedTopUpOutpoint: topUpProof.successorOutpoint,
   });
 
+  const mcp = await runFundedMcpBatch({ client, server, serverStore, pendingBroadcasts });
+
   await waitForDaa(rpc, timeoutDaa + 10n);
   const refundExecution = await client.refundChannel(claimable.channelId);
   if (!refundExecution.accepted) {
@@ -2005,6 +2105,12 @@ async function runBatch(input) {
     expectedChannelId: claimable.channelId,
     expectedTransactionId: refundExecution.transactionId,
   });
+  const mcpRefund = await client.refundChannel(mcp.channelId);
+  if (!mcpRefund.accepted) throw new Error("MCP batch refund did not reach accepted finality");
+  await serverStore.retireChannel(mcp.channelId);
+  const mcpRefundArtifact = batchArtifactsByTxid.get(mcpRefund.transactionId.toLowerCase());
+  if (!mcpRefundArtifact || mcpRefundArtifact.kind !== "batch-refund") throw new Error("MCP refund artifact missing");
+  mcp.refund = { transactionId: mcpRefund.transactionId, finality: mcpRefund.finality, inputAmountSompi: mcpRefundArtifact.transaction.inputs[0].utxo.amount, refundAmountSompi: mcpRefundArtifact.fee.refundOutputAmount, feeSompi: mcpRefundArtifact.fee.amount, clientState: mcpRefund.channel.status, serverState: (await serverStore.loadChannel(mcp.channelId))?.status };
   const refundServerInfo = await rpc.getServerInfo();
   const observedRefundDaaScore = String(refundServerInfo.virtualDaaScore);
   if (
@@ -2073,6 +2179,8 @@ async function runBatch(input) {
 
   return {
     claimReserveSompi: DEFAULT_FEE_SOMPI.toString(),
+    mcp,
+    admissionNegatives,
     restartReload,
     deposit: {
       txid: first.channel.activeOutpoint.txid,
@@ -2216,6 +2324,80 @@ async function runBatch(input) {
   };
 }
 
+async function runFundedMcpBatch({ client, server, serverStore, pendingBroadcasts }) {
+  const audience = "https://mcp-live.kaspa-x402.local";
+  const resource = { url: `${audience}/tool/probe` };
+  const options = { audience, name: "probe", resource, scheme: "batch-settlement", amount: BATCH_REQUEST_AMOUNT };
+  const evidence = { evidence: "real TN10-funded channel and Schnorr verification; MCP handlers execute in process", scenarios: {} };
+  for (const scenario of ["returnedError", "thrownError", "success"]) {
+    const params = { name: "probe", arguments: { scenario } };
+    const unpaid = await handlePaidMcpToolCall(server, options, params, () => { throw new Error("unpaid MCP handler executed"); });
+    const required = readMcpPaymentRequired(unpaid);
+    if (!required) throw new Error("MCP tool did not return payment requirements");
+    const payment = await client.createPayment(encodePaymentRequiredHeader(required), {
+      url: resource.url,
+      requestHash: mcpToolCallFingerprint({ audience, toolName: params.name, arguments: params.arguments, accepted: required.accepts[0] }),
+    });
+    if (evidence.channelId && evidence.channelId !== payment.channel.id) throw new Error("MCP scenarios unexpectedly opened multiple channels");
+    evidence.channelId = payment.channel.id;
+    evidence.depositTransactionId ??= payment.channel.activeOutpoint.txid;
+    const paidParams = { ...params, _meta: { [MCP_PAYMENT_META_KEY]: payment.paymentPayload } };
+    let executions = 0;
+    const handler = () => {
+      executions++;
+      if (scenario === "thrownError") throw new Error("controlled MCP failure with no side effect");
+      return { chargedAmount: BATCH_REQUEST_AMOUNT, result: { isError: scenario === "returnedError", content: [{ type: "text", text: scenario }] } };
+    };
+    const broadcastsBefore = pendingBroadcasts.size;
+    let attemptId;
+    const claim = serverStore.claimBatchSettlement;
+    serverStore.claimBatchSettlement = async function (attempt) {
+      if (attempt.channelId === evidence.channelId) attemptId = attempt.attemptId;
+      return claim.call(this, attempt);
+    };
+    let first;
+    try {
+      first = await handlePaidMcpToolCall(server, options, paidParams, handler);
+    } finally {
+      serverStore.claimBatchSettlement = claim;
+    }
+    const firstSettlement = readMcpPaymentResponse(first);
+    if (scenario === "thrownError") {
+      if (!first.isError || firstSettlement) throw new Error("thrown MCP outcome incorrectly produced a settlement");
+      for (let retry = 0; retry < 2; retry++) {
+        const result = await handlePaidMcpToolCall(server, options, paidParams, handler);
+        if (!result.isError || readMcpPaymentResponse(result) || result.content?.[0]?.text !== "batch_settlement_recovery_required") throw new Error("thrown MCP retry did not remain pending");
+      }
+      const pending = await serverStore.loadBatchSettlementAttempt(attemptId);
+      if (pending?.status !== "pending" || !pending.recoveryReason || pending.handlerResult || executions !== 1) throw new Error("thrown MCP attempt lacks durable ambiguous-outcome evidence");
+      const beforeRecovery = await serverStore.loadChannel(evidence.channelId);
+      if (beforeRecovery.chargedCumulativeAmount !== "0") throw new Error("thrown MCP handler advanced charge");
+      const recovered = await server.recoverBatchHandler(attemptId, {
+        chargedAmount: "0",
+        body: { isError: true, content: [{ type: "text", text: "operator-confirmed controlled failure" }] },
+      });
+      if (recovered.status !== 200 || decodeResponse(recovered).amount !== "0") throw new Error("MCP explicit zero recovery failed");
+      await client.applySettlement(payment, decodeResponse(recovered));
+      const replay = await handlePaidMcpToolCall(server, options, paidParams, handler);
+      if (readMcpPaymentResponse(replay)?.amount !== "0" || (await serverStore.loadBatchSettlementAttempt(attemptId))?.status !== "applied") throw new Error("MCP recovered result was not replayable");
+      evidence.scenarios[scenario] = { handlerExecutions: executions, pendingRetries: 2, chargedBeforeRecovery: "0", operatorConfirmedCharge: "0", recoveredRetryCharge: "0", attemptId };
+    } else {
+      const amount = scenario === "returnedError" ? "0" : BATCH_REQUEST_AMOUNT;
+      const retry = await handlePaidMcpToolCall(server, options, paidParams, handler);
+      if (first.isError !== (scenario === "returnedError") || !firstSettlement?.success || firstSettlement.amount !== amount || stableStringify(first) !== stableStringify(retry)) throw new Error(`MCP ${scenario} settlement or cached retry mismatch`);
+      await client.applySettlement(payment, firstSettlement);
+      evidence.scenarios[scenario] = { handlerExecutions: executions, chargedAmount: amount, identicalCachedRetry: true };
+    }
+    if (executions !== 1 || pendingBroadcasts.size !== broadcastsBefore) throw new Error("MCP retry re-executed or unexpectedly broadcast a transaction");
+    evidence.scenarios[scenario].handlerExecutions = executions;
+    evidence.scenarios[scenario].settlementBroadcasts = 0;
+  }
+  const channel = await serverStore.loadChannel(evidence.channelId);
+  if (channel.chargedCumulativeAmount !== BATCH_REQUEST_AMOUNT) throw new Error("MCP total charge differs from one successful tool call");
+  evidence.chargedCumulativeAmount = channel.chargedCumulativeAmount;
+  return evidence;
+}
+
 function batchReportState(channel, settlementState) {
   return {
     covenantId: channel.covenantId,
@@ -2297,6 +2479,7 @@ async function buildPreparedGenesis(input) {
     request,
     rpc,
     sdk,
+    networkId,
     network,
     fundingPrivateKeyHex,
     fundingAddress,
@@ -2310,18 +2493,23 @@ async function buildPreparedGenesis(input) {
   } = input;
   const requestedMinimum = BigInt(request.amount);
   const fee = DEFAULT_FEE_SOMPI;
-  const funding = await selectFundingUtxo(
+  // Singleton genesis cannot return change: prepare exactly the approved deposit plus fee.
+  const preparedFunding = await sendFromFunding({
     rpc,
+    sdk,
+    networkId,
+    fundingPrivateKey: new sdk.PrivateKey(fundingPrivateKeyHex),
     fundingAddress,
-    requestedMinimum + fee,
     spentOutpoints,
-  );
-  const escrowAmount = BigInt(funding.amount) - fee;
-  if (escrowAmount < requestedMinimum) {
-    throw new Error(
-      "selected batch genesis input is below the requested minimum plus fee",
-    );
-  }
+    outputs: [{ address: fundingAddress, amount: requestedMinimum + fee }],
+  });
+  const funding = await waitForAddressOutpoint({
+    rpc,
+    address: fundingAddress,
+    txid: preparedFunding.txid,
+    amount: requestedMinimum + fee,
+  });
+  const escrowAmount = requestedMinimum;
   const fundingScriptPublicKey = funding.scriptPublicKey;
   const params = escrowParamsFromChannelConfig(
     request.channelConfig,
@@ -2787,6 +2975,7 @@ function makeChainProvider({
   sdk,
   addressCodec,
   network,
+  proofSecrets,
   knownUtxos,
   spentOutpoints,
   pendingBroadcasts,
@@ -2975,7 +3164,7 @@ function makeChainProvider({
               transactionId: parsed.id,
               message: sanitizeProofOutputText(
                 error instanceof Error ? error.message : String(error),
-                { secrets: [context.rpcUrl, context.fundingWallet] },
+                { secrets: proofSecrets },
               ),
             },
             null,

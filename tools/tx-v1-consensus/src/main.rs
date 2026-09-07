@@ -197,6 +197,7 @@ fn main() -> Result<()> {
     }
     let batch_chain = validate_batch_chain(&batch_vectors)?;
     let batch_negative = validate_batch_negative_cases(&batch_vectors)?;
+    let batch_adversarial = validate_batch_adversarial(&batch_vectors)?;
     let exact_profiles = validate_exact_consensus_profiles()?;
     validate_exact_profiles_vector(repo_root, &exact_profiles)?;
     let exact_interop = validate_exact_interop_vector(repo_root, &exact_profiles)?;
@@ -215,6 +216,7 @@ fn main() -> Result<()> {
             "vectors": checked,
             "batchChain": batch_chain,
             "batchNegative": batch_negative,
+            "batchAdversarial": batch_adversarial,
             "kip10Exact": kip10,
             "exactProfiles": exact_profiles,
             "exactInterop": exact_interop,
@@ -469,6 +471,136 @@ fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde
         "wrongCovenantId": "rejected-by-full-TransactionValidator",
         "wrongSuccessor": "rejected-by-full-TransactionValidator",
         "earlyRefund": "rejected-by-full-TransactionValidator",
+    }))
+}
+
+// Every transaction-shape mutation is re-signed with the legitimate authorizer.
+// This prevents an unrelated stale signature from disguising a missing covenant check.
+fn validate_batch_adversarial(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
+    let mut evidence = Vec::new();
+    for (vector_index, cases) in [
+        (1, vec!["claim-payout-inflation", "claim-successor-inflation", "claim-wrong-payout",
+            "claim-unbound-successor", "claim-double-successor", "claim-wrong-authorizer",
+            "claim-zero-delta", "claim-negative-delta", "claim-int64-max-delta",
+            "claim-invalid-selector", "claim-wrong-server", "claim-corrupt-voucher",
+            "claim-locktime", "claim-sequence", "claim-no-successor",
+            "claim-ceiling-int64-max", "claim-ceiling-int64-overflow", "claim-ceiling-zero",
+            "claim-voucher-wrong-network", "claim-voucher-wrong-covenant", "claim-voucher-wrong-domain"]),
+        (2, vec!["claim-exhausted-cumulative-ceiling", "claim-exact-cumulative-ceiling"]),
+        (3, vec!["topup-no-increase", "topup-wrong-change", "topup-state-reset",
+            "topup-double-successor", "topup-wrong-authorizer", "topup-wrong-client",
+            "topup-locktime", "topup-sequence", "topup-extra-output", "topup-no-change"]),
+        (4, vec!["refund-before-timeout", "refund-at-timeout", "refund-after-timeout",
+            "refund-wrong-destination", "refund-inflation", "refund-bound-output",
+            "refund-wrong-client", "refund-sequence", "refund-extra-output"]),
+    ] {
+        for label in cases {
+            let artifact = &vectors[vector_index].1.expected.transaction;
+            let mut tx = build_transaction(artifact)?;
+            let entries = build_utxo_entries(artifact)?;
+            let mut signing_key = if vector_index <= 2 { [9_u8; 32] } else { [7_u8; 32] };
+            match label {
+                "claim-ceiling-int64-max" | "claim-ceiling-int64-overflow" | "claim-ceiling-zero"
+                | "claim-voucher-wrong-network" | "claim-voucher-wrong-covenant" | "claim-voucher-wrong-domain" => {
+                    let ceiling = match label {
+                        "claim-ceiling-int64-max" => i64::MAX as u64,
+                        "claim-ceiling-int64-overflow" => (i64::MAX as u64) + 1,
+                        "claim-ceiling-zero" => 0,
+                        _ => 30_000_000,
+                    };
+                    let domain = if label == "claim-voucher-wrong-domain" { b"kaspa:x402:wrong".as_slice() } else { b"kaspa:x402:escrow-voucher:v2".as_slice() };
+                    let network = if label == "claim-voucher-wrong-network" { b"kaspa:mainnet".as_slice() } else { b"kaspa:testnet-10".as_slice() };
+                    let covenant_id = if label == "claim-voucher-wrong-covenant" { Hash::from_bytes([99; 32]) } else { entries[0].covenant_id.unwrap() };
+                    let preimage = concat_bytes(&[sha256_bytes(domain), sha256_bytes(network), covenant_id.as_bytes().to_vec(), ceiling.to_le_bytes().to_vec()]);
+                    let message = Message::from_digest_slice(&sha256_bytes(&preimage))?;
+                    let key = Keypair::from_seckey_slice(SECP256K1, &[7_u8; 32])?;
+                    let voucher = SECP256K1.sign_schnorr_no_aux_rand(&message, &key);
+                    let script = &mut tx.inputs[0].signature_script;
+                    let mut cursor = 0;
+                    read_canonical_push(script, &mut cursor)?;
+                    let voucher_start = cursor + 1;
+                    read_canonical_push(script, &mut cursor)?;
+                    let ceiling_start = cursor + 1;
+                    if script[voucher_start - 1] != 64 || script[ceiling_start - 1] != 8 { return Err(anyhow!("voucher ABI mismatch")); }
+                    script[voucher_start..voucher_start + 64].copy_from_slice(voucher.as_ref());
+                    script[ceiling_start..ceiling_start + 8].copy_from_slice(&ceiling.to_le_bytes());
+                }
+                "topup-no-change" => { tx.outputs.pop(); }
+                "claim-payout-inflation" => tx.outputs[0].value = 8_000_001,
+                "claim-successor-inflation" => tx.outputs[1].value += 1,
+                "claim-wrong-payout" => tx.outputs[0].script_public_key = p2pk_script(&[7_u8; 32])?,
+                "claim-unbound-successor" => tx.outputs[1].covenant = None,
+                "claim-double-successor" => tx.outputs[0].covenant = tx.outputs[1].covenant.clone(),
+                "claim-wrong-authorizer" => tx.outputs[1].covenant.as_mut().unwrap().authorizing_input = 1,
+                "claim-zero-delta" => set_claim_delta(&mut tx.inputs[0].signature_script, 0)?,
+                "claim-negative-delta" => set_claim_delta(&mut tx.inputs[0].signature_script, u64::MAX)?,
+                "claim-int64-max-delta" => set_claim_delta(&mut tx.inputs[0].signature_script, i64::MAX as u64)?,
+                "claim-exhausted-cumulative-ceiling" | "claim-exact-cumulative-ceiling" => {
+                    let delta = if label == "claim-exact-cumulative-ceiling" { 22_000_000 } else { 22_000_001 };
+                    set_claim_delta(&mut tx.inputs[0].signature_script, delta)?;
+                    // Match both amounts and successor state so only signed headroom differs.
+                    tx.outputs[0].value = delta - 1000;
+                    tx.outputs[1].value = entries[0].amount - delta;
+                    let script = &tx.inputs[0].signature_script;
+                    let mut cursor = 0;
+                    for _ in 0..5 { read_canonical_push(script, &mut cursor)?; }
+                    if script[cursor] != 0x4d { return Err(anyhow!("expected PUSHDATA2 redeem script")); }
+                    let length = u16::from_le_bytes([script[cursor + 1], script[cursor + 2]]) as usize;
+                    let mut redeem = script[cursor + 3..cursor + 3 + length].to_vec();
+                    if redeem[..2] != [0x6b, 8] { return Err(anyhow!("fixed-width state prefix mismatch")); }
+                    let previous = u64::from_le_bytes(redeem[2..10].try_into().unwrap());
+                    redeem[2..10].copy_from_slice(&(previous + delta).to_le_bytes());
+                    tx.outputs[1].script_public_key = pay_to_script_hash_script(&redeem);
+                }
+                "claim-invalid-selector" => {
+                    let script = &mut tx.inputs[0].signature_script;
+                    let mut cursor = 0;
+                    for _ in 0..4 { read_canonical_push(script, &mut cursor)?; }
+                    script[cursor + 1] ^= 1;
+                }
+                "claim-wrong-server" | "topup-wrong-client" | "refund-wrong-client" => signing_key = [8_u8; 32],
+                "claim-corrupt-voucher" => tx.inputs[0].signature_script[67] ^= 1,
+                "claim-locktime" | "topup-locktime" => tx.lock_time = 1,
+                "claim-sequence" | "topup-sequence" | "refund-sequence" => tx.inputs[0].sequence = 1,
+                "claim-no-successor" => { tx.outputs.pop(); }
+                "topup-no-increase" => tx.outputs[0].value = entries[0].amount,
+                "topup-wrong-change" => tx.outputs[1].script_public_key = p2pk_script(&[9_u8; 32])?,
+                "topup-state-reset" => tx.outputs[0].script_public_key = build_transaction(&vectors[0].1.expected.transaction)?.outputs[0].script_public_key.clone(),
+                "topup-double-successor" => tx.outputs[1].covenant = tx.outputs[0].covenant.clone(),
+                "topup-wrong-authorizer" => tx.outputs[0].covenant.as_mut().unwrap().authorizing_input = 1,
+                "topup-extra-output" | "refund-extra-output" => {
+                    let mut output = tx.outputs.last().unwrap().clone();
+                    output.value = 1;
+                    tx.outputs.push(output);
+                }
+                "refund-before-timeout" => tx.lock_time -= 1,
+                "refund-at-timeout" => {},
+                "refund-after-timeout" => tx.lock_time += 1,
+                "refund-wrong-destination" => tx.outputs[0].script_public_key = p2pk_script(&[9_u8; 32])?,
+                "refund-inflation" => tx.outputs[0].value = entries[0].amount + 1,
+                "refund-bound-output" => tx.outputs[0].covenant = Some(CovenantBinding { authorizing_input: 0, covenant_id: entries[0].covenant_id.unwrap() }),
+                _ => unreachable!(),
+            }
+            resign_embedded_signature(&mut tx, &entries, 0, &signing_key)
+                .with_context(|| format!("re-signing {label}"))?;
+            if vector_index == 3 {
+                let populated = PopulatedTransaction::new(&tx, entries.clone());
+                tx.inputs[1].signature_script = deterministic_signature(&populated, 1, &[7_u8; 32])?;
+                tx.finalize();
+            }
+            let result = validate_full_consensus(&tx, &entries);
+            let expected_acceptance = matches!(label, "refund-at-timeout" | "refund-after-timeout" | "claim-ceiling-int64-max" | "topup-no-change" | "claim-exact-cumulative-ceiling");
+            if result.is_ok() != expected_acceptance {
+                return Err(anyhow!("{label}: expected acceptance={expected_acceptance}, got {result:?}"));
+            }
+            evidence.push(json!({ "scenario": label, "accepted": result.is_ok(),
+                "error": result.err().map(|error| error.to_string()) }));
+        }
+    }
+    Ok(json!({
+        "oracle": "TransactionValidator-isolation-and-populated-UTXO-with-Full-script-checks",
+        "scope": "Synthetic UTXOs at fixed post-activation DAA; excludes header-context finality, mempool policy, DAG acceptance and reorgs. Refund boundary cases vary transaction lock_time, not containing-block DAA.",
+        "cases": evidence,
     }))
 }
 

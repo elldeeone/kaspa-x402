@@ -1475,7 +1475,7 @@ export class KaspaRestClient {
     return {
       ok: true,
       networkName: blockdag.networkName,
-      virtualDaaScore: String(blockdag.virtualDaaScore),
+      virtualDaaScore: uintStringValue(blockdag.virtualDaaScore, "Kaspa REST virtual DAA score"),
     };
   }
 
@@ -1495,10 +1495,10 @@ export class KaspaRestClient {
       );
     return utxos.map((utxo) => ({
       outpoint: {
-        txid: String(utxo.outpoint.transactionId).toLowerCase(),
-        index: Number(utxo.outpoint.index),
+        txid: hashValue(utxo.outpoint.transactionId, "Kaspa REST UTXO transaction id"),
+        index: uint32Value(utxo.outpoint.index, "Kaspa REST UTXO index"),
       },
-      amount: String(utxo.utxoEntry.amount),
+      amount: uintStringValue(utxo.utxoEntry.amount, "Kaspa REST UTXO amount"),
       scriptPublicKey: normalizeRestScript(
         utxo.utxoEntry.scriptPublicKey.scriptPublicKey,
       ),
@@ -1540,9 +1540,27 @@ export class KaspaRestClient {
 
   async getTransaction(transactionId: string): Promise<RestTransaction | null> {
     try {
-      return await this.#json<RestTransaction>(
+      const transaction = await this.#json<RestTransaction>(
         `/transactions/${encodeURIComponent(transactionId.toLowerCase())}?inputs=true&outputs=true&resolve_previous_outpoints=no`,
       );
+      if (!isRecord(transaction) || typeof transaction.is_accepted !== "boolean")
+        throw invalidTransaction("Kaspa REST transaction requires boolean acceptance evidence");
+      if (hashValue(transaction.transaction_id, "Kaspa REST transaction id") !== transactionId.toLowerCase())
+        throw invalidTransaction("Kaspa REST transaction id does not match the requested transaction");
+      if (transaction.outputs !== undefined) {
+        if (!Array.isArray(transaction.outputs))
+          throw invalidTransaction("Kaspa REST transaction outputs must be an array");
+        const indexes = new Set<number>();
+        for (const [position, output] of transaction.outputs.entries()) {
+          if (!isRecord(output)) throw invalidTransaction("Kaspa REST transaction output must be an object");
+          const index = uint32Value(output.index ?? position, "Kaspa REST output index");
+          if (indexes.has(index)) throw invalidTransaction("Kaspa REST transaction contains duplicate output indexes");
+          indexes.add(index);
+          uintStringValue(output.amount, "Kaspa REST output amount");
+          normalizeRestScript(requiredRestScript(output));
+        }
+      }
+      return transaction;
     } catch (error) {
       if (error instanceof RestNotFoundError) return null;
       throw error;
@@ -1626,6 +1644,8 @@ export class KaspaRestClient {
           `Kaspa REST request failed: ${response.status}${detail}`,
         );
       }
+      if (!isRecord(body) && !Array.isArray(body))
+        throw invalidTransaction("Kaspa REST response must be a JSON object or array");
       return body as T;
     } finally {
       clearTimeout(timeout);
@@ -2622,7 +2642,7 @@ function assertChainTransactionMatchesSafe(
     const actualComputeBudget =
       safe.version === 0
         ? Number(actual.compute_budget ?? 0)
-        : actual.compute_budget == null
+        : actual.compute_budget === undefined
           ? undefined
           : Number(actual.compute_budget);
     if (

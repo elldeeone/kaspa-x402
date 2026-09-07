@@ -1332,6 +1332,7 @@ describe("RestExactTransactionVerifier", () => {
     const artifact = JSON.stringify(artifactObject);
     let candidateAccepted = false;
     let includeAcceptedComputeBudget = true;
+    let nullAcceptedComputeBudgetIndex = -1;
     const fetchMock = vi.fn(async (request: RequestInfo | URL) => {
       const url = new URL(request.toString());
       const input = additive.transaction.inputs.find(
@@ -1363,14 +1364,14 @@ describe("RestExactTransactionVerifier", () => {
           gas: artifactObject.gas,
           payload: artifactObject.payload,
           is_accepted: true,
-          inputs: artifactObject.inputs.map((entry) => ({
+          inputs: artifactObject.inputs.map((entry, index) => ({
             previous_outpoint_hash: entry.previousOutpoint.transactionId,
             previous_outpoint_index: entry.previousOutpoint.index,
             signature_script: entry.signatureScript,
             sequence: entry.sequence,
             sig_op_count: entry.sigOpCount,
             ...(includeAcceptedComputeBudget
-              ? { compute_budget: entry.computeBudget }
+              ? { compute_budget: index === nullAcceptedComputeBudgetIndex ? null : entry.computeBudget }
               : {}),
           })),
           outputs: artifactObject.outputs.map((entry, index) => ({
@@ -1596,6 +1597,18 @@ describe("RestExactTransactionVerifier", () => {
       transactionId: additive.transactionId,
       finality: "accepted",
     });
+
+    // TN10 REST represents the head's canonical zero as explicit null.
+    nullAcceptedComputeBudgetIndex = 0;
+    await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({
+      transactionId: additive.transactionId,
+      finality: "accepted",
+    });
+    nullAcceptedComputeBudgetIndex = 1;
+    await expect(verifier.verifyExactPayment(request)).rejects.toThrow(
+      "accepted transaction computeBudget does not match exact artifact",
+    );
+    nullAcceptedComputeBudgetIndex = -1;
 
     includeAcceptedComputeBudget = false;
     await expect(verifier.verifyExactPayment(request)).rejects.toThrow(

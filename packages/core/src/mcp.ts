@@ -180,6 +180,7 @@ export function readMcpPaymentPayload(
 ): PaymentPayload | undefined {
   const value = params._meta?.[MCP_PAYMENT_META_KEY];
   if (value === undefined) return undefined;
+  assertPaymentRepresentationBudget(value);
   const result = validatePaymentPayload(value);
   if (!result.ok) throw result.error;
   return result.value;
@@ -203,6 +204,7 @@ export function readMcpPaymentResponse(
 ): SettlementResponse | undefined {
   const value = result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY];
   if (value === undefined) return undefined;
+  assertPaymentRepresentationBudget(value);
   const validation = validateSettlementResponse(value);
   if (!validation.ok) throw validation.error;
   return validation.value;
