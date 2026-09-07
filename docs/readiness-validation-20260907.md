@@ -8,8 +8,8 @@ The preceding adversarial work was committed and pushed as `19c29058827072612f41
 | Independent batch review | One medium client-state rollback found, fixed and independently rechecked |
 | Controlled canonical consensus reorg | PASS: accepted spend replaced, UTXOs reversed, selected-chain removal/addition observed |
 | Containing-block DAA finality | PASS: equality rejected, lock time plus one accepted |
-| Existing reference persistence helpers | Process-loss and contention checks completed; unsafe multi-writer snapshot overwrite reproduced |
-| Production client persistence | BLOCKED: no durable transactional client store exists in this repository |
+| Test-harness persistence helpers | Process-loss and contention checks completed; multi-writer snapshot overwrite reproduced as a test-only limitation |
+| Production client persistence | Integration responsibility; building a production store is outside this repository's current scope |
 | Mainnet readiness | BLOCKED; no mainnet configuration or deployment was enabled |
 
 ## Independent review
@@ -42,7 +42,7 @@ A separate containing-header test rejected the same non-final transaction at DAA
 
 This was isolated simnet consensus with skipped PoW, deterministic block hashes, maturity reduced to two, and generic `OP_TRUE` spends. It does not exercise x402 covenant scripts in a reorg, application settlement rollback, RPC transport, public node synchronisation or real reorg probability/depth. Existing signed x402 covenant checks and funded TN10 proofs remain separate evidence. In particular, an observed `accepted` transaction can be displaced; the current TN10 gateway's acceptance policy is not evidence of mainnet finality.
 
-## Actual persistence tests
+## Test-harness persistence checks
 
 Run after building:
 
@@ -50,16 +50,18 @@ Run after building:
 node scripts/check-client-persistence.mjs --report persistence-report.json
 ```
 
-The script uses real child processes on an ext-family filesystem, killing only children it created. It calls the existing reference helpers; it does not substitute a new persistence implementation.
+The script uses real child processes on an ext-family filesystem, killing only children it created. It exercises auxiliary helpers built for controlled testing, not a recommended production storage implementation.
 
 - Exact journal: SIGKILL after write, file fsync, hardlink publication and directory fsync. Fresh processes recovered only published records, with unchanged artifact/transaction ID and reserved input.
 - Provider contention: a second writer was rejected. A killed owner left a stale lock that failed closed; explicit recovery after verified child exit restored operation.
 - Batch/refund snapshot: kills before/after rename preserved a complete old/new record. Reloading the reserved refund into the actual memory store blocked conflicting reuse, mismatched evidence and stale application; accepted application was idempotent.
-- Two snapshot writers: both read the same initial file; the stale second writer overwrote the first writer's update without rejection. This deliberately demonstrates a failed production requirement, not a successful durability guarantee.
+- Two snapshot writers: both read the same initial file; the stale second writer overwrote the first writer's update without rejection. This establishes a concurrency limitation of the test snapshot files, not missing protocol or SDK functionality.
 
-Only `MemoryChannelStore` implements the checked-in client-store contract. Batch recovery snapshots use write/rename without fsync or a transactional compare-and-set; they are reference-harness snapshots. The SDK CAS fix protects in-memory application updates, but does not turn these snapshot files into a durable multi-process store. Process-kill survival also does not prove power-loss durability.
+Only `MemoryChannelStore` implements the checked-in client-store contract. Batch recovery snapshots use write/rename without fsync or a transactional compare-and-set; they are test-harness checkpoints. Process-kill survival does not prove power-loss durability. These limitations can remain documented for controlled testing; replacing the snapshots with production infrastructure is not an Alpha.11 release requirement.
 
-The gateway's real local SQLite and abrupt-process-loss tests from the earlier matrix remain valid for their tested paths. They do not fill the missing production client implementation. A production client/store target is required before that gate can be validated and closed.
+The separate SDK stale-update defect was real and is fixed by the atomic store contract described above. Anyone deploying a production integration must supply storage that durably implements that contract and validate their implementation. This repository does not need to ship that auxiliary implementation; it may be developed separately later.
+
+The gateway's real local SQLite and abrupt-process-loss tests from the earlier matrix remain valid for their tested paths. Neither those tests nor the snapshot checks certify a production client's storage.
 
 ## Final verification
 
@@ -72,4 +74,4 @@ The gateway's real local SQLite and abrupt-process-loss tests from the earlier m
 
 Original reviewer reports, the independent closure report, final reorg JSON and persistence JSON are retained privately under `.kaspa-x402-live/readiness-evidence-20260907/`. The earlier funded evidence is indexed in [the scenario matrix](testnet-scenario-matrix-20260907.md).
 
-Remaining gates: implement/select and validate the production durable client store, define and test application-level finality/reorg recovery for the intended deployment, and complete any required external audit and operational soak. The tests above do not close those gates. Legacy alpha channel migration remains outside the clean Alpha.11 cutover.
+Remaining protocol/SDK readiness work includes defining and testing application-level finality/reorg recovery and completing any required external audit. Production integrations additionally own their durable storage validation and operational soak. Building that auxiliary storage is deferred and is not missing product work for this repository. This scope clarification does not enable mainnet or waive the SDK store contract. Legacy alpha channel migration remains outside the clean Alpha.11 cutover.
