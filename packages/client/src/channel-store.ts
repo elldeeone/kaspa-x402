@@ -88,6 +88,26 @@ export class MemoryChannelStore implements ChannelStore {
   }
 
   async saveChannel(channel: DirectModeChannel): Promise<void> {
+    this.#saveChannel(channel);
+  }
+
+  async compareAndSaveChannel(
+    expected: DirectModeChannel,
+    updated: DirectModeChannel,
+  ): Promise<boolean> {
+    const key = channelKey(expected.id);
+    if (channelKey(updated.id) !== key)
+      throw new Error("channel update must preserve its id");
+    this.#assertChannelMutable(expected.id);
+    const current = this.#channels.get(key);
+    if (!current) return false;
+    if (stableStringify(current) === stableStringify(updated)) return true;
+    if (stableStringify(current) !== stableStringify(expected)) return false;
+    this.#saveChannel(updated);
+    return true;
+  }
+
+  #saveChannel(channel: DirectModeChannel): void {
     const key = channelKey(channel.id);
     this.#assertChannelMutable(channel.id);
     if (this.#fundingAttempts.get(key)?.status === "applied") {

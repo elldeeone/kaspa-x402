@@ -446,14 +446,14 @@ export class DirectModeClient {
         paymentVoucherAmount(payment.paymentPayload),
       );
 
-      await this.#options.store.saveChannel(updated);
+      await this.#saveChannelUpdate(payment.channel, updated);
       return {
         channel: updated,
         chargedAmount,
         response,
       };
     } catch (error) {
-      await this.#options.store.saveChannel({
+      await this.#options.store.compareAndSaveChannel(payment.channel, {
         ...payment.channel,
         status: "suspicious",
       });
@@ -863,10 +863,7 @@ export class DirectModeClient {
       );
       const stillUnspent = await this.#activeOutpointExists(current);
       if (!stillUnspent) {
-        await this.#options.store.retireChannel(
-          current.id,
-          "active outpoint not found",
-        );
+        await this.#saveChannelUpdate(current, { ...current, status: "retired" });
         continue;
       }
 
@@ -1221,7 +1218,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#options.store.saveChannel(signedChannel);
+    await this.#saveChannelUpdate(channel, signedChannel);
     return { channel: signedChannel, paymentPayload };
   }
 
@@ -1570,7 +1567,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#options.store.saveChannel(updated);
+    await this.#saveChannelUpdate(channel, updated);
     return { channel: updated, paymentPayload };
   }
 
@@ -1942,8 +1939,20 @@ export class DirectModeClient {
         "corrective active outpoint does not match authoritative chain state",
       );
     }
-    await this.#options.store.saveChannel(candidate);
+    await this.#saveChannelUpdate(channel, candidate);
     return candidate;
+  }
+
+  async #saveChannelUpdate(
+    expected: DirectModeChannel,
+    updated: DirectModeChannel,
+  ): Promise<void> {
+    if (!(await this.#options.store.compareAndSaveChannel(expected, updated))) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_outpoint",
+        "channel changed before state update",
+      );
+    }
   }
 }
 

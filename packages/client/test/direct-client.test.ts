@@ -3715,3 +3715,90 @@ class FakeAddressCodec implements AddressCodec {
     return `kaspatest:${sha256Hex(input.serializedScriptPublicKey).slice(0, 32)}`;
   }
 }
+
+describe("atomic client channel updates", () => {
+  async function firstPayment() {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store, verifyVoucherSignature: () => true });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const response = makeSettlement(payment.channel!, "100");
+    await client.applySettlement(payment, response);
+    return { provider, store, client, payment, response };
+  }
+
+  it.each(["top-up", "same-head voucher", "claim successor"])(
+    "rejects an old receipt after %s without overwriting state or journals",
+    async (change) => {
+      const { provider, store, client, payment, response } = await firstPayment();
+      let required = makeRequired({ amount: change === "top-up" ? "950" : "75" });
+      if (change === "claim successor") {
+        const outpoint = { txid: "77".repeat(32), index: 0 };
+        const script = v2EscrowScriptPublicKey(payment.channel!, "100");
+        provider.utxos.push({ outpoint, covenantId: payment.channel!.covenantId, amount: "900", scriptPublicKey: script });
+        required = makeRequired({ amount: "50", channelState: {
+          ...channelState(payment.channel!, "100", "100"), activeOutpoint: outpoint,
+          activeScriptPublicKey: script, fundingAmount: "900", claimedCumulativeAmount: "100",
+        }, voucherState: { amount: "100", signature: "aa".repeat(64) } });
+      }
+      await client.createPayment(encodePaymentRequiredHeader(required), { url: "https://api.example.test/data" });
+      const before = await store.loadChannels({});
+      const attempt = await store.loadFundingTransitionAttempt(payment.channel!.id);
+      await expect(client.applySettlement(payment, response)).rejects.toThrow("channel changed before state update");
+      expect(await store.loadChannels({})).toEqual(before);
+      expect(await store.loadFundingTransitionAttempt(payment.channel!.id)).toEqual(attempt);
+      // Invalid old replies must not mark the current channel suspicious either.
+      await expect(client.applySettlement(payment, { ...response, network: "kaspa:mainnet" })).rejects.toThrow();
+      expect(await store.loadChannels({})).toEqual(before);
+    },
+  );
+
+  it("keeps an identical already-applied receipt idempotent", async () => {
+    const { store, client, payment, response } = await firstPayment();
+    const before = await store.loadChannels({});
+    await expect(client.applySettlement(payment, response)).resolves.toMatchObject({ chargedAmount: "100" });
+    expect(await store.loadChannels({})).toEqual(before);
+  });
+
+  it("atomically admits one of two different updates from the same snapshot", async () => {
+    const { store } = await firstPayment();
+    const [before] = await store.loadChannels({});
+    const updates = ["101", "102"].map(amount => ({ ...before!, signedMaxClaimable: amount }));
+    const outcomes = await Promise.all(updates.map(updated => store.compareAndSaveChannel(before!, updated)));
+    expect(outcomes).toEqual([true, false]);
+    expect(await store.loadChannels({})).toEqual([updates[0]]);
+  });
+
+  it("does not retire a newer channel after a stale UTXO observation", async () => {
+    const { provider, store, client } = await firstPayment();
+    const [before] = await store.loadChannels({});
+    const updated = { ...before!, signedMaxClaimable: "200" };
+    provider.getUtxo = async () => {
+      await store.compareAndSaveChannel(before!, updated);
+      return null;
+    };
+    await expect(client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "50" })),
+      { url: "https://api.example.test/data" },
+    )).rejects.toThrow("channel changed before state update");
+    expect(await store.loadChannels({})).toEqual([updated]);
+    expect(provider.deposits).toHaveLength(1);
+  });
+});
+
+it("rejects a refund reserved during signing even when the voucher update is unchanged", async () => {
+ const provider = new FakeFundingProvider(); const store = new MemoryChannelStore(); const signer = new FakeSigner(); const client = makeClient({provider,store,signer});
+ const first = await client.createPayment(encodePaymentRequiredHeader(makeRequired({amount:"100"})), {url:"https://api.example.test/data"});
+ await client.applySettlement(first,makeSettlement(first.channel!,"0"));
+ const original = signer.signBatchRequestAuthorization.bind(signer);
+ signer.signBatchRequestAuthorization = async (request) => {
+   const [c] = await store.loadChannels({});
+   await store.claimRefundAttempt({channelId:c.id,covenantId:c.covenantId,activeOutpoint:c.activeOutpoint,activeScriptPublicKey:c.activeScriptPublicKey,fundingAmount:c.fundingAmount,channelStatus:c.status,refundAmount:c.fundingAmount,transaction:"aa".repeat(32),transactionId:REFUND_TX,status:"pending"});
+   return original(request);
+ };
+ await expect(client.createPayment(encodePaymentRequiredHeader(makeRequired({amount:"50"})),{url:"https://api.example.test/data"})).rejects.toThrow("channel has an open refund attempt");
+ expect((await store.loadRefundAttempt(first.channel!.id))!.status).toBe("pending");
+});

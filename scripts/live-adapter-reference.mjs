@@ -4318,7 +4318,7 @@ function scriptAddressFromSerialized(sdk, serialized, networkId) {
   return address.toString();
 }
 
-function persistExactPaymentAttempt(dataDir, record) {
+export function persistExactPaymentAttempt(dataDir, record) {
   const directory = path.join(dataDir, "exact-payment-attempts");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const name = `${record.attemptId}.json`;
@@ -4344,7 +4344,7 @@ function persistExactPaymentAttempt(dataDir, record) {
   }
 }
 
-function loadPersistedExactPaymentAttempts(dataDir, spentOutpoints) {
+export function loadPersistedExactPaymentAttempts(dataDir, spentOutpoints) {
   const attempts = new Map();
   const directory = path.join(dataDir, "exact-payment-attempts");
   if (!fs.existsSync(directory)) return attempts;
@@ -4381,7 +4381,7 @@ function removeExactPaymentAttempt(dataDir, attemptId) {
   fsyncDirectory(directory);
 }
 
-async function withExactPaymentStoreLock(dataDir, operation) {
+export async function withExactPaymentStoreLock(dataDir, operation) {
   const directory = path.join(dataDir, "exact-payment-attempts");
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   const lock = path.join(directory, ".provider.lock");
@@ -4503,7 +4503,7 @@ function loadPersistedBatchArtifacts({
   return loaded;
 }
 
-function persistBatchRecoveryRecord(dataDir, name, value) {
+export function persistBatchRecoveryRecord(dataDir, name, value) {
   const directory = path.join(dataDir, "batch-recovery");
   return writeJsonAtomically(directory, `${name}.json`, value);
 }

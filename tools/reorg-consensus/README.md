@@ -1,0 +1,19 @@
+# Controlled canonical consensus reorg check
+
+Run from this repository:
+
+```sh
+node scripts/validate-reorg-consensus.mjs /path/to/canonical/rusty-kaspa
+```
+
+Requires Rust and a clean Rusty Kaspa checkout at `c338d495bec29e4dc8b5149f99e8db6fa916ed4a` (2.0.1). The launcher shares the existing tx-v1 oracle's pinned dependency versions and build cache. Successful execution prints a JSON report; redirect stdout to retain it.
+
+The harness runs the canonical `TestConsensus` block/virtual-state pipeline against a temporary database. It builds two branches containing conflicting tx-v1 spends and asserts:
+
+- The initial spend is accepted and its output exists before the reorg.
+- The longer competing branch changes the selected sink; the chain API reports the removed and added blocks.
+- The initial output disappears, the conflicting replacement output appears, and the funding outpoint remains spent.
+- Acceptance data on the added selected chain includes the replacement and excludes the initial spend.
+- A non-final tx-v1 input with DAA lock time is rejected by actual block validation when the containing header DAA equals its lock time; the same transaction succeeds at lock time plus one.
+
+This is local consensus evidence, not a live network experiment. Proof of work is skipped, block hashes are deterministic, and simnet coinbase maturity is reduced to two. The spends use `OP_TRUE` outputs; this does not exercise the x402 covenant script, application settlement policy, daemon RPC transport, node synchronisation, or production reorg probability/depth. Header finality is tested independently of covenant CLTV. No public-network mining, partitioning or funds are involved.

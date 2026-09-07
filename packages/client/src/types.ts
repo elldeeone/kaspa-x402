@@ -422,6 +422,11 @@ export interface ExactPaymentAttemptRecord {
 export interface ChannelStore {
   loadChannels(scope: ChannelLookupScope): Promise<DirectModeChannel[]>;
   saveChannel(channel: DirectModeChannel): Promise<void>;
+  /** Atomically compares the full snapshot; rejects open/terminal transitions even on no-op retries. */
+  compareAndSaveChannel(
+    expected: DirectModeChannel,
+    updated: DirectModeChannel,
+  ): Promise<boolean>;
   retireChannel(channelId: Hash32Hex, reason?: string): Promise<void>;
   deleteChannel(channelId: Hash32Hex): Promise<void>;
   listRefundableChannels(nowDaa?: SompiString): Promise<DirectModeChannel[]>;

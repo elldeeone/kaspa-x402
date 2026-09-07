@@ -96,3 +96,14 @@ applied attempt is idempotent.
 `MemoryChannelStore` demonstrates both transition contracts for tests and
 examples. A live deployment needs a durable `ChannelStore` implementation and
 trusted funding and refund chain-reconciliation adapters.
+
+Off-chain updates use `ChannelStore.compareAndSaveChannel(expected, updated)`.
+The store must atomically compare the complete captured channel snapshot before
+writing, return `false` without changing state when it is stale, and accept an
+identical already-applied update without writing again. This protects receipts,
+voucher signing, corrective head adoption and retirement from concurrent channel
+changes. A separate read followed by `saveChannel` does not meet this contract.
+Open funding or refund attempts and terminal refunds must reject updates,
+including identical no-op retries, within the same transaction.
+Production adapters must implement this method transactionally; `saveChannel`
+alone is for explicit insertion or restoration of trusted state.
