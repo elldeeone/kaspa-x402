@@ -7,7 +7,7 @@ This guide describes the Alpha.11 candidate source and planned public-gateway
 cutover. The public registry and gateway remain Alpha.10 until the Alpha.11
 release and funded canaries are completed.
 
-Alpha.11 uses `kaspa-escrow-v2` / `kaspa-x402-escrow-v3` for batch settlement.
+Alpha.11 uses `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` for batch settlement.
 The exact profiles are unchanged. Older alpha snapshots are historical artifacts
 only; clients must not send their batch payloads to the Alpha.11 runtime.
 
@@ -70,8 +70,8 @@ Alpha.10 until the clean cutover completes:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
-- `scheme: "batch-settlement"`, binding `kaspa-escrow-v2`, and template
-  `kaspa-x402-escrow-v3`;
+- `scheme: "batch-settlement"`, binding `kaspa-escrow-v3`, and template
+  `kaspa-x402-escrow-v4`;
 - `scheme: "exact"` under the configured exact profile; and
 - accepted finality `accepted`.
 
@@ -148,8 +148,8 @@ curl -i https://demo.kaspa-x402.org/batch
 ```
 
 The `402` response must contain `batch-settlement` requirements with
-`extra.binding: "kaspa-escrow-v2"` and
-`extra.templateId: "kaspa-x402-escrow-v3"`.
+`extra.binding: "kaspa-escrow-v3"` and
+`extra.templateId: "kaspa-x402-escrow-v4"`.
 
 Open a lane by building and funding the advertised singleton KIP-20 genesis.
 Before signing the first voucher, derive and retain its stable `covenantId` and
@@ -164,6 +164,14 @@ ceiling T. The voucher signature binds Testnet-10, stable `covenantId`, and T; i
 does not bind the rotating outpoint. Both client and server still persist the
 current outpoint because standard RPC cannot find the current UTXO from a
 covenant id.
+
+The reference Testnet-10 policy requires 30 confirmations proven by an
+authoritative selected-chain traversal. Accepting-block and durable-checkpoint
+blue scores bind the evidence but do not determine selected-chain depth.
+Clients resume lineage from that checkpoint, process removed blocks before
+additions, and accept only one verified successor. Missing or pruned continuity
+keeps the lane unavailable; REST UTXO presence or peer channel metadata is not
+enough.
 
 For one lane define A as lifetime actual charges, S as lifetime gross on-chain
 settlement including claim fees, V as current covenant value, and R as the

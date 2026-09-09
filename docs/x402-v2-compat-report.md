@@ -12,7 +12,7 @@ upstream v2 specification (`specs/x402-specification-v2.md`) and transports
 
 The Kaspa binding remains wire-compatible with upstream x402 v2. Alpha.11
 leaves both exact profiles unchanged and replaces the active batch binding with
-`kaspa-escrow-v2` / `kaspa-x402-escrow-v3`. KIP-20 covenant identity, lifetime
+`kaspa-escrow-v3` / `kaspa-x402-escrow-v4`. KIP-20 covenant identity, lifetime
 voucher accounting, and transaction-v1 evidence remain ecosystem-defined
 scheme payload details inside the upstream envelope.
 
@@ -72,8 +72,8 @@ cares.
 - Scheme-specific payload content is ecosystem-defined upstream. Kaspa exact
   uses a signed transaction artifact; Alpha.11 batch uses stable KIP-20
   `covenantId`, current-outpoint evidence, and cumulative voucher fields.
-- `extra.binding` identifiers (`kaspa-exact-v2`, `kaspa-escrow-v2`) and the
-  `kaspa-x402-escrow-v3` template id live in scheme-defined `extra` objects,
+- `extra.binding` identifiers (`kaspa-exact-v2`, `kaspa-escrow-v3`) and the
+  `kaspa-x402-escrow-v4` template id live in scheme-defined `extra` objects,
   which upstream leaves to bindings.
 - Signed-int64 batch limits, singleton covenant transitions, and claim fee
   topology constrain the Kaspa binding without changing upstream envelopes or

@@ -4,7 +4,7 @@ The reference `MemoryServerChannelStore` is for tests and examples. Production
 servers need a durable implementation of `ServerStateStore` with the semantics
 below.
 
-Alpha.11 supports `kaspa-escrow-v2` / `kaspa-x402-escrow-v3` as the active
+Alpha.11 supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` as the active
 batch profile. Older alpha stores are not migrated or read by the Alpha.11
 runtime; immutable release snapshots remain historical records only.
 
@@ -87,6 +87,37 @@ KIP-20 supplies stable lineage identity, not discovery. Standard RPC does not
 provide reverse lookup from `covenantId` to its current UTXO, so the current
 outpoint must be advanced durably from verified transaction evidence.
 
+## Chain Truth And Covenant Lineage
+
+Adapters report objective evidence; they do not declare policy finality. An
+accepted record contains the transaction id, accepting-block hash and blue
+score, numeric confirmation count, and a durable selected-chain checkpoint.
+The runtime derives `confirmed` by applying its configured threshold. The
+Alpha.11 Testnet-10 deployment profile uses 30 confirmations. `absent` requires
+a confirmed conflicting spend or a stable consensus-rejection proof. Anything
+else is `unknown` and keeps the owning attempt reserved.
+
+Every channel stores an immutable launch manifest containing network, checked
+compiler commit and command, source path and SHA-256, template and compiled-base
+identity, ABI, selectors, and verified genesis derivation, transaction,
+outpoint, value, accepting block, and checkpoint.
+
+After genesis, the store maintains an append-only lineage journal. Each
+accepted transition records its kind, consumed outpoint, transaction,
+successor or terminal output, covenant state, value, binding, accepting block,
+numeric confirmation evidence, and checkpoint. Selected-chain removal events
+are appended before replacement additions. The live outpoint, script, value,
+and settled state are an atomically derived index, never an adapter-supplied
+field.
+
+Lineage reads resume only from the durable checkpoint. Pruned or incomplete
+continuity is `unknown` and fails closed. A reorganization atomically rolls back
+every derived channel state affected by removed events before applying a unique
+verified successor. Missing predecessors, multiple spends or successors,
+wrong covenant/template bindings, and inconsistent state or value transitions
+are rejected. A removed terminal refund restores only a refund-capable or
+suspicious lane; it must never reactivate charging.
+
 ## Batch Accounting And Commit
 
 At voucher acceptance, one transaction must verify and persist
@@ -127,7 +158,8 @@ S, and T. Applying a refund must verify that no same-ID successor exists and
 close the lane. Each application is a compare-and-set on the attempt's expected
 outpoint and accounting snapshot.
 
-A timeout, process crash, or RPC error after submission must leave the attempt
+A timeout, process crash, RPC error, accepted-but-under-threshold result, or
+unknown lineage after submission must leave the attempt
 unresolved. It must never make the old outpoint available for another claim,
 top-up, refund, or protected request until trusted chain evidence reconciles the
 winner.

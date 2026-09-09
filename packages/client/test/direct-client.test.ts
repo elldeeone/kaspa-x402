@@ -18,8 +18,10 @@ import {
   trustedSecurityContextHash,
 } from "@kaspa-x402/core";
 import type {
+  AcceptedTransactionEvidence,
   BatchPaymentRequirements,
   ChannelState,
+  CovenantSelectedChainUpdate,
   ExactPaymentRequirements,
   Hash32Hex,
   KaspaPaymentPayload,
@@ -28,6 +30,7 @@ import type {
   PaymentRequired,
   PaymentScheme,
   SettlementResponse,
+  TrustedTransactionEvidence,
 } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
@@ -38,6 +41,7 @@ import {
 import {
   DirectModeClient,
   MemoryChannelStore,
+  PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   paidMcpToolCall,
@@ -84,6 +88,56 @@ const ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
   payToScriptHashScript(ADDITIVE_HEAD_REDEEM_SCRIPT),
 );
 const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
+const CONFIRMATION_THRESHOLD = 30;
+
+function acceptedEvidence(
+  transactionId: string,
+  confirmationCount = CONFIRMATION_THRESHOLD,
+  acceptingBlockHash = sha256Hex(`accepting-block:${transactionId.toLowerCase()}`),
+): AcceptedTransactionEvidence {
+  const checkpointBlueScore = 1_000n;
+  return {
+    status: "accepted",
+    transactionId: transactionId.toLowerCase(),
+    acceptingBlockHash,
+    acceptingBlockBlueScore: (
+      checkpointBlueScore -
+      BigInt(confirmationCount) +
+      1n
+    ).toString(),
+    confirmationCount,
+    checkpoint: {
+      blockHash: "ef".repeat(32),
+      blueScore: checkpointBlueScore.toString(),
+      daaScore: "1000",
+    },
+  };
+}
+
+function unknownEvidence(transactionId: string, reason = "not yet indexed") {
+  return {
+    status: "unknown" as const,
+    transactionId: transactionId.toLowerCase(),
+    reason,
+  };
+}
+
+function absentEvidence(
+  transactionId: string,
+  reason = "authoritative rejection",
+) {
+  return {
+    status: "absent" as const,
+    transactionId: transactionId.toLowerCase(),
+    reason,
+    proof: {
+      kind: "consensus-rejection" as const,
+      rejectedTransactionId: transactionId.toLowerCase(),
+      rejectionCode: "CONSENSUS_REJECTED",
+      checkpoint: acceptedEvidence(transactionId).checkpoint,
+    },
+  };
+}
 
 describe("direct-mode client", () => {
   it("normalizes schema-known challenge hex before authorization", () => {
@@ -232,6 +286,45 @@ describe("direct-mode client", () => {
       voucherBearingPayload(topped.paymentPayload).voucher
         .authorizedCumulativeAmount,
     ).toBe("1050");
+  });
+
+  it("reopens a removed confirmed top-up as blocking recovery", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+    const topped = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "950" })),
+      { url: "https://api.example.test/data" },
+    );
+    const applied = await store.loadFundingTransitionAttempt(topped.channel!.id);
+    expect(applied).toMatchObject({ kind: "top-up", status: "applied" });
+    const acceptingBlockHash = applied!.acceptance!.acceptingBlockHash;
+    provider.lineageDiscovery = (request) => ({
+      fromCheckpoint: request.lineage.checkpoint,
+      checkpoint: request.lineage.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [acceptingBlockHash],
+      addedChainBlocks: [],
+    });
+
+    await expect(client.reconcileChannel(topped.channel!.id)).resolves.toMatchObject({
+      activeOutpoint: first.channel!.activeOutpoint,
+      status: "refundable",
+    });
+    await expect(
+      store.loadFundingTransitionAttempt(topped.channel!.id),
+    ).resolves.toMatchObject({
+      kind: "top-up",
+      status: "broadcast",
+      finality: "broadcast",
+      expectedChannel: { status: "refundable" },
+    });
+    await expect(store.loadOpenFundingTransitionAttempts()).resolves.toHaveLength(1);
   });
 
   it("tops up a lane before a voucher would consume its advertised claim reserve", async () => {
@@ -757,6 +850,23 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments).toHaveLength(0);
   });
 
+  it("does not advertise or fund batch without authoritative lineage discovery", async () => {
+    const provider = new FakeFundingProvider();
+    Object.defineProperty(provider, "discoverCovenantLineage", {
+      value: undefined,
+    });
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    expect(client.supportedSchemes()).toEqual(["exact"]);
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("no supported Kaspa x402 requirement was offered");
+    expect(provider.deposits).toHaveLength(0);
+  });
+
   it("selects the supported Kaspa entry from an envelope with foreign scheme and network entries", async () => {
     const provider = new FakeFundingProvider();
     const client = makeClient({ provider, store: new MemoryChannelStore() });
@@ -991,9 +1101,8 @@ describe("direct-mode client", () => {
       fundingTransitionReconciler: {
         async reconcileFundingTransition(persisted) {
           return {
-            status: "accepted",
             transactionId: persisted.transactionId,
-            finality: "accepted",
+            evidence: acceptedEvidence(persisted.transactionId),
           };
         },
       },
@@ -1005,7 +1114,7 @@ describe("direct-mode client", () => {
       channelId,
       kind: "genesis",
       transactionId: FUNDING_TX,
-      finality: "accepted",
+      finality: "confirmed",
       accepted: true,
       channel: {
         id: channelId,
@@ -1062,15 +1171,16 @@ describe("direct-mode client", () => {
         kind: "top-up",
         channelId: captured!.id,
         transactionId: "ff".repeat(32),
-        finality: "accepted",
+        acceptance: acceptedEvidence("ff".repeat(32)),
         evidence: {
           covenantId: captured!.covenantId,
           spentOutpoint: captured!.activeOutpoint,
           successorOutpoint: attempt!.intendedSuccessor.outpoint,
-          successorScriptPublicKey:
-            attempt!.intendedSuccessor.scriptPublicKey,
+          successorScriptPublicKey: attempt!.intendedSuccessor.scriptPublicKey,
           successorAmount: attempt!.intendedSuccessor.amount,
           authorizedSuccessorCount: 1,
+          authorizingInput: 0,
+          acceptance: acceptedEvidence("ff".repeat(32)),
         },
       }),
     ).rejects.toThrow("transaction id does not match");
@@ -1099,9 +1209,8 @@ describe("direct-mode client", () => {
       fundingTransitionReconciler: {
         async reconcileFundingTransition(persisted) {
           return {
-            status: "accepted",
             transactionId: persisted.transactionId.toUpperCase(),
-            finality: "confirmed",
+            evidence: acceptedEvidence(persisted.transactionId),
           };
         },
       },
@@ -1126,12 +1235,7 @@ describe("direct-mode client", () => {
       captured!.id,
     );
     expect(
-      () =>
-        new MemoryChannelStore(
-          [recovered.channel!],
-          [],
-          [appliedAttempt!],
-        ),
+      () => new MemoryChannelStore([recovered.channel!], [], [appliedAttempt!]),
     ).not.toThrow();
   });
 
@@ -1148,9 +1252,8 @@ describe("direct-mode client", () => {
       fundingTransitionReconciler: {
         async reconcileFundingTransition(attempt) {
           return {
-            status: "absent",
             transactionId: attempt.transactionId,
-            reason: "authoritative rejection",
+            evidence: absentEvidence(attempt.transactionId),
           };
         },
       },
@@ -1160,7 +1263,7 @@ describe("direct-mode client", () => {
       client.createPayment(required, {
         url: "https://api.example.test/data",
       }),
-    ).rejects.toThrow("not accepted");
+    ).rejects.toThrow("confirmation threshold");
     const channelId = provider.deposits[0]!.channelId;
     await expect(
       client.reconcileFundingTransition(channelId),
@@ -1237,6 +1340,68 @@ describe("direct-mode client", () => {
     );
     const [stored] = await store.loadChannels({});
     expect(stored?.status).toBe("suspicious");
+  });
+
+  it("keeps malformed settlement quarantine refund-capable after authoritative reconciliation", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      refundBuilder: {
+        async buildRefundTransaction(request) {
+          expect(request.channel.status).toBe("refundable");
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
+        },
+      },
+    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    await expect(
+      client.applySettlement(
+        payment,
+        makeSettlement(payment.channel!, "100", {
+          channelId: "ff".repeat(32),
+        }),
+      ),
+    ).rejects.toThrow("channel id");
+    await expect(store.loadChannels({})).resolves.toMatchObject([
+      { status: "suspicious" },
+    ]);
+
+    const refund = await client.refundChannel(payment.channel!.id);
+    expect(refund.channel.status).toBe("refunded");
+    expect(refund.channel.chargedCumulativeAmount).toBe("0");
+  });
+
+  it("does not let a delayed settlement reactivate a refund-only channel", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    await client.quarantineDisclosedPayment(payment);
+    await expect(client.reconcileChannel(payment.channel!.id)).resolves.toMatchObject({
+      status: "refundable",
+    });
+
+    await expect(
+      client.applySettlement(payment, makeSettlement(payment.channel!, "100")),
+    ).rejects.toThrow("changed before settlement apply");
+    await expect(store.loadChannels({})).resolves.toMatchObject([
+      { id: payment.channel!.id, status: "refundable" },
+    ]);
   });
 
   it("rejects settlement state that does not match this request transition", async () => {
@@ -1354,18 +1519,10 @@ describe("direct-mode client", () => {
     );
   });
 
-  it("adopts verified corrective channel state before reusing a channel", async () => {
+  it("ignores peer corrective channel state before reusing a channel", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
-    let verified = 0;
-    const client = makeClient({
-      provider,
-      store,
-      verifyVoucherSignature: () => {
-        verified += 1;
-        return true;
-      },
-    });
+    const client = makeClient({ provider, store });
     const firstPayment = await client.createPayment(
       encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
       {
@@ -1377,18 +1534,10 @@ describe("direct-mode client", () => {
       makeSettlement(firstPayment.channel!, "100"),
     );
 
-    const [preauthorized] = await store.loadChannels({});
-    if (!preauthorized) throw new Error("missing stored channel");
-    await store.saveChannel({
-      ...preauthorized,
-      signedMaxClaimable: "200",
-      latestVoucher: {
-        covenantId: preauthorized.covenantId,
-        authorizedCumulativeAmount: "200",
-        signature: "aa".repeat(64),
-      },
-    });
-    const correctiveState = channelState(preauthorized, "200");
+    const correctiveState = {
+      ...channelState(firstPayment.channel!, "200"),
+      fundingAmount: "999999",
+    };
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: correctiveState,
@@ -1400,29 +1549,19 @@ describe("direct-mode client", () => {
       },
     );
 
-    expect(verified).toBe(1);
     expect(correctivePayment.openedChannel).toBe(false);
     expect(correctivePayment.paymentPayload.payload.type).toBe("voucher");
     expect(
       voucherBearingPayload(correctivePayment.paymentPayload).voucher
         .authorizedCumulativeAmount,
-    ).toBe("250");
+    ).toBe("150");
   });
 
-  it("recovers a changed active outpoint from verified corrective state", async () => {
+  it("recovers a changed active outpoint from authoritative lineage", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const replacementOutpoint = { txid: "77".repeat(32), index: 0 };
-    let verifierSawReplacement = false;
-    const client = makeClient({
-      provider,
-      store,
-      verifyVoucherSignature: (_voucher, channel) => {
-        verifierSawReplacement =
-          channel.activeOutpoint.txid === replacementOutpoint.txid;
-        return true;
-      },
-    });
+    const client = makeClient({ provider, store });
     const firstPayment = await client.createPayment(
       encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
       {
@@ -1437,13 +1576,59 @@ describe("direct-mode client", () => {
       firstPayment.channel!,
       "100",
     );
+    const replacementAcceptance = acceptedEvidence(
+      replacementOutpoint.txid,
+      CONFIRMATION_THRESHOLD,
+      "76".repeat(32),
+    );
     provider.utxos.push({
       outpoint: replacementOutpoint,
       covenantId: firstPayment.channel!.covenantId,
       amount: "900",
       address: firstPayment.channel!.escrowAddress,
       scriptPublicKey: successorScriptPublicKey,
+      acceptance: replacementAcceptance,
     });
+    provider.lineageDiscovery = (request) =>
+      request.lineage.currentHead?.outpoint.txid === replacementOutpoint.txid
+        ? {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [],
+          }
+        : {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: replacementAcceptance.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [
+              {
+                blockHash: replacementAcceptance.acceptingBlockHash,
+                transitions: [
+                  {
+                    kind: "claim",
+                    covenantId: firstPayment.channel!.covenantId,
+                    templateId: firstPayment.channel!.templateId,
+                    consumedOutpoint: firstPayment.channel!.activeOutpoint,
+                    transactionId: replacementOutpoint.txid,
+                    authorizedSuccessorCount: 1,
+                    successor: {
+                      outpoint: replacementOutpoint,
+                      covenantId: firstPayment.channel!.covenantId,
+                      authorizingInput: 0,
+                      scriptPublicKey: successorScriptPublicKey,
+                      value: "900",
+                      claimedCumulativeAmount: "100",
+                    },
+                    terminalOutput: null,
+                    acceptance: replacementAcceptance,
+                  },
+                ],
+              },
+            ],
+          };
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: {
@@ -1462,7 +1647,6 @@ describe("direct-mode client", () => {
       },
     );
 
-    expect(verifierSawReplacement).toBe(true);
     expect(payment.openedChannel).toBe(false);
     expect(
       voucherBearingPayload(payment.paymentPayload).fundingOutpoint,
@@ -1477,14 +1661,10 @@ describe("direct-mode client", () => {
     );
   });
 
-  it("rejects corrective state whose script does not encode its claimed amount", async () => {
+  it("rejects authoritative lineage whose script does not encode its claimed amount", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
-    const client = makeClient({
-      provider,
-      store,
-      verifyVoucherSignature: () => true,
-    });
+    const client = makeClient({ provider, store });
     const firstPayment = await client.createPayment(
       encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
       {
@@ -1498,13 +1678,59 @@ describe("direct-mode client", () => {
     const [original] = await store.loadChannels({});
     if (!original) throw new Error("missing stored channel");
     const replacementOutpoint = { txid: "78".repeat(32), index: 0 };
+    const replacementAcceptance = acceptedEvidence(
+      replacementOutpoint.txid,
+      CONFIRMATION_THRESHOLD,
+      "75".repeat(32),
+    );
     provider.utxos.push({
       outpoint: replacementOutpoint,
       covenantId: original.covenantId,
       amount: "900",
       address: original.escrowAddress,
       scriptPublicKey: original.activeScriptPublicKey,
+      acceptance: replacementAcceptance,
     });
+    provider.lineageDiscovery = (request) =>
+      request.lineage.currentHead?.outpoint.txid === replacementOutpoint.txid
+        ? {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [],
+          }
+        : {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: replacementAcceptance.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [
+              {
+                blockHash: replacementAcceptance.acceptingBlockHash,
+                transitions: [
+                  {
+                    kind: "claim",
+                    covenantId: original.covenantId,
+                    templateId: original.templateId,
+                    consumedOutpoint: original.activeOutpoint,
+                    transactionId: replacementOutpoint.txid,
+                    authorizedSuccessorCount: 1,
+                    successor: {
+                      outpoint: replacementOutpoint,
+                      covenantId: original.covenantId,
+                      authorizingInput: 0,
+                      scriptPublicKey: original.activeScriptPublicKey,
+                      value: "900",
+                      claimedCumulativeAmount: "100",
+                    },
+                    terminalOutput: null,
+                    acceptance: replacementAcceptance,
+                  },
+                ],
+              },
+            ],
+          };
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: {
@@ -1519,16 +1745,14 @@ describe("direct-mode client", () => {
       client.createPayment(encodePaymentRequiredHeader(correctiveRequired), {
         url: "https://api.example.test/data",
       }),
-    ).rejects.toThrow(
-      "corrective active script does not match lifetime settled accounting",
-    );
+    ).rejects.toThrow("authoritative successor does not match");
 
     const [afterRejection] = await store.loadChannels({});
     expect(afterRejection).toEqual(original);
     expect(afterRejection?.status).toBe("active");
   });
 
-  it("rejects corrective channel state without voucher proof", async () => {
+  it("does not let peer channel state advance authorization without local proof", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
     const client = makeClient({ provider, store });
@@ -1546,19 +1770,21 @@ describe("direct-mode client", () => {
     if (!withoutProof) throw new Error("missing stored channel");
     await store.saveChannel({ ...withoutProof, latestVoucher: undefined });
 
-    await expect(
-      client.createPayment(
-        encodePaymentRequiredHeader(
-          makeRequired({
-            amount: "50",
-            channelState: channelState(firstPayment.channel!, "200"),
-          }),
-        ),
-        {
-          url: "https://api.example.test/data",
-        },
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(
+        makeRequired({
+          amount: "50",
+          channelState: channelState(firstPayment.channel!, "200"),
+        }),
       ),
-    ).rejects.toThrow("locally retained voucher proof");
+      {
+        url: "https://api.example.test/data",
+      },
+    );
+    expect(
+      voucherBearingPayload(payment.paymentPayload).voucher
+        .authorizedCumulativeAmount,
+    ).toBe("150");
   });
 
   it("uses active unclaimed value after claims when checking balance and signing", async () => {
@@ -1577,13 +1803,68 @@ describe("direct-mode client", () => {
     );
     const [stored] = await store.loadChannels({});
     if (!stored) throw new Error("missing stored channel");
+    const claimOutpoint = { txid: "79".repeat(32), index: 0 };
+    const claimScriptPublicKey = v4EscrowScriptPublicKey(stored, "250");
+    const claimAcceptance = acceptedEvidence(
+      claimOutpoint.txid,
+      CONFIRMATION_THRESHOLD,
+      "74".repeat(32),
+    );
+    provider.utxos.push({
+      outpoint: claimOutpoint,
+      covenantId: stored.covenantId,
+      amount: "750",
+      address: stored.escrowAddress,
+      scriptPublicKey: claimScriptPublicKey,
+      acceptance: claimAcceptance,
+    });
+    provider.lineageDiscovery = (request) =>
+      request.lineage.currentHead?.outpoint.txid === claimOutpoint.txid
+        ? {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [],
+          }
+        : {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: claimAcceptance.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [
+              {
+                blockHash: claimAcceptance.acceptingBlockHash,
+                transitions: [
+                  {
+                    kind: "claim",
+                    covenantId: stored.covenantId,
+                    templateId: stored.templateId,
+                    consumedOutpoint: stored.activeOutpoint,
+                    transactionId: claimOutpoint.txid,
+                    authorizedSuccessorCount: 1,
+                    successor: {
+                      outpoint: claimOutpoint,
+                      covenantId: stored.covenantId,
+                      authorizingInput: 0,
+                      scriptPublicKey: claimScriptPublicKey,
+                      value: "750",
+                      claimedCumulativeAmount: "250",
+                    },
+                    terminalOutput: null,
+                    acceptance: claimAcceptance,
+                  },
+                ],
+              },
+            ],
+          };
+    const reconciled = await client.reconcileChannel(stored.id);
     await store.saveChannel({
-      ...stored,
+      ...reconciled,
       chargedCumulativeAmount: "300",
-      claimedCumulativeAmount: "250",
       signedMaxClaimable: "300",
       latestVoucher: {
-        covenantId: stored.covenantId,
+        covenantId: reconciled.covenantId,
         authorizedCumulativeAmount: "300",
         signature: "dd".repeat(64),
       },
@@ -1641,6 +1922,47 @@ describe("direct-mode client", () => {
     expect(result.response.status).toBe(200);
     expect(capturedPayment?.payload.type).toBe("deposit-voucher");
     expect(result.settlement?.channel!.chargedCumulativeAmount).toBe("100");
+  });
+
+  it.each([
+    ["missing", undefined],
+    ["malformed", "not-base64"],
+  ])("quarantines a disclosed batch voucher when HTTP settlement metadata is %s", async (_label, responseHeader) => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    let attempts = 0;
+    const client = makeClient({
+      provider,
+      store,
+      fetch: async () => {
+        attempts += 1;
+        if (attempts === 1) {
+          return response(402, {
+            [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(
+              makeRequired({ amount: "100" }),
+            ),
+          });
+        }
+        return response(
+          200,
+          responseHeader
+            ? { [PAYMENT_RESPONSE_HEADER]: responseHeader }
+            : {},
+        );
+      },
+    });
+
+    await expect(
+      client.paidFetch("https://api.example.test/data"),
+    ).rejects.toThrow(
+      responseHeader
+        ? "header must use canonical padded base64"
+        : "paid retry response is missing PAYMENT-RESPONSE",
+    );
+    expect(attempts).toBe(2);
+    await expect(store.loadChannels({})).resolves.toMatchObject([
+      { status: "suspicious", signedMaxClaimable: "100" },
+    ]);
   });
 
   it("rejects redirected payment challenges before signing", async () => {
@@ -1800,6 +2122,28 @@ describe("direct-mode client", () => {
     expect(result.result.content?.[0]?.text).toBe("paid data");
     expect(result.settlement?.chargedAmount).toBe("100");
     expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
+  });
+
+  it("quarantines a disclosed batch voucher when MCP settlement metadata is missing", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const required = makeRequired({ amount: "100" });
+
+    await expect(
+      paidMcpToolCall(
+        client,
+        async (params) =>
+          params._meta?.["x402/payment"]
+            ? { content: [{ type: "text", text: "missing settlement" }] }
+            : mcpPaymentRequiredResult(required),
+        { name: "metered", arguments: { id: "alpha" } },
+        { audience: MCP_AUDIENCE },
+      ),
+    ).rejects.toThrow("missing x402 payment response metadata");
+    await expect(store.loadChannels({})).resolves.toMatchObject([
+      { status: "suspicious", signedMaxClaimable: "100" },
+    ]);
   });
 
   it("uses client mainnet opt-in for paid MCP tool calls", async () => {
@@ -2269,6 +2613,210 @@ describe("direct-mode client", () => {
     expect(signedDigests).toEqual([refundDigest]);
   });
 
+  it("independently discovers a partial-claim successor and refunds that head", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      refundBuilder: {
+        async buildRefundTransaction(request) {
+          expect(request.channel.activeOutpoint.txid).toBe("79".repeat(32));
+          expect(request.refundAmount).toBe("750");
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
+        },
+      },
+    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const channel = payment.channel!;
+    const claimOutpoint = { txid: "79".repeat(32), index: 0 };
+    const claimScriptPublicKey = v4EscrowScriptPublicKey(channel, "250");
+    const claimAcceptance = acceptedEvidence(
+      claimOutpoint.txid,
+      CONFIRMATION_THRESHOLD,
+      "74".repeat(32),
+    );
+    provider.utxos.push({
+      outpoint: claimOutpoint,
+      covenantId: channel.covenantId,
+      amount: "750",
+      address: channel.escrowAddress,
+      scriptPublicKey: claimScriptPublicKey,
+      acceptance: claimAcceptance,
+    });
+    provider.lineageDiscovery = (request) =>
+      request.lineage.currentHead?.outpoint.txid === claimOutpoint.txid
+        ? {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [],
+          }
+        : {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: claimAcceptance.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [
+              {
+                blockHash: claimAcceptance.acceptingBlockHash,
+                transitions: [
+                  {
+                    kind: "claim",
+                    covenantId: channel.covenantId,
+                    templateId: channel.templateId,
+                    consumedOutpoint: channel.activeOutpoint,
+                    transactionId: claimOutpoint.txid,
+                    authorizedSuccessorCount: 1,
+                    successor: {
+                      outpoint: claimOutpoint,
+                      covenantId: channel.covenantId,
+                      authorizingInput: 0,
+                      scriptPublicKey: claimScriptPublicKey,
+                      value: "750",
+                      claimedCumulativeAmount: "250",
+                    },
+                    terminalOutput: null,
+                    acceptance: claimAcceptance,
+                  },
+                ],
+              },
+            ],
+          };
+
+    const refund = await client.refundChannel(channel.id);
+
+    expect(refund.channel.status).toBe("refunded");
+    expect(refund.channel.claimedCumulativeAmount).toBe("250");
+    await expect(store.loadRefundAttempt(channel.id)).resolves.toMatchObject({
+      activeOutpoint: claimOutpoint,
+      fundingAmount: "750",
+      status: "applied",
+    });
+  });
+
+  it("rejects a terminal lineage output sent outside the configured refund script", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const channel = payment.channel!;
+    const refundTransactionId = "7a".repeat(32);
+    const acceptance = acceptedEvidence(
+      refundTransactionId,
+      CONFIRMATION_THRESHOLD,
+      "7b".repeat(32),
+    );
+    provider.lineageDiscovery = (request) => ({
+      fromCheckpoint: request.lineage.checkpoint,
+      checkpoint: acceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [
+        {
+          blockHash: acceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "refund",
+              covenantId: channel.covenantId,
+              templateId: channel.templateId,
+              consumedOutpoint: channel.activeOutpoint,
+              transactionId: refundTransactionId,
+              authorizedSuccessorCount: 0,
+              successor: null,
+              terminalOutput: {
+                index: 0,
+                scriptPublicKey: "0000ff",
+                value: channel.fundingAmount,
+              },
+              acceptance,
+            },
+          ],
+        },
+      ],
+    });
+
+    await expect(client.reconcileChannel(channel.id)).rejects.toThrow(
+      "configured refund script",
+    );
+    await expect(store.loadChannels({})).resolves.toMatchObject([
+      { id: channel.id, status: "active" },
+    ]);
+  });
+
+  it("rolls back a removed confirmed refund and permits a refund-only retry", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    const store = new MemoryChannelStore();
+    const client = makeClient({
+      provider,
+      store,
+      refundBuilder: {
+        async buildRefundTransaction(request) {
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
+        },
+      },
+    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const first = await client.refundChannel(payment.channel!.id);
+    expect(first.channel.status).toBe("refunded");
+    await expect(store.loadRefundAttempt(payment.channel!.id)).resolves.toMatchObject({
+      status: "applied",
+    });
+
+    provider.lineageDiscovery = (request) =>
+      request.lineage.currentHead === null
+        ? {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [
+              acceptedEvidence(REFUND_TX).acceptingBlockHash,
+            ],
+            addedChainBlocks: [],
+          }
+        : {
+            fromCheckpoint: request.lineage.checkpoint,
+            checkpoint: request.lineage.checkpoint,
+            continuity: "complete",
+            removedChainBlockHashes: [],
+            addedChainBlocks: [],
+          };
+
+    await expect(client.listRefundableChannels()).resolves.toMatchObject([
+      { id: payment.channel!.id, status: "refundable" },
+    ]);
+    await expect(store.loadRefundAttempt(payment.channel!.id)).resolves.toBeUndefined();
+
+    const second = await client.refundChannel(payment.channel!.id);
+    expect(second.channel.status).toBe("refunded");
+    expect(provider.sendCount).toBe(3); // genesis plus both refund broadcasts
+    await expect(store.loadRefundAttempt(payment.channel!.id)).resolves.toMatchObject({
+      status: "applied",
+    });
+  });
+
   it("does not mark a channel refunded for broadcast-only refund submission", async () => {
     const provider = new FakeFundingProvider();
     provider.daa = "1001";
@@ -2280,9 +2828,8 @@ describe("direct-mode client", () => {
       refundReconciler: {
         async reconcileRefund(attempt) {
           return {
-            status: "unknown",
             transactionId: attempt.transactionId,
-            reason: "not yet indexed",
+            evidence: unknownEvidence(attempt.transactionId),
           };
         },
       },
@@ -2320,7 +2867,6 @@ describe("direct-mode client", () => {
       "refund attempt is unresolved",
     );
     const sendsBeforeReconcile = provider.sendCount;
-    provider.utxos.length = 0;
     await expect(
       client.reconcileRefund(payment.channel!.id),
     ).resolves.toMatchObject({
@@ -2370,6 +2916,35 @@ describe("direct-mode client", () => {
     expect(stored?.status).toBe("active");
   });
 
+  it("rejects channels detached from their immutable launch manifest", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const wrongEvidence = structuredClone(payment.channel!);
+    wrongEvidence.lineage.manifest.genesis.acceptance.acceptingBlockHash =
+      "ac".repeat(32);
+    const wrongAuthorizer = structuredClone(payment.channel!);
+    wrongAuthorizer.lineage.manifest.genesis.authorizingInput = {
+      txid: "ad".repeat(32),
+      index: 0,
+    };
+    const wrongSource = structuredClone(payment.channel!);
+    wrongSource.lineage.manifest.source.sha256 = "ae".repeat(32);
+
+    expect(() => new MemoryChannelStore([wrongEvidence])).toThrow(
+      "immutable covenant launch manifest",
+    );
+    expect(() => new MemoryChannelStore([wrongAuthorizer])).toThrow(
+      "immutable covenant launch manifest",
+    );
+    expect(() => new MemoryChannelStore([wrongSource])).toThrow(
+      "immutable covenant launch manifest",
+    );
+  });
+
   it("atomically applies a durable refund attempt only against its captured head", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -2389,6 +2964,11 @@ describe("direct-mode client", () => {
       refundAmount: channel.fundingAmount,
       transaction: "ab".repeat(32),
       transactionId: REFUND_TX,
+      requiredConfirmations: CONFIRMATION_THRESHOLD,
+      refundScriptPublicKey: new FakeAddressCodec().scriptPublicKeyForAddress(
+        channel.config.refundAddress,
+        channel.config.network,
+      ),
       status: "pending",
     };
 
@@ -2411,7 +2991,7 @@ describe("direct-mode client", () => {
       "open refund",
     );
     expect(() => new MemoryChannelStore([changed], [attempt])).toThrow(
-      "does not match channel state",
+      "derived covenant lineage index",
     );
     expect(
       () =>
@@ -2424,13 +3004,13 @@ describe("direct-mode client", () => {
       store.applyRefundAttempt({
         channelId: channel.id,
         transactionId: REFUND_TX,
-        finality: "broadcast" as never,
+        acceptance: acceptedEvidence(REFUND_TX, 29),
       }),
-    ).rejects.toThrow("accepted finality");
+    ).rejects.toThrow("confirmation threshold");
     const applied = await store.applyRefundAttempt({
       channelId: channel.id,
       transactionId: REFUND_TX,
-      finality: "accepted",
+      acceptance: acceptedEvidence(REFUND_TX),
     });
     expect(applied.channel.status).toBe("refunded");
     expect(applied.attempt.status).toBe("applied");
@@ -2447,7 +3027,7 @@ describe("direct-mode client", () => {
       store.applyRefundAttempt({
         channelId: channel.id,
         transactionId: "67".repeat(32),
-        finality: "accepted",
+        acceptance: acceptedEvidence("67".repeat(32)),
       }),
     ).rejects.toThrow("transaction id does not match");
     await expect(store.loadRefundAttempt(channel.id)).resolves.toMatchObject({
@@ -2502,16 +3082,15 @@ describe("direct-mode client", () => {
       refundBuilder,
     });
     await expect(restarted.refundChannel(payment.channel!.id)).rejects.toThrow(
-      "refund attempt is unresolved",
+      "trusted refund reconciliation adapter is required",
     );
     const reconciler: RefundReconciler = {
       async reconcileRefund(attempt) {
         expect(attempt.transactionId).toBe(REFUND_TX);
         expect(attempt.transaction).toBe("ab".repeat(32));
         return {
-          status: "accepted",
           transactionId: attempt.transactionId,
-          finality: "accepted",
+          evidence: acceptedEvidence(attempt.transactionId),
         };
       },
     };
@@ -2533,7 +3112,81 @@ describe("direct-mode client", () => {
       restartedStore.loadRefundAttempt(payment.channel!.id),
     ).resolves.toMatchObject({
       status: "applied",
-      finality: "accepted",
+      finality: "confirmed",
+    });
+  });
+
+  it("keeps unknown refunds reserved and releases only trusted absent artifacts", async () => {
+    const provider = new FakeFundingProvider();
+    provider.daa = "1001";
+    provider.sendError = new Error("transport lost after submission");
+    const store = new MemoryChannelStore();
+    let evidence: TrustedTransactionEvidence = unknownEvidence(REFUND_TX);
+    const client = makeClient({
+      provider,
+      store,
+      refundBuilder: {
+        async buildRefundTransaction(request) {
+          await request.signDigest("dd".repeat(32));
+          return {
+            transaction: "ab".repeat(32),
+            transactionId: REFUND_TX,
+            refundAmount: request.refundAmount,
+          };
+        },
+      },
+      refundReconciler: {
+        async reconcileRefund(attempt) {
+          return { transactionId: attempt.transactionId, evidence };
+        },
+      },
+    });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+
+    await expect(client.refundChannel(payment.channel!.id)).rejects.toThrow(
+      "transport lost",
+    );
+    provider.sendError = undefined;
+    await expect(
+      client.reconcileRefund(payment.channel!.id),
+    ).resolves.toMatchObject({ finality: "unknown", accepted: false });
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({ status: "pending" });
+
+    evidence = {
+      status: "absent",
+      transactionId: REFUND_TX,
+      reason: "an unrelated outpoint was spent",
+      proof: {
+        kind: "confirmed-conflicting-spend",
+        spentOutpoint: { txid: "99".repeat(32), index: 7 },
+        conflictingTransaction: acceptedEvidence("98".repeat(32)),
+      },
+    };
+    await expect(
+      client.reconcileRefund(payment.channel!.id),
+    ).resolves.toMatchObject({ finality: "unknown", accepted: false });
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toMatchObject({ status: "pending" });
+
+    evidence = absentEvidence(REFUND_TX);
+    await expect(
+      client.reconcileRefund(payment.channel!.id),
+    ).resolves.toMatchObject({ finality: "absent", accepted: false });
+    await expect(
+      store.loadRefundAttempt(payment.channel!.id),
+    ).resolves.toBeUndefined();
+    await expect(
+      client.refundChannel(payment.channel!.id),
+    ).resolves.toMatchObject({
+      transactionId: REFUND_TX,
+      accepted: true,
+      channel: { status: "refunded" },
     });
   });
 
@@ -2557,9 +3210,8 @@ describe("direct-mode client", () => {
       refundReconciler: {
         async reconcileRefund() {
           return {
-            status: "accepted",
             transactionId: "69".repeat(32),
-            finality: "confirmed",
+            evidence: acceptedEvidence("69".repeat(32)),
           };
         },
       },
@@ -2623,6 +3275,7 @@ function makeClient(options: {
     refundBuilder: options.refundBuilder,
     refundReconciler: options.refundReconciler,
     fundingTransitionReconciler: options.fundingTransitionReconciler,
+    confirmationThreshold: CONFIRMATION_THRESHOLD,
     allowMainnet: options.allowMainnet,
     supportedNetworks: options.supportedNetworks,
     supportedSchemes: options.supportedSchemes,
@@ -2949,9 +3602,9 @@ class FakeFundingProvider implements FundingProvider {
   >();
   depositMode: "outpoint" | "txid-only-ambiguous" | "outpoint-underfunded" =
     "outpoint";
-  sendFinality: SendTransactionResult["finality"] = "accepted";
+  sendFinality: "broadcast" | "accepted" | "confirmed" = "accepted";
   sendError?: Error;
-  fundingSendFinality: SendTransactionResult["finality"] = "accepted";
+  fundingSendFinality: "broadcast" | "accepted" | "confirmed" = "accepted";
   fundingSendError?: Error;
   genesisTotalOutputCount = 1;
   genesisAuthorizedOutputCount = 1;
@@ -2960,6 +3613,11 @@ class FakeFundingProvider implements FundingProvider {
   omitExactTransactionId = false;
   exactTransactionOutputIndex?: number;
   daa = "1000";
+  lineageDiscovery?: (
+    request: Parameters<
+      NonNullable<FundingProvider["discoverCovenantLineage"]>
+    >[0],
+  ) => CovenantSelectedChainUpdate;
 
   constructor(
     sourceKind: FundingSourceKind = "hot-wallet",
@@ -3092,19 +3750,26 @@ class FakeFundingProvider implements FundingProvider {
   }
 
   async getUtxos(addresses: readonly string[]) {
-    return this.utxos.filter(
-      (utxo) => utxo.address && addresses.includes(utxo.address),
-    );
+    return this.utxos
+      .filter((utxo) => utxo.address && addresses.includes(utxo.address))
+      .map((utxo) => ({
+        ...utxo,
+        acceptance: utxo.acceptance ?? acceptedEvidence(utxo.outpoint.txid),
+      }));
   }
 
   async getUtxo(outpoint: { txid: string; index: number }) {
-    return (
-      this.utxos.find(
-        (utxo) =>
-          utxo.outpoint.txid.toLowerCase() === outpoint.txid.toLowerCase() &&
-          utxo.outpoint.index === outpoint.index,
-      ) ?? null
+    const utxo = this.utxos.find(
+      (utxo) =>
+        utxo.outpoint.txid.toLowerCase() === outpoint.txid.toLowerCase() &&
+        utxo.outpoint.index === outpoint.index,
     );
+    return utxo
+      ? {
+          ...utxo,
+          acceptance: utxo.acceptance ?? acceptedEvidence(utxo.outpoint.txid),
+        }
+      : null;
   }
 
   async verifyCovenantGenesis(request: {
@@ -3119,6 +3784,8 @@ class FakeFundingProvider implements FundingProvider {
       genesisAmount: request.utxo.amount,
       totalOutputCount: this.genesisTotalOutputCount,
       authorizedOutputCount: this.genesisAuthorizedOutputCount,
+      acceptance:
+        request.utxo.acceptance ?? acceptedEvidence(request.utxo.outpoint.txid),
     };
   }
 
@@ -3134,6 +3801,25 @@ class FakeFundingProvider implements FundingProvider {
       successorScriptPublicKey: request.successor.scriptPublicKey,
       successorAmount: request.successor.amount,
       authorizedSuccessorCount: 1,
+      authorizingInput: 0,
+      acceptance:
+        request.successor.acceptance ??
+        acceptedEvidence(request.successor.outpoint.txid),
+    };
+  }
+
+  async discoverCovenantLineage(
+    request: Parameters<
+      NonNullable<FundingProvider["discoverCovenantLineage"]>
+    >[0],
+  ) {
+    if (this.lineageDiscovery) return this.lineageDiscovery(request);
+    return {
+      fromCheckpoint: request.lineage.checkpoint,
+      checkpoint: request.lineage.checkpoint,
+      continuity: "complete" as const,
+      removedChainBlockHashes: [],
+      addedChainBlocks: [],
     };
   }
 
@@ -3148,12 +3834,27 @@ class FakeFundingProvider implements FundingProvider {
       if (this.fundingSendError) throw this.fundingSendError;
       const finality = this.fundingSendFinality;
       if (finality === "accepted" || finality === "confirmed") {
-        this.utxos.push(funding.successor);
+        this.utxos.push({
+          ...funding.successor,
+          acceptance: acceptedEvidence(funding.transactionId),
+        });
       }
-      return { transactionId: funding.transactionId, finality };
+      return {
+        transactionId: funding.transactionId,
+        evidence:
+          finality === "broadcast"
+            ? unknownEvidence(funding.transactionId)
+            : acceptedEvidence(funding.transactionId),
+      };
     }
     if (this.sendError) throw this.sendError;
-    return { transactionId: REFUND_TX, finality: this.sendFinality };
+    return {
+      transactionId: REFUND_TX,
+      evidence:
+        this.sendFinality === "broadcast"
+          ? unknownEvidence(REFUND_TX)
+          : acceptedEvidence(REFUND_TX),
+    };
   }
 
   async estimateFees(_request: FeeEstimateRequest) {

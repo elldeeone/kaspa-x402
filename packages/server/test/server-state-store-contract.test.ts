@@ -1,7 +1,13 @@
 import { describe, expect, it } from "vitest";
 
-import type { SettlementResponse } from "@kaspa-x402/core";
 import {
+  applyCovenantSelectedChainUpdate,
+  createCovenantLineageState,
+  type AcceptedTransactionEvidence,
+  type SettlementResponse,
+} from "@kaspa-x402/core";
+import {
+  ESCROW_V4_LAUNCH_IDENTITY,
   buildKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
@@ -541,6 +547,27 @@ describe("memory durable-state limits", () => {
 });
 
 function defineStoreContract(factory: StoreFactory): void {
+  it("rejects channels detached from their immutable launch manifest", async () => {
+    const wrongEvidence = channel();
+    wrongEvidence.lineage.manifest.genesis.acceptance = {
+      ...acceptedEvidence(TX),
+      acceptingBlockHash: "ac".repeat(32),
+    };
+    const refundedWithLiveHead = { ...channel(), status: "refunded" as const };
+    const wrongSource = channel();
+    wrongSource.lineage.manifest.source.sha256 = "ad".repeat(32);
+
+    await expect(
+      Promise.resolve().then(() => factory.create([wrongEvidence])),
+    ).rejects.toThrow("immutable covenant launch manifest");
+    await expect(
+      Promise.resolve().then(() => factory.create([refundedWithLiveHead])),
+    ).rejects.toThrow("still has a derived covenant head");
+    await expect(
+      Promise.resolve().then(() => factory.create([wrongSource])),
+    ).rejects.toThrow("covenant launch identity hash is inconsistent");
+  });
+
   it("atomically binds one covenant lineage to one channel", async () => {
     const store = await factory.create();
     const first = channel();
@@ -584,6 +611,131 @@ function defineStoreContract(factory: StoreFactory): void {
       "covenant lineage is already registered",
     );
     await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
+  });
+
+  it("does not retire a terminal refunded channel", async () => {
+    const first = channel();
+    const acceptance = {
+      ...acceptedEvidence(OTHER_TX),
+      acceptingBlockHash: "ac".repeat(32),
+    };
+    const lineage = applyCovenantSelectedChainUpdate(first.lineage, {
+      fromCheckpoint: first.lineage.checkpoint,
+      checkpoint: acceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [
+        {
+          blockHash: acceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "refund",
+              covenantId: first.covenantId,
+              templateId: first.channelConfig.templateId,
+              consumedOutpoint: first.activeOutpoint,
+              transactionId: OTHER_TX,
+              authorizedSuccessorCount: 0,
+              successor: null,
+              terminalOutput: {
+                index: 0,
+                scriptPublicKey: SCRIPT,
+                value: first.fundingAmount,
+              },
+              acceptance,
+            },
+          ],
+        },
+      ],
+    });
+    const refunded: ServerChannelRecord = {
+      ...first,
+      version: "1",
+      status: "refunded",
+      lineage,
+    };
+    const store = await factory.create([refunded]);
+    await store.claimChannelOperation(
+      channelOperation(refunded, "retirement", ATTEMPT),
+    );
+
+    await expect(
+      store.retireChannel(refunded.channelId, ATTEMPT, refunded),
+    ).rejects.toThrow("terminal refunded channel cannot be retired");
+    await expect(store.loadChannel(refunded.channelId)).resolves.toEqual(
+      refunded,
+    );
+  });
+
+  it("atomically persists the covenant journal and derived head across restart", async () => {
+    const first = channel();
+    let store = await factory.create([first]);
+    const acceptance = acceptedEvidence(OTHER_TX);
+    const lineage = applyCovenantSelectedChainUpdate(first.lineage, {
+      fromCheckpoint: first.lineage.checkpoint,
+      checkpoint: acceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [
+        {
+          blockHash: acceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "claim",
+              covenantId: first.covenantId,
+              templateId: first.channelConfig.templateId,
+              consumedOutpoint: first.activeOutpoint,
+              transactionId: OTHER_TX,
+              authorizedSuccessorCount: 1,
+              successor: {
+                covenantId: first.covenantId,
+                authorizingInput: 0,
+                outpoint: { txid: OTHER_TX, index: 0 },
+                scriptPublicKey: SCRIPT,
+                value: "900",
+                claimedCumulativeAmount: "100",
+              },
+              terminalOutput: null,
+              acceptance,
+            },
+          ],
+        },
+      ],
+    });
+    const advanced: ServerChannelRecord = {
+      ...first,
+      version: "1",
+      activeOutpoint: { txid: OTHER_TX, index: 0 },
+      fundingAmount: "900",
+      claimedCumulativeAmount: "100",
+      lineage,
+    };
+
+    for (const invalid of [
+      { ...advanced, chargedCumulativeAmount: "1" },
+      {
+        ...advanced,
+        channelConfig: { ...advanced.channelConfig, payTo: "kaspatest:other" },
+      },
+      { ...advanced, status: "suspicious" as const },
+      { ...advanced, version: "2" },
+    ]) {
+      await expect(
+        store.applyCovenantLineage(first, invalid),
+      ).rejects.toThrow();
+      await expect(store.loadChannel(first.channelId)).resolves.toEqual(first);
+    }
+
+    await store.applyCovenantLineage(first, advanced);
+    if (store instanceof DurableMockServerChannelStore) {
+      store = await store.restart();
+    }
+    await expect(store.loadChannel(first.channelId)).resolves.toEqual(advanced);
+
+    const rolledBack = { ...first, version: "2" };
+    await expect(store.applyCovenantLineage(advanced, rolledBack)).rejects.toThrow(
+      "journal is not append-only",
+    );
+    await expect(store.loadChannel(first.channelId)).resolves.toEqual(advanced);
   });
 
   it("consumes exact transaction ids once while allowing identical retries", async () => {
@@ -1183,7 +1335,8 @@ function defineStoreContract(factory: StoreFactory): void {
     const accepted: ClaimAttemptRecord = {
       ...broadcast,
       status: "accepted",
-      finality: "accepted",
+      finality: "confirmed",
+      acceptance: acceptedEvidence(first.transactionId),
     };
     await store.saveClaimAttempt(broadcast);
     await store.saveClaimAttempt(accepted);
@@ -1218,13 +1371,14 @@ function defineStoreContract(factory: StoreFactory): void {
       store.saveClaimAttempt({ ...pending, transaction: "cd".repeat(32) }),
     ).rejects.toThrow("immutable artifact");
     await expect(
-      store.saveClaimAttempt({ ...pending, requiredFinality: "confirmed" }),
+      store.saveClaimAttempt({ ...pending, requiredConfirmations: 31 }),
     ).rejects.toThrow("immutable artifact");
     await expect(
       store.saveClaimAttempt({
         ...pending,
         status: "accepted",
-        finality: "accepted",
+        finality: "confirmed",
+        acceptance: acceptedEvidence(pending.transactionId),
       }),
     ).rejects.toThrow("status transition");
 
@@ -1241,18 +1395,27 @@ function defineStoreContract(factory: StoreFactory): void {
       store.saveClaimAttempt({
         ...broadcast,
         status: "applied",
-        finality: "accepted",
+        finality: "confirmed",
+        acceptance: acceptedEvidence(broadcast.transactionId),
       }),
     ).rejects.toThrow("applied atomically");
 
     const accepted: ClaimAttemptRecord = {
       ...broadcast,
       status: "accepted",
-      finality: "accepted",
+      finality: "confirmed",
+      acceptance: acceptedEvidence(broadcast.transactionId),
     };
     await store.saveClaimAttempt(accepted);
+    await expect(store.saveClaimAttempt(accepted)).resolves.toBeUndefined();
     await expect(
-      store.saveClaimAttempt({ ...accepted, finality: "confirmed" }),
+      store.saveClaimAttempt({
+        ...accepted,
+        acceptance: {
+          ...accepted.acceptance!,
+          acceptingBlockHash: "ac".repeat(32),
+        },
+      }),
     ).rejects.toThrow("same-state update");
     await expect(
       store.applyClaimAttempt(
@@ -1285,11 +1448,11 @@ function defineStoreContract(factory: StoreFactory): void {
     );
   });
 
-  it("persists the claim finality threshold and rejects weaker acceptance", async () => {
+  it("persists the claim confirmation threshold and rejects weaker acceptance", async () => {
     let store = await factory.create([claimableChannel()]);
     const pending: ClaimAttemptRecord = {
       ...claimAttempt({ attemptId: ATTEMPT }),
-      requiredFinality: "confirmed",
+      requiredConfirmations: 30,
     };
     await reserveClaim(store, pending);
     await store.saveClaimAttempt(pending);
@@ -1298,7 +1461,7 @@ function defineStoreContract(factory: StoreFactory): void {
     }
     await expect(store.loadOpenClaimAttempt(CHANNEL_ID)).resolves.toMatchObject(
       {
-        requiredFinality: "confirmed",
+        requiredConfirmations: 30,
         status: "pending",
       },
     );
@@ -1307,6 +1470,11 @@ function defineStoreContract(factory: StoreFactory): void {
       ...pending,
       status: "broadcast",
       finality: "accepted",
+      acceptance: {
+        ...acceptedEvidence(pending.transactionId),
+        acceptingBlockBlueScore: "972",
+        confirmationCount: 29,
+      },
     };
     await store.saveClaimAttempt(broadcast);
     await expect(
@@ -1314,11 +1482,12 @@ function defineStoreContract(factory: StoreFactory): void {
         ...broadcast,
         status: "accepted",
       }),
-    ).rejects.toThrow("has not reached required finality");
+    ).rejects.toThrow("lacks confirmed chain evidence");
     await store.saveClaimAttempt({
       ...broadcast,
       status: "accepted",
       finality: "confirmed",
+      acceptance: acceptedEvidence(pending.transactionId),
     });
   });
 }
@@ -1378,6 +1547,11 @@ function batchSettlementAttempt(
 
 type DurableMockOperation =
   | { type: "registerChannel"; channel: ServerChannelRecord }
+  | {
+      type: "applyCovenantLineage";
+      expected: ServerChannelRecord;
+      channel: ServerChannelRecord;
+    }
   | { type: "claimChannelOperation"; record: ChannelOperationLeaseRecord }
   | {
       type: "retireChannel";
@@ -1485,6 +1659,15 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
   async registerChannel(channel: ServerChannelRecord): Promise<void> {
     await this.#write({ type: "registerChannel", channel }, () =>
       super.registerChannel(channel),
+    );
+  }
+
+  async applyCovenantLineage(
+    expected: ServerChannelRecord,
+    channel: ServerChannelRecord,
+  ): Promise<void> {
+    await this.#write({ type: "applyCovenantLineage", expected, channel }, () =>
+      super.applyCovenantLineage(expected, channel),
     );
   }
 
@@ -1735,6 +1918,12 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
       case "registerChannel":
         await super.registerChannel(operation.channel);
         return;
+      case "applyCovenantLineage":
+        await super.applyCovenantLineage(
+          operation.expected,
+          operation.channel,
+        );
+        return;
       case "claimChannelOperation":
         await super.claimChannelOperation(operation.record);
         return;
@@ -1840,7 +2029,8 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
 function channel(
   overrides: Partial<ServerChannelRecord> = {},
 ): ServerChannelRecord {
-  return {
+  const genesisAcceptance = acceptedEvidence(TX);
+  const base = {
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
     version: "0",
@@ -1852,6 +2042,7 @@ function channel(
       genesisAmount: "1000",
       totalOutputCount: 1,
       authorizedOutputCount: 1,
+      acceptance: genesisAcceptance,
     },
     channelConfig: {
       network: "kaspa:testnet-10",
@@ -1872,7 +2063,48 @@ function channel(
     claimedCumulativeAmount: "0",
     signedMaxClaimable: "0",
     status: "active",
-    ...overrides,
+  };
+  const merged = { ...base, ...overrides } as Omit<
+    ServerChannelRecord,
+    "lineage"
+  > & { lineage?: ServerChannelRecord["lineage"] };
+  const lineage = overrides.lineage ?? createCovenantLineageState({
+    format: "kaspa-x402-covenant-launch-v1",
+    network: merged.channelConfig.network,
+    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
+    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
+    bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+    constructorSlots: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots),
+    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
+    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
+    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+    genesis: {
+      derivation: "kip20-covenant-id-v1",
+      covenantId: merged.covenantId,
+      authorizingInput: merged.genesisEvidence.authorizingInput,
+      transactionId: merged.activeOutpoint.txid,
+      outpoint: merged.activeOutpoint,
+      scriptPublicKey: merged.activeScriptPublicKey,
+      value: merged.fundingAmount,
+      claimedCumulativeAmount: merged.claimedCumulativeAmount,
+      acceptance: acceptedEvidence(merged.activeOutpoint.txid),
+    },
+  });
+  return { ...merged, lineage };
+}
+
+function acceptedEvidence(transactionId: string): AcceptedTransactionEvidence {
+  return {
+    status: "accepted",
+    transactionId,
+    acceptingBlockHash: "aa".repeat(32),
+    acceptingBlockBlueScore: "971",
+    confirmationCount: 30,
+    checkpoint: {
+      blockHash: "ab".repeat(32),
+      blueScore: "1000",
+      daaScore: "1000",
+    },
   };
 }
 
@@ -2024,7 +2256,7 @@ function claimAttempt(input: { attemptId: string }): ClaimAttemptRecord {
     channelStatus: current.status,
     transaction: "ab".repeat(32),
     transactionId: TX,
-    requiredFinality: "accepted",
+    requiredConfirmations: 30,
     operationLeaseId: input.attemptId,
     expected: clone(current),
     continuationOutpoint: { txid: TX, index: 1 },
@@ -2064,15 +2296,49 @@ function claimSuccessor(
   current: ServerChannelRecord,
   attempt: ClaimAttemptRecord,
 ): ServerChannelRecord {
+  const claimedCumulativeAmount = (
+    BigInt(current.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
+  ).toString();
+  const acceptance =
+    attempt.acceptance ?? acceptedEvidence(attempt.transactionId);
   return {
     ...current,
     version: (BigInt(current.version) + 1n).toString(),
     activeOutpoint: attempt.continuationOutpoint!,
     activeScriptPublicKey: attempt.continuationScriptPublicKey!,
     fundingAmount: attempt.continuationFundingAmount!,
-    claimedCumulativeAmount: (
-      BigInt(current.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
-    ).toString(),
+    claimedCumulativeAmount,
+    lineage: applyCovenantSelectedChainUpdate(current.lineage, {
+      fromCheckpoint: current.lineage.checkpoint,
+      checkpoint: acceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [
+        {
+          blockHash: acceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "claim",
+              covenantId: current.covenantId,
+              templateId: current.channelConfig.templateId,
+              consumedOutpoint: current.activeOutpoint,
+              transactionId: attempt.transactionId,
+              authorizedSuccessorCount: 1,
+              successor: {
+                outpoint: attempt.continuationOutpoint!,
+                covenantId: current.covenantId,
+                authorizingInput: 0,
+                scriptPublicKey: attempt.continuationScriptPublicKey!,
+                value: attempt.continuationFundingAmount!,
+                claimedCumulativeAmount,
+              },
+              terminalOutput: null,
+              acceptance,
+            },
+          ],
+        },
+      ],
+    }),
   };
 }
 

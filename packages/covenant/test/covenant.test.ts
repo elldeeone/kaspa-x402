@@ -5,6 +5,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  ESCROW_V4_COMPILED_BASE,
+  ESCROW_V4_COMPILED_BASE_SHA256,
+  ESCROW_V4_CONSTRUCTOR_SLOTS,
+  ESCROW_V4_LAUNCH_IDENTITY,
+  ESCROW_V4_SELECTORS,
+  ESCROW_V4_SOURCE_PATH,
+  ESCROW_V4_SOURCE_SHA256,
   ESCROW_TEMPLATE_ID,
   ESCROW_VOUCHER_DOMAIN,
   ESCROW_VOUCHER_DOMAIN_TAG,
@@ -63,6 +70,28 @@ describe("stateful escrow covenant template", () => {
     expect(withoutState(item.sample.genesis.redeemScript, item.stateLayout)).toBe(
       withoutState(item.sample.successor.redeemScript, item.stateLayout),
     );
+  });
+
+  it("binds the launch identity to the checked source and compiled base", () => {
+    const source = fs.readFileSync(
+      path.join(repoRoot, ESCROW_V4_SOURCE_PATH),
+    );
+    const sourceHash = crypto.createHash("sha256").update(source).digest("hex");
+    const compiledBaseHash = crypto
+      .createHash("sha256")
+      .update(Buffer.from(ESCROW_V4_COMPILED_BASE, "hex"))
+      .digest("hex");
+
+    expect(sourceHash).toBe(ESCROW_V4_SOURCE_SHA256);
+    expect(compiledBaseHash).toBe(ESCROW_V4_COMPILED_BASE_SHA256);
+    expect(ESCROW_V4_LAUNCH_IDENTITY.source).toEqual({
+      path: ESCROW_V4_SOURCE_PATH,
+      sha256: sourceHash,
+    });
+    expect(ESCROW_V4_LAUNCH_IDENTITY.bytecode).toEqual({
+      templateId: ESCROW_TEMPLATE_ID,
+      compiledBaseSha256: compiledBaseHash,
+    });
   });
 
   it("keeps silverc transition offsets invariant across timeout values", () => {
@@ -137,6 +166,34 @@ describe("stateful escrow covenant template", () => {
     expect(item.sample.topUpArgsWithDummySignatures.endsWith("04ae09679c")).toBe(true);
     expect(buildRefundArgs({ clientSignature: "ab".repeat(65) })).toBe(item.sample.refundArgsWithDummySig);
     expect(item.sample.refundArgsWithDummySig.endsWith("0417a2027b")).toBe(true);
+  });
+
+  it("keeps exported launch metadata recursively immutable and isolated", () => {
+    const item = fixture();
+    const claimInput = {
+      serverSignature: "ab".repeat(65),
+      voucherSignature: "cd".repeat(64),
+      authorizedCumulativeAmount: item.sample.voucher.authorizedCumulativeAmount,
+      claimAmount: item.sample.voucher.claimAmount,
+    };
+    const before = buildClaimArgs(claimInput);
+
+    expect(Object.isFrozen(ESCROW_V4_SELECTORS)).toBe(true);
+    expect(Object.isFrozen(ESCROW_V4_CONSTRUCTOR_SLOTS)).toBe(true);
+    expect(
+      Object.isFrozen(ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey.offsets),
+    ).toBe(true);
+    expect(() => {
+      (ESCROW_V4_SELECTORS as unknown as Record<string, string>).claim =
+        "00000000";
+    }).toThrow();
+    expect(() => {
+      (ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey.offsets as unknown as number[]).push(
+        999,
+      );
+    }).toThrow();
+    expect(buildClaimArgs(claimInput)).toBe(before);
+    expect(ESCROW_V4_LAUNCH_IDENTITY.identitySha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("rejects malformed ABI values and unsigned-64 overflow", () => {

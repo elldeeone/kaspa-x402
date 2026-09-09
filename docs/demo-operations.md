@@ -10,7 +10,7 @@ https://demo.kaspa-x402.org
 Last repository-backed funded deployment evidence: Alpha.10 Worker version
 `c57eb755-e169-4a00-ac4a-5e035371cad1`, built from commit `78f2ada`. That
 historical evidence does not validate the Alpha.11 source, fresh durable state,
-or `kaspa-x402-escrow-v3`. Alpha.11 deployment and funded canary proof are
+or `kaspa-x402-escrow-v4`. Alpha.11 deployment and funded canary proof are
 pending.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
@@ -39,8 +39,8 @@ Important non-secret variables:
 | `KASPA_X402_RELEASE_VERSION`                 | Immutable alpha release snapshot checked by the scheduled canary.                                                                                              |
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
-| `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact settlement. REST is read-side evidence only for hosted exact.                                                                    |
-| `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used by the Worker to submit exact transaction artifacts.                                                            |
+| `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact submission and authoritative batch selected-chain lineage. REST mode cannot prove batch lineage continuity.                       |
+| `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used for exact submission and `GetVirtualChainFromBlockV2` batch lineage recovery.                                    |
 
 The Worker must not receive a mainnet key, a spending key, or a faucet key.
 Claim broadcasting is disabled in the hosted gateway package.
@@ -63,16 +63,16 @@ object.
    Verify the Alpha.11 release metadata, schemas, vectors, and docs publicly.
 2. Disable the Alpha.10 public gateway before replacing its Worker. Keep the
    Alpha.10 deployment and Durable Object untouched for rollback evidence.
-3. Confirm the Worker advertises `0.1.0-alpha.11`, `kaspa-escrow-v2`,
-   `kaspa-x402-escrow-v3`, and R, and resolves fresh
+3. Confirm the Worker advertises `0.1.0-alpha.11`, `kaspa-escrow-v3`,
+   `kaspa-x402-escrow-v4`, and R, and resolves fresh
    `demo-gateway-alpha.11` state.
 4. Validate the disabled Alpha.11 Worker, then run funded exact and batch
    canaries through an operator-controlled preview. Re-register any verified,
    still-unspent additive heads; exact replay records, payment identifiers, and
    batch channels are intentionally not copied from Alpha.10.
 5. Enable the public Alpha.11 Worker only after its canaries pass. New batch
-   clients must open singleton `kaspa-escrow-v2` binding lanes using the
-   `kaspa-x402-escrow-v3` template; no older batch lane continues across the
+   clients must open singleton `kaspa-escrow-v3` binding lanes using the
+   `kaspa-x402-escrow-v4` template; no older batch lane continues across the
    cutover.
 
 Pending. Do not mark this cutover complete until the Alpha.11 release snapshot,
@@ -211,25 +211,30 @@ KASPA_X402_GATEWAY_ENABLED=true
 
 ## Chain Evidence Or PNN Outage
 
-The Worker uses REST evidence for accepted UTXOs and DAA health. Hosted exact
-also uses public TN10 PNN/WSS for transaction submission. `/health` is shallow
-and does not probe either dependency. If the scheduled canary or hosted exact
-proof reports chain failure:
+The Worker uses REST for accepted-UTXO and DAA reads. In `pnn` mode it uses
+public TN10 PNN/WSS both for exact submission and authoritative batch
+`GetVirtualChainFromBlockV2` lineage deltas. The reference policy requires 30
+confirmations proven by that selected-chain traversal; blue-score difference is
+not selected-chain depth.
+`/health` is shallow and does not probe either dependency. If chain evidence
+fails:
 
 1. Confirm whether `https://api-tn10.kaspa.org/info/blockdag` is reachable.
 2. If the REST endpoint is down or stale, disable the gateway.
 3. Do not point the public gateway at mainnet or an unreviewed private node.
 4. If moving to a different `kaspa:testnet-10` REST endpoint, deploy only after
    unpaid offers and a manual paid exact check pass.
-5. If PNN submission is failing, disable hosted exact or the full gateway until
-   a paid exact proof passes again.
+5. If PNN or selected-chain V2 is failing, disable hosted exact and batch (or
+   the full gateway). REST UTXO presence alone cannot authorize lineage reuse.
 6. Re-enable only after `/health`, a fresh successful `/canary`, batch deposit,
    replay rejection, and exact payment checks pass when hosted exact settlement
    is enabled.
 
-The static browser demo uses PNN/WASM for client-side checks, and hosted exact
-uses lightweight PNN/WSS JSON inside the Worker for KIP-10 submission. A PNN
-outage can break hosted exact while `/batch` remains usable.
+On restart, resume every batch observer from its stored checkpoint. Process
+removed blocks before additions. If history is pruned, branching, or otherwise
+incomplete, keep the lane unavailable; do not reset its checkpoint, scan from a
+new arbitrary block, or trust peer channel metadata. A removed refund restores
+refund-only state and requires authoritative reconciliation before retry.
 
 ## Scheduled Canary
 
@@ -322,6 +327,10 @@ default and reusable additive heads when explicitly enabled.
 The hosted gateway uses one SQLite-backed Durable Object. It stores exact
 replay records, payment identifiers, batch channels, settlement commitments,
 locks, rate counters, metrics, and the latest canary report.
+
+Each Alpha.11 batch row also owns its immutable covenant launch manifest,
+append-only accepted/removed lineage journal, durable selected-chain checkpoint,
+and atomically derived current head. Those fields must be committed together.
 
 Policy for the public alpha:
 

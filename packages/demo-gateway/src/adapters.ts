@@ -1,7 +1,12 @@
 import {
+  applyCovenantSelectedChainUpdate,
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   KaspaX402Error,
+  type AcceptedTransactionEvidence,
+  type ChainCheckpoint,
+  type CovenantLineageTransition,
+  type CovenantSelectedChainUpdate,
   type FundingOutpoint,
   type Hash32Hex,
   type NetworkId,
@@ -66,7 +71,7 @@ const U64_MAX = 0xffff_ffff_ffff_ffffn;
 
 type TrustedInputReadCache = {
   transactions: Map<string, Promise<RestTransaction | null>>;
-  utxosByAddress: Map<string, Promise<ChainUtxo[]>>;
+  utxosByAddress: Map<string, Promise<RestObservedUtxo[]>>;
 };
 
 type PnnRpc = {
@@ -82,6 +87,16 @@ type PnnRpc = {
     allowOrphan: boolean;
   }): Promise<{ transactionId?: unknown }>;
   getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
+  getVirtualChainFromBlockV2?(request: {
+    startHash: string;
+    dataVerbosityLevel: "Full";
+    minConfirmationCount: number;
+  }): Promise<unknown>;
+  getBlockDagInfo?(): Promise<unknown>;
+  getBlock?(request: {
+    hash: string;
+    includeTransactions: boolean;
+  }): Promise<unknown>;
 };
 
 type PnnRpcFactory = (endpoint: string, timeoutMs: number) => PnnRpc;
@@ -168,10 +183,9 @@ export class RestKaspaChainProvider
     network: NetworkId,
   ): Promise<ChainUtxo | null> {
     assertTestnet(network);
-    let transaction: RestTransaction | null | undefined;
     let address = this.#book.addressForOutpoint(outpoint);
     if (!address) {
-      transaction = await this.#client.getTransaction(outpoint.txid);
+      const transaction = await this.#client.getTransaction(outpoint.txid);
       const output = transactionOutputAt(transaction, outpoint);
       if (!output) return null;
       address = this.#book.addressForScriptPublicKey(
@@ -183,14 +197,14 @@ export class RestKaspaChainProvider
         "current covenant output script has no derived address",
       );
     }
-    const match = (await this.#client.getUtxosForAddress(address)).find(
-      (utxo) => sameOutpoint(utxo.outpoint, outpoint),
-    );
-    if (!match) return null;
-
-    transaction ??= await this.#client.getTransaction(outpoint.txid);
-    const output = transactionOutputAt(transaction, outpoint);
-    if (!output) return match;
+    const observed = await this.#client.observeAcceptedUtxo(address, outpoint);
+    if (!observed) return null;
+    const { transaction, output, utxo: match, evidence: acceptance } = observed;
+    if (!transaction || !output) {
+      throw invalidTransaction(
+        "current covenant outpoint lacks accepted transaction evidence",
+      );
+    }
     if (
       String(output.amount) !== match.amount ||
       normalizeRestScript(requiredRestScript(output)).toLowerCase() !==
@@ -202,7 +216,12 @@ export class RestKaspaChainProvider
     }
     this.#book.recordOutpoint(outpoint, match.scriptPublicKey, address);
     const covenantId = restOutputCovenant(output)?.covenantId;
-    return covenantId ? { ...match, covenantId } : match;
+    return {
+      ...match,
+      ...(covenantId ? { covenantId } : {}),
+      acceptance,
+      finality: "accepted",
+    };
   }
 
   async verifyCovenantGenesis(
@@ -291,6 +310,7 @@ export class RestKaspaChainProvider
       genesisAmount: request.utxo.amount,
       totalOutputCount: transaction.outputs.length,
       authorizedOutputCount: authorizedOutputs.length,
+      acceptance: request.utxo.acceptance,
     };
   }
 
@@ -361,7 +381,17 @@ export class RestKaspaChainProvider
         request.next.activeScriptPublicKey.toLowerCase(),
       successorAmount: request.next.fundingAmount,
       authorizedSuccessorCount: successors.length,
+      authorizingInput: covenantInput.index,
+      acceptance: request.utxo.acceptance,
     };
+  }
+
+  async discoverCovenantLineage(
+    _request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
+  ): Promise<CovenantSelectedChainUpdate> {
+    throw invalidTransaction(
+      "authoritative covenant lineage discovery requires Kaspa PNN GetVirtualChainFromBlockV2",
+    );
   }
 
   async getVirtualDaaScore(): Promise<SompiString> {
@@ -379,7 +409,11 @@ export class RestKaspaChainProvider
     const accepted = await this.#client.getTransaction(parsed.id);
     if (accepted?.is_accepted) {
       assertChainTransactionMatchesSafe(accepted, parsed);
-      return { transactionId: parsed.id, finality: "accepted" };
+      return {
+        transactionId: parsed.id,
+        finality: "accepted",
+        evidence: await this.#client.acceptedTransactionEvidence(parsed.id),
+      };
     }
 
     let transactionId: string;
@@ -395,8 +429,17 @@ export class RestKaspaChainProvider
         "Kaspa REST returned a transaction id that does not match the exact artifact",
       );
     }
-    await this.#client.waitForTransactionAccepted(parsed);
-    return { transactionId: parsed.id, finality: "accepted" };
+    const acceptedTransaction = await this.#client.waitForTransactionAccepted(
+      parsed,
+    );
+    return {
+      transactionId: parsed.id,
+      finality: "accepted",
+      evidence:
+        await this.#client.acceptedTransactionEvidence(
+          acceptedTransaction.transaction_id ?? parsed.id,
+        ),
+    };
   }
 }
 
@@ -526,22 +569,33 @@ export class PnnBroadcastChainProvider
   readonly #reads: RestKaspaChainProvider;
   readonly #book: ScriptAddressBook;
   readonly #pnn: KaspaPnnClient;
+  readonly #requiredConfirmations: number;
 
   constructor(
     reads: RestKaspaChainProvider,
     book: ScriptAddressBook,
     pnn: KaspaPnnClient,
+    requiredConfirmations: number,
   ) {
     this.#reads = reads;
     this.#book = book;
     this.#pnn = pnn;
+    this.#requiredConfirmations = requiredConfirmations;
   }
 
-  getUtxo(
+  async getUtxo(
     outpoint: FundingOutpoint,
     network: NetworkId,
   ): Promise<ChainUtxo | null> {
-    return this.#reads.getUtxo(outpoint, network);
+    const utxo = await this.#reads.getUtxo(outpoint, network);
+    if (!utxo?.acceptance) return utxo;
+    return {
+      ...utxo,
+      acceptance: await this.#pnn.confirmAcceptedTransaction(
+        utxo.acceptance,
+        this.#requiredConfirmations,
+      ),
+    };
   }
 
   getVirtualDaaScore(): Promise<SompiString> {
@@ -558,6 +612,12 @@ export class PnnBroadcastChainProvider
     request: TopUpVerificationRequest,
   ): Promise<TopUpVerificationResult | null> {
     return this.#reads.verifyTopUp(request);
+  }
+
+  discoverCovenantLineage(
+    request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
+  ): Promise<CovenantSelectedChainUpdate> {
+    return this.#pnn.discoverCovenantLineage(request);
   }
 
   estimateClaimFee(): Promise<SompiString> {
@@ -639,7 +699,134 @@ export class KaspaPnnClient {
         );
       }
       await this.#waitForAcceptedPayment(rpc, safe.id, evidence);
-      return { transactionId: safe.id, finality: "accepted" };
+      return {
+        transactionId: safe.id,
+        finality: "accepted",
+        evidence: {
+          status: "unknown",
+          transactionId: safe.id,
+          reason:
+            "PNN UTXO observation lacks an accepting-block checkpoint; reconcile through selected-chain V2",
+        },
+      };
+    });
+  }
+
+  async discoverCovenantLineage(
+    request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
+  ): Promise<CovenantSelectedChainUpdate> {
+    assertTestnet(request.network);
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      if (
+        !rpc.getVirtualChainFromBlockV2 ||
+        !rpc.getBlockDagInfo ||
+        !rpc.getBlock
+      ) {
+        throw invalidTransaction(
+          "Kaspa PNN endpoint does not expose selected-chain V2 checkpoint methods",
+        );
+      }
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        const selected = await pnnSelectedChainFromCheckpoint(
+          rpc,
+          request.lineage.checkpoint.blockHash,
+          request.minConfirmationCount,
+          this.#timeoutMs,
+        );
+        const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        if (sameChainCheckpoint(before, after)) {
+          return covenantUpdateFromPnnSelection(request, selected, after);
+        }
+      }
+      throw invalidTransaction(
+        "Kaspa PNN selected-chain checkpoint changed during every bounded read",
+      );
+    });
+  }
+
+  async confirmAcceptedTransaction(
+    evidence: AcceptedTransactionEvidence,
+    minConfirmationCount: number,
+  ): Promise<AcceptedTransactionEvidence> {
+    if (!Number.isSafeInteger(minConfirmationCount) || minConfirmationCount < 1) {
+      throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
+    }
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      if (
+        !rpc.getVirtualChainFromBlockV2 ||
+        !rpc.getBlockDagInfo ||
+        !rpc.getBlock
+      ) {
+        throw invalidTransaction(
+          "Kaspa PNN endpoint does not expose selected-chain confirmation methods",
+        );
+      }
+      for (let attempt = 0; attempt < 3; attempt += 1) {
+        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        const rawAcceptingBlock = await withTimeout(
+          rpc.getBlock({
+            hash: evidence.acceptingBlockHash,
+            includeTransactions: false,
+          }),
+          this.#timeoutMs,
+          "pnn getBlock accepting block",
+        );
+        const acceptingBlock = unwrapRecord(rawAcceptingBlock, "block");
+        const verbose = requiredRecord(
+          acceptingBlock.verboseData ?? acceptingBlock.verbose_data,
+          "Kaspa PNN accepting block verbose data",
+        );
+        if (
+          hashValue(
+            verbose.hash,
+            "Kaspa PNN accepting block response hash",
+          ) !== evidence.acceptingBlockHash.toLowerCase()
+        ) {
+          throw invalidTransaction(
+            "Kaspa PNN accepting block response does not match transaction evidence",
+          );
+        }
+        const selectedParent = hashValue(
+          verbose.selectedParentHash ?? verbose.selected_parent_hash,
+          "Kaspa PNN accepting block selected parent",
+        );
+        const selected = await pnnSelectedChainFromCheckpoint(
+          rpc,
+          selectedParent,
+          minConfirmationCount,
+          this.#timeoutMs,
+        );
+        const proofBlock = selected.addedChainBlocks.find(
+          (block) => block.blockHash === evidence.acceptingBlockHash.toLowerCase(),
+        );
+        const transactionAccepted = proofBlock?.transactions.some(
+          (transaction) =>
+            pnnAcceptedTransactionId(transaction) ===
+            evidence.transactionId.toLowerCase(),
+        );
+        const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        if (!sameChainCheckpoint(before, after)) continue;
+        if (!proofBlock || !transactionAccepted) {
+          throw invalidTransaction(
+            "Kaspa PNN did not prove the accepted transaction at the configured selected-chain depth",
+          );
+        }
+        return {
+          ...structuredClone(evidence),
+          acceptingBlockBlueScore: uintStringValue(
+            proofBlock.header.blueScore,
+            "Kaspa PNN accepting block blue score",
+          ),
+          confirmationCount: minConfirmationCount,
+          checkpoint: after,
+        };
+      }
+      throw invalidTransaction(
+        "Kaspa PNN confirmation checkpoint changed during every bounded read",
+      );
     });
   }
 
@@ -846,6 +1033,25 @@ class JsonPnnRpc implements PnnRpc {
 
   getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }> {
     return this.#request("getUtxosByAddresses", { addresses });
+  }
+
+  getVirtualChainFromBlockV2(request: {
+    startHash: string;
+    dataVerbosityLevel: "Full";
+    minConfirmationCount: number;
+  }): Promise<unknown> {
+    return this.#request("getVirtualChainFromBlockV2", request);
+  }
+
+  getBlockDagInfo(): Promise<unknown> {
+    return this.#request("getBlockDagInfo", {});
+  }
+
+  getBlock(request: {
+    hash: string;
+    includeTransactions: boolean;
+  }): Promise<unknown> {
+    return this.#request("getBlock", request);
   }
 
   #request<T>(method: string, params: unknown): Promise<T> {
@@ -1458,9 +1664,10 @@ export class KaspaRestClient {
     return (await this.health()).virtualDaaScore;
   }
 
-  async getUtxosForAddress(address: string): Promise<ChainUtxo[]> {
+  async getUtxosForAddress(address: string): Promise<RestObservedUtxo[]> {
     const utxos = await this.#json<RestUtxo[]>(
       `/addresses/${encodeURIComponent(address)}/utxos`,
+      { headers: { "cache-control": "no-cache" } },
     );
     if (!Array.isArray(utxos))
       throw invalidTransaction("Kaspa REST UTXO response must be an array");
@@ -1517,6 +1724,7 @@ export class KaspaRestClient {
     try {
       return await this.#json<RestTransaction>(
         `/transactions/${encodeURIComponent(transactionId.toLowerCase())}?inputs=true&outputs=true&resolve_previous_outpoints=no`,
+        { headers: { "cache-control": "no-cache" } },
       );
     } catch (error) {
       if (error instanceof RestNotFoundError) return null;
@@ -1526,14 +1734,14 @@ export class KaspaRestClient {
 
   async waitForTransactionAccepted(
     transaction: SafeTransaction,
-  ): Promise<void> {
+  ): Promise<RestTransaction> {
     const deadline = Date.now() + this.#acceptanceTimeoutMs;
     let last = "not checked";
     while (Date.now() <= deadline) {
       const accepted = await this.getTransaction(transaction.id);
       if (accepted?.is_accepted) {
         assertChainTransactionMatchesSafe(accepted, transaction);
-        return;
+        return accepted;
       }
       const acceptance = await this.#transactionAccepted(transaction.id);
       if (acceptance)
@@ -1545,6 +1753,173 @@ export class KaspaRestClient {
     throw invalidTransaction(
       `exact transaction did not reach accepted finality: ${last}`,
     );
+  }
+
+  async observeAcceptedUtxo(
+    address: string,
+    outpoint: FundingOutpoint,
+  ): Promise<{
+    utxo: RestObservedUtxo;
+    transaction: RestTransaction;
+    output: RestTransactionOutput;
+    evidence: AcceptedTransactionEvidence;
+  } | null> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const before = await this.#chainCheckpoint();
+      let observation:
+        | {
+            utxo: RestObservedUtxo;
+            transaction: RestTransaction;
+            output: RestTransactionOutput;
+            evidence: AcceptedTransactionEvidence;
+          }
+        | null = null;
+      let observationError: unknown;
+      try {
+        const [utxos, transaction] = await Promise.all([
+          this.getUtxosForAddress(address),
+          this.getTransaction(outpoint.txid),
+        ]);
+        const utxo = utxos.find((candidate) =>
+          sameOutpoint(candidate.outpoint, outpoint),
+        );
+        if (utxo && transaction) {
+          const output = transactionOutputAt(transaction, outpoint);
+          if (!output) {
+            throw invalidTransaction(
+              "current covenant outpoint lacks accepted transaction output",
+            );
+          }
+          observation = {
+            utxo,
+            transaction,
+            output,
+            evidence: await this.#acceptedEvidenceAtCheckpoint(
+              transaction,
+              before,
+            ),
+          };
+        }
+      } catch (error) {
+        observationError = error;
+      }
+      const after = await this.#chainCheckpoint();
+      if (sameChainCheckpoint(before, after)) {
+        if (observationError) throw observationError;
+        return observation;
+      }
+    }
+    throw invalidTransaction(
+      "Kaspa REST UTXO checkpoint changed during every bounded read",
+    );
+  }
+
+  async acceptedTransactionEvidence(
+    transactionId: string,
+  ): Promise<AcceptedTransactionEvidence> {
+    for (let attempt = 0; attempt < 3; attempt += 1) {
+      const before = await this.#chainCheckpoint();
+      let evidence: AcceptedTransactionEvidence | undefined;
+      let observationError: unknown;
+      try {
+        const transaction = await this.getTransaction(transactionId);
+        if (!transaction) {
+          throw invalidTransaction("Kaspa REST transaction is unavailable");
+        }
+        evidence = await this.#acceptedEvidenceAtCheckpoint(
+          transaction,
+          before,
+        );
+      } catch (error) {
+        observationError = error;
+      }
+      const after = await this.#chainCheckpoint();
+      if (sameChainCheckpoint(before, after)) {
+        if (observationError) throw observationError;
+        return evidence!;
+      }
+    }
+    throw invalidTransaction(
+      "Kaspa REST transaction checkpoint changed during every bounded read",
+    );
+  }
+
+  async #acceptedEvidenceAtCheckpoint(
+    transaction: RestTransaction,
+    checkpoint: ChainCheckpoint,
+  ): Promise<AcceptedTransactionEvidence> {
+    const acceptingBlockHash = hashValue(
+      transaction.accepting_block_hash,
+      "Kaspa REST accepting block hash",
+    );
+    const block = await this.#json<RestBlock>(
+      `/blocks/${acceptingBlockHash}?includeTransactions=false`,
+      { headers: { "cache-control": "no-cache" } },
+    );
+    const reportedHash = hashValue(
+      block.verboseData?.hash,
+      "Kaspa REST accepting block response hash",
+    );
+    if (
+      reportedHash !== acceptingBlockHash ||
+      block.verboseData?.isChainBlock !== true
+    ) {
+      throw invalidTransaction(
+        "Kaspa REST accepting block is not a selected-chain block",
+      );
+    }
+    const evidence = restAcceptedTransactionEvidence(transaction, checkpoint);
+    const blockBlueScore = uintStringValue(
+      block.header?.blueScore,
+      "Kaspa REST accepting block blue score",
+    );
+    if (blockBlueScore !== evidence.acceptingBlockBlueScore) {
+      throw invalidTransaction(
+        "Kaspa REST accepting block score conflicts with transaction evidence",
+      );
+    }
+    return evidence;
+  }
+
+  async #chainCheckpoint(): Promise<ChainCheckpoint> {
+    const blockdag = await this.#json<RestBlockdag>("/info/blockdag");
+    if (blockdag.networkName !== "kaspa-testnet-10") {
+      throw invalidTransaction(
+        `unexpected Kaspa REST network ${blockdag.networkName}`,
+      );
+    }
+    const sink = hashValue(blockdag.sink, "Kaspa REST selected-chain sink");
+    const block = await this.#json<RestBlock>(
+      `/blocks/${sink}?includeTransactions=false`,
+    );
+    const reportedHash = block.verboseData?.hash;
+    if (
+      reportedHash !== undefined &&
+      hashValue(reportedHash, "Kaspa REST checkpoint block hash") !== sink
+    ) {
+      throw invalidTransaction(
+        "Kaspa REST checkpoint block does not match the selected-chain sink",
+      );
+    }
+    if (
+      block.verboseData?.isChainBlock !== undefined &&
+      block.verboseData.isChainBlock !== true
+    ) {
+      throw invalidTransaction(
+        "Kaspa REST checkpoint is not a selected-chain block",
+      );
+    }
+    return {
+      blockHash: sink,
+      blueScore: uintStringValue(
+        block.header?.blueScore,
+        "Kaspa REST checkpoint blue score",
+      ),
+      daaScore: uintStringValue(
+        block.header?.daaScore,
+        "Kaspa REST checkpoint DAA score",
+      ),
+    };
   }
 
   async #transactionAccepted(transactionId: string): Promise<boolean> {
@@ -1641,6 +2016,26 @@ async function readBoundedResponseText(
 type RestBlockdag = {
   networkName: string;
   virtualDaaScore: string | number;
+  sink?: unknown;
+};
+
+type RestBlock = {
+  header?: {
+    blueScore?: unknown;
+    daaScore?: unknown;
+  };
+  verboseData?: {
+    hash?: unknown;
+    selectedParentHash?: unknown;
+    isChainBlock?: unknown;
+  };
+};
+
+type RestObservedUtxo = {
+  outpoint: FundingOutpoint;
+  amount: SompiString;
+  scriptPublicKey: string;
+  covenantId?: Hash32Hex;
 };
 
 type RestUtxo = {
@@ -1676,6 +2071,8 @@ type RestTransaction = {
   gas?: string | number | null;
   payload?: string | null;
   is_accepted?: boolean;
+  accepting_block_hash?: unknown;
+  accepting_block_blue_score?: unknown;
   inputs?: RestTransactionInput[];
   outputs?: RestTransactionOutput[];
 };
@@ -1747,6 +2144,15 @@ type PnnUtxo = {
   scriptPublicKey: string;
 };
 
+type PnnSelectedChain = {
+  removedChainBlockHashes: Hash32Hex[];
+  addedChainBlocks: Array<{
+    blockHash: Hash32Hex;
+    header: Record<string, unknown>;
+    transactions: unknown[];
+  }>;
+};
+
 function pnnPaymentEvidence(
   transaction: SafeTransaction,
   book: ScriptAddressBook,
@@ -1803,6 +2209,518 @@ function pnnUtxo(entry: unknown): PnnUtxo {
   };
 }
 
+async function pnnChainCheckpoint(
+  rpc: PnnRpc,
+  timeoutMs: number,
+): Promise<ChainCheckpoint> {
+  const rawInfo = await withTimeout(
+    rpc.getBlockDagInfo!(),
+    timeoutMs,
+    "pnn getBlockDagInfo",
+  );
+  const info = unwrapRecord(rawInfo, "blockDagInfo");
+  const sink = hashValue(info.sink, "Kaspa PNN selected-chain sink");
+  const rawBlock = await withTimeout(
+    rpc.getBlock!({ hash: sink, includeTransactions: false }),
+    timeoutMs,
+    "pnn getBlock checkpoint",
+  );
+  const block = unwrapRecord(rawBlock, "block");
+  const header = requiredRecord(
+    block.header,
+    "Kaspa PNN checkpoint block header",
+  );
+  const verbose = isRecord(block.verboseData) ? block.verboseData : undefined;
+  const reportedHash = header.hash ?? verbose?.hash;
+  if (
+    reportedHash !== undefined &&
+    hashValue(reportedHash, "Kaspa PNN checkpoint block hash") !== sink
+  ) {
+    throw invalidTransaction(
+      "Kaspa PNN checkpoint block does not match the selected-chain sink",
+    );
+  }
+  return {
+    blockHash: sink,
+    blueScore: uintStringValue(
+      header.blueScore,
+      "Kaspa PNN checkpoint blue score",
+    ),
+    daaScore: uintStringValue(
+      header.daaScore,
+      "Kaspa PNN checkpoint DAA score",
+    ),
+  };
+}
+
+async function pnnSelectedChainFromCheckpoint(
+  rpc: PnnRpc,
+  initialHash: Hash32Hex,
+  minConfirmationCount: number,
+  timeoutMs: number,
+): Promise<PnnSelectedChain> {
+  if (
+    !Number.isSafeInteger(minConfirmationCount) ||
+    minConfirmationCount < 1
+  ) {
+    throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
+  }
+  const removedChainBlockHashes: Hash32Hex[] = [];
+  const addedChainBlocks: PnnSelectedChain["addedChainBlocks"] = [];
+  const seenRemoved = new Set<string>();
+  const seenAdded = new Set<string>();
+  let startHash = initialHash;
+  for (let page = 0; page < 64; page += 1) {
+    const raw = await withTimeout(
+      rpc.getVirtualChainFromBlockV2!({
+        startHash,
+        dataVerbosityLevel: "Full",
+        minConfirmationCount,
+      }),
+      timeoutMs,
+      "pnn getVirtualChainFromBlockV2",
+    );
+    const response = unwrapRecord(raw, "virtualChainFromBlockV2Response");
+    const removed = optionalArray(
+      response.removedChainBlockHashes,
+      "Kaspa PNN removed-chain blocks",
+    ).map((value) => hashValue(value, "Kaspa PNN removed-chain block"));
+    const added = optionalArray(
+      response.addedChainBlockHashes,
+      "Kaspa PNN added-chain blocks",
+    ).map((value) => hashValue(value, "Kaspa PNN added-chain block"));
+    const accepted = optionalArray(
+      response.chainBlockAcceptedTransactions,
+      "Kaspa PNN accepted-transaction blocks",
+    );
+    if (accepted.length !== added.length) {
+      throw invalidTransaction(
+        "Kaspa PNN selected-chain V2 block data is incomplete",
+      );
+    }
+    for (const hash of removed) {
+      if (seenRemoved.has(hash)) {
+        throw invalidTransaction("Kaspa PNN repeats a removed-chain block");
+      }
+      seenRemoved.add(hash);
+      removedChainBlockHashes.push(hash);
+    }
+    for (let index = 0; index < added.length; index += 1) {
+      const blockHash = added[index]!;
+      if (seenAdded.has(blockHash)) {
+        throw invalidTransaction("Kaspa PNN repeats an added-chain block");
+      }
+      seenAdded.add(blockHash);
+      const blockData = requiredRecord(
+        accepted[index],
+        "Kaspa PNN accepted-transaction block",
+      );
+      const header = requiredRecord(
+        blockData.chainBlockHeader,
+        "Kaspa PNN accepted-transaction block header",
+      );
+      const reportedHeaderHash =
+        header.hash ?? header.blockHash ?? header.block_hash;
+      if (
+        reportedHeaderHash !== undefined &&
+        hashValue(reportedHeaderHash, "Kaspa PNN accepted block header hash") !==
+          blockHash
+      ) {
+        throw invalidTransaction(
+          "Kaspa PNN accepted-transaction block header does not match its added-chain hash",
+        );
+      }
+      addedChainBlocks.push({
+        blockHash,
+        header,
+        transactions: optionalArray(
+          blockData.acceptedTransactions,
+          "Kaspa PNN accepted transactions",
+        ),
+      });
+    }
+    if (added.length === 0) {
+      return { removedChainBlockHashes, addedChainBlocks };
+    }
+    if (addedChainBlocks.length > 4_096) {
+      throw invalidTransaction(
+        "Kaspa PNN selected-chain response exceeds the block limit",
+      );
+    }
+    startHash = added.at(-1)!;
+  }
+  throw invalidTransaction("Kaspa PNN selected-chain response did not converge");
+}
+
+function covenantUpdateFromPnnSelection(
+  request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
+  selected: PnnSelectedChain,
+  checkpoint: ChainCheckpoint,
+): CovenantSelectedChainUpdate {
+  let working = applyCovenantSelectedChainUpdate(request.lineage, {
+    fromCheckpoint: request.lineage.checkpoint,
+    checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: selected.removedChainBlockHashes,
+    addedChainBlocks: [],
+  });
+  const addedChainBlocks: CovenantSelectedChainUpdate["addedChainBlocks"] = [];
+  for (const block of selected.addedChainBlocks) {
+    const acceptingBlockBlueScore = uintStringValue(
+      block.header.blueScore,
+      "Kaspa PNN accepting block blue score",
+    );
+    if (BigInt(acceptingBlockBlueScore) > BigInt(checkpoint.blueScore)) {
+      throw invalidTransaction(
+        "Kaspa PNN accepting block exceeds the durable checkpoint blue score",
+      );
+    }
+    const transitions: CovenantLineageTransition[] = [];
+    let head = working.currentHead;
+    let genesisAcceptance: AcceptedTransactionEvidence | undefined;
+    for (const transaction of block.transactions) {
+      const transactionId = pnnAcceptedTransactionId(transaction);
+      if (
+        transactionId ===
+        request.lineage.manifest.genesis.transactionId.toLowerCase()
+      ) {
+        genesisAcceptance = {
+          status: "accepted",
+          transactionId,
+          acceptingBlockHash: block.blockHash,
+          acceptingBlockBlueScore,
+          // GetVirtualChainFromBlockV2 includes this block only after the
+          // requested selected-chain minimum has been reached.
+          confirmationCount: request.minConfirmationCount,
+          checkpoint: structuredClone(checkpoint),
+        };
+        continue;
+      }
+      const transition = pnnCovenantTransition(
+        transaction,
+        head,
+        request.covenantId,
+        request.templateId,
+        block.blockHash,
+        acceptingBlockBlueScore,
+        request.minConfirmationCount,
+        checkpoint,
+      );
+      if (!transition) continue;
+      transitions.push(transition);
+      head = transition.successor
+        ? {
+            outpoint: structuredClone(transition.successor.outpoint),
+            scriptPublicKey: transition.successor.scriptPublicKey,
+            value: transition.successor.value,
+            claimedCumulativeAmount:
+              transition.successor.claimedCumulativeAmount,
+          }
+        : null;
+    }
+    if (transitions.length === 0 && !genesisAcceptance) continue;
+    const added = {
+      blockHash: block.blockHash,
+      ...(genesisAcceptance ? { genesisAcceptance } : {}),
+      transitions,
+    };
+    working = applyCovenantSelectedChainUpdate(working, {
+      fromCheckpoint: working.checkpoint,
+      checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [added],
+    });
+    addedChainBlocks.push(added);
+  }
+  return {
+    fromCheckpoint: request.lineage.checkpoint,
+    checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: selected.removedChainBlockHashes,
+    addedChainBlocks,
+  };
+}
+
+function pnnCovenantTransition(
+  rawTransaction: unknown,
+  head: NonNullable<
+    Parameters<ServerChainProvider["discoverCovenantLineage"]>[0]["lineage"]["currentHead"]
+  > | null,
+  covenantId: Hash32Hex,
+  templateId: "kaspa-x402-escrow-v4",
+  acceptingBlockHash: Hash32Hex,
+  acceptingBlockBlueScore: string,
+  confirmationCount: number,
+  checkpoint: ChainCheckpoint,
+): CovenantLineageTransition | undefined {
+  const transaction = unwrapRecord(rawTransaction, "transaction");
+  const transactionId = pnnAcceptedTransactionId(rawTransaction);
+  const inputs = optionalArray(
+    transaction.inputs,
+    "Kaspa PNN transaction inputs",
+  );
+  const outputs = optionalArray(
+    transaction.outputs,
+    "Kaspa PNN transaction outputs",
+  );
+  const inputRecords = inputs
+    .map((input, index) => ({
+      index,
+      input: requiredRecord(input, "Kaspa PNN transaction input"),
+    }));
+  const covenantInputs = inputRecords
+    .filter(({ input }) => pnnInputCovenantId(input) === covenantId);
+  const targetOutputs = outputs
+    .map((output, index) => ({
+      index,
+      output: requiredRecord(output, "Kaspa PNN transaction output"),
+    }))
+    .filter(({ output }) => pnnOutputCovenant(output)?.covenantId === covenantId);
+  const headSpends =
+    head === null
+      ? []
+      : inputRecords.filter(({ input }) => {
+          const outpoint = pnnOptionalInputOutpoint(input);
+          return outpoint !== undefined && sameOutpoint(outpoint, head.outpoint);
+        });
+  if (covenantInputs.length === 0) {
+    if (headSpends.length > 0) {
+      throw invalidTransaction(
+        "Kaspa PNN lineage spends the durable predecessor without the expected covenant identity",
+      );
+    }
+    if (targetOutputs.length > 0) {
+      throw invalidTransaction(
+        "Kaspa PNN lineage contains an unauthorized covenant successor",
+      );
+    }
+    return undefined;
+  }
+  if (covenantInputs.length !== 1 || head === null) {
+    throw invalidTransaction(
+      "Kaspa PNN lineage contains a branching covenant spend",
+    );
+  }
+  if (headSpends.length !== 1 || headSpends[0]!.index !== covenantInputs[0]!.index) {
+    throw invalidTransaction(
+      "Kaspa PNN lineage contains an inconsistent durable predecessor spend",
+    );
+  }
+  const covenantInput = covenantInputs[0]!;
+  const spentOutpoint = pnnInputOutpoint(covenantInput.input);
+  if (!sameOutpoint(spentOutpoint, head.outpoint)) {
+    throw invalidTransaction(
+      "Kaspa PNN lineage spend is missing the unique durable predecessor",
+    );
+  }
+  const acceptance: AcceptedTransactionEvidence = {
+    status: "accepted",
+    transactionId,
+    acceptingBlockHash,
+    acceptingBlockBlueScore,
+    confirmationCount,
+    checkpoint: structuredClone(checkpoint),
+  };
+  if (targetOutputs.length === 0) {
+    if (outputs.length !== 1) {
+      throw invalidTransaction(
+        "Kaspa PNN terminal covenant spend has ambiguous outputs",
+      );
+    }
+    const terminal = requiredRecord(
+      outputs[0],
+      "Kaspa PNN terminal transaction output",
+    );
+    if (pnnOutputCovenant(terminal)) {
+      throw invalidTransaction(
+        "Kaspa PNN terminal covenant spend changes covenant identity",
+      );
+    }
+    return {
+      kind: "refund",
+      covenantId,
+      templateId,
+      consumedOutpoint: spentOutpoint,
+      transactionId,
+      authorizedSuccessorCount: 0,
+      successor: null,
+      terminalOutput: {
+        index: 0,
+        scriptPublicKey: serializeSdkScriptPublicKey(
+          terminal.scriptPublicKey,
+        ),
+        value: uintStringValue(
+          terminal.value ?? terminal.amount,
+          "Kaspa PNN terminal output value",
+        ),
+      },
+      acceptance,
+    };
+  }
+  if (targetOutputs.length !== 1) {
+    throw invalidTransaction(
+      "Kaspa PNN lineage contains ambiguous covenant successors",
+    );
+  }
+  const target = targetOutputs[0]!;
+  const binding = pnnOutputCovenant(target.output)!;
+  if (binding.authorizingInput !== covenantInput.index) {
+    throw invalidTransaction(
+      "Kaspa PNN covenant successor has the wrong authorizing input",
+    );
+  }
+  const successorValue = uintStringValue(
+    target.output.value ?? target.output.amount,
+    "Kaspa PNN covenant successor value",
+  );
+  const priorValue = BigInt(head.value);
+  const nextValue = BigInt(successorValue);
+  if (nextValue === priorValue) {
+    throw invalidTransaction(
+      "Kaspa PNN covenant successor does not change escrow value",
+    );
+  }
+  const kind = nextValue > priorValue ? "top-up" : "claim";
+  const claimedCumulativeAmount =
+    kind === "top-up"
+      ? head.claimedCumulativeAmount
+      : (BigInt(head.claimedCumulativeAmount) + priorValue - nextValue).toString();
+  return {
+    kind,
+    covenantId,
+    templateId,
+    consumedOutpoint: spentOutpoint,
+    transactionId,
+    authorizedSuccessorCount: 1,
+    successor: {
+      covenantId,
+      authorizingInput: covenantInput.index,
+      outpoint: { txid: transactionId, index: target.index },
+      scriptPublicKey: serializeSdkScriptPublicKey(
+        target.output.scriptPublicKey,
+      ),
+      value: successorValue,
+      claimedCumulativeAmount,
+    },
+    terminalOutput: null,
+    acceptance,
+  };
+}
+
+function pnnAcceptedTransactionId(rawTransaction: unknown): Hash32Hex {
+  const transaction = unwrapRecord(rawTransaction, "transaction");
+  const verbose = isRecord(transaction.verboseData)
+    ? transaction.verboseData
+    : isRecord(transaction.verbose_data)
+      ? transaction.verbose_data
+      : undefined;
+  return hashValue(
+    verbose?.transactionId ??
+      verbose?.transaction_id ??
+      transaction.transactionId ??
+      transaction.transaction_id ??
+      transaction.id,
+    "Kaspa PNN accepted transaction id",
+  );
+}
+
+function pnnInputCovenantId(
+  input: Record<string, unknown>,
+): Hash32Hex | undefined {
+  const verbose = isRecord(input.verboseData)
+    ? input.verboseData
+    : isRecord(input.verbose_data)
+      ? input.verbose_data
+      : undefined;
+  const utxoEntry = isRecord(verbose?.utxoEntry)
+    ? verbose.utxoEntry
+    : isRecord(verbose?.utxo_entry)
+      ? verbose.utxo_entry
+      : undefined;
+  const flattened = normalizeOptionalCovenantId(
+    input.covenantId ?? input.covenant_id,
+  );
+  const nested = normalizeOptionalCovenantId(
+    utxoEntry?.covenantId ?? utxoEntry?.covenant_id,
+  );
+  if (flattened && nested && flattened !== nested) {
+    throw invalidTransaction(
+      "Kaspa PNN covenant input contains conflicting identity aliases",
+    );
+  }
+  return nested ?? flattened;
+}
+
+function pnnInputOutpoint(input: Record<string, unknown>): FundingOutpoint {
+  const outpoint = requiredRecord(
+    input.previousOutpoint ?? input.previous_outpoint,
+    "Kaspa PNN covenant input outpoint",
+  );
+  return {
+    txid: hashValue(
+      outpoint.transactionId ?? outpoint.transaction_id,
+      "Kaspa PNN covenant input transaction id",
+    ),
+    index: uint32Value(
+      outpoint.index,
+      "Kaspa PNN covenant input output index",
+    ),
+  };
+}
+
+function pnnOptionalInputOutpoint(
+  input: Record<string, unknown>,
+): FundingOutpoint | undefined {
+  const value = input.previousOutpoint ?? input.previous_outpoint;
+  if (value === undefined || value === null) return undefined;
+  return pnnInputOutpoint(input);
+}
+
+function pnnOutputCovenant(
+  output: Record<string, unknown>,
+): { covenantId: Hash32Hex; authorizingInput: number } | undefined {
+  const nested = isRecord(output.covenant) ? output.covenant : undefined;
+  const covenantId = normalizeOptionalCovenantId(
+    nested?.covenantId ?? output.covenantId ?? output.covenant_id,
+  );
+  if (!covenantId) return undefined;
+  const authorizingInput = uint32Value(
+    nested?.authorizingInput ??
+      output.covenantAuthorizingInput ??
+      output.covenant_authorizing_input,
+    "Kaspa PNN covenant authorizing input",
+  );
+  return { covenantId, authorizingInput };
+}
+
+function unwrapRecord(value: unknown, wrapper: string): Record<string, unknown> {
+  const record = requiredRecord(value, `Kaspa PNN ${wrapper} response`);
+  return isRecord(record[wrapper]) ? record[wrapper] : record;
+}
+
+function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+  if (!isRecord(value)) throw invalidTransaction(`${label} is not an object`);
+  return value;
+}
+
+function optionalArray(value: unknown, label: string): unknown[] {
+  if (value === undefined || value === null) return [];
+  if (!Array.isArray(value)) throw invalidTransaction(`${label} is not an array`);
+  return value;
+}
+
+function sameChainCheckpoint(
+  left: ChainCheckpoint,
+  right: ChainCheckpoint,
+): boolean {
+  return (
+    left.blockHash === right.blockHash &&
+    left.blueScore === right.blueScore &&
+    left.daaScore === right.daaScore
+  );
+}
+
 function serializeSdkScriptPublicKey(value: unknown): string {
   if (typeof value === "string")
     return serializedScriptValue(value, "Kaspa PNN UTXO scriptPublicKey");
@@ -1832,6 +2750,44 @@ function normalizeRestScript(script: string): string {
     throw invalidTransaction("Kaspa REST script public key must be byte hex");
   const lower = script.toLowerCase();
   return lower.startsWith("0000") ? lower : `0000${lower}`;
+}
+
+function restAcceptedTransactionEvidence(
+  transaction: RestTransaction,
+  checkpoint: ChainCheckpoint,
+): AcceptedTransactionEvidence {
+  if (!transaction.is_accepted) {
+    throw invalidTransaction("Kaspa REST transaction is not accepted");
+  }
+  const transactionId = hashValue(
+    transaction.transaction_id,
+    "Kaspa REST accepted transaction id",
+  );
+  const acceptingBlockHash = hashValue(
+    transaction.accepting_block_hash,
+    "Kaspa REST accepting block hash",
+  );
+  const acceptingBlockBlueScore = uintStringValue(
+    transaction.accepting_block_blue_score,
+    "Kaspa REST accepting block blue score",
+  );
+  if (BigInt(checkpoint.blueScore) < BigInt(acceptingBlockBlueScore)) {
+    throw invalidTransaction(
+      "Kaspa REST accepting block is inconsistent with the selected-chain checkpoint",
+    );
+  }
+  return {
+    status: "accepted",
+    transactionId,
+    acceptingBlockHash,
+    acceptingBlockBlueScore,
+    // REST proves selected-chain membership at a stable checkpoint, but it
+    // does not expose selected-parent depth. Keep the conservative lower bound
+    // at one; PNN promotes it only after GetVirtualChainFromBlockV2 proves the
+    // configured minimum.
+    confirmationCount: 1,
+    checkpoint: structuredClone(checkpoint),
+  };
 }
 
 function transactionOutputAt(

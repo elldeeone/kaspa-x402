@@ -14,9 +14,15 @@ import type {
 } from "@kaspa-x402/server";
 import {
   buildKip10AdditiveRedeemScript,
+  ESCROW_V4_LAUNCH_IDENTITY,
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
+import {
+  applyCovenantSelectedChainUpdate,
+  createCovenantLineageState,
+  type AcceptedTransactionEvidence,
+} from "@kaspa-x402/core";
 import {
   DurableGatewayLockManager,
   GatewayLedger,
@@ -81,6 +87,60 @@ describe("gateway durable ledger", () => {
       "covenant lineage is already registered",
     );
     await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
+  });
+
+  it("does not retire a terminal refunded channel", async () => {
+    const first = channel();
+    const acceptance = {
+      ...acceptedEvidence(OTHER_TX),
+      acceptingBlockHash: "ac".repeat(32),
+    };
+    const lineage = applyCovenantSelectedChainUpdate(first.lineage, {
+      fromCheckpoint: first.lineage.checkpoint,
+      checkpoint: acceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [
+        {
+          blockHash: acceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "refund",
+              covenantId: first.covenantId,
+              templateId: first.channelConfig.templateId,
+              consumedOutpoint: first.activeOutpoint,
+              transactionId: OTHER_TX,
+              authorizedSuccessorCount: 0,
+              successor: null,
+              terminalOutput: {
+                index: 0,
+                scriptPublicKey: SCRIPT,
+                value: first.fundingAmount,
+              },
+              acceptance,
+            },
+          ],
+        },
+      ],
+    });
+    const refunded: ServerChannelRecord = {
+      ...first,
+      version: "1",
+      status: "refunded",
+      lineage,
+    };
+    const ledger = new GatewayLedger(new FakeStorage());
+    await ledger.registerChannel(refunded);
+    await ledger.claimChannelOperation(
+      channelOperation(refunded, "retirement"),
+    );
+
+    await expect(
+      ledger.retireChannel(refunded.channelId, ATTEMPT, refunded),
+    ).rejects.toThrow("terminal refunded channel cannot be retired");
+    await expect(ledger.loadChannel(refunded.channelId)).resolves.toEqual(
+      refunded,
+    );
   });
 
   it("commits exact transaction ids once while allowing identical retries", async () => {
@@ -831,13 +891,44 @@ describe("gateway durable ledger", () => {
 
     const topUpLedger = new GatewayLedger(new FakeStorage());
     await topUpLedger.registerChannel(previous);
-    const toppedUp = channel({
+    const topUpAcceptance = acceptedEvidence(OTHER_TX);
+    const topUpScript = "0000" + "aa".repeat(34);
+    const topUpLineage = applyCovenantSelectedChainUpdate(previous.lineage, {
+      fromCheckpoint: previous.lineage.checkpoint,
+      checkpoint: topUpAcceptance.checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: [{
+        blockHash: topUpAcceptance.acceptingBlockHash,
+        transitions: [{
+          kind: "top-up",
+          covenantId: previous.covenantId,
+          templateId: previous.channelConfig.templateId,
+          consumedOutpoint: previous.activeOutpoint,
+          transactionId: OTHER_TX,
+          authorizedSuccessorCount: 1,
+          successor: {
+            covenantId: previous.covenantId,
+            authorizingInput: 0,
+            outpoint: { txid: OTHER_TX, index: 0 },
+            scriptPublicKey: topUpScript,
+            value: "1001",
+            claimedCumulativeAmount: previous.claimedCumulativeAmount,
+          },
+          terminalOutput: null,
+          acceptance: topUpAcceptance,
+        }],
+      }],
+    });
+    const toppedUp: ServerChannelRecord = {
+      ...previous,
       version: "1",
       activeOutpoint: { txid: OTHER_TX, index: 0 },
-      activeScriptPublicKey: "0000" + "aa".repeat(34),
+      activeScriptPublicKey: topUpScript,
       escrowAddress: "kaspatest:replacement-escrow",
       fundingAmount: "1001",
-    });
+      lineage: topUpLineage,
+    };
     await expect(
       topUpLedger.claimBatchSettlement(
         batchSettlementAttempt(toppedUp, {
@@ -1179,7 +1270,8 @@ describe("gateway durable ledger", () => {
     const accepted: ClaimAttemptRecord = {
       ...broadcast,
       status: "accepted",
-      finality: "accepted",
+      finality: "confirmed",
+      acceptance: acceptedEvidence(broadcast.transactionId),
     };
     await ledger.saveClaimAttempt(broadcast);
     await ledger.saveClaimAttempt(accepted);
@@ -1209,13 +1301,14 @@ describe("gateway durable ledger", () => {
       ledger.saveClaimAttempt({ ...pending, transaction: "cd".repeat(32) }),
     ).rejects.toThrow("immutable artifact");
     await expect(
-      ledger.saveClaimAttempt({ ...pending, requiredFinality: "confirmed" }),
+      ledger.saveClaimAttempt({ ...pending, requiredConfirmations: 31 }),
     ).rejects.toThrow("immutable artifact");
     await expect(
       ledger.saveClaimAttempt({
         ...pending,
         status: "accepted",
-        finality: "accepted",
+        finality: "confirmed",
+        acceptance: acceptedEvidence(pending.transactionId),
       }),
     ).rejects.toThrow("status transition");
 
@@ -1232,18 +1325,27 @@ describe("gateway durable ledger", () => {
       ledger.saveClaimAttempt({
         ...broadcast,
         status: "applied",
-        finality: "accepted",
+        finality: "confirmed",
+        acceptance: acceptedEvidence(broadcast.transactionId),
       }),
     ).rejects.toThrow("applied atomically");
 
     const accepted: ClaimAttemptRecord = {
       ...broadcast,
       status: "accepted",
-      finality: "accepted",
+      finality: "confirmed",
+      acceptance: acceptedEvidence(broadcast.transactionId),
     };
     await ledger.saveClaimAttempt(accepted);
+    await expect(ledger.saveClaimAttempt(accepted)).resolves.toBeUndefined();
     await expect(
-      ledger.saveClaimAttempt({ ...accepted, finality: "confirmed" }),
+      ledger.saveClaimAttempt({
+        ...accepted,
+        acceptance: {
+          ...accepted.acceptance!,
+          acceptingBlockHash: "ac".repeat(32),
+        },
+      }),
     ).rejects.toThrow("same-state update");
     await expect(
       ledger.applyClaimAttempt(
@@ -1349,7 +1451,8 @@ class FakeStorage implements GatewayStorage {
 function channel(
   overrides: Partial<ServerChannelRecord> = {},
 ): ServerChannelRecord {
-  return {
+  const genesisAcceptance = acceptedEvidence(TX);
+  const base = {
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
     version: "0",
@@ -1361,6 +1464,7 @@ function channel(
       genesisAmount: "1000",
       totalOutputCount: 1,
       authorizedOutputCount: 1,
+      acceptance: genesisAcceptance,
     },
     channelConfig: {
       network: "kaspa:testnet-10",
@@ -1381,7 +1485,48 @@ function channel(
     claimedCumulativeAmount: "0",
     signedMaxClaimable: "0",
     status: "active",
-    ...overrides,
+  };
+  const merged = { ...base, ...overrides } as Omit<
+    ServerChannelRecord,
+    "lineage"
+  > & { lineage?: ServerChannelRecord["lineage"] };
+  const lineage = overrides.lineage ?? createCovenantLineageState({
+    format: "kaspa-x402-covenant-launch-v1",
+    network: merged.channelConfig.network,
+    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
+    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
+    bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+    constructorSlots: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots),
+    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
+    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
+    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+    genesis: {
+      derivation: "kip20-covenant-id-v1",
+      covenantId: merged.covenantId,
+      authorizingInput: merged.genesisEvidence.authorizingInput,
+      transactionId: merged.activeOutpoint.txid,
+      outpoint: merged.activeOutpoint,
+      scriptPublicKey: merged.activeScriptPublicKey,
+      value: merged.fundingAmount,
+      claimedCumulativeAmount: merged.claimedCumulativeAmount,
+      acceptance: acceptedEvidence(merged.activeOutpoint.txid),
+    },
+  });
+  return { ...merged, lineage };
+}
+
+function acceptedEvidence(transactionId: string): AcceptedTransactionEvidence {
+  return {
+    status: "accepted",
+    transactionId,
+    acceptingBlockHash: "aa".repeat(32),
+    acceptingBlockBlueScore: "971",
+    confirmationCount: 30,
+    checkpoint: {
+      blockHash: "ab".repeat(32),
+      blueScore: "1000",
+      daaScore: "1000",
+    },
   };
 }
 
@@ -1422,15 +1567,45 @@ function claimSuccessor(
   previous: ServerChannelRecord,
   attempt: ClaimAttemptRecord,
 ): ServerChannelRecord {
+  const acceptance = attempt.acceptance ?? acceptedEvidence(attempt.transactionId);
+  const claimedCumulativeAmount = (
+    BigInt(previous.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
+  ).toString();
+  const lineage = applyCovenantSelectedChainUpdate(previous.lineage, {
+    fromCheckpoint: previous.lineage.checkpoint,
+    checkpoint: acceptance.checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: [],
+    addedChainBlocks: [{
+      blockHash: acceptance.acceptingBlockHash,
+      transitions: [{
+        kind: "claim",
+        covenantId: previous.covenantId,
+        templateId: previous.channelConfig.templateId,
+        consumedOutpoint: previous.activeOutpoint,
+        transactionId: attempt.transactionId,
+        authorizedSuccessorCount: 1,
+        successor: {
+          covenantId: previous.covenantId,
+          authorizingInput: 0,
+          outpoint: attempt.continuationOutpoint!,
+          scriptPublicKey: attempt.continuationScriptPublicKey!,
+          value: attempt.continuationFundingAmount!,
+          claimedCumulativeAmount,
+        },
+        terminalOutput: null,
+        acceptance,
+      }],
+    }],
+  });
   return {
     ...previous,
     version: (BigInt(previous.version) + 1n).toString(),
     activeOutpoint: attempt.continuationOutpoint!,
     activeScriptPublicKey: attempt.continuationScriptPublicKey!,
     fundingAmount: attempt.continuationFundingAmount!,
-    claimedCumulativeAmount: (
-      BigInt(previous.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
-    ).toString(),
+    claimedCumulativeAmount,
+    lineage,
   };
 }
 
@@ -1685,7 +1860,7 @@ function claimAttempt(
     channelStatus: current.status,
     transaction: "aa",
     transactionId: TX,
-    requiredFinality: "accepted",
+    requiredConfirmations: 30,
     operationLeaseId: ATTEMPT,
     expected: structuredClone(current),
     continuationOutpoint: { txid: TX, index: 1 },

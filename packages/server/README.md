@@ -14,14 +14,15 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - defaults exact offers to `standard-native` and can optionally select, claim,
   and atomically advance reusable KIP-10 additive heads;
 - verifies singleton KIP-20 genesis, the stable covenant ID, current outpoint,
-  escrow script, and lifetime cumulative vouchers through injected adapters;
+  escrow script, immutable launch identity, append-only selected-chain lineage,
+  and lifetime cumulative vouchers through injected adapters;
 - serializes per-transaction or per-channel verification, handler execution, and state commit;
 - stores exact transaction replay records before returning protected content;
 - stores per-request settlement commitments before advancing channel charge state;
 - supports payment identifier idempotency for exact and batch payment-payload retries;
 - reserves payment identifiers and one per-channel operation owner atomically
   before protected work, preserving uncertain ownership across restart;
-- returns corrective `402` responses with channel state where possible;
+- returns corrective `402` responses without peer-usable channel metadata;
 - returns MCP payment-required tool results, requires a trusted configured MCP
   server `audience` in the tool-call fingerprint, reads
   `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]`
@@ -36,6 +37,12 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
   byte, per-payer, and terminal-response retention policies.
 
 Mainnet runtime use fails closed unless `allowMainnet: true` is set.
+
+The reference Testnet-10 deployment applies a 30-confirmation policy proven by
+authoritative selected-chain traversal. Accepting-block/checkpoint blue scores
+bind the observation but do not derive selected-chain depth. Removed blocks are
+reconciled before additions, current heads are derived from unique verified
+transaction lineage, and incomplete or pruned continuity fails closed.
 
 Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Production deployments should back the state store with durable transactional storage that follows [the server store contract](../../docs/server-store-contract.md). Amounts on the wire remain decimal sompi strings.
 

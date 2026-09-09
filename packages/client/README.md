@@ -26,7 +26,13 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
   `_meta["x402/payment"]`, and applies `_meta["x402/payment-response"]`;
 - exposes refund eligibility and a crash-safe, digest-bound refund workflow
   through injected transaction, broadcast, persistence, and reconciliation
-  adapters.
+  adapters;
+- persists an immutable covenant launch manifest and append-only selected-chain
+  journal, deriving the live head locally from verified lineage.
+
+The client exposes and selects `batch-settlement` only when its funding
+provider implements authoritative `discoverCovenantLineage` recovery. A REST
+UTXO reader without selected-chain lineage proof is exact-only.
 
 Mainnet funding fails closed unless `allowMainnet: true` is set. The default
 offer selector accepts only `kaspa:testnet-10`; operators that opt into mainnet
@@ -84,6 +90,14 @@ trusted `RefundReconciler`. An `unknown` result remains unresolved, while an
 `accepted` or `confirmed` result atomically applies the refund. A mismatched
 transaction id or stale channel head fails closed. Reconciliation of an already
 applied attempt is idempotent.
+
+The reference Testnet-10 profile requires 30 confirmations proven by an
+authoritative selected-chain traversal. Accepting-block and checkpoint blue
+scores bind the evidence but are not a substitute for selected-chain depth.
+`unknown` or pruned continuity blocks reuse. Reconciliation processes removed
+blocks before additions; if a confirmed refund is removed, the applied attempt
+and terminal status roll back atomically to `refundable`, never `active`, before
+a newly built refund is allowed.
 
 `MemoryChannelStore` demonstrates both transition contracts for tests and
 examples. A live deployment needs a durable `ChannelStore` implementation and

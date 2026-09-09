@@ -2,6 +2,7 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   X402_VERSION,
+  type AcceptedTransactionEvidence,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
   bindRequestHashToTrustedContext,
@@ -39,7 +40,7 @@ import {
   type DirectModeServerConfig,
   type ServerChainProvider,
   type ServerChannelRecord,
-  type SettlementFinality,
+  type SendTransactionResult,
 } from "@kaspa-x402/server";
 import {
   DirectModeFacilitator,
@@ -56,6 +57,29 @@ const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
+const CONFIRMATION_THRESHOLD = 30;
+
+function acceptedChainEvidence(
+  transactionId: string,
+): AcceptedTransactionEvidence {
+  const checkpointBlueScore = 1_000n;
+  return {
+    status: "accepted",
+    transactionId: transactionId.toLowerCase(),
+    acceptingBlockHash: sha256Hex(
+      `accepting-block:${transactionId.toLowerCase()}`,
+    ),
+    acceptingBlockBlueScore: (
+      checkpointBlueScore - BigInt(CONFIRMATION_THRESHOLD) + 1n
+    ).toString(),
+    confirmationCount: CONFIRMATION_THRESHOLD,
+    checkpoint: {
+      blockHash: "ee".repeat(32),
+      blueScore: checkpointBlueScore.toString(),
+      daaScore: "1000",
+    },
+  };
+}
 
 describe("direct-mode facilitator", () => {
   it("returns supported x402 kinds without hardcoded signer identity", async () => {
@@ -1144,6 +1168,7 @@ function makeFacilitator(
       "exactTransactionVerifier",
     ) && suppliedExactVerifier === undefined;
   const server = new DirectModeServer({
+    confirmationThreshold: CONFIRMATION_THRESHOLD,
     network: "kaspa:testnet-10",
     payTo: "kaspatest:payout",
     serverPublicKey: SERVER_KEY,
@@ -1292,6 +1317,7 @@ function makeDepositPayment(
     covenantId: COVENANT_ID,
     amount: accepted.extra.minDepositSompi,
     scriptPublicKey: derived.activeScriptPublicKey,
+    acceptance: acceptedChainEvidence(fundingOutpoint.txid),
     finality: "accepted",
   });
   const id = channelId(channelConfig);
@@ -1442,6 +1468,19 @@ class FakeChainProvider implements ServerChainProvider {
       genesisAmount: request.utxo.amount,
       totalOutputCount: 1,
       authorizedOutputCount: 1,
+      acceptance: request.utxo.acceptance,
+    };
+  }
+
+  async discoverCovenantLineage(
+    request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
+  ) {
+    return {
+      fromCheckpoint: request.lineage.checkpoint,
+      checkpoint: request.lineage.checkpoint,
+      continuity: "complete" as const,
+      removedChainBlockHashes: [],
+      addedChainBlocks: [],
     };
   }
 
@@ -1450,9 +1489,16 @@ class FakeChainProvider implements ServerChainProvider {
   }
 
   async sendTransaction(
-    _transaction: string,
-  ): Promise<{ transactionId: Hash32Hex; finality: SettlementFinality }> {
-    return { transactionId: EXACT_TX_ID, finality: "accepted" };
+    transaction: string,
+  ): Promise<SendTransactionResult> {
+    const transactionId = /^[0-9a-f]{64}$/.test(transaction)
+      ? transaction
+      : EXACT_TX_ID;
+    return {
+      transactionId,
+      evidence: acceptedChainEvidence(transactionId),
+      finality: "accepted",
+    };
   }
 }
 

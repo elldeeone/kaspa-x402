@@ -8,7 +8,7 @@ The current native Kaspa x402 surface ships two profiles:
   default `standard-native` profile is an ordinary native-KAS transfer; its
   optional `additive` profile uses a reusable KIP-10 head whose exact
   successor delta is the payment;
-- `batch-settlement` with `kaspa-escrow-v2` for repeated or variable-cost
+- `batch-settlement` with `kaspa-escrow-v3` for repeated fixed-price
   requests backed by a funded escrow/channel.
 
 Both profiles are represented in schemas, vectors, examples, public specs,
@@ -26,8 +26,8 @@ to the advertised recipient. Optional `additive` requires a signed transaction
 that spends the advertised current KIP-10 head and recreates its same-script
 successor with an exact delta equal to the advertised amount. The head challenge
 is not an exclusive reservation and there is no second merchant payment output.
-`kaspa-escrow-v2` settles native KAS from a funded
-`kaspa-x402-escrow-v3` channel. Buyer vouchers sign lifetime cumulative
+`kaspa-escrow-v3` settles native KAS from a funded
+`kaspa-x402-escrow-v4` channel. Buyer vouchers sign lifetime cumulative
 ceilings, so the provider may make partial claims without resetting the
 authorization history. Top-ups add capacity while preserving the settled
 lifetime total, and the buyer retains a timed refund path. KIP-20 keeps the
@@ -83,7 +83,7 @@ must clear the full readiness bar below before it can ship.
 - Payment payloads accept only `exact-transaction`, `deposit-voucher`, `voucher`,
   `claim`, and `refund`.
 - Kaspa requirements extras accept only `kaspa-exact-v2` and
-  `kaspa-escrow-v2`.
+  `kaspa-escrow-v3`.
 - Covenant helpers expose only the escrow template and batch deposit, partial
   claim, top-up, and refund transaction builders.
 - Client, server, facilitator, and CLI packages must not advertise or accept

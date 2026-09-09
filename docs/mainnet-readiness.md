@@ -7,8 +7,8 @@ The active Alpha.11 native profiles are:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile); and
-- `batch-settlement` with `kaspa-escrow-v2` and
-  `kaspa-x402-escrow-v3`.
+- `batch-settlement` with `kaspa-escrow-v3` and
+  `kaspa-x402-escrow-v4`.
 
 `kaspa:testnet-10` is the only validation target. Older alpha releases remain
 available as immutable historical snapshots, but Alpha.11 does not provide
@@ -65,6 +65,14 @@ The store must preserve stable `covenantId`, current outpoint, A/S/T/V state,
 voucher evidence, and unresolved transition attempts across process loss. KIP-20
 does not provide covenant-id reverse lookup, so genesis and every accepted
 successor must be recorded from verified transaction evidence.
+
+It must also preserve the immutable source/compiler/bytecode/ABI launch
+manifest, append-only accepted and removed lineage events, and selected-chain
+checkpoint. The current head must be derived atomically from those records.
+Recovery must process removals before additions and fail closed across pruning,
+missing predecessors, branches, or wrong covenant bindings. The current
+Testnet-10 reference threshold is 30 confirmations; choosing and validating a
+mainnet threshold remains an explicit independent-audit and operations gate.
 
 The client `ChannelStore` must durably reserve the exact signed refund and its
 deterministic transaction id before broadcast. A send exception or

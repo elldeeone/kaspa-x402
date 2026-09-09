@@ -74,32 +74,37 @@ export async function paidMcpToolCall(
     requestHash,
     trustedSecurityContext: options.trustedSecurityContext,
   });
-  const retryResult = await callTool(
-    withMcpPaymentPayload(params, payment.paymentPayload),
-  );
-  const settlementResponse = readMcpPaymentResponse(retryResult);
-  if (settlementResponse) {
-    const settlement = await client.applySettlement(
-      payment,
-      settlementResponse,
+  try {
+    const retryResult = await callTool(
+      withMcpPaymentPayload(params, payment.paymentPayload),
     );
-    return {
-      result: retryResult,
-      payment,
-      settlement,
-    };
-  }
+    const settlementResponse = readMcpPaymentResponse(retryResult);
+    if (settlementResponse) {
+      const settlement = await client.applySettlement(
+        payment,
+        settlementResponse,
+      );
+      return {
+        result: retryResult,
+        payment,
+        settlement,
+      };
+    }
 
-  const corrective = readMcpPaymentRequired(retryResult);
-  if (retryResult.isError && corrective) {
+    const corrective = readMcpPaymentRequired(retryResult);
+    if (retryResult.isError && corrective) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "corrective MCP payment requirements need a new explicit payment authorization",
+      );
+    }
+
     throw new KaspaX402Error(
-      "invalid_kaspa_x402_payload",
-      "corrective MCP payment requirements need a new explicit payment authorization",
+      "invalid_kaspa_settlement_response",
+      "paid MCP tool result is missing x402 payment response metadata",
     );
+  } catch (error) {
+    await client.quarantineDisclosedPayment(payment);
+    throw error;
   }
-
-  throw new KaspaX402Error(
-    "invalid_kaspa_settlement_response",
-    "paid MCP tool result is missing x402 payment response metadata",
-  );
 }

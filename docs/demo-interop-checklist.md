@@ -15,7 +15,7 @@ the site without repository context.
 | Can a reader find the supported schemes and networks?     | Yes. The homepage, specs, and gateway docs state `exact`, `batch-settlement`, `kaspa:testnet-10`, and `KAS`.                                                                                                                               |
 | Can a reader run fixture validation?                      | Yes. `/vectors/` groups fixtures by directory and `npm run validate:schemas` validates committed fixtures locally.                                                                                                                         |
 | Can a reader hit a real endpoint?                         | Yes. `https://demo.kaspa-x402.org` exposes `/health`, `/canary`, `/supported`, `/exact`, and `/batch` from the paid-canary-proven Alpha.10 Worker. Alpha.11 deployment proof is pending.                                                    |
-| Does the endpoint advertise current payable terms?        | Yes, for Alpha.10. The Alpha.11 candidate uses the same bindings with `kaspa-x402-escrow-v3`, but implementers must not treat the public endpoint as Alpha.11 until its cutover is recorded.                                                |
+| Does the endpoint advertise current payable terms?        | Yes, for Alpha.10. The Alpha.11 candidate uses `kaspa-escrow-v3` with `kaspa-x402-escrow-v4`, but implementers must not treat the public endpoint as Alpha.11 until its cutover is recorded.                                                |
 | Does the endpoint publish operational status?             | Yes. `/health` is a shallow, non-amplifying liveness check; `/metrics` exposes counters and `/canary` exposes the stored upstream/release checks after the scheduled job has run. |
 | Does the public material imply mainnet readiness?         | No. The site and gateway docs frame the deployment as alpha and `kaspa:testnet-10` only.                                                                                                                                                   |
 | Does the site publish internal planning or review drafts? | No. The site checker blocks ignored planning files, review files, and private announcement drafts.                                                                                                                                         |
@@ -39,8 +39,9 @@ Recommended external manual checks:
 
 - The scheduled canary is non-spending. Paid canaries are manual because the
   Worker does not hold spending keys.
-- The Worker uses REST accepted-UTXO evidence; the static browser demo uses
-  PNN/WASM for client-side connectivity checks.
+- The Worker uses REST accepted-UTXO reads and PNN selected-chain V2 for batch
+  lineage continuity; the static browser demo uses PNN/WASM for client-side
+  connectivity checks.
 - Claim broadcasting is disabled in the hosted gateway.
 - Durable state is alpha operational state and may be reset after an incident
   with disclosure.

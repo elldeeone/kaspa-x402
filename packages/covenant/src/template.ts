@@ -2,9 +2,12 @@ import crypto from "node:crypto";
 import { blake2b } from "blakejs";
 import {
   ESCROW_V4_COMPILED_BASE,
-  ESCROW_V4_CONSTRUCTOR_SLOTS,
-  ESCROW_V4_SELECTORS,
+  ESCROW_V4_CONSTRUCTOR_SLOTS as GENERATED_CONSTRUCTOR_SLOTS,
+  ESCROW_V4_GENERATED_DECLARATIONS as GENERATED_DECLARATIONS,
+  ESCROW_V4_SELECTORS as GENERATED_SELECTORS,
 } from "./generated/escrow-v4-template.js";
+
+export { ESCROW_V4_COMPILED_BASE } from "./generated/escrow-v4-template.js";
 
 export type NetworkId = "kaspa:mainnet" | "kaspa:testnet-10";
 
@@ -77,6 +80,61 @@ export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
 export const KASPA_LOCK_TIME_THRESHOLD = 500_000_000_000n;
 export const SCRIPT_UNITS_PER_COMPUTE_BUDGET = 10_000;
 export const FREE_SCRIPT_UNITS_PER_INPUT = 9_999;
+export const ESCROW_V4_SOURCE_PATH = "contracts/kaspa-x402-escrow-v4.sil";
+export const ESCROW_V4_SOURCE_SHA256 =
+  "065dff5d0d02f3a09f56bab977a33d4e047f2ccec64c0d066a318d342797fcb0";
+export const ESCROW_V4_COMPILED_BASE_SHA256 =
+  "49e6d7da1c59afc51949ba43c2682047aa0c487a586e143bc9addc62e08e3df3";
+
+// Runtime construction uses private recursively-frozen copies. Public metadata
+// is a separate frozen copy so consumer mutation can never alter generated
+// scripts in this process.
+const INTERNAL_CONSTRUCTOR_SLOTS = deepFreeze(
+  structuredClone(GENERATED_CONSTRUCTOR_SLOTS),
+);
+const INTERNAL_DECLARATIONS = deepFreeze(
+  structuredClone(GENERATED_DECLARATIONS),
+);
+const INTERNAL_SELECTORS = deepFreeze(structuredClone(GENERATED_SELECTORS));
+
+export const ESCROW_V4_CONSTRUCTOR_SLOTS = deepFreeze(
+  structuredClone(INTERNAL_CONSTRUCTOR_SLOTS),
+);
+export const ESCROW_V4_GENERATED_DECLARATIONS = deepFreeze(
+  structuredClone(INTERNAL_DECLARATIONS),
+);
+export const ESCROW_V4_SELECTORS = deepFreeze(
+  structuredClone(INTERNAL_SELECTORS),
+);
+
+const ESCROW_V4_IDENTITY_MATERIAL = {
+  compiler: {
+    name: "silverc",
+    checkedCommit: "158534d606e9d5541e932c7575ff331e12699fb5",
+    command:
+      "cd <silverscript-checkout> && cargo run --quiet -p silverscript-lang --bin silverc -- <kaspa-x402-root>/contracts/kaspa-x402-escrow-v4.sil --constructor-args <args.json> -c > <out.json>",
+  },
+  source: {
+    path: ESCROW_V4_SOURCE_PATH,
+    sha256: ESCROW_V4_SOURCE_SHA256,
+  },
+  bytecode: {
+    templateId: ESCROW_TEMPLATE_ID,
+    compiledBaseSha256: ESCROW_V4_COMPILED_BASE_SHA256,
+  },
+  constructorSlots: INTERNAL_CONSTRUCTOR_SLOTS,
+  abi: INTERNAL_DECLARATIONS,
+  selectors: INTERNAL_SELECTORS,
+};
+
+/** Immutable build identity copied into every runtime covenant launch manifest. */
+export const ESCROW_V4_LAUNCH_IDENTITY = deepFreeze({
+  ...structuredClone(ESCROW_V4_IDENTITY_MATERIAL),
+  identitySha256: crypto
+    .createHash("sha256")
+    .update(stableJson(ESCROW_V4_IDENTITY_MATERIAL))
+    .digest("hex"),
+});
 
 const U64_MAX = 0xffff_ffff_ffff_ffffn;
 const HEX_BYTE_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
@@ -105,33 +163,33 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   );
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.claimedCumulativeAmount,
+    INTERNAL_CONSTRUCTOR_SLOTS.claimedCumulativeAmount,
     int64Le(claimedCumulativeAmount),
   );
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey,
+    INTERNAL_CONSTRUCTOR_SLOTS.serverPublicKey,
     server,
   );
-  patchConstructorSlot(script, ESCROW_V4_CONSTRUCTOR_SLOTS.networkHash, network);
+  patchConstructorSlot(script, INTERNAL_CONSTRUCTOR_SLOTS.networkHash, network);
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.clientPublicKey,
+    INTERNAL_CONSTRUCTOR_SLOTS.clientPublicKey,
     client,
   );
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.payoutScriptPublicKeyHash,
+    INTERNAL_CONSTRUCTOR_SLOTS.payoutScriptPublicKeyHash,
     payoutScriptPublicKeyHash,
   );
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.refundScriptPublicKeyHash,
+    INTERNAL_CONSTRUCTOR_SLOTS.refundScriptPublicKeyHash,
     refundScriptPublicKeyHash,
   );
   patchConstructorSlot(
     script,
-    ESCROW_V4_CONSTRUCTOR_SLOTS.timeoutDaa,
+    INTERNAL_CONSTRUCTOR_SLOTS.timeoutDaa,
     int64Le(timeout),
   );
   return bytesToHex(script);
@@ -248,7 +306,7 @@ export function buildClaimArgs(input: ClaimArgsInput): string {
       pushData(voucherSignature),
       pushData(authorizedCumulativeAmount),
       pushData(claimAmount),
-      pushData(hexToBytes(ESCROW_V4_SELECTORS.claim, 4, "claim selector")),
+      pushData(hexToBytes(INTERNAL_SELECTORS.claim, 4, "claim selector")),
     ]),
   );
 }
@@ -260,7 +318,7 @@ export function buildTopUpArgs(input: TopUpArgsInput): string {
     concatBytes([
       pushData(clientSignature),
       pushData(providerSignature),
-      pushData(hexToBytes(ESCROW_V4_SELECTORS.topUp, 4, "top-up selector")),
+      pushData(hexToBytes(INTERNAL_SELECTORS.topUp, 4, "top-up selector")),
     ]),
   );
 }
@@ -270,7 +328,7 @@ export function buildRefundArgs(input: RefundArgsInput): string {
   return bytesToHex(
     concatBytes([
       pushData(clientSignature),
-      pushData(hexToBytes(ESCROW_V4_SELECTORS.refund, 4, "refund selector")),
+      pushData(hexToBytes(INTERNAL_SELECTORS.refund, 4, "refund selector")),
     ]),
   );
 }
@@ -488,4 +546,36 @@ function pushScriptNumber(value: bigint): Uint8Array {
     bytes.push(0);
   }
   return pushData(Uint8Array.from(bytes));
+}
+
+function deepFreeze<T>(value: T): Readonly<T> {
+  if (value !== null && typeof value === "object" && !Object.isFrozen(value)) {
+    for (const child of Object.values(value as Record<string, unknown>)) {
+      deepFreeze(child);
+    }
+    Object.freeze(value);
+  }
+  return value;
+}
+
+function stableJson(value: unknown): string {
+  if (value === null) return "null";
+  if (Array.isArray(value)) {
+    return `[${value.map(stableJson).join(",")}]`;
+  }
+  if (typeof value === "object") {
+    const record = value as Record<string, unknown>;
+    return `{${Object.keys(record)
+      .sort()
+      .map((key) => `${JSON.stringify(key)}:${stableJson(record[key])}`)
+      .join(",")}}`;
+  }
+  if (
+    typeof value === "string" ||
+    typeof value === "boolean" ||
+    (typeof value === "number" && Number.isFinite(value))
+  ) {
+    return JSON.stringify(value);
+  }
+  throw new TypeError("launch identity must be JSON-serializable");
 }

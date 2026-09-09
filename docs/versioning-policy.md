@@ -16,8 +16,8 @@ minor/pre-release versions, and the affected docs in the same change.
 Current alpha wire notes:
 
 - `0.1.0-alpha.11` cleanly replaces the active covenant with
-  `kaspa-x402-escrow-v3`, compiled by SilverScript commit
-  `28a16f0ee194dcb288a5aaf371abd0f4b77f462e`. It uses explicit DAA lock
+  `kaspa-x402-escrow-v4`, compiled by SilverScript commit
+  `158534d606e9d5541e932c7575ff331e12699fb5`. It uses explicit DAA lock
   semantics and four-byte KCC-01 dispatch tags; Alpha.10 channel state and
   signature scripts are not accepted or migrated.
 - `0.1.0-alpha.10` introduced the `kaspa-escrow-v2` binding and
@@ -70,7 +70,7 @@ Rules:
 Template IDs identify covenant families. The current template ids are:
 
 ```text
-kaspa-x402-escrow-v3
+kaspa-x402-escrow-v4
 kaspa-x402-kip10-additive-v1
 ```
 
@@ -86,8 +86,8 @@ or signed meaning requires a new domain tag.
 Current examples include:
 
 ```text
-kaspa:x402:escrow-voucher:v2
-kaspa:x402:channel:v1
+kaspa:x402:escrow-voucher:v3
+kaspa:x402:channel:v2
 ```
 
 ## Vector Sets

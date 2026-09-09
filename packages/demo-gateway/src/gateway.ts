@@ -6,6 +6,7 @@ import {
   ESCROW_TEMPLATE_ID,
   KaspaX402Error,
   KASPA_LOCK_TIME_THRESHOLD,
+  TESTNET_10_CONFIRMATION_THRESHOLD,
   toX402ErrorReason,
   X402_VERSION,
   type ResourceInfo,
@@ -477,6 +478,7 @@ async function createGateway(
               timeoutMs: config.pnnTimeoutMs,
               attempts: config.pnnAttempts,
             }),
+            TESTNET_10_CONFIRMATION_THRESHOLD,
           )
         : restChainProvider,
     addressCodec,
@@ -488,6 +490,7 @@ async function createGateway(
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
+    confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     requirePaymentIdentifier: false,
   });
   return { server };
@@ -523,6 +526,14 @@ class AddressRecordingStore implements ServerStateStore {
     const channels = await this.#inner.listChannels();
     for (const channel of channels) this.#recordChannel(channel);
     return channels;
+  }
+
+  async applyCovenantLineage(
+    expected: Parameters<ServerStateStore["applyCovenantLineage"]>[0],
+    channel: Parameters<ServerStateStore["applyCovenantLineage"]>[1],
+  ) {
+    this.#recordChannel(channel);
+    return this.#inner.applyCovenantLineage(expected, channel);
   }
 
   retireChannel(

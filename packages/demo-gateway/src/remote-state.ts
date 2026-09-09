@@ -65,6 +65,13 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("listChannels");
   }
 
+  applyCovenantLineage(
+    expected: ServerChannelRecord,
+    channel: ServerChannelRecord,
+  ): Promise<void> {
+    return this.#call("applyCovenantLineage", { expected, channel });
+  }
+
   claimChannelOperation(
     record: ChannelOperationLeaseRecord,
   ): Promise<ChannelOperationLeaseClaimResult> {

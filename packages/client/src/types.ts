@@ -2,7 +2,11 @@ import type {
   BatchPresentationAuthorization,
   BatchPaymentRequirements,
   ByteHex,
+  ChainCheckpoint,
   ChannelConfig,
+  CovenantLaunchManifest,
+  CovenantLineageState,
+  CovenantSelectedChainUpdate,
   ExactPaymentRequirements,
   ExactProfile,
   ExactRequestAuthorization,
@@ -19,6 +23,8 @@ import type {
   SignatureHex,
   SompiString,
   TrustedSecurityContext,
+  TrustedTransactionEvidence,
+  AcceptedTransactionEvidence,
   Voucher,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
@@ -44,6 +50,8 @@ export interface FundingProviderUtxo {
   amount: SompiString;
   scriptPublicKey: ByteHex;
   address?: string;
+  /** Objective inclusion evidence when this UTXO is used as trusted chain state. */
+  acceptance?: AcceptedTransactionEvidence;
 }
 
 export interface EscrowDepositRequest {
@@ -85,6 +93,7 @@ export interface CovenantGenesisEvidence {
   genesisAmount: SompiString;
   totalOutputCount: number;
   authorizedOutputCount: number;
+  acceptance: AcceptedTransactionEvidence;
 }
 
 export interface EscrowTopUpRequest {
@@ -109,6 +118,8 @@ export interface CovenantTopUpEvidence {
   successorScriptPublicKey: ByteHex;
   successorAmount: SompiString;
   authorizedSuccessorCount: number;
+  authorizingInput: number;
+  acceptance: AcceptedTransactionEvidence;
 }
 
 export interface ExactPaymentRequest {
@@ -166,7 +177,16 @@ export interface FeeEstimate {
 
 export interface SendTransactionResult {
   transactionId: Hash32Hex;
-  finality?: "broadcast" | "accepted" | "confirmed";
+  evidence: TrustedTransactionEvidence;
+}
+
+export interface CovenantLineageDiscoveryRequest {
+  network: NetworkId;
+  covenantId: Hash32Hex;
+  templateId: "kaspa-x402-escrow-v4";
+  /** Complete durable state is required to derive the rollback head before additions. */
+  lineage: CovenantLineageState;
+  minConfirmationCount: number;
 }
 
 export interface FundingProvider {
@@ -194,6 +214,10 @@ export interface FundingProvider {
     prepared: PreparedEscrowTopUp;
     successor: FundingProviderUtxo;
   }): Promise<CovenantTopUpEvidence | null>;
+  /** Authoritatively discovers spends from the durable head; never uses peer hints. */
+  discoverCovenantLineage?(
+    request: CovenantLineageDiscoveryRequest,
+  ): Promise<CovenantSelectedChainUpdate>;
   getVirtualDaaScore(): Promise<SompiString>;
   sendTransaction(transaction: ByteHex): Promise<SendTransactionResult>;
   estimateFees(request: FeeEstimateRequest): Promise<FeeEstimate>;
@@ -274,6 +298,8 @@ export interface DirectModeChannel {
   requiresDepositVoucher: boolean;
   refundTimeoutDaa: SompiString;
   templateId: "kaspa-x402-escrow-v4";
+  /** Immutable launch manifest, append-only journal, and derived live head. */
+  lineage: CovenantLineageState;
   status: ChannelStatus;
 }
 
@@ -300,6 +326,8 @@ interface FundingTransitionAttemptBase {
   fundingSource: FundingSourceKind;
   status: FundingTransitionAttemptStatus;
   finality?: "broadcast" | "accepted" | "confirmed";
+  acceptance?: AcceptedTransactionEvidence;
+  requiredConfirmations: number;
 }
 
 /** Genesis is reserved before a channel or covenant head exists. */
@@ -325,14 +353,14 @@ export type FundingTransitionAttemptApplyRequest =
       kind: "genesis";
       channelId: Hash32Hex;
       transactionId: Hash32Hex;
-      finality: "accepted" | "confirmed";
+      acceptance: AcceptedTransactionEvidence;
       evidence: CovenantGenesisEvidence;
     }
   | {
       kind: "top-up";
       channelId: Hash32Hex;
       transactionId: Hash32Hex;
-      finality: "accepted" | "confirmed";
+      acceptance: AcceptedTransactionEvidence;
       evidence: CovenantTopUpEvidence;
     };
 
@@ -356,12 +384,15 @@ export interface RefundAttemptRecord {
   transactionId: Hash32Hex;
   status: RefundAttemptStatus;
   finality?: "broadcast" | "accepted" | "confirmed";
+  acceptance?: AcceptedTransactionEvidence;
+  requiredConfirmations: number;
+  refundScriptPublicKey: ByteHex;
 }
 
 export interface RefundAttemptApplyRequest {
   channelId: Hash32Hex;
   transactionId: Hash32Hex;
-  finality: "accepted" | "confirmed";
+  acceptance: AcceptedTransactionEvidence;
 }
 
 export interface RefundAttemptApplyResult {
@@ -372,6 +403,13 @@ export interface RefundAttemptApplyResult {
 export interface ChannelStore {
   loadChannels(scope: ChannelLookupScope): Promise<DirectModeChannel[]>;
   saveChannel(channel: DirectModeChannel): Promise<void>;
+  /** Applies one validated settlement only if the disclosed channel snapshot is current. */
+  applySettledChannel(
+    expected: DirectModeChannel,
+    channel: DirectModeChannel,
+  ): Promise<DirectModeChannel>;
+  /** Fail-closed quarantine after a voucher was disclosed but settlement is untrusted. */
+  quarantineChannel(expected: DirectModeChannel): Promise<DirectModeChannel>;
   retireChannel(channelId: Hash32Hex, reason?: string): Promise<void>;
   deleteChannel(channelId: Hash32Hex): Promise<void>;
   listRefundableChannels(nowDaa?: SompiString): Promise<DirectModeChannel[]>;
@@ -410,6 +448,20 @@ export interface ChannelStore {
   applyRefundAttempt(
     request: RefundAttemptApplyRequest,
   ): Promise<RefundAttemptApplyResult>;
+  /** Releases only an exact artifact proven permanently absent. */
+  releaseRefundAttempt(
+    channelId: Hash32Hex,
+    transactionId: Hash32Hex,
+  ): Promise<void>;
+  loadCovenantLineage(
+    channelId: Hash32Hex,
+  ): Promise<CovenantLineageState | undefined>;
+  /** Atomically installs the verified journal and its derived channel head. */
+  applyCovenantLineage(input: {
+    expectedChannel: DirectModeChannel;
+    lineage: CovenantLineageState;
+    channel: DirectModeChannel;
+  }): Promise<DirectModeChannel>;
 }
 
 export interface ChannelLookupScope {
@@ -525,16 +577,7 @@ export interface RefundResult {
 }
 
 export type RefundReconciliation =
-  | {
-      status: "unknown";
-      transactionId: Hash32Hex;
-      reason?: string;
-    }
-  | {
-      status: "accepted";
-      transactionId: Hash32Hex;
-      finality: "accepted" | "confirmed";
-    };
+  { transactionId: Hash32Hex; evidence: TrustedTransactionEvidence };
 
 /** Trusted chain lookup for one already-persisted refund transaction. */
 export interface RefundReconciler {
@@ -545,27 +588,12 @@ export interface RefundReconcileResult {
   channel: DirectModeChannel;
   refundAmount: SompiString;
   transactionId: Hash32Hex;
-  finality: "unknown" | "accepted" | "confirmed";
+  finality: "unknown" | "absent" | "accepted" | "confirmed";
   accepted: boolean;
 }
 
 export type FundingTransitionReconciliation =
-  | {
-      status: "unknown";
-      transactionId: Hash32Hex;
-      reason?: string;
-    }
-  | {
-      /** Trusted proof that the exact artifact cannot become accepted. */
-      status: "absent";
-      transactionId: Hash32Hex;
-      reason?: string;
-    }
-  | {
-      status: "accepted";
-      transactionId: Hash32Hex;
-      finality: "accepted" | "confirmed";
-    };
+  { transactionId: Hash32Hex; evidence: TrustedTransactionEvidence };
 
 /** Trusted chain lookup for one already-persisted genesis or top-up artifact. */
 export interface FundingTransitionReconciler {
@@ -596,6 +624,8 @@ export interface DirectModeClientOptions {
   refundBuilder?: RefundTransactionBuilder;
   refundReconciler?: RefundReconciler;
   fundingTransitionReconciler?: FundingTransitionReconciler;
+  /** Deployment policy; Testnet-10 launch profile is 30. */
+  confirmationThreshold: number;
   verifyVoucherSignature?: (
     voucher: Voucher,
     channel: DirectModeChannel,

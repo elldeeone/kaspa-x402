@@ -1,8 +1,11 @@
 import type {
   BatchPresentationAuthorization,
+  AcceptedTransactionEvidence,
   BatchPaymentRequirements,
   ByteHex,
   ChannelConfig,
+  CovenantLineageState,
+  CovenantSelectedChainUpdate,
   ClaimPolicy,
   ChannelState,
   DepositVoucherPayload,
@@ -24,6 +27,7 @@ import type {
   SompiString,
   SupportedKind,
   TrustedSecurityContext,
+  TrustedTransactionEvidence,
   Voucher,
   VoucherPayload,
 } from "@kaspa-x402/core";
@@ -47,11 +51,15 @@ export interface ChainUtxo {
   covenantId?: Hash32Hex;
   amount: SompiString;
   scriptPublicKey: ByteHex;
+  /** Objective selected-chain inclusion evidence; semantic finality alone is never trusted. */
+  acceptance: AcceptedTransactionEvidence;
+  /** Legacy/exact-path display label. Covenant policy is derived from acceptance. */
   finality: SettlementFinality;
 }
 
 export interface TransactionBroadcast {
   transactionId: Hash32Hex;
+  evidence: TrustedTransactionEvidence;
   finality: SettlementFinality;
 }
 
@@ -71,6 +79,15 @@ export interface ServerChainProvider {
   verifyCovenantGenesis(
     request: CovenantGenesisVerificationRequest,
   ): Promise<CovenantGenesisVerification | null>;
+  /** Authoritative selected-chain discovery from the durable covenant checkpoint. */
+  discoverCovenantLineage(request: {
+    network: NetworkId;
+    covenantId: Hash32Hex;
+    templateId: "kaspa-x402-escrow-v4";
+    /** Complete durable state is required to derive the rollback head before additions. */
+    lineage: CovenantLineageState;
+    minConfirmationCount: number;
+  }): Promise<CovenantSelectedChainUpdate>;
   estimateClaimFee(channel: ServerChannelRecord): Promise<SompiString>;
   sendTransaction(
     transaction: PreparedTransaction,
@@ -92,6 +109,7 @@ export interface CovenantGenesisVerification {
   totalOutputCount: number;
   /** Batch escrow admission intentionally permits exactly one authorized output. */
   authorizedOutputCount: number;
+  acceptance: AcceptedTransactionEvidence;
 }
 
 export interface VoucherVerificationRequest {
@@ -309,6 +327,8 @@ export interface TopUpVerificationResult {
   successorAmount: SompiString;
   /** The transition must create one and only one successor for this covenant. */
   authorizedSuccessorCount: number;
+  authorizingInput: number;
+  acceptance: AcceptedTransactionEvidence;
 }
 
 export interface TopUpVerifier {
@@ -333,6 +353,8 @@ export interface ServerChannelRecord {
   signedMaxClaimable: SompiString;
   voucherSignature?: SignatureHex;
   lastCommitmentId?: Hash32Hex;
+  /** Immutable launch manifest, append-only journal, and atomically derived head. */
+  lineage: CovenantLineageState;
   status: ChannelStatus;
 }
 
@@ -351,6 +373,11 @@ export interface ServerChannelStore {
     reason?: string,
   ): Promise<void>;
   listChannels(): Promise<ServerChannelRecord[]>;
+  /** Atomically installs a verified append-only lineage against a complete snapshot. */
+  applyCovenantLineage(
+    expected: ServerChannelRecord,
+    channel: ServerChannelRecord,
+  ): Promise<void>;
 }
 
 export type StoreCoordinationScope = "process-local" | "deployment-wide";
@@ -753,10 +780,11 @@ export interface ClaimAttemptRecord {
   transaction: PreparedTransaction;
   /** Deterministic id of the exact signed transaction captured before broadcast. */
   transactionId: Hash32Hex;
-  /** Immutable finality threshold captured before the first broadcast. */
-  requiredFinality: "accepted" | "confirmed";
+  /** Immutable numeric confirmation policy captured before the first broadcast. */
+  requiredConfirmations: number;
   status: ClaimAttemptStatus;
   finality?: SettlementFinality;
+  acceptance?: AcceptedTransactionEvidence;
   continuationOutpoint?: FundingOutpoint;
   continuationScriptPublicKey?: ByteHex;
   continuationFundingAmount?: SompiString;
@@ -828,14 +856,10 @@ export interface ClaimTransactionBuilder {
   ): Promise<ClaimTransactionResult>;
 }
 
-export type ClaimReconciliation =
-  | {
-      status: "accepted";
-      transactionId: Hash32Hex;
-      finality: "accepted" | "confirmed";
-    }
-  | { status: "rejected"; transactionId: Hash32Hex; reason: string }
-  | { status: "unknown"; transactionId: Hash32Hex; reason?: string };
+export interface ClaimReconciliation {
+  transactionId: Hash32Hex;
+  evidence: TrustedTransactionEvidence;
+}
 
 /** Trusted chain lookup for one already-persisted claim transaction. */
 export interface ClaimReconciler {
@@ -853,7 +877,6 @@ export interface ClaimExecutionResult {
 
 export interface ClaimRecoveryInput {
   transactionId?: Hash32Hex;
-  finality?: Exclude<SettlementFinality, "broadcast">;
 }
 
 export interface DirectModeServerConfig {
@@ -895,6 +918,8 @@ export interface DirectModeServerConfig {
   requirePaymentIdentifier?: boolean;
   allowMainnet?: boolean;
   acceptedFinality?: Exclude<SettlementFinality, "broadcast">;
+  /** Deployment policy; the Testnet-10 launch profile is 30. */
+  confirmationThreshold: number;
   topUpVerifier?: TopUpVerifier;
 }
 

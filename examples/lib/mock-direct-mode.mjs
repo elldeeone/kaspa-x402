@@ -6,6 +6,7 @@ import {
   exactRequestAuthorizationId,
   sha256Hex,
   stableStringify,
+  TESTNET_10_CONFIRMATION_THRESHOLD,
 } from "@kaspa-x402/core";
 import { DirectModeFacilitator } from "@kaspa-x402/facilitator";
 import { DirectModeServer, MemoryServerChannelStore } from "@kaspa-x402/server";
@@ -28,6 +29,7 @@ export function createMockDirectModeEnvironment() {
   const serverStore = new MemoryServerChannelStore();
   const clientStore = new MemoryChannelStore();
   const server = new DirectModeServer({
+    confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     network: NETWORK,
     payTo: PAYOUT_ADDRESS,
     serverPublicKey: SERVER_PUBLIC_KEY,
@@ -113,12 +115,32 @@ export function createMockDirectModeEnvironment() {
         ).toString();
         chainProvider.prepareTransaction(transaction, () => {
           chainProvider.deleteUtxo(channel.activeOutpoint);
+          const acceptance = acceptedChainEvidence(transaction);
           chainProvider.setUtxo({
             outpoint: continuationOutpoint,
             covenantId: channel.covenantId,
             amount: continuationFundingAmount,
             scriptPublicKey: continuationScriptPublicKey,
+            acceptance,
             finality: "accepted",
+          });
+          chainProvider.recordTransition({
+            kind: "claim",
+            covenantId: channel.covenantId,
+            templateId: channel.channelConfig.templateId,
+            consumedOutpoint: channel.activeOutpoint,
+            transactionId: transaction,
+            authorizedSuccessorCount: 1,
+            successor: {
+              outpoint: continuationOutpoint,
+              covenantId: channel.covenantId,
+              authorizingInput: 0,
+              scriptPublicKey: continuationScriptPublicKey,
+              value: continuationFundingAmount,
+              claimedCumulativeAmount,
+            },
+            terminalOutput: null,
+            acceptance,
           });
         });
         return {
@@ -134,18 +156,46 @@ export function createMockDirectModeEnvironment() {
     exactProfile: "standard-native",
   });
   const client = new DirectModeClient({
+    confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     fundingProvider,
     signer: new MockSigner(),
     store: clientStore,
     addressCodec,
     fetch: createMockPaidFetch(server),
     refundBuilder: {
-      async buildRefundTransaction({ refundAmount, signDigest }) {
+      async buildRefundTransaction({ channel, refundAmount, signDigest }) {
         await signDigest(mockHash(`refund-digest:${refundAmount}`));
         const transaction = mockTransaction(`refund:${refundAmount}`);
+        const transactionId = mockHash(`broadcast:${transaction}`);
+        const refundScriptPublicKey = addressCodec.scriptPublicKeyForAddress(
+          channel.config.refundAddress,
+          channel.config.network,
+        );
+        chainProvider.prepareTransaction(transaction, () => {
+          chainProvider.deleteUtxo(channel.activeOutpoint);
+          fundingProvider.removeAddressUtxo(
+            channel.escrowAddress,
+            channel.activeOutpoint,
+          );
+          chainProvider.recordTransition({
+            kind: "refund",
+            covenantId: channel.covenantId,
+            templateId: channel.templateId,
+            consumedOutpoint: channel.activeOutpoint,
+            transactionId,
+            authorizedSuccessorCount: 0,
+            successor: null,
+            terminalOutput: {
+              index: 0,
+              scriptPublicKey: refundScriptPublicKey,
+              value: refundAmount,
+            },
+            acceptance: acceptedChainEvidence(transactionId),
+          });
+        });
         return {
           transaction,
-          transactionId: mockHash(`broadcast:${transaction}`),
+          transactionId,
           refundAmount,
         };
       },
@@ -294,6 +344,7 @@ class MockFundingProvider {
       covenantId,
       amount: request.amount,
       scriptPublicKey: request.escrowScriptPublicKey,
+      acceptance: acceptedChainEvidence(transactionId),
       finality: "accepted",
     };
     const genesisEvidence = {
@@ -304,6 +355,7 @@ class MockFundingProvider {
       genesisAmount: request.amount,
       totalOutputCount: 1,
       authorizedOutputCount: 1,
+      acceptance: acceptedChainEvidence(transactionId),
     };
     this.preparedTransitions.set(transaction, () => {
       this.addAddressUtxo(request.escrowAddress, {
@@ -339,11 +391,13 @@ class MockFundingProvider {
       covenantId: previous.covenantId,
       amount: request.targetFundingAmount,
       scriptPublicKey: previous.activeScriptPublicKey,
+      acceptance: acceptedChainEvidence(transactionId),
       finality: "accepted",
     };
     this.preparedTransitions.set(transaction, () => {
       this.removeAddressUtxo(previous.escrowAddress, previous.activeOutpoint);
       this.chainProvider.deleteUtxo(previous.activeOutpoint);
+      const acceptance = acceptedChainEvidence(transactionId);
       this.addAddressUtxo(previous.escrowAddress, {
         ...utxo,
         address: previous.escrowAddress,
@@ -356,6 +410,26 @@ class MockFundingProvider {
         successorScriptPublicKey: previous.activeScriptPublicKey,
         successorAmount: request.targetFundingAmount,
         authorizedSuccessorCount: 1,
+        authorizingInput: 0,
+        acceptance,
+      });
+      this.chainProvider.recordTransition({
+        kind: "top-up",
+        covenantId: previous.covenantId,
+        templateId: previous.templateId,
+        consumedOutpoint: previous.activeOutpoint,
+        transactionId,
+        authorizedSuccessorCount: 1,
+        successor: {
+          outpoint,
+          covenantId: previous.covenantId,
+          authorizingInput: 0,
+          scriptPublicKey: previous.activeScriptPublicKey,
+          value: request.targetFundingAmount,
+          claimedCumulativeAmount: previous.claimedCumulativeAmount,
+        },
+        terminalOutput: null,
+        acceptance,
       });
     });
     return {
@@ -444,18 +518,24 @@ class MockFundingProvider {
     return "100";
   }
 
+  async discoverCovenantLineage(request) {
+    return this.chainProvider.discoverCovenantLineage(request);
+  }
+
   async sendTransaction(transaction) {
     const apply = this.preparedTransitions.get(transaction);
     if (apply) {
       apply();
       this.preparedTransitions.delete(transaction);
     }
+    this.chainProvider.applyPreparedTransaction(transaction);
+    const transactionId =
+      transaction.length === 64
+        ? transaction
+        : mockHash(`broadcast:${transaction}`);
     return {
-      transactionId:
-        transaction.length === 64
-          ? transaction
-          : mockHash(`broadcast:${transaction}`),
-      finality: "accepted",
+      transactionId,
+      evidence: acceptedChainEvidence(transactionId),
     };
   }
 
@@ -493,9 +573,25 @@ class MockChainProvider {
   genesisEvidence = new Map();
   topUpEvidence = new Map();
   preparedTransactions = new Map();
+  transitions = new Map();
 
   prepareTransaction(transaction, apply) {
     this.preparedTransactions.set(transaction, apply);
+  }
+
+  applyPreparedTransaction(transaction) {
+    const apply = this.preparedTransactions.get(transaction);
+    if (!apply) return false;
+    apply();
+    this.preparedTransactions.delete(transaction);
+    return true;
+  }
+
+  recordTransition(transition) {
+    this.transitions.set(
+      transition.transactionId.toLowerCase(),
+      structuredClone(transition),
+    );
   }
 
   setUtxo(utxo) {
@@ -552,21 +648,50 @@ class MockChainProvider {
     return "100";
   }
 
+  async discoverCovenantLineage(request) {
+    const seenTransactionIds = new Set([
+      request.lineage.manifest.genesis.transactionId.toLowerCase(),
+    ]);
+    for (const event of request.lineage.journal) {
+      if (event.event === "accepted") {
+        seenTransactionIds.add(event.transition.transactionId.toLowerCase());
+      } else if (event.event === "genesis-accepted") {
+        seenTransactionIds.add(event.acceptance.transactionId.toLowerCase());
+      }
+    }
+    const unseen = Array.from(this.transitions.values()).filter(
+      (transition) =>
+        transition.covenantId.toLowerCase() ===
+          request.covenantId.toLowerCase() &&
+        !seenTransactionIds.has(transition.transactionId.toLowerCase()),
+    );
+    if (unseen.length === 0) return unchangedLineageUpdate(request);
+    const checkpoint = structuredClone(unseen.at(-1).acceptance.checkpoint);
+    return {
+      fromCheckpoint: request.lineage.checkpoint,
+      checkpoint,
+      continuity: "complete",
+      removedChainBlockHashes: [],
+      addedChainBlocks: unseen.map((transition) => ({
+        blockHash: transition.acceptance.acceptingBlockHash,
+        transitions: [structuredClone(transition)],
+      })),
+    };
+  }
+
   async estimateClaimFee() {
     return "0";
   }
 
   async sendTransaction(transaction) {
-    const apply = this.preparedTransactions.get(transaction);
-    if (apply) {
-      apply();
-      this.preparedTransactions.delete(transaction);
-    }
+    this.applyPreparedTransaction(transaction);
+    const transactionId =
+      transaction.length === 64
+        ? transaction
+        : mockHash(`chain-broadcast:${transaction}`);
     return {
-      transactionId:
-        transaction.length === 64
-          ? transaction
-          : mockHash(`chain-broadcast:${transaction}`),
+      transactionId,
+      evidence: acceptedChainEvidence(transactionId),
       finality: "accepted",
     };
   }
@@ -651,6 +776,34 @@ function routeForUrl(url) {
 
 function outpointKey(outpoint) {
   return `${outpoint.txid.toLowerCase()}:${outpoint.index}`;
+}
+
+function acceptedChainEvidence(transactionId) {
+  const checkpointBlueScore = 1_000n;
+  return {
+    status: "accepted",
+    transactionId: transactionId.toLowerCase(),
+    acceptingBlockHash: mockHash(`accepting-block:${transactionId}`),
+    acceptingBlockBlueScore: (
+      checkpointBlueScore - BigInt(TESTNET_10_CONFIRMATION_THRESHOLD) + 1n
+    ).toString(),
+    confirmationCount: TESTNET_10_CONFIRMATION_THRESHOLD,
+    checkpoint: {
+      blockHash: mockHash("selected-chain-checkpoint"),
+      blueScore: checkpointBlueScore.toString(),
+      daaScore: "1000",
+    },
+  };
+}
+
+function unchangedLineageUpdate(request) {
+  return {
+    fromCheckpoint: request.lineage.checkpoint,
+    checkpoint: request.lineage.checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: [],
+    addedChainBlocks: [],
+  };
 }
 
 export { X402_VERSION };

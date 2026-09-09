@@ -54,6 +54,7 @@ The gateway uses:
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - accepted finality;
+- 30-confirmation covenant transition and lineage policy;
 - exact price `20000000` sompi;
 - batch voucher charge `500` sompi;
 - batch minimum deposit `20000000` sompi;
@@ -66,8 +67,8 @@ mass depends on the complete transaction shape. The reference Worker uses
 `10000000` sompi as a conservative application policy for on-chain outputs,
 including the advertised batch successor reserve.
 
-The Alpha.11 candidate Worker emits batch offers with binding `kaspa-escrow-v2`, template
-`kaspa-x402-escrow-v3`, and a `10000000` sompi claim reserve. Its exact offers
+The Alpha.11 candidate Worker emits batch offers with binding `kaspa-escrow-v3`, template
+`kaspa-x402-escrow-v4`, and a `10000000` sompi claim reserve. Its exact offers
 carry binding `kaspa-exact-v2` and an explicit profile:
 
 - `standard-native` needs no merchant head inventory;
@@ -121,6 +122,9 @@ The Worker uses `https://api-tn10.kaspa.org` for read-side evidence:
 Exact transaction artifacts are submitted through configured public TN10
 PNN/WSS endpoints. The REST submit fallback must not be cited as KIP-10
 broadcast evidence because it does not preserve the v1 compute-budget field.
+The same PNN connection supplies complete `GetVirtualChainFromBlockV2` deltas
+for batch lineage recovery. REST UTXO presence does not prove removed-chain
+continuity or authorize a recovered batch head.
 
 The gateway fails closed when it cannot establish chain health, transaction
 validity, accepted finality, or required durable state. Protected content is
@@ -134,6 +138,8 @@ Gateway state is held in a SQLite-backed Cloudflare Durable Object. It records:
 - reusable additive heads and atomic successor advancement;
 - payment-identifier response cache entries;
 - batch channel state and settlement commitments;
+- immutable batch launch manifests, append-only lineage journals, selected-chain
+  checkpoints, and atomically derived current heads;
 - request locks, rate counters, metrics, and the latest canary report.
 
 No private keys or wallet seeds are stored. This is a demo deployment pattern,
@@ -173,7 +179,7 @@ The 2026-08-10 Alpha.10 deployment completed funded exact and batch runs:
   and unsupported-scheme checks.
 
 This evidence predates the Alpha.11 alias controls, fresh
-`demo-gateway-alpha.11` state, and `kaspa-x402-escrow-v3` template. It must not
+`demo-gateway-alpha.11` state, and `kaspa-x402-escrow-v4` template. It must not
 be used as Alpha.11 deployment or funded-canary proof.
 
 ## Testnet Funding

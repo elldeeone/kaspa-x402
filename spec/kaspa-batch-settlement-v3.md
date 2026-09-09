@@ -316,6 +316,60 @@ Corrective public responses MAY include this snapshot but MUST NOT include a
 reusable voucher signature. Reusable voucher disclosure requires separate
 payer authentication outside this wire profile.
 
+## Chain Truth, Confirmation, And Recovery
+
+Peers and adapters do not choose semantic finality. Trusted accepted evidence
+contains the transaction id, accepting-block hash and blue score, numeric
+confirmation count, and a stable selected-chain checkpoint (sink block hash,
+blue score, and DAA score). The confirmation count is the authoritative
+selected-parent distance from the selected-chain tip, including the accepting
+block. Blue-score difference MUST NOT be used as selected-chain depth.
+
+The runtime applies deployment policy to that count. Alpha.11's reference
+`kaspa:testnet-10` deployment requires 30 confirmations for covenant genesis,
+claim, top-up, refund, and recovered lineage. This is not a universal Kaspa
+consensus-finality constant. Accepted evidence below the threshold remains
+reserved and cannot authorize a state transition.
+
+The reference adapter proves the threshold through
+`GetVirtualChainFromBlockV2` with `minConfirmationCount`. A stable REST UTXO and
+selected-chain accepting block prove only a conservative lower bound of one;
+REST evidence alone cannot authorize 30-confirmation batch lineage.
+
+`absent` means the exact transaction is permanently excluded by either a
+distinct confirmed spend of its input or stable consensus-rejection evidence.
+A missing index entry, UTXO observation, timeout, transport error, or pruned
+history is `unknown`; it never permits rebuilding or reusing the captured head.
+
+Each lane begins with an immutable launch manifest containing:
+
+- network, checked compiler commit and command, source path and SHA-256;
+- template id, compiled-base SHA-256, ABI, and selectors; and
+- genesis derivation, covenant id, authorizing input, transaction, outpoint,
+  script, value, state, accepting block, confirmation evidence, and checkpoint.
+
+Every later accepted claim, top-up, or refund is appended to a durable journal
+with its consumed outpoint, transaction, unique successor or terminal output,
+state, value, covenant binding, accepting block, confirmation evidence, and
+checkpoint. The current head is derived atomically from this manifest and
+journal; an adapter-supplied head is never authority.
+
+An observer resumes from the durable checkpoint using a complete selected-chain
+delta. Removed blocks MUST be processed and journaled before added blocks. All
+affected derived state is rolled back first; replacement transactions may then
+extend only the restored head. Missing or ambiguous predecessors, multiple
+spends or successors, wrong covenant/template bindings, and inconsistent state
+or value changes fail closed. If pruning prevents continuity proof, the lane is
+unavailable until an authoritative complete history can be supplied.
+
+Clients and servers reconcile this lineage before lane reuse, top-up, claim,
+retirement, or refund. A suspicious client lane may become `refundable` after
+its unique live head is verified, but it MUST NOT become chargeable again. If a
+confirmed terminal refund is removed, its applied attempt and terminal status
+roll back atomically to refund-only state before another refund can be built.
+An implementation MUST NOT advertise or select `batch-settlement` unless this
+authoritative lineage-discovery capability is configured.
+
 ## Voucher
 
 ```json

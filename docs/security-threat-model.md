@@ -1,8 +1,8 @@
 # Security Threat Model
 
 Status: alpha threat model for the Testnet-10 exact and batch-settlement
-profiles. Alpha.11 replaces the active batch binding with `kaspa-escrow-v2` and
-template `kaspa-x402-escrow-v3`; older alpha snapshots are historical artifacts,
+profiles. Alpha.11 replaces the active batch binding with `kaspa-escrow-v3` and
+template `kaspa-x402-escrow-v4`; older alpha snapshots are historical artifacts,
 not supported runtime profiles.
 
 ## Assets
@@ -36,6 +36,7 @@ not supported runtime profiles.
 | Duplicate retry double-executes protected work | A durable work attempt and identifier reservation bind payer, channel or transaction, payload, scope, and request fingerprint before handler execution. Only one handler-start transition succeeds; a staged result is reused if final commit fails. | A crash after a non-repeatable side effect but before result staging still requires handler-owned idempotency or an outbox. |
 | Handler failure consumes payment state | A and the request commitment advance only after protected handler success unless the flow has an explicit recoverable on-chain transition. | Accepted genesis or top-up state remains live even when later protected work fails. |
 | Stale node or RPC failure | Verification fails closed unless required finality and covenant-transition evidence is present. | Operators must monitor node health, pruning horizon, and finality lag. |
+| Selected-chain reorganization or pruned history | The durable observer resumes from a stable checkpoint, journals removals before additions, rolls back derived state, and accepts only one verified successor. Incomplete continuity becomes unavailable. A removed refund restores refund-only state. | Recovery can remain blocked until a complete authoritative selected-chain history is available. |
 | Funding source policy bypass | Client code checks required funding source against adapter-reported funding source. | Wallet and treasury adapters still require independent audit. |
 | Malicious facilitator widens capability | Facilitator supported kinds are intersected with direct-mode server capability and explicit action settlers. | Hosted facilitators need authentication, rate limits, and tenant isolation. |
 | Covenant template drift | Escrow fixture checks and transaction-v1 vectors pin script public key, state, covenant binding, fee, and output behavior. | Mainnet requires an independent covenant and transaction-builder audit. |

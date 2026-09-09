@@ -69,6 +69,7 @@ describe("MCP hybrid settlement failure E2E", () => {
       },
     };
     const client = new DirectModeClient({
+      confirmationThreshold: 30,
       fundingProvider: exactFundingProvider(),
       store: new MemoryChannelStore(),
       signer: unusedChannelSigner(),

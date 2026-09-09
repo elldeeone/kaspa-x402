@@ -2,6 +2,7 @@ import {
   KASPA_X402_RESOURCE_BUDGET,
   applyBatchClaimAccounting,
   batchLaneAccounting,
+  decideChainEvidence,
   parseBatchLaneAmount,
   type Hash32Hex,
 } from "@kaspa-x402/core";
@@ -22,6 +23,12 @@ import {
   normalizeExactSettlementAttempt,
   releaseExactHeadClaim,
 } from "./exact-heads.js";
+import {
+  assertServerChannelLineageConsistency,
+  assertServerCovenantLineageExtension,
+  assertServerCovenantJournalExtension,
+  sameCovenantLineage,
+} from "./channel-lineage.js";
 import type {
   BatchCommitmentRecord,
   BatchSettlementAttemptRecord,
@@ -203,17 +210,41 @@ export class MemoryServerChannelStore implements ServerStateStore {
     if (!sameChannelSnapshot(channel, expected) ||
         !sameChannelSnapshot(channel, lease.expected))
       throw new Error("channel state changed before retirement");
-    this.#channels.set(channelId, {
+    if (channel.status === "refunded" || channel.lineage.currentHead === null) {
+      throw new Error("terminal refunded channel cannot be retired");
+    }
+    const retired = {
       ...channel,
       version: incrementVersion(channel.version),
-      status: "retired",
-    });
+      status: "retired" as const,
+    };
+    assertServerChannelLineageConsistency(retired);
+    this.#channels.set(channelId, retired);
     this.#channelOperations.delete(channelId);
     this.#channelByLeaseId.delete(leaseId);
   }
 
   async listChannels(): Promise<ServerChannelRecord[]> {
     return Array.from(this.#channels.values()).map(clone);
+  }
+
+  async applyCovenantLineage(
+    expected: ServerChannelRecord,
+    channel: ServerChannelRecord,
+  ): Promise<void> {
+    const current = this.#channels.get(expected.channelId);
+    if (!sameChannelSnapshot(current, expected)) {
+      throw new Error("channel state changed before covenant lineage apply");
+    }
+    if (
+      this.#channelOperations.has(expected.channelId) ||
+      this.#openBatchAttemptByChannel.has(expected.channelId) ||
+      this.#openClaimAttemptByChannel.has(expected.channelId)
+    ) {
+      throw new Error("channel has an open operation during covenant lineage apply");
+    }
+    assertServerCovenantLineageExtension(expected, channel);
+    this.#setChannel(channel);
   }
 
   async claimChannelOperation(
@@ -261,6 +292,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   }
 
   #setChannel(channel: ServerChannelRecord): void {
+    assertServerChannelLineageConsistency(channel);
     const { channelId, covenantId } = this.#assertChannelBinding(channel);
     this.#channelByCovenantId.set(covenantId, channelId);
     this.#channels.set(channelId, clone(channel));
@@ -1145,11 +1177,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
       parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
         parseBatchLaneAmount(previous.signedMaxClaimable, "previous signed ceiling") ||
       next.lastCommitmentId !== commitment.commitmentId
-      || next.version !== incrementVersion(previous.version)
+      || next.version !== incrementVersion(previous.version) ||
+      !sameCovenantLineage(previous.lineage, next.lineage)
     ) {
       throw new Error("settlement would roll back or replace channel state");
     }
     batchLaneAccounting(next);
+    assertServerChannelLineageConsistency(next);
   }
 
   #assertClaimTransition(
@@ -1174,6 +1208,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
     )
       throw new Error("claim transition is not the reserved monotonic successor");
     batchLaneAccounting(next);
+    assertServerCovenantJournalExtension(previous, next);
   }
 
   async loadOpenClaimAttempt(
@@ -1762,11 +1797,13 @@ function claimAttemptArtifactsMatch(
   const {
     status: _leftStatus,
     finality: _leftFinality,
+    acceptance: _leftAcceptance,
     ...leftArtifact
   } = left;
   const {
     status: _rightStatus,
     finality: _rightFinality,
+    acceptance: _rightAcceptance,
     ...rightArtifact
   } = right;
   return stableJson(leftArtifact) === stableJson(rightArtifact);
@@ -1774,10 +1811,10 @@ function claimAttemptArtifactsMatch(
 
 function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
   if (
-    attempt.requiredFinality !== "accepted" &&
-    attempt.requiredFinality !== "confirmed"
+    !Number.isSafeInteger(attempt.requiredConfirmations) ||
+    attempt.requiredConfirmations < 1
   ) {
-    throw new Error("claim attempt required finality is invalid");
+    throw new Error("claim attempt confirmation threshold is invalid");
   }
   if (
     !isLowerHash32(attempt.attemptId) ||
@@ -1849,8 +1886,8 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
     );
   }
   if (attempt.status === "pending") {
-    if (attempt.finality !== undefined)
-      throw new Error("pending claim attempt cannot have finality");
+    if (attempt.finality !== undefined || attempt.acceptance !== undefined)
+      throw new Error("pending claim attempt cannot have chain evidence");
     return;
   }
   if (attempt.status === "broadcast") {
@@ -1861,18 +1898,29 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
     ) {
       throw new Error("broadcast claim attempt requires observed finality");
     }
+    if (attempt.finality === "broadcast" && attempt.acceptance !== undefined) {
+      throw new Error("broadcast-only claim attempt cannot have acceptance evidence");
+    }
+    if (
+      (attempt.finality === "accepted" || attempt.finality === "confirmed") &&
+      (!attempt.acceptance ||
+        attempt.acceptance.transactionId !== attempt.transactionId)
+    ) {
+      throw new Error("accepted claim observation requires matching evidence");
+    }
     return;
   }
   if (attempt.status === "accepted" || attempt.status === "applied") {
-    if (attempt.finality !== "accepted" && attempt.finality !== "confirmed")
-      throw new Error("accepted claim attempt requires accepted finality");
     if (
-      attempt.requiredFinality === "confirmed" &&
-      attempt.finality !== "confirmed"
+      attempt.finality !== "confirmed" ||
+      !attempt.acceptance ||
+      attempt.acceptance.transactionId !== attempt.transactionId ||
+      decideChainEvidence(
+        attempt.acceptance,
+        attempt.requiredConfirmations,
+      ).status !== "confirmed"
     ) {
-      throw new Error(
-        "accepted claim attempt has not reached required finality",
-      );
+      throw new Error("accepted claim attempt lacks confirmed chain evidence");
     }
     return;
   }

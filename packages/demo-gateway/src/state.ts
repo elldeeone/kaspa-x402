@@ -34,6 +34,10 @@ import type {
 import {
   acceptExactHead,
   applyExactHeadLineage as applyExactHeadLineageRecord,
+  assertServerChannelLineageConsistency,
+  assertServerCovenantLineageExtension,
+  assertServerCovenantJournalExtension,
+  sameCovenantLineage,
   assertBatchDepositTransition,
   assertBatchHandlerResultTransition,
   batchSettlementAttemptIsReadyToCommit,
@@ -145,6 +149,7 @@ export type GatewayStateMethod =
   | "loadChannel"
   | "registerChannel"
   | "retireChannel"
+  | "applyCovenantLineage"
   | "listChannels"
   | "claimChannelOperation"
   | "loadChannelOperation"
@@ -245,11 +250,16 @@ export class GatewayLedger implements ServerStateStore {
         !sameChannelSnapshot(channel, lease.expected)
       )
         throw new Error("channel state changed before retirement");
-      await txn.put(channelKey(channelId), {
+      if (channel.status === "refunded" || channel.lineage.currentHead === null) {
+        throw new Error("terminal refunded channel cannot be retired");
+      }
+      const retired = {
         ...clone(channel),
         version: incrementVersion(channel.version),
-        status: "retired",
-      });
+        status: "retired" as const,
+      };
+      assertServerChannelLineageConsistency(retired);
+      await txn.put(channelKey(channelId), retired);
       await deleteChannelOperation(txn, lease);
     });
   }
@@ -316,6 +326,29 @@ export class GatewayLedger implements ServerStateStore {
         await this.#storage.list<ServerChannelRecord>({ prefix: "channel:" })
       ).values(),
     ).map(clone);
+  }
+
+  async applyCovenantLineage(
+    expected: ServerChannelRecord,
+    channel: ServerChannelRecord,
+  ): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<ServerChannelRecord>(
+        channelKey(expected.channelId),
+      );
+      if (!sameChannelSnapshot(current, expected)) {
+        throw new Error("channel state changed before covenant lineage apply");
+      }
+      if (
+        (await txn.get(channelOperationKey(expected.channelId))) ||
+        (await txn.get(openBatchAttemptKey(expected.channelId))) ||
+        (await txn.get(openClaimKey(expected.channelId)))
+      ) {
+        throw new Error("channel has an open operation during covenant lineage apply");
+      }
+      assertServerCovenantLineageExtension(expected, channel);
+      await putChannel(txn, channel);
+    });
   }
 
   async loadCommitment(
@@ -1453,6 +1486,13 @@ export async function dispatchGatewayState(
         payload.expected,
       );
     }
+    case "applyCovenantLineage": {
+      const payload = readPayload<{
+        expected: ServerChannelRecord;
+        channel: ServerChannelRecord;
+      }>(request);
+      return ledger.applyCovenantLineage(payload.expected, payload.channel);
+    }
     case "listChannels":
       return ledger.listChannels();
     case "claimChannelOperation":
@@ -1950,6 +1990,7 @@ async function putChannel(
   txn: GatewayTransaction,
   channel: ServerChannelRecord,
 ): Promise<void> {
+  assertServerChannelLineageConsistency(channel);
   const channelId = channel.channelId.toLowerCase();
   const covenantId = channel.covenantId.toLowerCase();
   const current = await txn.get<ServerChannelRecord>(channelKey(channelId));
@@ -2073,10 +2114,12 @@ function assertSettlementTransition(
     parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
       parseBatchLaneAmount(previous.signedMaxClaimable, "previous signed ceiling") ||
     next.lastCommitmentId !== commitment.commitmentId ||
-    next.version !== incrementVersion(previous.version)
+    next.version !== incrementVersion(previous.version) ||
+    !sameCovenantLineage(previous.lineage, next.lineage)
   )
     throw new Error("settlement would roll back or replace channel state");
   batchLaneAccounting(next);
+  assertServerChannelLineageConsistency(next);
 }
 
 function assertClaimTransition(
@@ -2101,6 +2144,7 @@ function assertClaimTransition(
   )
     throw new Error("claim transition is not the reserved monotonic successor");
   batchLaneAccounting(next);
+  assertServerCovenantJournalExtension(previous, next);
 }
 
 function assertImmutableChannelIdentity(

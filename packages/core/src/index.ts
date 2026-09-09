@@ -5,6 +5,7 @@ export * from "./batch-lane.js";
 export * from "./batch-presentation.js";
 export * from "./binary.js";
 export * from "./channel.js";
+export * from "./chain-truth.js";
 export * from "./constants.js";
 export * from "./errors.js";
 export * from "./exact-authorization.js";

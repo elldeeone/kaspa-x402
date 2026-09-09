@@ -445,19 +445,10 @@ async function runBatchProof() {
   );
   const correctiveAccepted = correctiveRequired.accepts[0];
   assert.equal(correctiveAccepted.scheme, "batch-settlement");
-  assert.equal(
-    correctiveAccepted.extra.channelState.channelId,
-    deposit.channel.id,
-  );
-  assert.equal(
-    correctiveAccepted.extra.channelState.authorizedCumulativeAmount,
-    "50000",
-  );
-  check("batch corrective 402 channel state", {
+  assert.equal(correctiveAccepted.extra.channelState, undefined);
+  check("batch corrective 402 omits channel metadata", {
     status: corrective.status,
-    channelId: correctiveAccepted.extra.channelState.channelId,
-    authorizedCumulativeAmount:
-      correctiveAccepted.extra.channelState.authorizedCumulativeAmount,
+    channelStatePresent: false,
   });
 
   let executions = 0;
@@ -552,15 +543,11 @@ async function runBatchProof() {
   );
   const staleReplayAccepted = staleReplayRequired.accepts[0];
   assert.equal(staleReplayAccepted.scheme, "batch-settlement");
-  assert.equal(
-    staleReplayAccepted.extra.channelState.authorizedCumulativeAmount,
-    "100000",
-  );
+  assert.equal(staleReplayAccepted.extra.channelState, undefined);
   check("batch corrective stale-voucher handling", {
     status: staleReplay.status,
     error: staleReplay.body.error,
-    authorizedCumulativeAmount:
-      staleReplayAccepted.extra.channelState.authorizedCumulativeAmount,
+    channelStatePresent: false,
   });
 
   const channels = await serverStore.listChannels();
@@ -599,6 +586,17 @@ async function runBatchProof() {
   assert.equal(afterClaim.signedMaxClaimable, "100000");
   assert.equal(afterClaim.voucherSignature, beforeClaim.voucherSignature);
   assert.equal(afterClaim.fundingAmount, "3950000");
+  const clientAfterClaim = await client.reconcileChannel(beforeClaim.channelId);
+  assert.deepEqual(clientAfterClaim.activeOutpoint, afterClaim.activeOutpoint);
+  assert.equal(
+    clientAfterClaim.activeScriptPublicKey,
+    afterClaim.activeScriptPublicKey,
+  );
+  assert.equal(clientAfterClaim.fundingAmount, afterClaim.fundingAmount);
+  assert.equal(
+    clientAfterClaim.claimedCumulativeAmount,
+    afterClaim.claimedCumulativeAmount,
+  );
   check("batch KIP-20 partial-claim successor", {
     covenantId: afterClaim.covenantId,
     transactionId: claim.transactionId,
@@ -618,6 +616,8 @@ async function runBatchProof() {
     signedMaxClaimable: afterClaim.signedMaxClaimable,
     voucherSignaturePreserved:
       afterClaim.voucherSignature === beforeClaim.voucherSignature,
+    clientObservedServerClaim:
+      clientAfterClaim.activeOutpoint.txid === afterClaim.activeOutpoint.txid,
   });
 
   return {

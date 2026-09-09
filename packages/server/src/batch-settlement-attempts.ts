@@ -9,6 +9,11 @@ import type {
   ServerChannelRecord,
   SettlementCommit,
 } from "./types.js";
+import {
+  assertServerChannelLineageConsistency,
+  assertServerCovenantJournalExtension,
+  sameCovenantLineage,
+} from "./channel-lineage.js";
 
 export function normalizeBatchSettlementAttempt(
   input: BatchSettlementAttemptRecord,
@@ -105,6 +110,7 @@ export function assertBatchDepositTransition(
 ): void {
   batchLaneAccounting(next);
   if (!previous) {
+    assertServerChannelLineageConsistency(next);
     if (kind !== "deposit")
       throw new Error("new channel requires a deposit operation");
     if (next.version !== "0")
@@ -148,6 +154,10 @@ export function assertBatchDepositTransition(
   ) {
     throw new Error("same-outpoint deposit state is inconsistent");
   }
+  if (!outpointChanged && !sameCovenantLineage(previous.lineage, next.lineage)) {
+    throw new Error("same-outpoint deposit cannot replace covenant lineage");
+  }
+  assertServerCovenantJournalExtension(previous, next);
   if (
     outpointChanged &&
     parseBatchLaneAmount(next.fundingAmount, "top-up funding amount") <=
