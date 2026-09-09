@@ -1,4 +1,9 @@
 import { KaspaX402Error } from "./errors.js";
+import {
+  assertDecodedByteBudget,
+  assertEncodedHeaderBudget,
+  assertJsonResourceBudget,
+} from "./resource-budget.js";
 import { stableStringify } from "./stable-json.js";
 import type { PaymentPayload, PaymentRequired, PaymentRequiredEnvelope, SettlementResponse } from "./types.js";
 import {
@@ -41,6 +46,7 @@ export function decodePaymentResponseHeader(value: string): SettlementResponse {
 }
 
 function encodeHeader<T>(value: T, validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: Error }): string {
+  assertJsonResourceBudget(value, { label: "header value" });
   const result = validate(value);
   if (!result.ok) throw result.error;
   try {
@@ -51,14 +57,25 @@ function encodeHeader<T>(value: T, validate: (value: unknown) => { ok: true; val
 }
 
 function decodeHeader<T>(value: string, validate: (value: unknown) => { ok: true; value: T } | { ok: false; error: Error }): T {
-  let decoded: unknown;
-  try {
-    decoded = JSON.parse(Buffer.from(value, "base64").toString("utf8"));
-  } catch (error) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "header must contain base64-encoded JSON", error);
-  }
+  const decoded = decodeBoundedJsonHeader(value);
 
   const result = validate(decoded);
   if (!result.ok) throw result.error;
   return result.value;
+}
+
+/** Bounded discriminator decoder for hosts that must inspect foreign schemes. */
+export function decodeBoundedJsonHeader(value: string): unknown {
+  assertEncodedHeaderBudget(value);
+  let decoded: unknown;
+  try {
+    const bytes = Buffer.from(value, "base64");
+    assertDecodedByteBudget(bytes, "header");
+    decoded = JSON.parse(bytes.toString("utf8"));
+  } catch (error) {
+    if (error instanceof KaspaX402Error) throw error;
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "header must contain base64-encoded JSON", error);
+  }
+  assertJsonResourceBudget(decoded, { label: "decoded header" });
+  return decoded;
 }

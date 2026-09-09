@@ -104,6 +104,7 @@ describe("MCP hybrid settlement failure E2E", () => {
       toolName: "download",
       arguments: { id: "hybrid-fail" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource: required.resource,
     });
     const serializedResult = JSON.stringify(result.result);
 

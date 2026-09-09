@@ -18,6 +18,7 @@ import type {
   SettlementResponse,
   SignatureHex,
   SompiString,
+  TrustedSecurityContext,
   Voucher,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
@@ -425,6 +426,8 @@ export interface PaymentRequestContext {
   origin?: string;
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
+  /** Host-derived normalized claims. Never pass raw cookies or bearer tokens. */
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export interface ParsedPaymentRequired {
@@ -473,6 +476,8 @@ export interface HttpRequestInitLike {
   redirect?: "error";
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
+  /** Host-derived normalized claims. Never pass raw cookies or bearer tokens. */
+  trustedSecurityContext?: TrustedSecurityContext;
   [key: string]: unknown;
 }
 

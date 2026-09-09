@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MCP_PAYMENT_RESPONSE_META_KEY,
   X402_VERSION,
+  bindRequestHashToTrustedContext,
   encodePaymentRequiredEnvelopeHeader,
   encodePaymentRequiredHeader,
   encodePaymentResponseHeader,
@@ -13,6 +14,8 @@ import {
   mcpToolCallFingerprint,
   paymentIdentifierExtension,
   sha256Hex,
+  stableStringify,
+  trustedSecurityContextHash,
 } from "@kaspa-x402/core";
 import type {
   BatchPaymentRequirements,
@@ -83,6 +86,28 @@ const ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 
 describe("direct-mode client", () => {
+  it("normalizes schema-known challenge hex before authorization", () => {
+    const client = makeClient({});
+    const required = makeRequired({ amount: "100" });
+    const offered = required.accepts[0] as BatchPaymentRequirements;
+    offered.extra.serverPublicKey = offered.extra.serverPublicKey.toUpperCase();
+    offered.extra.securityContextHash =
+      offered.extra.securityContextHash.toUpperCase();
+
+    const parsed = client.selectPaymentRequirement(
+      encodePaymentRequiredHeader(required),
+    );
+
+    const accepted = parsed.accepted as BatchPaymentRequirements;
+    expect(accepted.extra.serverPublicKey).toBe(
+      offered.extra.serverPublicKey.toLowerCase(),
+    );
+    expect(accepted.extra.securityContextHash).toBe(
+      offered.extra.securityContextHash.toLowerCase(),
+    );
+    expect(parsed.paymentRequired.accepts[0]).toEqual(accepted);
+  });
+
   it("opens a deposit-voucher channel for the first paid request", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -320,6 +345,57 @@ describe("direct-mode client", () => {
       paymentOutputIndex: 0,
       requestHash: "99".repeat(32),
     });
+  });
+
+  it("binds exact request authorization to typed trusted context", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "250" });
+    const accepted = required.accepts[0]!;
+    const context = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+      handlerState: { policyVersion: 3 },
+    };
+    const base = sha256Hex(
+      stableStringify({
+        method: "GET",
+        url: required.resource.url,
+        body: null,
+        paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+      }),
+    );
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(required),
+      {
+        url: required.resource.url,
+        trustedSecurityContext: context,
+      },
+    );
+    const expected = bindRequestHashToTrustedContext(base, context);
+    expect(payment.paymentPayload.payload.type).toBe("exact-transaction");
+    expect(provider.exactPayments[0]?.requestHash).toBe(expected);
+  });
+
+  it("rejects a batch challenge for another trusted context before funding", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeRequired({ amount: "100" });
+    const context = { principal: "user:alpha" };
+    const accepted = required.accepts[0] as BatchPaymentRequirements;
+    expect(accepted.extra.securityContextHash).not.toBe(
+      trustedSecurityContextHash(context),
+    );
+
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(required), {
+        url: required.resource.url,
+        trustedSecurityContext: context,
+      }),
+    ).rejects.toThrow("trusted request context");
+    expect(provider.deposits).toHaveLength(0);
+    expect(provider.sendCount).toBe(0);
   });
 
   it("enforces static origin, profile, recipient, and amount pins before exact signing", async () => {
@@ -1696,6 +1772,7 @@ describe("direct-mode client", () => {
       toolName: "download",
       arguments: { id: "alpha" },
       accepted: required.accepts[0]!,
+      resource: required.resource,
     });
     let attempts = 0;
 
@@ -1741,6 +1818,7 @@ describe("direct-mode client", () => {
       toolName: "download",
       arguments: { id: "mainnet" },
       accepted: required.accepts[0]!,
+      resource: required.resource,
     });
 
     const result = await paidMcpToolCall(
@@ -1788,6 +1866,7 @@ describe("direct-mode client", () => {
       toolName: "download",
       arguments: { id: "scheme-policy" },
       accepted: exactRequired.accepts[0]!,
+      resource: required.resource,
     });
 
     const result = await paidMcpToolCall(
@@ -1822,6 +1901,7 @@ describe("direct-mode client", () => {
       toolName: "download",
       arguments: { id: "fallback" },
       accepted: required.accepts[0]!,
+      resource: required.resource,
     });
 
     const result = await paidMcpToolCall(
@@ -1949,6 +2029,94 @@ describe("direct-mode client", () => {
 
     expect(calls).toBe(2);
     expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("rejects missing required identifiers before exact or deposit adapter work", async () => {
+    for (const required of [
+      {
+        ...makeExactRequired({ amount: "100" }),
+        extensions: {
+          "payment-identifier": paymentIdentifierExtension({ required: true }),
+        },
+      },
+      makeRequired({
+        amount: "100",
+        extensions: {
+          "payment-identifier": paymentIdentifierExtension({ required: true }),
+        },
+      }),
+    ]) {
+      const provider = new FakeFundingProvider();
+      const client = makeClient({ provider, store: new MemoryChannelStore() });
+      await expect(
+        client.createPayment(encodePaymentRequiredHeader(required), {
+          url: required.resource.url,
+        }),
+      ).rejects.toThrow("required for this retry");
+      expect(provider.exactPayments).toHaveLength(0);
+      expect(provider.deposits).toHaveLength(0);
+      expect(provider.topUps).toHaveLength(0);
+      expect(provider.sendCount).toBe(0);
+    }
+  });
+
+  it("rejects an unsupported identifier schema before exact or deposit adapter work", async () => {
+    const invalidExtension = {
+      info: { required: false },
+      schema: { oneOf: [{ type: "object" }] },
+    };
+    for (const required of [
+      {
+        ...makeExactRequired({ amount: "100" }),
+        extensions: { "payment-identifier": invalidExtension },
+      },
+      makeRequired({
+        amount: "100",
+        extensions: { "payment-identifier": invalidExtension },
+      }),
+    ] as PaymentRequired[]) {
+      const provider = new FakeFundingProvider();
+      const client = makeClient({ provider, store: new MemoryChannelStore() });
+      await expect(
+        client.createPayment(encodePaymentRequiredHeader(required), {
+          url: required.resource.url,
+        }),
+      ).rejects.toThrow("schema is invalid");
+      expect(provider.exactPayments).toHaveLength(0);
+      expect(provider.deposits).toHaveLength(0);
+      expect(provider.sendCount).toBe(0);
+    }
+  });
+
+  it("rejects a missing required identifier before an automatic top-up", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const sendsBefore = provider.sendCount;
+
+    await expect(
+      client.createPayment(
+        encodePaymentRequiredHeader(
+          makeRequired({
+            amount: "995",
+            minDepositSompi: "1005",
+            extensions: {
+              "payment-identifier": paymentIdentifierExtension({
+                required: true,
+              }),
+            },
+          }),
+        ),
+        { url: "https://api.example.test/data" },
+      ),
+    ).rejects.toThrow("required for this retry");
+
+    expect(provider.topUps).toHaveLength(0);
+    expect(provider.sendCount).toBe(sendsBefore);
   });
 
   it("passes payment identifiers through paidFetch retries", async () => {

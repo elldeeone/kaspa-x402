@@ -115,7 +115,7 @@ describe("batch v3 accepted requirements hash", () => {
     ).toThrow(message);
   });
 
-  it("validates and hashes one immutable requirements snapshot", () => {
+  it("rejects accessor-backed requirements before reading them", () => {
     const stateful = {
       ...accepted,
       extra: { ...accepted.extra },
@@ -132,15 +132,13 @@ describe("batch v3 accepted requirements hash", () => {
       get: () => (++timeoutReads === 1 ? "102000" : "500000000000"),
     });
 
-    const preimage = new TextDecoder().decode(
+    expect(() =>
       batchPaymentRequirementsPreimage(
         stateful as unknown as BatchPaymentRequirements,
       ),
-    );
-    expect(networkReads).toBe(1);
-    expect(timeoutReads).toBe(1);
-    expect(preimage).toContain('"network":"kaspa:testnet-10"');
-    expect(preimage).toContain('"refundTimeoutDaa":"102000"');
+    ).toThrow("accessor property");
+    expect(networkReads).toBe(0);
+    expect(timeoutReads).toBe(0);
   });
 });
 

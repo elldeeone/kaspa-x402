@@ -6,6 +6,7 @@ import {
   X402_VERSION,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
+  bindRequestHashToTrustedContext,
   channelId,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -21,6 +22,7 @@ import {
   readMcpPaymentResponse,
   sha256Hex,
   stableStringify,
+  trustedSecurityContextHash,
   voucherDigest,
   type BatchPaymentRequirements,
   type ChannelConfig,
@@ -31,6 +33,7 @@ import {
   type NetworkId,
   type PaymentPayload,
   type SettlementResponse,
+  type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
@@ -87,6 +90,55 @@ describe("direct-mode server", () => {
 
     expect(response.status).toBe(402);
     expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeTruthy();
+  });
+
+  it("derives batch challenge context from host-trusted claims", async () => {
+    const setup = makeServer();
+    const trustedSecurityContext = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+      handlerState: { policyVersion: 3 },
+    } satisfies TrustedSecurityContext;
+    const response = await setup.server.handlePaidRequest(
+      {
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        trustedSecurityContext,
+      },
+      async () => ({ body: "unreachable" }),
+    );
+    const required = decodePaymentRequiredHeader(
+      response.headers[PAYMENT_REQUIRED_HEADER]!,
+    );
+    const accepted = required.accepts[0] as BatchPaymentRequirements;
+    expect(accepted.extra.securityContextHash).toBe(
+      trustedSecurityContextHash(trustedSecurityContext),
+    );
+  });
+
+  it("accepts a deposit bound to host-trusted claims", async () => {
+    const setup = makeServer();
+    const trustedSecurityContext = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+    } satisfies TrustedSecurityContext;
+    const required = setup.server.buildPaymentRequired({
+      resource: RESOURCE,
+      trustedSecurityContext,
+    });
+    const payment = makeDepositPayment(setup, {
+      accepted: required.accepts[0] as BatchPaymentRequirements,
+    });
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { trustedSecurityContext }),
+      async () => ({ body: "context-bound", chargedAmount: "100" }),
+    );
+
+    expect(response.status).toBe(200);
+    expect(response.body).toBe("context-bound");
   });
 
   it("uses custom per-request amounts on unpaid requests", async () => {
@@ -658,6 +710,7 @@ describe("direct-mode server", () => {
       toolName: "download",
       arguments: { id: "same" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource: required.resource,
     });
     const payment = makeExactPayment(setup, { requestHash });
     let executions = 0;
@@ -718,6 +771,7 @@ describe("direct-mode server", () => {
       toolName: "download",
       arguments: { id: "cross-server" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource: required.resource,
     });
     const payment = makeExactPayment(serverA, { requestHash });
     const params = {
@@ -766,6 +820,73 @@ describe("direct-mode server", () => {
     expect(executionsB).toBe(0);
   });
 
+  it("rejects one exact MCP authorization at another custom resource", async () => {
+    const setup = makeServer({ amount: "100" });
+    const resourceA = {
+      url: "mcp://custom/download",
+      tenantResource: "tenant-a",
+    };
+    const resourceB = {
+      url: "mcp://custom/download",
+      tenantResource: "tenant-b",
+    };
+    const required = setup.server.buildPaymentRequired({
+      resource: resourceA,
+      amount: "100",
+      scheme: "exact",
+    });
+    const requestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
+      toolName: "download",
+      arguments: { id: "same" },
+      accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource: resourceA,
+    });
+    const payment = makeExactPayment(setup, { requestHash });
+    const params = {
+      name: "download",
+      arguments: { id: "same" },
+      _meta: { [MCP_PAYMENT_META_KEY]: payment },
+    };
+    let executions = 0;
+
+    const accepted = await handlePaidMcpToolCall(
+      setup.server,
+      {
+        audience: MCP_AUDIENCE,
+        name: "download",
+        resource: resourceA,
+        amount: "100",
+        scheme: "exact",
+      },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "paid A" }] } };
+      },
+    );
+    const substituted = await handlePaidMcpToolCall(
+      setup.server,
+      {
+        audience: MCP_AUDIENCE,
+        name: "download",
+        resource: resourceB,
+        amount: "100",
+        scheme: "exact",
+      },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "wrong" }] } };
+      },
+    );
+
+    expect(accepted.content?.[0]?.text).toBe("paid A");
+    expect(substituted.isError).toBe(true);
+    expect(readMcpPaymentRequired(substituted)).toBeDefined();
+    expect(executions).toBe(1);
+  });
+
   it("returns a fresh MCP challenge when payer authorization targets another call", async () => {
     const setup = makeServer({ amount: "100" });
     const firstRequired = setup.server.buildPaymentRequired({
@@ -778,6 +899,7 @@ describe("direct-mode server", () => {
       toolName: "download",
       arguments: { id: "first" },
       accepted: firstRequired.accepts[0] as ExactPaymentRequirements,
+      resource: firstRequired.resource,
     });
     const payment = makeExactPayment(setup, { requestHash: firstHash });
 
@@ -833,6 +955,7 @@ describe("direct-mode server", () => {
       toolName: "download",
       arguments: { id: "fail" },
       accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource: required.resource,
     });
     const payment = makeExactPayment(setup, { requestHash });
     const settlement: SettlementResponse = {
@@ -1069,6 +1192,40 @@ describe("direct-mode server", () => {
 
     expect(replay.status).toBe(200);
     expect(replay.body).toBe("download");
+    expect(executed).toBe(false);
+  });
+
+  it("never returns an exact cached response across trusted principals", async () => {
+    const setup = makeServer();
+    const principalA = {
+      principal: "user:a",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+    } satisfies TrustedSecurityContext;
+    const principalB = { ...principalA, principal: "user:b" };
+    const accepted = makeExactPayment(setup)
+      .accepted as ExactPaymentRequirements;
+    const requestHash = bindRequestHashToTrustedContext(
+      testRequestFingerprint(accepted),
+      principalA,
+    );
+    const payment = makeExactPayment(setup, { requestHash });
+    const first = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { trustedSecurityContext: principalA }),
+      async () => ({ body: "principal A secret" }),
+    );
+    let executed = false;
+    const crossPrincipal = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { trustedSecurityContext: principalB }),
+      async () => {
+        executed = true;
+        return { body: "wrong" };
+      },
+    );
+
+    expect(first.status).toBe(200);
+    expect(crossPrincipal.status).toBe(402);
+    expect(crossPrincipal.body).not.toBe("principal A secret");
     expect(executed).toBe(false);
   });
 
@@ -2004,6 +2161,51 @@ describe("direct-mode server", () => {
       ...makeAdditivePayment(accepted, { requestHash }),
       ...paymentIdentifierExtension(paymentIdentifier),
     };
+    if (payment.payload.type !== "exact-transaction") {
+      throw new Error("expected exact payment");
+    }
+    const transactionArtifact = {
+      id: EXACT_TX_ID,
+      version: 1,
+      inputs: [
+        {
+          previousOutpoint: { transactionId: "71".repeat(32), index: 0 },
+          sequence: "0",
+          sigOpCount: 0,
+          computeBudget: 0,
+          signatureScript: "00",
+          utxo: { amount: "100", scriptPublicKey: "000000" },
+        },
+        {
+          previousOutpoint: { transactionId: "72".repeat(32), index: 1 },
+          sequence: "0",
+          sigOpCount: 0,
+          computeBudget: 10,
+          signatureScript: "00",
+          utxo: { amount: "100", scriptPublicKey: "000000" },
+        },
+      ],
+      outputs: [
+        { value: "100", scriptPublicKey: "000000", covenant: null },
+      ],
+      lockTime: "0",
+      subnetworkId: "00".repeat(20),
+      gas: "0",
+      payload: "",
+      storageMass: "0",
+    };
+    payment.payload.transaction = JSON.stringify(transactionArtifact);
+    const representationVariant = structuredClone(payment);
+    if (representationVariant.payload.type !== "exact-transaction") {
+      throw new Error("expected exact payment");
+    }
+    representationVariant.payload.transaction = JSON.stringify(
+      { ignored: true, ...transactionArtifact },
+      null,
+      2,
+    );
+    representationVariant.payload.payerAddress =
+      "kaspatest:receipt-only-variant";
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
@@ -2014,7 +2216,10 @@ describe("direct-mode server", () => {
       },
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(representationVariant, {
+        paymentScheme: "exact",
+        requestHash,
+      }),
       async () => {
         executions += 1;
         return { body: "wrong" };
@@ -2025,7 +2230,9 @@ describe("direct-mode server", () => {
     expect(second.status).toBe(200);
     expect(second.body).toBe("cached");
     expect(executions).toBe(1);
-    expect(setup.chain.sentTransactions).toEqual([EXACT_TRANSACTION_ARTIFACT]);
+    expect(setup.chain.sentTransactions).toEqual([
+      JSON.stringify(transactionArtifact),
+    ]);
   });
 
   it("returns cached accepted exact replays after challenge expiry", async () => {
@@ -2365,7 +2572,7 @@ describe("direct-mode server", () => {
     expect(calls).toBe(0);
   });
 
-  it("returns a controlled 402 when request fingerprinting needs an explicit hash", async () => {
+  it("returns a controlled 400 for a non-JSON direct request body", async () => {
     const setup = makeServer();
     const payment = makeExactPayment(setup);
 
@@ -2377,8 +2584,8 @@ describe("direct-mode server", () => {
       async () => ({ body: "wrong" }),
     );
 
-    expect(response.status).toBe(402);
-    expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeTruthy();
+    expect(response.status).toBe(400);
+    expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeUndefined();
   });
 
   it("accepts an initial deposit-voucher and commits channel state after handler success", async () => {
@@ -2825,6 +3032,40 @@ describe("direct-mode server", () => {
     const stored = await requireChannel(setup.store, payment.channelId);
     expect(stored.chargedCumulativeAmount).toBe("100");
     expect(stored.signedMaxClaimable).toBe("100");
+  });
+
+  it("returns one cached response for batch representation variants", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    let executions = 0;
+    const first = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      async () => {
+        executions += 1;
+        return { body: "cached", chargedAmount: "100" };
+      },
+    );
+    const variant = structuredClone(payment.payload);
+    if (variant.payload.type !== "deposit-voucher") {
+      throw new Error("expected deposit voucher");
+    }
+    variant.payload.activeScriptPublicKey =
+      variant.payload.activeScriptPublicKey.toUpperCase();
+    variant.payload.untrusted = { ignored: true };
+    variant.untrusted = "ignored";
+    variant.extensions = { untrusted: { ignored: true } };
+    const replay = await setup.server.handlePaidRequest(
+      requestWithPayment(variant, { requestHash: "aa".repeat(32) }),
+      async () => {
+        executions += 1;
+        return { body: "wrong" };
+      },
+    );
+
+    expect(first.status).toBe(200);
+    expect(replay.status).toBe(200);
+    expect(replay.body).toBe("cached");
+    expect(executions).toBe(1);
   });
 
   it("keeps stale batch vouchers corrective after a later commitment", async () => {
@@ -3280,6 +3521,30 @@ describe("direct-mode server", () => {
       response.headers[PAYMENT_REQUIRED_HEADER],
     );
     expect(corrective.accepts[0]?.amount).toBe("75");
+  });
+
+  it("preserves host-trusted context in corrective batch offers", async () => {
+    const setup = makeServer();
+    const trustedSecurityContext = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+    } satisfies TrustedSecurityContext;
+    const payment = makeDepositPayment(setup, { voucherAmount: "99" });
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { trustedSecurityContext }),
+      async () => ({ body: "wrong" }),
+    );
+
+    expect(response.status).toBe(402);
+    const corrective = decodePaymentRequiredHeader(
+      response.headers[PAYMENT_REQUIRED_HEADER],
+    );
+    const accepted = corrective.accepts[0] as BatchPaymentRequirements;
+    expect(accepted.extra.securityContextHash).toBe(
+      trustedSecurityContextHash(trustedSecurityContext),
+    );
   });
 
   it("rejects voucher-only payments when stored channel terms no longer match the server", async () => {
@@ -4951,6 +5216,7 @@ function requestWithPayment(
     paymentScheme?: "exact" | "batch-settlement";
     paymentSchemes?: readonly ("exact" | "batch-settlement")[];
     body?: unknown;
+    trustedSecurityContext?: TrustedSecurityContext;
   } = {},
 ) {
   let requestPayment = paymentPayload;
@@ -4969,10 +5235,13 @@ function requestWithPayment(
     const unsigned = {
       ...requestPayment.payload.presentation,
       requestFingerprint:
-        options.requestHash ??
-        testBatchRequestFingerprint(
-          requestPayment.accepted as BatchPaymentRequirements,
-          options.body,
+        bindRequestHashToTrustedContext(
+          options.requestHash ??
+            testBatchRequestFingerprint(
+              requestPayment.accepted as BatchPaymentRequirements,
+              options.body,
+            ),
+          options.trustedSecurityContext,
         ),
       paymentIdentifier: testPaymentIdentifier(requestPayment),
     };
@@ -4991,6 +5260,7 @@ function requestWithPayment(
     paymentScheme: options.paymentScheme,
     paymentSchemes: options.paymentSchemes,
     requestHash: options.requestHash,
+    trustedSecurityContext: options.trustedSecurityContext,
     headers: {
       [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(requestPayment),
     },

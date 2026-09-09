@@ -4,6 +4,7 @@ import {
   X402_VERSION,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
+  bindRequestHashToTrustedContext,
   channelId,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
@@ -21,6 +22,7 @@ import {
   type Hash32Hex,
   type NetworkId,
   type PaymentPayload,
+  type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import {
   deriveEscrowAddress,
@@ -385,6 +387,42 @@ describe("direct-mode facilitator", () => {
     });
   });
 
+  it("settles exact payments with trusted context bound exactly once", async () => {
+    const { facilitator, server } = makeFacilitator();
+    const trustedSecurityContext = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+    } satisfies TrustedSecurityContext;
+    const requestFingerprint = bindRequestHashToTrustedContext(
+      REQUEST_HASH,
+      trustedSecurityContext,
+    );
+    const paymentPayload = makeExactPayment(server);
+    if (paymentPayload.payload.type !== "exact-transaction") {
+      throw new Error("expected exact payment");
+    }
+    paymentPayload.payload.requestHash = requestFingerprint;
+    paymentPayload.payload.authorization = fakeExactAuthorization(
+      paymentPayload.accepted as ExactPaymentRequirements,
+      requestFingerprint,
+    );
+    const request = {
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements: paymentPayload.accepted,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    };
+
+    await expect(
+      facilitator.verify(request, trustedSecurityContext),
+    ).resolves.toMatchObject({ isValid: true });
+    await expect(
+      facilitator.settle(request, trustedSecurityContext),
+    ).resolves.toMatchObject({ success: true, transaction: EXACT_TX_ID });
+  });
+
   it("settles batch deposit vouchers at the payer-approved fixed charge", async () => {
     const { facilitator, server, chain } = makeFacilitator();
     const paymentPayload = makeDepositPayment(server, chain);
@@ -410,6 +448,50 @@ describe("direct-mode facilitator", () => {
       authorizedCumulativeAmount: "100",
       claimedCumulativeAmount: "0",
     });
+  });
+
+  it("settles batch payments with trusted context bound exactly once", async () => {
+    const { facilitator, server, chain } = makeFacilitator();
+    const trustedSecurityContext = {
+      principal: "user:alpha",
+      tenant: "tenant:one",
+      authorizationScopes: ["download"],
+    } satisfies TrustedSecurityContext;
+    const requestFingerprint = bindRequestHashToTrustedContext(
+      REQUEST_HASH,
+      trustedSecurityContext,
+    );
+    const accepted = server.buildPaymentRequired({
+      resource: RESOURCE,
+      scheme: "batch-settlement",
+      trustedSecurityContext,
+    }).accepts[0] as BatchPaymentRequirements;
+    const paymentPayload = makeDepositPayment(server, chain);
+    if (paymentPayload.payload.type !== "deposit-voucher") {
+      throw new Error("expected deposit payment");
+    }
+    paymentPayload.accepted = accepted;
+    paymentPayload.payload.presentation = signBatchPresentation({
+      accepted,
+      channelId: paymentPayload.payload.channelId,
+      covenantId: paymentPayload.payload.voucher.covenantId,
+      voucher: paymentPayload.payload.voucher,
+      requestFingerprint,
+    });
+    const request = {
+      x402Version: X402_VERSION,
+      paymentPayload,
+      paymentRequirements: accepted,
+      resource: RESOURCE,
+      requestHash: REQUEST_HASH,
+    };
+
+    await expect(
+      facilitator.verify(request, trustedSecurityContext),
+    ).resolves.toMatchObject({ isValid: true });
+    await expect(
+      facilitator.settle(request, trustedSecurityContext),
+    ).resolves.toMatchObject({ success: true });
   });
 
   it("rejects malformed facilitator requests at the HTTP adapter boundary", async () => {
@@ -1298,10 +1380,11 @@ function signBatchPresentation(input: {
   channelId: Hash32Hex;
   covenantId: Hash32Hex;
   voucher: { authorizedCumulativeAmount: string };
+  requestFingerprint?: Hash32Hex;
 }) {
   const unsigned = {
     version: "kaspa-x402-batch-presentation-v1" as const,
-    requestFingerprint: REQUEST_HASH,
+    requestFingerprint: input.requestFingerprint ?? REQUEST_HASH,
     acceptedRequirementsHash: batchPaymentRequirementsHash(input.accepted),
     securityContextHash: input.accepted.extra.securityContextHash,
     channelId: input.channelId,

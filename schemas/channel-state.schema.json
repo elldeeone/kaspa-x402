@@ -53,9 +53,12 @@
     },
     "claimedCumulativeAmount": {
       "$ref": "#/$defs/batchAmount"
+    },
+    "status": {
+      "const": "open"
     }
   },
-  "additionalProperties": true,
+  "additionalProperties": false,
   "$defs": {
     "batchAmount": {
       "type": "string",

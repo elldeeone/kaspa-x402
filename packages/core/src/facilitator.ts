@@ -1,4 +1,5 @@
 import { X402_VERSION } from "./constants.js";
+import { assertJsonResourceBudget } from "./resource-budget.js";
 import type {
   Hash32Hex,
   JsonRecord,
@@ -47,6 +48,11 @@ export type SettleResponse = SettlementResponse;
 export function isFacilitatorRequest(
   value: unknown,
 ): value is FacilitatorRequest {
+  try {
+    assertJsonResourceBudget(value, { label: "facilitator request" });
+  } catch {
+    return false;
+  }
   if (!isRecord(value)) return false;
   const record = value as {
     x402Version?: unknown;

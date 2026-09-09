@@ -118,7 +118,7 @@
           "$ref": "#/$defs/hash32"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "channelId": {
       "$ref": "#/$defs/hash32"
@@ -164,7 +164,7 @@
           "$ref": "#/$defs/signature64"
         }
       },
-      "additionalProperties": true
+      "additionalProperties": false
     },
     "presentation": {
       "type": "object",

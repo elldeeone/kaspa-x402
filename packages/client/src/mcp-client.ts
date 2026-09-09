@@ -1,4 +1,5 @@
 import {
+  assertJsonResourceBudget,
   encodePaymentRequiredEnvelopeHeader,
   mcpToolCallFingerprint,
   readMcpPaymentRequired,
@@ -7,6 +8,7 @@ import {
   type Hash32Hex,
   type McpToolCallParams,
   type McpToolResult,
+  type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
 import { DirectModeClient } from "./direct-client.js";
@@ -22,6 +24,8 @@ export interface PaidMcpToolCallOptions {
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
   origin?: string;
+  /** Host-derived normalized claims, never raw credentials. */
+  trustedSecurityContext?: TrustedSecurityContext;
   maxPaymentRetries?: number;
 }
 
@@ -37,6 +41,7 @@ export async function paidMcpToolCall(
   params: McpToolCallParams,
   options: PaidMcpToolCallOptions,
 ): Promise<PaidMcpToolCallResult> {
+  assertJsonResourceBudget(params, { label: "MCP tool call parameters" });
   if (
     options.maxPaymentRetries !== undefined &&
     options.maxPaymentRetries !== 0
@@ -59,12 +64,15 @@ export async function paidMcpToolCall(
       toolName: params.name,
       arguments: params.arguments,
       accepted: parsed.accepted,
+      resource: paymentRequired.resource,
+      trustedSecurityContext: options.trustedSecurityContext,
     });
   const payment = await client.createPayment(header, {
     url: paymentRequired.resource.url,
     origin: options.origin ?? options.audience,
     paymentIdentifier: options.paymentIdentifier,
     requestHash,
+    trustedSecurityContext: options.trustedSecurityContext,
   });
   const retryResult = await callTool(
     withMcpPaymentPayload(params, payment.paymentPayload),

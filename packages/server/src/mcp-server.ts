@@ -1,4 +1,5 @@
 import {
+  assertJsonResourceBudget,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
@@ -14,6 +15,7 @@ import {
   type PaymentRequired,
   type ResourceInfo,
   type SompiString,
+  type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import { DirectModeServer } from "./direct-server.js";
 import {
@@ -31,6 +33,8 @@ export interface PaidMcpToolOptions {
   resource?: ResourceInfo;
   amount?: SompiString;
   scheme?: "exact" | "batch-settlement";
+  /** Host-derived normalized claims, never raw credentials. */
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export interface PaidMcpToolHandlerContext extends HandlerContext {
@@ -50,6 +54,16 @@ export async function handlePaidMcpToolCall(
   params: McpToolCallParams,
   handler: PaidMcpToolHandler,
 ): Promise<McpToolResult> {
+  try {
+    assertJsonResourceBudget(params, { label: "MCP tool call parameters" });
+    if (options.trustedSecurityContext) {
+      assertJsonResourceBudget(options.trustedSecurityContext, {
+        label: "MCP trusted security context",
+      });
+    }
+  } catch {
+    return mcpErrorResult("invalid_payload");
+  }
   const resource = options.resource ?? mcpToolResource({ name: options.name });
   if (params.name !== options.name) {
     return mcpErrorResult(`MCP tool name mismatch: expected ${options.name}`);
@@ -70,6 +84,7 @@ export async function handlePaidMcpToolCall(
         },
         paymentAmount: options.amount,
         paymentScheme: options.scheme,
+        trustedSecurityContext: options.trustedSecurityContext,
       },
       async () => ({ body: mcpErrorResult("unreachable") }),
     );
@@ -89,6 +104,8 @@ export async function handlePaidMcpToolCall(
         toolName: options.name,
         arguments: params.arguments,
         accepted: paymentPayload.accepted,
+        resource,
+        trustedSecurityContext: options.trustedSecurityContext,
       })
     : undefined;
 
@@ -104,6 +121,7 @@ export async function handlePaidMcpToolCall(
       paymentAmount: options.amount,
       paymentScheme: options.scheme,
       requestHash,
+      trustedSecurityContext: options.trustedSecurityContext,
       headers: paymentPayload ? { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload) } : undefined,
     },
     async (context) => {

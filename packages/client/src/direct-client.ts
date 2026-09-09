@@ -1,10 +1,12 @@
 import {
   X402_VERSION,
   assertBatchVoucherReserve,
+  assertJsonResourceBudget,
   assertMainnetAllowed,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
   batchLaneAccounting,
+  bindRequestHashToTrustedContext,
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
@@ -19,6 +21,10 @@ import {
   requiredBatchVoucherAmount,
   sha256Hex,
   stableStringify,
+  trustedSecurityContextHash,
+  validateKaspaPaymentRequirement,
+  validatePaymentIdentifierInfo,
+  validatePaymentRequired,
   validatePaymentRetry,
   voucherDigest,
   voucherPreimageHex,
@@ -123,12 +129,18 @@ export class DirectModeClient {
   ): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
     const parsed = this.selectPaymentRequirement(header);
+    const requestContext = contextWithRequestHash(context, parsed.accepted);
+    preflightSelectedPayment(
+      parsed.paymentRequired,
+      parsed.accepted,
+      requestContext,
+    );
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
       return this.#createExactPayment(
         parsed.accepted,
         parsed.paymentRequired,
-        contextWithRequestHash(context, parsed.accepted),
+        requestContext,
       );
     }
     if (parsed.accepted.scheme !== "batch-settlement") {
@@ -141,7 +153,6 @@ export class DirectModeClient {
     const origin = context.origin ?? originForUrl(context.url);
     const resourceUrl = parsed.paymentRequired.resource.url;
     const accepted = parsed.accepted;
-    const requestContext = contextWithRequestHash(context, accepted);
     assertPaymentDestinationPolicy(this.#options, {
       origin,
       payTo: accepted.payTo,
@@ -226,6 +237,7 @@ export class DirectModeClient {
       requestHash: init.requestHash,
       method: init.method,
       body: init.body,
+      trustedSecurityContext: init.trustedSecurityContext,
     });
     const retryInit: HttpRequestInitLike = {
       ...requestInit,
@@ -2116,6 +2128,10 @@ function paymentIdentifierExtensions(
       ? extension.schema
       : undefined;
   const required = isRecord(info) && info.required === true;
+  if (isRecord(info)) {
+    const advertised = validatePaymentIdentifierInfo(info, schema);
+    if (!advertised.ok) throw advertised.error;
+  }
   if (required && !context.paymentIdentifier) {
     throw new KaspaX402Error(
       "missing_kaspa_payment_identifier",
@@ -2123,7 +2139,7 @@ function paymentIdentifierExtensions(
     );
   }
   if (!context.paymentIdentifier) return undefined;
-  return {
+  const extensions = {
     "payment-identifier": paymentIdentifierExtension(
       {
         ...(isRecord(info) ? info : {}),
@@ -2132,6 +2148,150 @@ function paymentIdentifierExtensions(
       },
       schema,
     ),
+  };
+  const intended = validatePaymentIdentifierInfo(
+    extensions["payment-identifier"].info,
+    extensions["payment-identifier"].schema,
+  );
+  if (!intended.ok) throw intended.error;
+  return extensions;
+}
+
+function preflightSelectedPayment(
+  paymentRequired: CreatePaymentResult["paymentRequired"],
+  accepted: PaymentRequirements,
+  context: PaymentRequestContext,
+): void {
+  const requiredValidation = validatePaymentRequired(paymentRequired);
+  if (!requiredValidation.ok) throw requiredValidation.error;
+  const acceptedValidation = validateKaspaPaymentRequirement(accepted);
+  if (!acceptedValidation.ok) throw acceptedValidation.error;
+  const acceptedIdentity = stableStringify(accepted);
+  if (
+    !paymentRequired.accepts.some(
+      (offered) => stableStringify(offered) === acceptedIdentity,
+    )
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_accepted",
+      "selected payment requirements are not present in the challenge",
+    );
+  }
+  if (!context.requestHash) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "selected payment preflight requires a request hash",
+    );
+  }
+  hexToBytes(context.requestHash, {
+    expectedLength: 32,
+    errorCode: "invalid_kaspa_x402_payload",
+    label: "request hash",
+  });
+  if (
+    context.trustedSecurityContext &&
+    accepted.scheme === "batch-settlement" &&
+    accepted.extra.securityContextHash.toLowerCase() !==
+      trustedSecurityContextHash(context.trustedSecurityContext)
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "batch challenge security context does not match the trusted request context",
+    );
+  }
+  const extensions = paymentIdentifierExtensions(paymentRequired, context);
+  assertJsonResourceBudget(
+    {
+      version: "kaspa-x402-prospective-payment-intent-v1",
+      requestUrl: context.url,
+      origin: context.origin ?? null,
+      resource: paymentRequired.resource,
+      accepted,
+      requestHash: context.requestHash,
+      method: context.method ?? "GET",
+      body: context.body ?? null,
+      extensions: extensions ?? {},
+      securityContextHash: context.trustedSecurityContext
+        ? trustedSecurityContextHash(context.trustedSecurityContext)
+        : null,
+    },
+    { label: "prospective payment intent" },
+  );
+  const intendedPayload = intendedPaymentPayloadForPreflight(
+    accepted,
+    context,
+    extensions,
+  );
+  const retryValidation = validatePaymentRetry({
+    paymentRequired,
+    paymentPayload: intendedPayload,
+  });
+  if (!retryValidation.ok) throw retryValidation.error;
+}
+
+function intendedPaymentPayloadForPreflight(
+  accepted: PaymentRequirements,
+  context: PaymentRequestContext,
+  extensions: PaymentPayload["extensions"],
+): PaymentPayload {
+  const zeroHash = "00".repeat(32);
+  const nonzeroHash = `01${"00".repeat(31)}`;
+  const zeroSignature = "00".repeat(64);
+  if (accepted.scheme === "exact") {
+    return {
+      x402Version: X402_VERSION,
+      accepted,
+      payload: {
+        type: "exact-transaction",
+        profile: accepted.extra.profile,
+        ...(accepted.extra.profile === "additive" && accepted.extra.challengeId
+          ? { challengeId: accepted.extra.challengeId }
+          : {}),
+        transaction: "{}",
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        paymentOutputIndex: accepted.extra.paymentOutputIndex ?? 0,
+        requestHash: context.requestHash!,
+        authorization: {
+          version: "kaspa-x402-exact-request-authorization-v1",
+          inputIndex: 0,
+          expiresAt: "1970-01-01T00:00:00.000Z",
+          digest: zeroHash,
+          signature: zeroSignature,
+        },
+      },
+      ...(extensions ? { extensions } : {}),
+    };
+  }
+  return {
+    x402Version: X402_VERSION,
+    accepted,
+    payload: {
+      type: "voucher",
+      channelId: zeroHash,
+      clientPublicKey: zeroHash,
+      fundingOutpoint: { txid: zeroHash, index: 0 },
+      activeScriptPublicKey: "000000",
+      voucher: {
+        covenantId: nonzeroHash,
+        authorizedCumulativeAmount: accepted.amount,
+        signature: zeroSignature,
+      },
+      presentation: {
+        version: "kaspa-x402-batch-presentation-v1",
+        requestFingerprint: context.requestHash!,
+        acceptedRequirementsHash: batchPaymentRequirementsHash(accepted),
+        securityContextHash: accepted.extra.securityContextHash,
+        channelId: zeroHash,
+        covenantId: nonzeroHash,
+        voucherDigest: zeroHash,
+        paymentIdentifier: context.paymentIdentifier ?? null,
+        nonce: zeroHash,
+        expiresAt: "1970-01-01T00:00:00.000Z",
+        digest: zeroHash,
+        signature: zeroSignature,
+      },
+    },
+    ...(extensions ? { extensions } : {}),
   };
 }
 
@@ -2412,11 +2572,14 @@ function contextWithRequestHash(
   context: PaymentRequestContext,
   accepted: PaymentRequirements,
 ): PaymentRequestContext {
+  const requestHash =
+    context.requestHash ?? fingerprintHttpRequest(context.url, context, accepted);
   return {
     ...context,
-    requestHash:
-      context.requestHash ??
-      fingerprintHttpRequest(context.url, context, accepted),
+    requestHash: bindRequestHashToTrustedContext(
+      requestHash,
+      context.trustedSecurityContext,
+    ),
   };
 }
 

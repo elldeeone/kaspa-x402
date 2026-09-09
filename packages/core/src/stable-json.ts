@@ -1,4 +1,7 @@
+import { assertJsonResourceBudget } from "./resource-budget.js";
+
 export function stableStringify(value: unknown): string {
+  assertJsonResourceBudget(value, { label: "canonical JSON value" });
   return stringifyJson(value, "$");
 }
 

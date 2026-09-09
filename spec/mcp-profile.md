@@ -71,13 +71,40 @@ MCP helpers should derive the payment request fingerprint from:
 - tool name;
 - canonical tool arguments;
 - selected `PaymentRequirements`.
+- the complete canonical challenged `ResourceInfo`, including `url` and any
+  extension fields;
+- the canonical host-derived trusted security-context hash, or `null` when the
+  integration has no such context.
 
 The audience prevents one server from accepting an exact authorization created
 for an otherwise identical tool and payment offer on another server. Changing
 the audience MUST change the fingerprint and invalidate the request
 authorization. The current fingerprint domain is
-`kaspa:x402:mcp-tool-call:v2`; v1 fingerprints without an audience are not
-accepted by this profile.
+`kaspa:x402:mcp-tool-call:v3`; v1 fingerprints without an audience and v2
+fingerprints without resource and caller-context binding are not accepted by
+this profile. Client and server MUST hash the exact same resource object.
+Resource properties are canonicalized by JSON key order, but no admitted
+extension property is discarded. Schema-known hexadecimal requirement fields
+are normalized to lowercase before hashing.
+
+The v3 canonical preimage is:
+
+```json
+{
+  "scope": "kaspa:x402:mcp-tool-call:v3",
+  "audience": "<trusted server audience>",
+  "toolName": "<tool name>",
+  "arguments": {},
+  "paymentRequirementsHash": "<sha256 of canonical normalized requirements>",
+  "resource": { "url": "<challenged resource>" },
+  "securityContextHash": "<trusted context hash or null>"
+}
+```
+
+The trusted context is supplied by the authenticated host integration, never
+from tool arguments or payment metadata. Its canonical form binds principal,
+tenant, authorization scopes, and handler-relevant scalar state while the
+fingerprint stores only the hash, not raw credentials.
 
 Scheme-specific payment identity is enforced by the normal payment payload hash and settlement scope:
 

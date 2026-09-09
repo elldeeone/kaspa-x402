@@ -9,6 +9,7 @@ import {
   type SettlementResponse,
   type SupportedKind,
   type SupportedResponse,
+  type TrustedSecurityContext,
   type VerifyResponse,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
@@ -30,6 +31,7 @@ export interface FacilitatorConfig {
 export interface FacilitatorActionContext {
   facilitator: DirectModeFacilitator;
   server: DirectModeServer;
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export type FacilitatorActionSettler = (
@@ -41,6 +43,8 @@ export interface FacilitatorHttpRequest {
   method: string;
   path: string;
   body?: unknown;
+  /** Host-derived normalized claims, never a value read from body. */
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export interface FacilitatorHttpResponse {
@@ -67,14 +71,19 @@ export class DirectModeFacilitator {
     };
   }
 
-  async verify(input: unknown): Promise<VerifyResponse> {
+  async verify(
+    input: unknown,
+    trustedSecurityContext?: TrustedSecurityContext,
+  ): Promise<VerifyResponse> {
     if (!isFacilitatorRequest(input)) {
       return invalidVerify("invalid_kaspa_x402_payload");
     }
     const unsupportedReason = this.#unsupportedReason(input, "verify");
     if (unsupportedReason) return invalidVerify(unsupportedReason);
     try {
-      const verification = await this.#config.server.verifyPayment(input);
+      const verification = await this.#config.server.verifyPayment(
+        facilitatorServerOptions(input, trustedSecurityContext),
+      );
       return {
         isValid: true,
         ...(verification.payer ? { payer: verification.payer } : {}),
@@ -85,7 +94,10 @@ export class DirectModeFacilitator {
     }
   }
 
-  async settle(input: unknown): Promise<SettleResponse> {
+  async settle(
+    input: unknown,
+    trustedSecurityContext?: TrustedSecurityContext,
+  ): Promise<SettleResponse> {
     if (!isFacilitatorRequest(input)) {
       return invalidSettlement("invalid_kaspa_x402_payload");
     }
@@ -100,13 +112,19 @@ export class DirectModeFacilitator {
       const actionSettler = this.#actionSettler(mode);
       if (!actionSettler) return invalidSettlement("unsupported_kaspa_facilitator_action", network);
       try {
-        return await actionSettler(input, { facilitator: this, server: this.#config.server });
+        return await actionSettler(input, {
+          facilitator: this,
+          server: this.#config.server,
+          ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+        });
       } catch (error) {
         return invalidSettlement(errorCode(error), network);
       }
     }
     try {
-      return await this.#config.server.settlePayment(input);
+      return await this.#config.server.settlePayment(
+        facilitatorServerOptions(input, trustedSecurityContext),
+      );
     } catch (error) {
       return invalidSettlement(errorCode(error), network);
     }
@@ -130,6 +148,19 @@ export class DirectModeFacilitator {
   }
 }
 
+function facilitatorServerOptions(
+  input: FacilitatorRequest,
+  trustedSecurityContext?: TrustedSecurityContext,
+) {
+  return {
+    paymentPayload: input.paymentPayload,
+    paymentRequirements: input.paymentRequirements,
+    ...(input.resource ? { resource: input.resource } : {}),
+    ...(input.requestHash ? { requestHash: input.requestHash } : {}),
+    ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+  };
+}
+
 export async function handleFacilitatorRequest(
   facilitator: DirectModeFacilitator,
   request: FacilitatorHttpRequest,
@@ -144,14 +175,20 @@ export async function handleFacilitatorRequest(
     if (!isFacilitatorRequest(request.body)) {
       return jsonResponse(400, invalidVerify("invalid_kaspa_x402_payload"));
     }
-    const body = await facilitator.verify(request.body);
+    const body = await facilitator.verify(
+      request.body,
+      request.trustedSecurityContext,
+    );
     return jsonResponse(200, body);
   }
   if (method === "POST" && path === "/settle") {
     if (!isFacilitatorRequest(request.body)) {
       return jsonResponse(400, invalidSettlement("invalid_kaspa_x402_payload"));
     }
-    const body = await facilitator.settle(request.body);
+    const body = await facilitator.settle(
+      request.body,
+      request.trustedSecurityContext,
+    );
     return jsonResponse(200, body);
   }
   return jsonResponse(404, { error: "not_found" });

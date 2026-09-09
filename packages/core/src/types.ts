@@ -220,6 +220,7 @@ export interface ChannelState extends JsonRecord {
   authorizedCumulativeAmount: SompiString;
   /** On-chain lifetime gross amount removed from escrow, including claim fees. */
   claimedCumulativeAmount: SompiString;
+  status?: "open";
 }
 
 export interface ExactTransactionPayload extends JsonRecord {

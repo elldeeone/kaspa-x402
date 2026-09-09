@@ -3,6 +3,7 @@ import {
   KASPA_LOCK_TIME_THRESHOLD,
   decodePaymentRequiredEnvelopeHeader,
   narrowPaymentRequiredEnvelope,
+  normalizePaymentRequirementsHex,
   parseBatchLaneAmount,
   parseSompiString,
   type FundingOutpoint,
@@ -130,7 +131,12 @@ function narrowKaspaPaymentRequired(
 
   const narrowed = narrowPaymentRequiredEnvelope(paymentRequired);
   if (!narrowed.ok) throw narrowed.error;
-  return narrowed.value.paymentRequired;
+  return {
+    ...narrowed.value.paymentRequired,
+    accepts: narrowed.value.paymentRequired.accepts.map(
+      normalizePaymentRequirementsHex,
+    ),
+  };
 }
 
 function isSupportedKaspaRequirement(

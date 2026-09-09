@@ -23,6 +23,7 @@ import type {
   SignatureHex,
   SompiString,
   SupportedKind,
+  TrustedSecurityContext,
   Voucher,
   VoucherPayload,
 } from "@kaspa-x402/core";
@@ -777,6 +778,8 @@ export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;
   /** Hash of the authenticated tenant/session/capability context for this challenge. */
   securityContextHash?: Hash32Hex;
+  /** Host-derived normalized claims used to derive securityContextHash. */
+  trustedSecurityContext?: TrustedSecurityContext;
   amount?: SompiString;
   scheme?: "exact" | "batch-settlement";
   schemes?: readonly ("exact" | "batch-settlement")[];
@@ -790,6 +793,7 @@ export interface DirectPaymentVerificationOptions {
   paymentRequirements: PaymentPayload["accepted"];
   resource?: ResourceInfo;
   requestHash?: Hash32Hex;
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export interface DirectPaymentVerification {
@@ -811,6 +815,8 @@ export interface PaidRequest {
   paymentScheme?: "exact" | "batch-settlement";
   paymentSchemes?: readonly ("exact" | "batch-settlement")[];
   requestHash?: Hash32Hex;
+  /** Host-derived normalized claims. Never pass raw cookies or bearer tokens. */
+  trustedSecurityContext?: TrustedSecurityContext;
 }
 
 export type HeaderSource =

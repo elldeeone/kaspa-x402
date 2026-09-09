@@ -1,5 +1,6 @@
 import {
   decodePaymentRequiredHeader,
+  decodeBoundedJsonHeader,
   decodePaymentSignatureHeader,
   ESCROW_BINDING_ID,
   ESCROW_TEMPLATE_ID,
@@ -1167,7 +1168,10 @@ function unsafeDecodePaymentHeader(
     };
   } catch {
     try {
-      return JSON.parse(atob(header)) as { accepted?: { scheme?: unknown } };
+      const decoded = decodeBoundedJsonHeader(header);
+      return decoded && typeof decoded === "object"
+        ? (decoded as { accepted?: { scheme?: unknown } })
+        : undefined;
     } catch {
       return undefined;
     }
