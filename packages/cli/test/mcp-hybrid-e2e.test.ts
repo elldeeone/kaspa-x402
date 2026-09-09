@@ -118,7 +118,8 @@ describe("MCP hybrid settlement failure E2E", () => {
     );
     expect(result.result._meta?.[MCP_PAYMENT_RESPONSE_META_KEY]).toBeTruthy();
     expect(settlement?.success).toBe(false);
-    expect(result.settlement?.chargedAmount).toBe("0");
+    expect(result.settlement?.chargedAmount).toBe("100");
+    expect(result.settlement?.pending).toBe(true);
     expect(result.payment?.accepted.scheme).toBe("exact");
     expect(result.payment?.paymentPayload.payload.requestHash).toBe(
       expectedRequestHash,
@@ -154,13 +155,16 @@ function makeExactRequired(): PaymentRequired {
 }
 
 function exactFundingProvider(): FundingProvider {
+  const attempts = new Map<
+    string,
+    { intentHash: string; result: Awaited<ReturnType<NonNullable<FundingProvider["payExactTransaction"]>>> }
+  >();
   return {
     networkId: "kaspa:testnet-10",
     sourceKind: "hot-wallet",
     async getPublicIdentity() {
       return { address: "kaspatest:refund" };
     },
-    async authorizeExactPayment() {},
     async prepareEscrowDeposit() {
       throw new Error("not used");
     },
@@ -168,6 +172,12 @@ function exactFundingProvider(): FundingProvider {
       throw new Error("not used");
     },
     async payExactTransaction(request) {
+      const existing = attempts.get(request.attemptId.toLowerCase());
+      if (existing) {
+        if (existing.intentHash !== request.intentHash.toLowerCase())
+          throw new Error("exact payment attempt intent changed");
+        return structuredClone(existing.result);
+      }
       const transactionId = "77".repeat(32);
       const paymentOutputIndex = request.paymentOutputIndex ?? 0;
       const digest = exactRequestAuthorizationDigest({
@@ -183,7 +193,7 @@ function exactFundingProvider(): FundingProvider {
         inputIndex: 0,
         expiresAt: request.authorizationExpiresAt,
       });
-      return {
+      const result = {
         transaction: '{"transaction":"signed-kip10-exact"}',
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
         transactionId,
@@ -195,8 +205,24 @@ function exactFundingProvider(): FundingProvider {
           digest,
           signature: "ab".repeat(64),
         },
+        inputOutpoints: [{ txid: "76".repeat(32), index: 0 }],
         payerAddress: "kaspatest:refund",
       };
+      attempts.set(request.attemptId.toLowerCase(), {
+        intentHash: request.intentHash.toLowerCase(),
+        result: structuredClone(result),
+      });
+      return result;
+    },
+    async finalizeExactPaymentAttempt(request) {
+      const existing = attempts.get(request.attemptId.toLowerCase());
+      if (
+        existing &&
+        existing.result.transactionId.toLowerCase() !==
+          request.transactionId.toLowerCase()
+      ) {
+        throw new Error("exact transaction id does not match provider attempt");
+      }
     },
     async getUtxos() {
       return [];

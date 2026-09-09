@@ -20,6 +20,9 @@ import type {
   ExactHeadReconciler,
   ExactHeadReconciliation,
   ExactHeadRecord,
+  ExactSettlementAttemptRecord,
+  ExactSettlementReconciler,
+  ExactSettlementReconciliation,
   PreparedTransaction,
   ExactTransactionVerification,
   ExactTransactionVerificationRequest,
@@ -560,6 +563,97 @@ export class RestExactHeadReconciler implements ExactHeadReconciler {
       };
     }
     return { status: "advanced", steps };
+  }
+}
+
+export class RestExactSettlementReconciler
+  implements ExactSettlementReconciler
+{
+  readonly #client: KaspaRestClient;
+
+  constructor(client: KaspaRestClient) {
+    this.#client = client;
+  }
+
+  async reconcileExactSettlement(
+    attempt: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementReconciliation> {
+    const transaction = await this.#client.getTransaction(
+      attempt.transactionId,
+    );
+    if (!transaction?.is_accepted) {
+      return {
+        status: "unknown",
+        transactionId: attempt.transactionId,
+        reason: "exact transaction is not yet accepted by the trusted REST source",
+      };
+    }
+
+    const artifact = parseSafeTransactionArtifact(attempt.transaction);
+    assertChainTransactionMatchesSafe(transaction, artifact);
+    const artifactOutput = artifact.outputs[attempt.paymentOutputIndex];
+    const chainOutput = transactionOutputAt(transaction, {
+      txid: attempt.transactionId,
+      index: attempt.paymentOutputIndex,
+    });
+    if (!artifactOutput || !chainOutput) {
+      throw invalidTransaction(
+        "accepted exact transaction is missing the persisted payment output",
+      );
+    }
+    const chainScript = normalizeRestScript(requiredRestScript(chainOutput));
+    if (
+      artifactOutput.scriptPublicKey.toLowerCase() !==
+        attempt.payToScriptPublicKey.toLowerCase() ||
+      chainScript !== attempt.payToScriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "accepted exact transaction payment script does not match the persisted attempt",
+      );
+    }
+
+    if (!attempt.head) {
+      if (artifactOutput.value !== attempt.amount) {
+        throw invalidTransaction(
+          "accepted exact transaction payment amount does not match the persisted attempt",
+        );
+      }
+      return {
+        status: "accepted",
+        transactionId: attempt.transactionId,
+        finality: "accepted",
+        paymentOutput: {
+          amount: attempt.amount,
+          scriptPublicKey: attempt.payToScriptPublicKey,
+        },
+      };
+    }
+
+    const successor = attempt.head.successor;
+    if (
+      successor.outpoint.txid.toLowerCase() !==
+        attempt.transactionId.toLowerCase() ||
+      successor.outpoint.index !== attempt.paymentOutputIndex ||
+      successor.amount !== artifactOutput.value ||
+      successor.scriptPublicKey.toLowerCase() !==
+        artifactOutput.scriptPublicKey.toLowerCase()
+    ) {
+      throw invalidTransaction(
+        "accepted exact transaction successor does not match the persisted attempt",
+      );
+    }
+    return {
+      status: "accepted",
+      transactionId: attempt.transactionId,
+      finality: "accepted",
+      // For additive exact the charged payment is the delta, while the chain
+      // output is the cumulative successor amount validated immediately above.
+      paymentOutput: {
+        amount: attempt.amount,
+        scriptPublicKey: attempt.payToScriptPublicKey,
+      },
+      continuation: structuredClone(successor),
+    };
   }
 }
 

@@ -104,7 +104,8 @@ npm run proof:live:check -- --live --write-report
 
 The sanitized report in `docs/live-testnet-report.md` must show tiny and normal
 standard-native exact settlement, additive exact-delta head advancement,
-multiple heads, conflict/retry, exact replay and invalid-signature rejection,
+multiple heads, one-winner conflict with unresolved losers held pending, exact
+replay and invalid-signature rejection,
 post-broadcast recovery, and trusted external reconciliation.
 
 For batch settlement it must show verified singleton genesis, multiple lifetime

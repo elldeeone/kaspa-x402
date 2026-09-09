@@ -338,6 +338,7 @@ export async function runLiveProof(context) {
         batchArtifactsByTxid,
       }),
       supportedNetworks: [context.network],
+      confirmationThreshold: 30,
       verifyVoucherSignature(voucher, channel) {
         const digest = voucherDigest({
           network: channel.config.network,
@@ -511,6 +512,7 @@ async function runExact({
   const { resource, paymentRequired } = challenge;
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    paymentIdentifier: `live_exact_${profile}_${label}_0001`,
   });
   if (payment.paymentPayload.payload.type !== "exact-transaction") {
     throw new Error(
@@ -723,6 +725,7 @@ async function runExpiredExactAuthorization({
   });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    paymentIdentifier: "live_exact_expired_authorization_0001",
   });
   const requestHash = payment.paymentPayload.payload.requestHash;
   if (!requestHash)
@@ -831,6 +834,7 @@ async function runAdditiveConflict({
     payments.push(
       await client.createPayment(paymentRequired, {
         url: resource.url,
+        paymentIdentifier: `live_exact_additive_conflict_000${contender + 1}`,
       }),
     );
   }
@@ -892,27 +896,23 @@ async function runAdditiveConflict({
       "additive loser did not receive an advanced or alternate head",
     );
   }
-  const retryPayment = await client.createPayment(refreshedHeader, {
-    url: resource.url,
-    requestHash: requestHashes[loserIndex],
-  });
-  const retryResponse = await server.handlePaidRequest(
-    requestWithPayment(retryPayment.paymentPayload, {
+  let replacementBlocked = false;
+  try {
+    await client.createPayment(refreshedHeader, {
       url: resource.url,
-      resource,
-      scheme: "exact",
-      amount: EXACT_AMOUNT,
       requestHash: requestHashes[loserIndex],
-    }),
-    handler,
-  );
-  if (retryResponse.status !== 200 || handlerExecutions !== 2) {
+      paymentIdentifier: `live_exact_additive_conflict_000${loserIndex + 1}`,
+    });
+  } catch (error) {
+    replacementBlocked =
+      error?.code === "invalid_kaspa_exact_replay" &&
+      String(error?.message).includes("different immutable intent");
+  }
+  if (!replacementBlocked || handlerExecutions !== 1) {
     throw new Error(
-      `refreshed additive loser failed: ${retryResponse.status}/${handlerExecutions}`,
+      `refreshed additive loser was not held pending: ${replacementBlocked}/${handlerExecutions}`,
     );
   }
-  const retrySettlement = decodeResponse(retryResponse);
-  await client.applySettlement(retryPayment, retrySettlement);
   return {
     initialHeadId: accepted.extra.headId,
     initialHeadVersion: accepted.extra.headVersion,
@@ -922,8 +922,7 @@ async function runAdditiveConflict({
     loserStatus: responses[loserIndex].status,
     refreshedHeadId: refreshed.extra.headId,
     refreshedHeadVersion: refreshed.extra.headVersion,
-    retryTransactionId: retrySettlement.transaction,
-    retryStatus: retryResponse.status,
+    replacementBlocked,
     handlerExecutions,
     contenderEconomics: payments.map((payment) =>
       exactTransactionEconomics({
@@ -947,6 +946,7 @@ async function runInvalidExactSignature({ client, server, pendingBroadcasts }) {
   });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    paymentIdentifier: "live_exact_invalid_signature_0001",
   });
   const requestHash = payment.paymentPayload.payload.requestHash;
   if (!requestHash)
@@ -1015,6 +1015,7 @@ async function runExactRestartRecovery({
   });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    paymentIdentifier: "live_exact_restart_recovery_0001",
   });
   const requestHash = payment.paymentPayload.payload.requestHash;
   if (!requestHash)
@@ -1096,6 +1097,7 @@ async function runExternalHeadAdvance({
   });
   const payment = await client.createPayment(paymentRequired, {
     url: resource.url,
+    paymentIdentifier: "live_exact_external_advance_0001",
   });
   if (!payment.paymentPayload.payload.requestHash) {
     throw new Error(
@@ -1205,7 +1207,6 @@ async function buildStandardExactTransaction(input) {
     ...txShape,
     inputs: [{ ...inputBase, signatureScript }],
   });
-  markOutpointSpent(spentOutpoints, fundingUtxo.outpoint);
   return exactPaymentArtifact({
     transaction: signed,
     payerAddress: fundingAddress,
@@ -1312,7 +1313,6 @@ async function buildKip10ExactTransaction(input) {
       { ...fundingInput, signatureScript: fundingSignature },
     ],
   });
-  markOutpointSpent(spentOutpoints, fundingUtxo.outpoint);
   return exactPaymentArtifact({
     transaction: signed,
     payerAddress: fundingAddress,
@@ -1352,6 +1352,7 @@ function exactPaymentArtifact({
     transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
     paymentOutputIndex,
     transactionId: transaction.id,
+    inputOutpoints: exactTransactionInputOutpoints(transaction),
     authorization: {
       version: "kaspa-x402-exact-request-authorization-v1",
       inputIndex: authorizationInputIndex,
@@ -1367,6 +1368,18 @@ function exactPaymentArtifact({
     payerAddress,
     fundingSource: "hot-wallet",
   };
+}
+
+function exactTransactionInputOutpoints(transaction) {
+  return transaction.serializeToObject().inputs.map((input) => {
+    const outpoint = input.previousOutpoint ?? input.utxo?.outpoint;
+    if (!outpoint)
+      throw new Error("signed exact transaction input is missing its outpoint");
+    return {
+      txid: String(outpoint.transactionId),
+      index: Number(outpoint.index),
+    };
+  });
 }
 
 function exactArtifactTransactionId(sdk, transactionArtifact) {
@@ -2594,13 +2607,25 @@ function makeFundingProvider(input) {
     batchTopUpsByOutpoint,
     dataDir,
   } = input;
+  const exactAttempts = loadPersistedExactPaymentAttempts(
+    dataDir,
+    spentOutpoints,
+  );
+  let exactQueue = Promise.resolve();
+  const runExact = (operation) => {
+    const result = exactQueue.then(operation, operation);
+    exactQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
   return {
     networkId: network,
     sourceKind: "hot-wallet",
     async getPublicIdentity() {
       return { address: fundingAddress, publicKey: fundingPublicKey };
     },
-    async authorizeExactPayment() {},
     async prepareEscrowDeposit(request) {
       const genesis = await buildPreparedGenesis({
         request,
@@ -2655,16 +2680,82 @@ function makeFundingProvider(input) {
       };
     },
     async payExactTransaction(request) {
-      return buildExactTransaction({
-        rpc,
-        sdk,
-        fundingPrivateKey,
-        fundingPrivateKeyHex,
-        fundingAddress,
-        schnorr,
-        spentOutpoints,
-        request,
-      });
+      return runExact(() =>
+        withExactPaymentStoreLock(dataDir, async () => {
+          const persisted = loadPersistedExactPaymentAttempts(
+            dataDir,
+            spentOutpoints,
+          );
+          exactAttempts.clear();
+          for (const [attemptId, attempt] of persisted)
+            exactAttempts.set(attemptId, attempt);
+          const key = request.attemptId.toLowerCase();
+          const intentHash = request.intentHash.toLowerCase();
+          const existing = exactAttempts.get(key);
+          if (existing) {
+            if (existing.intentHash !== intentHash)
+              throw new Error("exact payment attempt intent changed");
+            return structuredClone(existing.result);
+          }
+          const result = await buildExactTransaction({
+            rpc,
+            sdk,
+            fundingPrivateKey,
+            fundingPrivateKeyHex,
+            fundingAddress,
+            schnorr,
+            spentOutpoints,
+            request,
+          });
+          const headKey = request.head
+            ? outpointKey(request.head.expectedHeadOutpoint)
+            : undefined;
+          const record = {
+            format: "kaspa-x402-exact-provider-attempt-v1",
+            attemptId: key,
+            intentHash,
+            result: structuredClone(result),
+            reservedOutpoints: result.inputOutpoints.filter(
+              (outpoint) => outpointKey(outpoint) !== headKey,
+            ),
+          };
+          persistExactPaymentAttempt(dataDir, record);
+          for (const outpoint of record.reservedOutpoints)
+            markOutpointSpent(spentOutpoints, outpoint);
+          exactAttempts.set(key, structuredClone(record));
+          return result;
+        }),
+      );
+    },
+    async finalizeExactPaymentAttempt(request) {
+      return runExact(() =>
+        withExactPaymentStoreLock(dataDir, async () => {
+          const persisted = loadPersistedExactPaymentAttempts(
+            dataDir,
+            spentOutpoints,
+          );
+          exactAttempts.clear();
+          for (const [attemptId, attempt] of persisted)
+            exactAttempts.set(attemptId, attempt);
+          const key = request.attemptId.toLowerCase();
+          const existing = exactAttempts.get(key);
+          if (!existing) return;
+          if (
+            existing.result.transactionId.toLowerCase() !==
+            request.transactionId.toLowerCase()
+          ) {
+            throw new Error(
+              "exact transaction id does not match provider attempt",
+            );
+          }
+          removeExactPaymentAttempt(dataDir, key);
+          exactAttempts.delete(key);
+          if (request.outcome === "absent") {
+            for (const outpoint of existing.reservedOutpoints)
+              spentOutpoints.delete(outpointKey(outpoint));
+          }
+        }),
+      );
     },
     async getUtxos(addresses) {
       const utxos = [];
@@ -4072,6 +4163,106 @@ function scriptAddressFromSerialized(sdk, serialized, networkId) {
   return address.toString();
 }
 
+export function persistExactPaymentAttempt(dataDir, record) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const name = `${record.attemptId}.json`;
+  const file = path.join(directory, name);
+  const temporary = path.join(
+    directory,
+    `.${name}.${process.pid}.${crypto.randomBytes(8).toString("hex")}.tmp`,
+  );
+  let handle;
+  try {
+    handle = fs.openSync(temporary, "wx", 0o600);
+    fs.writeFileSync(handle, `${JSON.stringify(record, null, 2)}\n`);
+    fs.fsyncSync(handle);
+    fs.closeSync(handle);
+    handle = undefined;
+    fs.linkSync(temporary, file);
+    fs.rmSync(temporary);
+    fsyncDirectory(directory);
+  } catch (error) {
+    if (handle !== undefined) fs.closeSync(handle);
+    fs.rmSync(temporary, { force: true });
+    throw error;
+  }
+}
+
+export function loadPersistedExactPaymentAttempts(dataDir, spentOutpoints) {
+  const attempts = new Map();
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  if (!fs.existsSync(directory)) return attempts;
+  for (const name of fs.readdirSync(directory).sort()) {
+    if (!/^[0-9a-f]{64}\.json$/.test(name)) continue;
+    const record = JSON.parse(
+      fs.readFileSync(path.join(directory, name), "utf8"),
+    );
+    if (
+      record.format !== "kaspa-x402-exact-provider-attempt-v1" ||
+      `${record.attemptId}.json` !== name ||
+      !/^[0-9a-f]{64}$/.test(record.intentHash ?? "") ||
+      !/^[0-9a-f]{64}$/i.test(record.result?.transactionId ?? "") ||
+      !Array.isArray(record.result?.inputOutpoints) ||
+      !Array.isArray(record.reservedOutpoints) ||
+      !record.reservedOutpoints.every(validFundingOutpoint) ||
+      !record.result.inputOutpoints.every(validFundingOutpoint)
+    ) {
+      throw new Error(`invalid persisted exact payment attempt ${name}`);
+    }
+    for (const outpoint of record.reservedOutpoints)
+      markOutpointSpent(spentOutpoints, outpoint);
+    attempts.set(record.attemptId, record);
+  }
+  return attempts;
+}
+
+function validFundingOutpoint(outpoint) {
+  return (
+    /^[0-9a-f]{64}$/i.test(outpoint?.txid ?? "") &&
+    Number.isInteger(outpoint?.index) &&
+    outpoint.index >= 0
+  );
+}
+
+function removeExactPaymentAttempt(dataDir, attemptId) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.rmSync(path.join(directory, `${attemptId}.json`), { force: true });
+  fsyncDirectory(directory);
+}
+
+export async function withExactPaymentStoreLock(dataDir, operation) {
+  const directory = path.join(dataDir, "exact-payment-attempts");
+  fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
+  const lock = path.join(directory, ".provider.lock");
+  let handle;
+  try {
+    handle = fs.openSync(lock, "wx", 0o600);
+  } catch (error) {
+    if (error?.code === "EEXIST") {
+      throw new Error(
+        `exact payment store is locked at ${lock}; remove it only after confirming the previous provider stopped`,
+      );
+    }
+    throw error;
+  }
+  try {
+    return await operation();
+  } finally {
+    fs.closeSync(handle);
+    fs.rmSync(lock, { force: true });
+  }
+}
+
+function fsyncDirectory(directory) {
+  const handle = fs.openSync(directory, "r");
+  try {
+    fs.fsyncSync(handle);
+  } finally {
+    fs.closeSync(handle);
+  }
+}
+
 function persistBatchArtifact(dataDir, artifact) {
   const directory = path.join(dataDir, "batch-artifacts");
   return writeJsonAtomically(
@@ -4191,6 +4382,72 @@ function writeJsonAtomically(directory, name, value) {
     throw error;
   }
   return file;
+}
+
+export function runExactPaymentAttemptPersistenceProof() {
+  const dataDir = fs.mkdtempSync(
+    path.join(os.tmpdir(), "kaspa-x402-exact-attempts-"),
+  );
+  try {
+    const attemptId = "a1".repeat(32);
+    const reservedOutpoint = { txid: "b2".repeat(32), index: 1 };
+    const record = {
+      format: "kaspa-x402-exact-provider-attempt-v1",
+      attemptId,
+      intentHash: "c3".repeat(32),
+      result: {
+        transaction: '{"signed":"exact"}',
+        transactionId: "d4".repeat(32),
+        inputOutpoints: [reservedOutpoint],
+      },
+      reservedOutpoints: [reservedOutpoint],
+    };
+    persistExactPaymentAttempt(dataDir, record);
+    let overwriteRejected = false;
+    try {
+      persistExactPaymentAttempt(dataDir, {
+        ...record,
+        intentHash: "e5".repeat(32),
+      });
+    } catch (error) {
+      overwriteRejected = error?.code === "EEXIST";
+    }
+    const directory = path.join(dataDir, "exact-payment-attempts");
+    const interruptedTemp = path.join(
+      directory,
+      `.interrupted-exact-attempt.${process.pid}.tmp`,
+    );
+    fs.writeFileSync(interruptedTemp, '{"format":', {
+      mode: 0o600,
+      flag: "wx",
+    });
+    const spentOutpoints = new Set();
+    const attempts = loadPersistedExactPaymentAttempts(
+      dataDir,
+      spentOutpoints,
+    );
+    const loaded = attempts.get(attemptId);
+    if (
+      !overwriteRejected ||
+      attempts.size !== 1 ||
+      loaded?.intentHash !== record.intentHash ||
+      !spentOutpoints.has(outpointKey(reservedOutpoint)) ||
+      !fs.existsSync(interruptedTemp)
+    ) {
+      throw new Error(
+        "durable exact payment attempt persistence did not preserve its create-only reservation",
+      );
+    }
+    return {
+      committedAttemptReloaded: true,
+      changedIntentOverwriteRejected: true,
+      reservedInputReloaded: true,
+      interruptedTempIgnored: true,
+      attemptCount: attempts.size,
+    };
+  } finally {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  }
 }
 
 export function runBatchArtifactPersistenceProof() {

@@ -83,6 +83,7 @@ export interface GatewayDurableStateLimits {
   maxRecords: number;
   maxBytes: number;
   maxRecordsPerPayer: number;
+  maxExactHeads: number;
   terminalRetentionMs: number;
 }
 
@@ -121,6 +122,7 @@ const DEFAULT_DURABLE_STATE_LIMITS: GatewayDurableStateLimits = {
   maxRecords: 10_000,
   maxBytes: 512 * 1024 * 1024,
   maxRecordsPerPayer: 1_000,
+  maxExactHeads: 256,
   terminalRetentionMs: 24 * 60 * 60 * 1_000,
 };
 
@@ -653,6 +655,9 @@ export class GatewayLedger implements ServerStateStore {
         return clone(existing);
       }
       const heads = await txn.list<ExactHeadRecord>({ prefix: "exact-head:" });
+      if (heads.size >= this.#limits.maxExactHeads) {
+        throw new Error("exact head admission limit exceeded");
+      }
       for (const current of heads.values()) {
         if (sameOutpoint(current.currentOutpoint, record.currentOutpoint))
           throw new Error("exact head outpoint is already registered");
@@ -2600,6 +2605,7 @@ function assertDurableStateLimits(limits: GatewayDurableStateLimits): void {
     [limits.maxRecords, "record limit"],
     [limits.maxBytes, "byte limit"],
     [limits.maxRecordsPerPayer, "per-payer record limit"],
+    [limits.maxExactHeads, "exact head limit"],
     [limits.terminalRetentionMs, "terminal retention"],
   ] as const) {
     if (!Number.isSafeInteger(value) || value <= 0)

@@ -183,6 +183,29 @@ describe("durable crash checkpoints", () => {
 });
 
 describe("memory durable-state limits", () => {
+  it("rejects independently provisioned additive heads at max plus one", async () => {
+    const store = new MemoryServerChannelStore([], {
+      limits: { maxExactHeads: 2 },
+    });
+    await store.registerExactHead(exactHead());
+    await store.registerExactHead(
+      exactHead({
+        headId: "92".repeat(32),
+        currentOutpoint: { txid: "93".repeat(32), index: 0 },
+      }),
+    );
+
+    await expect(
+      store.registerExactHead(
+        exactHead({
+          headId: "94".repeat(32),
+          currentOutpoint: { txid: "95".repeat(32), index: 0 },
+        }),
+      ),
+    ).rejects.toThrow("exact head admission limit");
+    await expect(store.listExactHeads()).resolves.toHaveLength(2);
+  });
+
   for (const candidateKind of ["exact", "batch"] as const) {
     it(`preserves safely released identifiers when ${candidateKind} replacement admission fails`, async () => {
       const current = channel();

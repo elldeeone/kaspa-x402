@@ -11,6 +11,7 @@ import {
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   readKaspaSettlementExtension,
+  paymentIdentifierExtension,
   sha256Hex,
   stableStringify,
   voucherDigest,
@@ -1246,6 +1247,12 @@ function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
       paymentOutputIndex: 0,
       requestHash: REQUEST_HASH,
       authorization,
+    },
+    extensions: {
+      "payment-identifier": paymentIdentifierExtension({
+        required: true,
+        id: `exact_${REQUEST_HASH}`,
+      }),
     },
   };
 }

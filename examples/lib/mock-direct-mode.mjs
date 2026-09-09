@@ -310,6 +310,7 @@ class MockFundingProvider {
   nextIndex = 0;
   utxosByAddress = new Map();
   preparedTransitions = new Map();
+  exactAttempts = new Map();
 
   constructor(chainProvider) {
     this.chainProvider = chainProvider;
@@ -321,8 +322,6 @@ class MockFundingProvider {
       publicKey: CLIENT_PUBLIC_KEY,
     };
   }
-
-  async authorizeExactPayment() {}
 
   async prepareEscrowDeposit(request) {
     const authorizingInput = this.nextOutpoint("genesis-authorizer");
@@ -446,6 +445,13 @@ class MockFundingProvider {
   }
 
   async payExactTransaction(request) {
+    const key = request.attemptId.toLowerCase();
+    const existing = this.exactAttempts.get(key);
+    if (existing) {
+      if (existing.intentHash !== request.intentHash.toLowerCase())
+        throw new Error("exact payment attempt intent changed");
+      return structuredClone(existing.result);
+    }
     const paymentIdentity =
       request.profile === "additive"
         ? request.head?.challengeId
@@ -471,7 +477,11 @@ class MockFundingProvider {
       inputIndex,
       expiresAt: request.authorizationExpiresAt,
     });
-    return {
+    const fundingOutpoint = {
+      txid: mockHash(`exact-funding:${request.attemptId}`),
+      index: 0,
+    };
+    const result = {
       transaction,
       transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
       transactionId,
@@ -483,9 +493,29 @@ class MockFundingProvider {
         digest,
         signature: mockSignature(digest),
       },
+      inputOutpoints: [
+        ...(request.head ? [request.head.expectedHeadOutpoint] : []),
+        fundingOutpoint,
+      ],
       payerAddress: REFUND_ADDRESS,
       fundingSource: this.sourceKind,
     };
+    this.exactAttempts.set(key, {
+      intentHash: request.intentHash.toLowerCase(),
+      result: structuredClone(result),
+    });
+    return result;
+  }
+
+  async finalizeExactPaymentAttempt(request) {
+    const existing = this.exactAttempts.get(request.attemptId.toLowerCase());
+    if (
+      existing &&
+      existing.result.transactionId.toLowerCase() !==
+        request.transactionId.toLowerCase()
+    ) {
+      throw new Error("exact transaction id does not match provider attempt");
+    }
   }
 
   async getUtxos(addresses) {

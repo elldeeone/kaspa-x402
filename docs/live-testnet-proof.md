@@ -28,7 +28,8 @@ The current proof requires:
 - additive exact settlement proving exact KIP-10 head delta and replay
   rejection;
 - two independent additive head shards;
-- concurrent additive conflict, one winner, loser refresh, and retry;
+- concurrent additive conflict with one winner and the unresolved loser held
+  pending without a replacement signature;
 - duplicate exact idempotency;
 - invalid exact authorization rejection before protected work or broadcast;
 - post-broadcast runtime re-instantiation and trusted settlement recovery;

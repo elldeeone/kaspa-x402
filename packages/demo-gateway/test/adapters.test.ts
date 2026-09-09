@@ -20,6 +20,7 @@ import {
   NativeAddressCodec,
   NativeVoucherVerifier,
   RestExactHeadReconciler,
+  RestExactSettlementReconciler,
   RestExactTransactionVerifier,
   RestKaspaChainProvider,
   ScriptAddressBook,
@@ -29,7 +30,11 @@ import {
   encodeScriptAddress,
   scriptPublicKeyForAddress,
 } from "../src/kaspa-native.js";
-import type { ExactHeadRecord, ServerChannelRecord } from "@kaspa-x402/server";
+import type {
+  ExactHeadRecord,
+  ExactSettlementAttemptRecord,
+  ServerChannelRecord,
+} from "@kaspa-x402/server";
 import {
   createCovenantLineageState,
   exactRequestAuthorizationDigest,
@@ -852,6 +857,63 @@ describe("RestExactHeadReconciler", () => {
       reason:
         "candidate transaction does not prove the expected same-index successor",
     });
+  });
+});
+
+describe("RestExactSettlementReconciler", () => {
+  it("accepts only the persisted additive artifact and returns its charged delta", async () => {
+    const exact = exactTransactionFixture();
+    const fetchMock = vi.fn(async () => Response.json(exact.restTransaction)) as typeof fetch;
+    const attempt = exactSettlementAttemptFixture(exact);
+
+    await expect(
+      new RestExactSettlementReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactSettlement(attempt),
+    ).resolves.toEqual({
+      status: "accepted",
+      transactionId: exact.txid,
+      finality: "accepted",
+      paymentOutput: {
+        amount: "20000000",
+        scriptPublicKey: exact.headScriptPublicKey,
+      },
+      continuation: attempt.head!.successor,
+    });
+  });
+
+  it("keeps a missing transaction pending", async () => {
+    const exact = exactTransactionFixture();
+    const fetchMock = vi.fn(async () => new Response("missing", { status: 404 })) as typeof fetch;
+
+    await expect(
+      new RestExactSettlementReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
+    ).resolves.toMatchObject({
+      status: "unknown",
+      transactionId: exact.txid,
+    });
+  });
+
+  it("rejects accepted chain output evidence that differs from the signed artifact", async () => {
+    const exact = exactTransactionFixture();
+    const fetchMock = vi.fn(async () =>
+      Response.json({
+        ...exact.restTransaction,
+        outputs: exact.restTransaction.outputs.map((output, index) =>
+          index === 0 ? { ...output, amount: "120000001" } : output,
+        ),
+      }),
+    ) as typeof fetch;
+
+    await expect(
+      new RestExactSettlementReconciler(
+        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
+    ).rejects.toThrow(
+      "accepted transaction output amount does not match exact artifact",
+    );
   });
 });
 
@@ -2438,6 +2500,39 @@ function exactHeadFixture(
     status: "available",
     createdAt: "2026-07-14T00:00:00.000Z",
     updatedAt: "2026-07-14T00:00:00.000Z",
+  };
+}
+
+function exactSettlementAttemptFixture(
+  exact: ReturnType<typeof exactTransactionFixture>,
+): ExactSettlementAttemptRecord {
+  return {
+    transactionId: exact.txid,
+    profile: "additive",
+    amount: "20000000",
+    paymentOutputIndex: 0,
+    requestFingerprint: "44".repeat(32),
+    paymentRequirementsHash: "55".repeat(32),
+    paymentPayloadHash: "66".repeat(32),
+    requestAuthorizationId: "77".repeat(32),
+    payToScriptPublicKey: exact.headScriptPublicKey,
+    transaction: exact.artifact,
+    requiredFinality: "accepted",
+    payerId: "88".repeat(32),
+    status: "broadcast",
+    createdAt: "2026-09-09T00:00:00.000Z",
+    updatedAt: "2026-09-09T00:00:00.000Z",
+    head: {
+      headId: "90".repeat(32),
+      expectedVersion: "0",
+      expectedOutpoint: { txid: exact.headTxid, index: 0 },
+      expectedAmount: "100000000",
+      successor: {
+        outpoint: { txid: exact.txid, index: 0 },
+        amount: "120000000",
+        scriptPublicKey: exact.headScriptPublicKey,
+      },
+    },
   };
 }
 

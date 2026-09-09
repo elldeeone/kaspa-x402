@@ -215,6 +215,7 @@ async function runHostedExactProof(input) {
       addressCodec,
       refundAddress: fundingAddress,
       supportedNetworks: [input.network],
+      confirmationThreshold: 30,
       fetch: gatewayFetch,
       maxPaymentRetries: 0,
       fundingPolicy: {
@@ -442,6 +443,16 @@ async function createHostedHead(input) {
 }
 
 function makeFundingProvider(input) {
+  const exactAttempts = new Map();
+  let exactQueue = Promise.resolve();
+  const runExact = (operation) => {
+    const result = exactQueue.then(operation, operation);
+    exactQueue = result.then(
+      () => undefined,
+      () => undefined,
+    );
+    return result;
+  };
   return {
     networkId: input.network,
     sourceKind: "hot-wallet",
@@ -460,18 +471,53 @@ function makeFundingProvider(input) {
         ),
       };
     },
-    async authorizeExactPayment() {},
     async payExactTransaction(request) {
-      return buildExactTransaction({
-        rpc: input.rpc,
-        sdk: input.sdk,
-        networkId: input.networkId,
-        fundingPrivateKey: input.fundingPrivateKey,
-        fundingPrivateKeyHex: input.fundingPrivateKeyHex,
-        fundingAddress: input.fundingAddress,
-        schnorr: input.schnorr,
-        request,
-        spentOutpoints: input.spentOutpoints,
+      return runExact(async () => {
+        const key = request.attemptId.toLowerCase();
+        const existing = exactAttempts.get(key);
+        if (existing) {
+          if (existing.intentHash !== request.intentHash.toLowerCase())
+            throw new Error("exact payment attempt intent changed");
+          return structuredClone(existing.result);
+        }
+        const result = await buildExactTransaction({
+          rpc: input.rpc,
+          sdk: input.sdk,
+          networkId: input.networkId,
+          fundingPrivateKey: input.fundingPrivateKey,
+          fundingPrivateKeyHex: input.fundingPrivateKeyHex,
+          fundingAddress: input.fundingAddress,
+          schnorr: input.schnorr,
+          request,
+          spentOutpoints: input.spentOutpoints,
+        });
+        const headKey = request.head
+          ? outpointKey(request.head.expectedHeadOutpoint)
+          : undefined;
+        exactAttempts.set(key, {
+          intentHash: request.intentHash.toLowerCase(),
+          result: structuredClone(result),
+          reservedOutpoints: result.inputOutpoints.filter(
+            (outpoint) => outpointKey(outpoint) !== headKey,
+          ),
+        });
+        return result;
+      });
+    },
+    async finalizeExactPaymentAttempt(request) {
+      return runExact(async () => {
+        const existing = exactAttempts.get(request.attemptId.toLowerCase());
+        if (!existing) return;
+        if (
+          existing.result.transactionId.toLowerCase() !==
+          request.transactionId.toLowerCase()
+        ) {
+          throw new Error("exact transaction id does not match provider attempt");
+        }
+        if (request.outcome === "absent") {
+          for (const outpoint of existing.reservedOutpoints)
+            input.spentOutpoints.delete(outpointKey(outpoint));
+        }
       });
     },
     async getUtxos(addresses) {
@@ -690,6 +736,7 @@ function exactPaymentArtifact(
     transactionEncoding: KIP10_EXACT_TRANSACTION_ENCODING,
     paymentOutputIndex: 0,
     transactionId: transaction.id,
+    inputOutpoints: exactTransactionInputOutpoints(transaction),
     authorization: {
       version: "kaspa-x402-exact-request-authorization-v1",
       inputIndex: authorizationInputIndex,
@@ -705,6 +752,18 @@ function exactPaymentArtifact(
     payerAddress,
     fundingSource: "hot-wallet",
   };
+}
+
+function exactTransactionInputOutpoints(transaction) {
+  return transaction.serializeToObject().inputs.map((input) => {
+    const outpoint = input.previousOutpoint ?? input.utxo?.outpoint;
+    if (!outpoint)
+      throw new Error("signed exact transaction input is missing its outpoint");
+    return {
+      txid: String(outpoint.transactionId),
+      index: Number(outpoint.index),
+    };
+  });
 }
 
 async function fundKip10Head(input) {

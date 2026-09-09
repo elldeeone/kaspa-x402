@@ -509,11 +509,12 @@ additive head/challenge provider checks challenge liveness and head state. An
 adapter may repeat these checks but cannot weaken them.
 
 Expiry prevents a new settlement or protected-handler execution. It does not
-invalidate an idempotent retry whose transaction and response were already
-durably accepted for the same request. An implementation MAY verify enough of
-an expired artifact to identify that exact stored result, but MUST NOT execute
-the protected handler or create a new settlement when no matching durable
-record exists.
+invalidate recovery for an exactly matching immutable attempt whose transaction
+was already durably accepted. That exception may only resume persisted handler
+or commit state; it MUST NOT reconstruct or rebroadcast a transaction. An
+implementation MAY verify enough of an expired artifact to identify that exact
+attempt, but MUST NOT execute the protected handler or create a new settlement
+when no matching accepted record exists.
 
 The committed interoperability vector fixes a reference clock and supplies
 positive and negative expiry cases so results do not depend on the test
@@ -598,9 +599,25 @@ referenced by the bounded result.
 A corrective 402 is a new offer, not permission for a wallet to sign another
 payment automatically. The Alpha.11 clients accept `maxPaymentRetries: 0` only.
 Every replacement exact transaction requires a fresh explicit caller or wallet
-authorization. Funding providers MUST expose an `authorizeExactPayment`
-boundary, and deployments SHOULD pin allowed origins, profiles, recipients,
-and a maximum amount before signing.
+authorization. Each logical payment has a stable attempt ID derived from its
+stable payment identifier; when the caller omits that identifier, the client
+derives it from the canonical request identity. A separate immutable intent
+hash binds that attempt to the canonical request and accepted payment terms.
+
+Funding providers MUST atomically create or load one durable signed artifact
+for `(attemptId, intentHash)`. An identical retry MUST return the byte-identical
+artifact. Reusing an attempt ID with changed intent MUST fail before signing,
+and the client MUST durably retain the artifact before disclosing it. Providers
+MUST pair that operation with idempotent finalization so reserved inputs are
+released only after trusted terminal evidence. Deployments SHOULD also pin
+allowed origins, profiles, recipients, and a maximum amount before signing.
+
+`PAYMENT-RESPONSE` is merchant acknowledgement, not chain-finality evidence.
+The client finalizes an exact attempt only after its trusted chain adapter proves
+the transaction, selected output, and configured confirmation threshold. A
+missing, malformed, negative, or transport-failed response leaves the disclosed
+attempt pending. It MUST NOT be replaced while acceptance is unknown; a new
+logical payment is allowed only after authoritative permanent-absence proof.
 
 The equivalent batch boundary is deliberately separate. Exact authorization
 continues to bind one complete transaction and request as defined above; it
@@ -717,7 +734,7 @@ On success, `amount` MUST equal the accepted requirement amount and
 
 ## Idempotency and replay
 
-Servers SHOULD require the x402 `payment-identifier` extension.
+Servers MUST require the x402 `payment-identifier` extension for exact.
 
 - The identifier MUST bind to the normalized request fingerprint and selected
   exact profile.

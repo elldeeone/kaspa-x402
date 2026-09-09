@@ -34,6 +34,7 @@ const payment = await client.createPayment(
   {
     url: resource.url,
     requestHash,
+    paymentIdentifier: "self_hosted_exact_download_0001",
   },
 );
 

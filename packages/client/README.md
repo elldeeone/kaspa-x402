@@ -20,7 +20,9 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
   covenant ID while persisting the rotating current outpoint;
 - applies same-lineage top-ups without resetting A/S/T and exposes the current
   A/S/T/V/R accounting state;
-- verifies `PAYMENT-RESPONSE` transaction, amount, output index, finality, and channel state before advancing local charged amounts;
+- validates `PAYMENT-RESPONSE` acknowledgement metadata; exact finality comes
+  only from a trusted chain reconciler, while batch responses advance verified
+  channel accounting;
 - detects MCP payment-required tool results, binds the tool-call fingerprint to
   a required configured server `audience`, retries with
   `_meta["x402/payment"]`, and applies `_meta["x402/payment-response"]`;
@@ -39,6 +41,23 @@ offer selector accepts only `kaspa:testnet-10`; operators that opt into mainnet
 must provide explicit funding, signer, node, custody, and review controls.
 
 Wallet, node, address-codec, and transaction-builder behavior is injected through typed adapters. Amounts on the wire remain decimal sompi strings.
+
+## Durable Exact Attempts
+
+Every exact payment uses a stable payment identifier and attempt ID. The
+funding provider atomically creates or reloads one signed artifact for that
+attempt and intent hash, returning the same bytes for identical calls and
+rejecting changed terms before another signature. The client persists the
+artifact and all consumed input outpoints before disclosing the payment.
+
+Merchant `PAYMENT-RESPONSE` metadata is acknowledgement only. Missing,
+malformed, negative, or transport-failed responses leave the attempt pending.
+`reconcileExactPayment(attemptId)` requires trusted transaction evidence plus
+the accepted output and configured confirmation depth. Unknown acceptance
+blocks replacement; only permanent-absence evidence bound to the persisted
+transaction or one of its inputs permits a new logical payment. Provider input
+reservations are finalized idempotently only after either confirmed acceptance
+or proven absence.
 
 ## Durable Funding Transitions
 

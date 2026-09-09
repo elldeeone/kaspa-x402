@@ -1021,6 +1021,8 @@ export interface VerifiedExactPayment {
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
   observedFinality?: "mempool" | "accepted" | "confirmed";
+  /** Expired authorization accepted only to resume an immutable durable attempt. */
+  recoveryOnly?: boolean;
 }
 
 export type VerifiedPayment = VerifiedBatchPayment | VerifiedExactPayment;

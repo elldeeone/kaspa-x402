@@ -11,7 +11,10 @@ import {
   type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
-import { DirectModeClient } from "./direct-client.js";
+import {
+  DirectModeClient,
+  PendingExactPaymentError,
+} from "./direct-client.js";
 import type { ApplySettlementResult, CreatePaymentResult } from "./types.js";
 
 export type McpToolCaller = (
@@ -22,6 +25,8 @@ export interface PaidMcpToolCallOptions {
   /** Authenticated MCP server identity approved by the payer. */
   audience: string;
   paymentIdentifier?: string;
+  /** Optional assertion of the attempt ID derived from paymentIdentifier. */
+  paymentAttemptId?: Hash32Hex;
   requestHash?: Hash32Hex;
   origin?: string;
   /** Host-derived normalized claims, never raw credentials. */
@@ -71,6 +76,7 @@ export async function paidMcpToolCall(
     url: paymentRequired.resource.url,
     origin: options.origin ?? options.audience,
     paymentIdentifier: options.paymentIdentifier,
+    paymentAttemptId: options.paymentAttemptId,
     requestHash,
     trustedSecurityContext: options.trustedSecurityContext,
   });
@@ -105,6 +111,8 @@ export async function paidMcpToolCall(
     );
   } catch (error) {
     await client.quarantineDisclosedPayment(payment);
-    throw error;
+    throw payment.scheme === "exact"
+      ? new PendingExactPaymentError(payment, error)
+      : error;
   }
 }

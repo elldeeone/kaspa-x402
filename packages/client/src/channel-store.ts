@@ -5,6 +5,7 @@ import {
   createCovenantLineageState,
   decideChainEvidence,
   parseSompiString,
+  sha256Hex,
   stableStringify,
   type AcceptedTransactionEvidence,
   type CovenantLaunchManifest,
@@ -15,6 +16,7 @@ import type {
   ChannelLookupScope,
   ChannelStore,
   DirectModeChannel,
+  ExactPaymentAttemptRecord,
   FundingSuccessorIntent,
   FundingTransitionAttemptApplyRequest,
   FundingTransitionAttemptApplyResult,
@@ -32,11 +34,14 @@ export class MemoryChannelStore implements ChannelStore {
     FundingTransitionAttemptRecord
   >();
   readonly #refundAttempts = new Map<string, RefundAttemptRecord>();
+  readonly #exactPaymentAttempts = new Map<string, ExactPaymentAttemptRecord>();
+  readonly #exactPaymentIdentifiers = new Map<string, string>();
 
   constructor(
     channels: readonly DirectModeChannel[] = [],
     refundAttempts: readonly RefundAttemptRecord[] = [],
     fundingAttempts: readonly FundingTransitionAttemptRecord[] = [],
+    exactPaymentAttempts: readonly ExactPaymentAttemptRecord[] = [],
   ) {
     for (const channel of channels) {
       const key = channelKey(channel.id);
@@ -79,6 +84,20 @@ export class MemoryChannelStore implements ChannelStore {
         );
       }
       this.#refundAttempts.set(key, cloneRefundAttempt(attempt));
+    }
+    for (const attempt of exactPaymentAttempts) {
+      const key = channelKey(attempt.attemptId);
+      if (
+        this.#exactPaymentAttempts.has(key) ||
+        this.#exactPaymentIdentifiers.has(attempt.paymentIdentifier) ||
+        !exactPaymentAttemptIsConsistent(attempt)
+      ) {
+        throw new Error(
+          "persisted exact payment attempt is invalid or duplicated",
+        );
+      }
+      this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(attempt));
+      this.#exactPaymentIdentifiers.set(attempt.paymentIdentifier, key);
     }
   }
 
@@ -623,6 +642,111 @@ export class MemoryChannelStore implements ChannelStore {
     return cloneChannel(input.channel);
   }
 
+  async loadExactPaymentAttempt(
+    attemptId: string,
+  ): Promise<ExactPaymentAttemptRecord | undefined> {
+    const attempt = this.#exactPaymentAttempts.get(channelKey(attemptId));
+    return attempt ? cloneExactPaymentAttempt(attempt) : undefined;
+  }
+
+  async loadExactPaymentAttemptByIdentifier(
+    paymentIdentifier: string,
+  ): Promise<ExactPaymentAttemptRecord | undefined> {
+    const key = this.#exactPaymentIdentifiers.get(paymentIdentifier);
+    if (!key) return undefined;
+    const attempt = this.#exactPaymentAttempts.get(key);
+    return attempt ? cloneExactPaymentAttempt(attempt) : undefined;
+  }
+
+  async claimExactPaymentAttempt(
+    attempt: ExactPaymentAttemptRecord,
+  ): Promise<ExactPaymentAttemptRecord> {
+    if (!exactPaymentAttemptIsConsistent(attempt) || attempt.status !== "pending") {
+      throw new Error("new exact payment attempt is inconsistent");
+    }
+    const key = channelKey(attempt.attemptId);
+    const existingByAttempt = this.#exactPaymentAttempts.get(key);
+    const identifierOwner = this.#exactPaymentIdentifiers.get(
+      attempt.paymentIdentifier,
+    );
+    const existingByIdentifier = identifierOwner
+      ? this.#exactPaymentAttempts.get(identifierOwner)
+      : undefined;
+    const existing = existingByAttempt ?? existingByIdentifier;
+    if (existing) {
+      if (!sameExactPaymentIntent(existing, attempt)) {
+        throw new Error(
+          "exact payment attempt conflicts with an existing logical payment",
+        );
+      }
+      return cloneExactPaymentAttempt(existing);
+    }
+    this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(attempt));
+    this.#exactPaymentIdentifiers.set(attempt.paymentIdentifier, key);
+    return cloneExactPaymentAttempt(attempt);
+  }
+
+  async resolveExactPaymentAttempt(input: {
+    attemptId: string;
+    transactionId: string;
+    outcome: "accepted" | "absent";
+    evidence: ExactPaymentAttemptRecord["evidence"] & {};
+    output?: ExactPaymentAttemptRecord["output"];
+  }): Promise<ExactPaymentAttemptRecord> {
+    const key = channelKey(input.attemptId);
+    const attempt = this.#exactPaymentAttempts.get(key);
+    if (!attempt) throw new Error("exact payment attempt was not found");
+    if (!sameHex(attempt.transactionId, input.transactionId)) {
+      throw new Error("exact transaction id does not match pending attempt");
+    }
+    if (attempt.status !== "pending") {
+      if (attempt.status !== input.outcome) {
+        throw new Error("exact payment terminal outcome cannot change");
+      }
+      return cloneExactPaymentAttempt(attempt);
+    }
+    if (
+      !input.evidence ||
+      !sameHex(input.evidence.transactionId, attempt.transactionId) ||
+      (input.outcome === "accepted" &&
+        (input.evidence.status !== "accepted" || !input.output)) ||
+      (input.outcome === "absent" &&
+        (input.evidence.status !== "absent" || input.output !== undefined))
+    ) {
+      throw new Error("exact payment resolution evidence is inconsistent");
+    }
+    const resolved: ExactPaymentAttemptRecord = {
+      ...attempt,
+      status: input.outcome,
+      evidence: structuredClone(input.evidence),
+      ...(input.output ? { output: structuredClone(input.output) } : {}),
+      providerFinalized: false,
+    };
+    if (!exactPaymentAttemptIsConsistent(resolved)) {
+      throw new Error("resolved exact payment attempt is inconsistent");
+    }
+    this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(resolved));
+    return cloneExactPaymentAttempt(resolved);
+  }
+
+  async markExactPaymentProviderFinalized(
+    attemptId: string,
+    transactionId: string,
+  ): Promise<ExactPaymentAttemptRecord> {
+    const key = channelKey(attemptId);
+    const attempt = this.#exactPaymentAttempts.get(key);
+    if (!attempt) throw new Error("exact payment attempt was not found");
+    if (!sameHex(attempt.transactionId, transactionId)) {
+      throw new Error("exact transaction id does not match pending attempt");
+    }
+    if (attempt.status === "pending") {
+      throw new Error("pending exact payment cannot finalize provider state");
+    }
+    const finalized = { ...attempt, providerFinalized: true };
+    this.#exactPaymentAttempts.set(key, cloneExactPaymentAttempt(finalized));
+    return cloneExactPaymentAttempt(finalized);
+  }
+
   #assertChannelMutable(channelId: string): void {
     const key = channelKey(channelId);
     if (isOpenFundingAttempt(this.#fundingAttempts.get(key))) {
@@ -700,6 +824,93 @@ function cloneFundingAttempt(
 
 function cloneRefundAttempt(attempt: RefundAttemptRecord): RefundAttemptRecord {
   return structuredClone(attempt);
+}
+
+function cloneExactPaymentAttempt(
+  attempt: ExactPaymentAttemptRecord,
+): ExactPaymentAttemptRecord {
+  return structuredClone(attempt);
+}
+
+function exactPaymentAttemptIsConsistent(
+  attempt: ExactPaymentAttemptRecord,
+): boolean {
+  const payment = attempt.payment;
+  const inputs = attempt.inputOutpoints;
+  const uniqueInputs = new Set(
+    inputs.map((input) => `${input.txid.toLowerCase()}:${input.index}`),
+  );
+  if (
+    !/^[0-9a-fA-F]{64}$/.test(attempt.attemptId) ||
+    !/^[0-9a-fA-F]{64}$/.test(attempt.intentHash) ||
+    !/^[0-9a-fA-F]{64}$/.test(attempt.requestHash) ||
+    !/^[0-9a-fA-F]{64}$/.test(attempt.transactionId) ||
+    !attempt.paymentIdentifier.trim() ||
+    !attempt.origin ||
+    !attempt.resourceUrl ||
+    inputs.length === 0 ||
+    uniqueInputs.size !== inputs.length ||
+    inputs.some(
+      (input) =>
+        !/^[0-9a-fA-F]{64}$/.test(input.txid) ||
+        !Number.isSafeInteger(input.index) ||
+        input.index < 0,
+    ) ||
+    payment.scheme !== "exact" ||
+    payment.accepted.scheme !== "exact" ||
+    !payment.transactionId ||
+    !payment.exactAttemptId ||
+    !sameHex(payment.transactionId, attempt.transactionId) ||
+    !sameHex(payment.exactAttemptId, attempt.attemptId) ||
+    payment.paymentRequired.resource.url !== attempt.resourceUrl ||
+    exactIntentHash(attempt) !== attempt.intentHash.toLowerCase()
+  ) {
+    return false;
+  }
+  if (attempt.status === "pending") {
+    return (
+      attempt.evidence === undefined &&
+      attempt.output === undefined &&
+      !attempt.providerFinalized
+    );
+  }
+  if (
+    !attempt.evidence ||
+    !sameHex(attempt.evidence.transactionId, attempt.transactionId)
+  ) {
+    return false;
+  }
+  return attempt.status === "accepted"
+    ? attempt.evidence.status === "accepted" && attempt.output !== undefined
+    : attempt.evidence.status === "absent" && attempt.output === undefined;
+}
+
+function exactIntentHash(attempt: ExactPaymentAttemptRecord): string {
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:exact-intent:v1",
+      origin: attempt.origin,
+      resourceUrl: attempt.resourceUrl,
+      requestHash: attempt.requestHash.toLowerCase(),
+      paymentIdentifier: attempt.paymentIdentifier,
+      accepted: attempt.payment.accepted,
+    }),
+  );
+}
+
+function sameExactPaymentIntent(
+  left: ExactPaymentAttemptRecord,
+  right: ExactPaymentAttemptRecord,
+): boolean {
+  return (
+    sameHex(left.attemptId, right.attemptId) &&
+    sameHex(left.intentHash, right.intentHash) &&
+    left.paymentIdentifier === right.paymentIdentifier &&
+    sameHex(left.transactionId, right.transactionId) &&
+    stableStringify(left.payment.paymentPayload) ===
+      stableStringify(right.payment.paymentPayload) &&
+    stableStringify(left.inputOutpoints) === stableStringify(right.inputOutpoints)
+  );
 }
 
 function isOpenFundingAttempt(

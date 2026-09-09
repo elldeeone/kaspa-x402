@@ -30,7 +30,7 @@ const requiredFlows = [
   "tiny and normal standard-native exact settlement",
   "KIP-10 additive-head exact-delta settlement and replay rejection",
   "multiple additive head shards",
-  "concurrent additive conflict and loser refresh",
+  "concurrent additive conflict with unresolved loser held pending",
   "duplicate exact settlement idempotency",
   "invalid exact signature rejected before protected work",
   "expired exact authorization rejected before protected work",
@@ -368,10 +368,10 @@ function validateLiveProofResult(result, flows) {
 
   require(result.exact?.conflict?.winnerStatus === 200 &&
     result.exact?.conflict?.loserStatus === 402 &&
-    result.exact?.conflict?.retryStatus ===
-      200, "exact.conflict", "must prove one winner, one refreshed loser, and one successful retry");
+    result.exact?.conflict?.replacementBlocked ===
+      true, "exact.conflict", "must prove one winner and keep the unresolved loser from creating a replacement");
   require(result.exact?.conflict?.handlerExecutions ===
-    2, "exact.conflict.handlerExecutions", "must execute protected work only for the winner and retry");
+    1, "exact.conflict.handlerExecutions", "must execute protected work only for the winner");
   require(result.exact?.invalidSignature?.handlerExecutions === 0 &&
     result.exact?.invalidSignature?.broadcasts ===
       0, "exact.invalidSignature", "must reject before protected work or broadcast");

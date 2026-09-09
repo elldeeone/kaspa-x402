@@ -78,6 +78,7 @@ import {
 } from "@kaspa-x402/covenant";
 import { activeChargedAmount, MemoryChannelLockManager } from "./stores.js";
 import { sameCovenantLineage } from "./channel-lineage.js";
+import { exactSettlementAttemptsMatch } from "./exact-heads.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -245,7 +246,7 @@ export class DirectModeServer {
   async #buildRuntimePaymentRequired(
     options: BuildPaymentRequiredOptions,
   ): Promise<PaymentRequired> {
-    const schemes = paymentRequirementSchemes(options);
+    const schemes = paymentRequirementSchemes(this.#config, options);
     if (
       this.#config.exactProfile === "additive" &&
       schemes.includes("exact") &&
@@ -319,7 +320,11 @@ export class DirectModeServer {
 
   supportedKinds(): SupportedKind[] {
     const kinds: SupportedKind[] = [];
-    if (this.#config.exactTransactionVerifier) {
+    if (
+      this.#config.exactTransactionVerifier &&
+      (this.#config.exactProfile !== "additive" ||
+        this.#config.exactSettlementReconciler)
+    ) {
       kinds.push({
         x402Version: X402_VERSION,
         scheme: "exact",
@@ -521,7 +526,11 @@ export class DirectModeServer {
       });
     }
     const paymentIdentifier = readPaymentIdentifier(paymentPayload);
-    if (this.#config.requirePaymentIdentifier && !paymentIdentifier) {
+    if (
+      (this.#config.requirePaymentIdentifier ||
+        paymentPayload.accepted.scheme === "exact") &&
+      !paymentIdentifier
+    ) {
       return this.#paymentRequiredResponse({
         resource,
         amount: paymentAmount,
@@ -622,7 +631,9 @@ export class DirectModeServer {
             const replay = await this.#checkExactReplay(verified, fingerprint);
             if (replay) return replay;
             try {
-              this.#assertExactAuthorizationLive(verified);
+              if (!verified.recoveryOnly) {
+                this.#assertExactAuthorizationLive(verified);
+              }
             } catch (error) {
               return this.#correctiveResponse(
                 resource,
@@ -1884,14 +1895,12 @@ export class DirectModeServer {
       authorizationExpiresAt: payload.authorization.expiresAt,
       ...(head ? { challengeExpiresAt: head.expiresAt } : {}),
     });
+    let recoveryOnly = false;
     if (currentExpiryError) {
       const currentlyExpiredEvidence =
         currentExpiryError === "expired_authorization" ||
         currentExpiryError === "expired_challenge";
-      if (
-        !currentlyExpiredEvidence ||
-        !(await this.#config.store.loadExactPayment(verification.transactionId))
-      ) {
+      if (!currentlyExpiredEvidence) {
         throw new KaspaX402Error(
           "invalid_kaspa_signature",
           `exact request authorization expiry is invalid: ${currentExpiryError}`,
@@ -1913,7 +1922,7 @@ export class DirectModeServer {
         "exact payment output script does not match payTo",
       );
     }
-    return {
+    const verified: VerifiedExactPayment = {
       scheme: "exact",
       profile,
       paymentRequired,
@@ -1937,6 +1946,30 @@ export class DirectModeServer {
         ? { observedFinality: verification.finality }
         : {}),
     };
+    if (currentExpiryError) {
+      const existing =
+        await this.#config.store.loadExactSettlementAttempt(
+          verification.transactionId,
+        );
+      const candidate = this.#buildExactSettlementAttempt(
+        verified,
+        requestFingerprint,
+        readPaymentIdentifier(paymentPayload),
+        new Date().toISOString(),
+      );
+      if (
+        !existing ||
+        (existing.status !== "accepted" && existing.status !== "applied") ||
+        !exactSettlementAttemptsMatch(existing, candidate)
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_signature",
+          `exact request authorization expiry is invalid: ${currentExpiryError}`,
+        );
+      }
+      recoveryOnly = true;
+    }
+    return recoveryOnly ? { ...verified, recoveryOnly: true } : verified;
   }
 
   #assertExactAuthorizationLive(verified: VerifiedExactPayment): void {
@@ -2803,13 +2836,37 @@ export class DirectModeServer {
     fingerprint: Hash32Hex,
     paymentIdentifier?: string,
   ): Promise<ExactSettlementClaimResult> {
+    const now = new Date().toISOString();
+    const attempt = this.#buildExactSettlementAttempt(
+      verified,
+      fingerprint,
+      paymentIdentifier,
+      now,
+    );
+    try {
+      return await this.#config.store.claimExactSettlement(attempt);
+    } catch (error) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        error instanceof Error
+          ? error.message
+          : "exact settlement claim failed",
+      );
+    }
+  }
+
+  #buildExactSettlementAttempt(
+    verified: VerifiedExactPayment,
+    fingerprint: Hash32Hex,
+    paymentIdentifier: string | undefined,
+    now: string,
+  ): ExactSettlementAttemptRecord {
     if (!verified.transaction) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "exact transaction artifact is required",
       );
     }
-    const now = new Date().toISOString();
     const payloadHash = paymentPayloadHash(verified.paymentPayload);
     const payerId = verified.payerPublicKey;
     const paymentScopeId =
@@ -2867,16 +2924,7 @@ export class DirectModeServer {
         "additive exact verification did not prove a successor head",
       );
     }
-    try {
-      return await this.#config.store.claimExactSettlement(attempt);
-    } catch (error) {
-      throw new KaspaX402Error(
-        "invalid_kaspa_transaction",
-        error instanceof Error
-          ? error.message
-          : "exact settlement claim failed",
-      );
-    }
+    return attempt;
   }
 
   async #settleExactIfNeeded(
@@ -2938,6 +2986,12 @@ export class DirectModeServer {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "exact settlement is pending trusted chain reconciliation and will not be rebroadcast",
+      );
+    }
+    if (verified.recoveryOnly) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "expired exact recovery cannot construct or rebroadcast a transaction",
       );
     }
     let broadcast: TransactionBroadcast;
@@ -3446,7 +3500,7 @@ export class DirectModeServer {
           x402Version: X402_VERSION,
           resource,
           accepts: [accepted],
-          ...requiredPaymentIdentifierExtensions(this.#config),
+          ...requiredPaymentIdentifierExtensions(this.#config, true),
         };
       }
       return this.#buildRuntimePaymentRequired({
@@ -3525,7 +3579,10 @@ export class DirectModeServer {
       x402Version: X402_VERSION,
       resource,
       accepts: [paymentRequirements],
-      ...requiredPaymentIdentifierExtensions(this.#config),
+      ...requiredPaymentIdentifierExtensions(
+        this.#config,
+        paymentRequirements.scheme === "exact",
+      ),
     };
   }
 }
@@ -3534,16 +3591,17 @@ function makePaymentRequired(
   config: ResolvedServerConfig,
   options: BuildPaymentRequiredOptions,
 ): PaymentRequired {
+  const schemes = paymentRequirementSchemes(config, options);
   return {
     x402Version: X402_VERSION,
     resource: options.resource,
-    accepts: paymentRequirementSchemes(options).map((scheme) =>
+    accepts: schemes.map((scheme) =>
       normalizePaymentRequirementsHex(
         makeAcceptedRequirement(config, options, scheme),
       ),
     ),
     ...(options.error ? { error: options.error } : {}),
-    ...requiredPaymentIdentifierExtensions(config),
+    ...requiredPaymentIdentifierExtensions(config, schemes.includes("exact")),
   };
 }
 
@@ -3702,13 +3760,29 @@ function makeAcceptedRequirement(
 }
 
 function paymentRequirementSchemes(
+  config: ResolvedServerConfig,
   options: BuildPaymentRequiredOptions,
 ): Array<"exact" | "batch-settlement"> {
   const schemes =
     options.schemes && options.schemes.length > 0
       ? options.schemes
       : [options.scheme ?? "batch-settlement"];
-  return [...new Set(schemes)];
+  const unique = [...new Set(schemes)];
+  if (
+    config.exactProfile === "additive" &&
+    !config.exactSettlementReconciler &&
+    unique.includes("exact")
+  ) {
+    const executable = unique.filter((scheme) => scheme !== "exact");
+    if (executable.length === 0) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "additive exact requires a trusted settlement reconciler",
+      );
+    }
+    return executable;
+  }
+  return unique;
 }
 
 function paymentRequirementRouteOptions(
@@ -3752,8 +3826,9 @@ function isPaymentSchemeAllowed(
 
 function requiredPaymentIdentifierExtensions(
   config: Pick<ResolvedServerConfig, "requirePaymentIdentifier">,
+  exactRequired = false,
 ): Pick<PaymentRequired, "extensions"> | Record<string, never> {
-  return config.requirePaymentIdentifier
+  return config.requirePaymentIdentifier || exactRequired
     ? {
         extensions: {
           "payment-identifier": paymentIdentifierExtension({
@@ -3939,6 +4014,15 @@ function validateExactTerms(
   config: ResolvedServerConfig,
   accepted: ExactPaymentRequirements,
 ): void {
+  if (
+    config.exactProfile === "additive" &&
+    !config.exactSettlementReconciler
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_transaction",
+      "additive exact requires a trusted settlement reconciler",
+    );
+  }
   if (accepted.network !== config.network) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",

@@ -326,8 +326,8 @@ The expected current live proof must include:
 - tiny and normal standard-native exact settlement and replay rejection;
 - additive exact settlement proving the KIP-10 successor delta equals the
   advertised amount and no second merchant payment output exists;
-- at least two durable head shards, concurrent conflict, loser refresh, and
-  successful retry;
+- at least two durable head shards and concurrent conflict with the unresolved
+  loser held pending without a replacement signature;
 - duplicate idempotency and invalid-signature rejection before protected work;
 - post-broadcast runtime recovery and trusted external head reconciliation;
 - verified singleton KIP-20 batch genesis and deposit-voucher settlement;

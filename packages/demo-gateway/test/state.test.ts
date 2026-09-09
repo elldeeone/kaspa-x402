@@ -49,6 +49,29 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("rejects independently provisioned additive heads at max plus one", async () => {
+    const ledger = new GatewayLedger(new FakeStorage(), {
+      limits: { maxExactHeads: 2 },
+    });
+    await ledger.registerExactHead(exactHead());
+    await ledger.registerExactHead(
+      exactHead({
+        headId: "92".repeat(32),
+        currentOutpoint: { txid: "93".repeat(32), index: 0 },
+      }),
+    );
+
+    await expect(
+      ledger.registerExactHead(
+        exactHead({
+          headId: "94".repeat(32),
+          currentOutpoint: { txid: "95".repeat(32), index: 0 },
+        }),
+      ),
+    ).rejects.toThrow("exact head admission limit");
+    await expect(ledger.listExactHeads()).resolves.toHaveLength(2);
+  });
+
   it("atomically binds one covenant lineage to one channel", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = channel();

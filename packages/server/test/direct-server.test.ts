@@ -434,6 +434,33 @@ describe("direct-mode server", () => {
     expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v3");
   });
 
+  it("suppresses additive exact without a trusted settlement reconciler", async () => {
+    const setup = makeServer({ exactProfile: "additive" });
+
+    expect(setup.server.supportedKinds().map((kind) => kind.scheme)).toEqual([
+      "batch-settlement",
+    ]);
+    expect(() =>
+      setup.server.buildPaymentRequired({
+        resource: RESOURCE,
+        scheme: "exact",
+        exactHead: exactHeadChallenge(exactHead()),
+      }),
+    ).toThrow("trusted settlement reconciler");
+    expect(
+      setup.server.buildPaymentRequired({
+        resource: RESOURCE,
+        schemes: ["exact", "batch-settlement"],
+      }).accepts.map((accepted) => accepted.scheme),
+    ).toEqual(["batch-settlement"]);
+
+    const exactOnly = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(exactOnly.status).toBe(503);
+  });
+
   it("preserves batch fallback when an additive exact head is unavailable", async () => {
     const setup = await makeAdditiveServer(
       {},
@@ -703,7 +730,14 @@ describe("direct-mode server", () => {
   });
 
   it("rejects explicit additive heads below the configured threshold", () => {
-    const setup = makeServer({ exactProfile: "additive" });
+    const setup = makeServer({
+      exactProfile: "additive",
+      exactSettlementReconciler: {
+        reconcileExactSettlement(attempt) {
+          return { status: "unknown", transactionId: attempt.transactionId };
+        },
+      },
+    });
     const head = exactHead({
       redeemScript: buildKip10AdditiveRedeemScript({
         ownerPublicKey: "aa".repeat(32),
@@ -941,7 +975,8 @@ describe("direct-mode server", () => {
 
     expect(accepted.content?.[0]?.text).toBe("paid A");
     expect(substituted.isError).toBe(true);
-    expect(readMcpPaymentRequired(substituted)).toBeDefined();
+    expect(readMcpPaymentRequired(substituted)).toBeUndefined();
+    expect(substituted.content?.[0]?.text).toContain("invalid_transaction_state");
     expect(executions).toBe(1);
   });
 
@@ -997,8 +1032,8 @@ describe("direct-mode server", () => {
     );
 
     expect(replay.isError).toBe(true);
-    expect(readMcpPaymentRequired(replay)).toBeDefined();
-    expect(replay.content?.[0]?.text).toContain("invalid_payload");
+    expect(readMcpPaymentRequired(replay)).toBeUndefined();
+    expect(replay.content?.[0]?.text).toContain("invalid_transaction_state");
   });
 
   it("returns hybrid MCP settlement failures without exposing paid tool output", async () => {
@@ -1089,6 +1124,42 @@ describe("direct-mode server", () => {
     expect(stored?.amount).toBe("100");
     expect(stored?.paymentOutputIndex).toBe(0);
     expect(stored?.response.status).toBe(200);
+  });
+
+  it("requires a payment identifier for every exact attempt", async () => {
+    let verifierCalls = 0;
+    const setup = makeServer({
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          verifierCalls += 1;
+          return {
+            transactionId: EXACT_TX_ID,
+            paymentOutput: {
+              amount: request.amount,
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            finality: "accepted",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
+          };
+        },
+      },
+    });
+    const payment = makeExactPayment(setup, { paymentIdentifier: null });
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { paymentScheme: "exact" }),
+      async () => {
+        executed = true;
+        return { body: "wrong" };
+      },
+    );
+
+    expect(response.status).toBe(402);
+    expect(verifierCalls).toBe(0);
+    expect(executed).toBe(false);
   });
 
   it("verifies and settles standard-native exact before protected work without head state", async () => {
@@ -1282,7 +1353,7 @@ describe("direct-mode server", () => {
     );
 
     expect(first.status).toBe(200);
-    expect(crossPrincipal.status).toBe(402);
+    expect(crossPrincipal.status).toBe(409);
     expect(crossPrincipal.body).not.toBe("principal A secret");
     expect(executed).toBe(false);
   });
@@ -1468,8 +1539,8 @@ describe("direct-mode server", () => {
       },
     );
 
-    expect(replay.status).toBe(402);
-    expect(replay.body).toEqual({ error: "invalid_payload" });
+    expect(replay.status).toBe(409);
+    expect(replay.body).toEqual({ error: "invalid_transaction_state" });
     expect(executed).toBe(false);
   });
 
@@ -2395,6 +2466,134 @@ describe("direct-mode server", () => {
       expect(second.body).toBe("cached");
       expect(executions).toBe(1);
       expect(setup.chain.sentTransactions).toEqual([]);
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("resumes one immutable accepted exact attempt after expiry without rebroadcast", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const setup = makeServer({
+        maxTimeoutSeconds: 1,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: {
+                amount: request.amount,
+                scriptPublicKey: request.payToScriptPublicKey,
+              },
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
+            };
+          },
+        },
+      });
+      setup.chain.sendTransactionId = EXACT_TX_ID;
+      const requestHash = "bd".repeat(32);
+      const payment = makeExactPayment(setup, { requestHash });
+      const request = requestWithPayment(payment, {
+        paymentScheme: "exact",
+        requestHash,
+      });
+      let handlerCalls = 0;
+
+      const first = await setup.server.handlePaidRequest(request, async () => {
+        handlerCalls += 1;
+        throw new Error("response lost after protected effect");
+      });
+      expect(first.status).toBe(500);
+      expect(setup.chain.sentTransactions).toEqual([
+        EXACT_TRANSACTION_ARTIFACT,
+      ]);
+      await expect(
+        setup.store.loadExactSettlementAttempt(EXACT_TX_ID),
+      ).resolves.toMatchObject({ status: "accepted" });
+      await setup.server.recoverExactHandler(EXACT_TX_ID, {
+        body: "recovered",
+        chargedAmount: "100",
+      });
+      vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+
+      const recovered = await setup.server.handlePaidRequest(
+        request,
+        async () => {
+          handlerCalls += 1;
+          return { body: "must not run" };
+        },
+      );
+
+      expect(recovered).toMatchObject({ status: 200, body: "recovered" });
+      expect(handlerCalls).toBe(1);
+      expect(setup.chain.sentTransactions).toEqual([
+        EXACT_TRANSACTION_ARTIFACT,
+      ]);
+      await expect(
+        setup.store.loadExactSettlementAttempt(EXACT_TX_ID),
+      ).resolves.toMatchObject({ status: "applied" });
+    } finally {
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects changed exact bindings through the expiry recovery exception", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-01-01T00:00:00.000Z"));
+    try {
+      const setup = makeServer({
+        maxTimeoutSeconds: 1,
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            return {
+              transactionId: EXACT_TX_ID,
+              paymentOutput: {
+                amount: request.amount,
+                scriptPublicKey: request.payToScriptPublicKey,
+              },
+              finality: "accepted",
+              requestAuthorization: fakeAuthorizationEvidence(
+                request.authorization,
+              ),
+            };
+          },
+        },
+      });
+      const requestHash = "be".repeat(32);
+      const payment = makeExactPayment(setup, { requestHash });
+      const request = requestWithPayment(payment, {
+        paymentScheme: "exact",
+        requestHash,
+      });
+      await setup.server.handlePaidRequest(request, async () => {
+        throw new Error("leave accepted attempt for recovery");
+      });
+      const changed = structuredClone(payment);
+      Object.assign(
+        changed,
+        paymentIdentifierExtension("changed_exact_identifier_0001"),
+      );
+      vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
+      let executed = false;
+
+      const rejected = await setup.server.handlePaidRequest(
+        requestWithPayment(changed, {
+          paymentScheme: "exact",
+          requestHash,
+        }),
+        async () => {
+          executed = true;
+          return { body: "wrong" };
+        },
+      );
+
+      expect(rejected.status).toBe(402);
+      expect(executed).toBe(false);
+      await expect(
+        setup.store.loadExactSettlementAttempt(EXACT_TX_ID),
+      ).resolves.toMatchObject({ status: "accepted" });
     } finally {
       vi.useRealTimers();
     }
@@ -5285,6 +5484,15 @@ async function makeAdditiveServer(
     addressCodec,
     exactTransactionVerifier:
       overrides.exactTransactionVerifier ?? defaultVerifier,
+    exactSettlementReconciler:
+      overrides.exactSettlementReconciler ?? {
+        reconcileExactSettlement(attempt) {
+          return {
+            status: "unknown" as const,
+            transactionId: attempt.transactionId,
+          };
+        },
+      },
   });
   const head = exactHead({
     scriptPublicKey,
@@ -5356,7 +5564,11 @@ function exactHeadChallenge(
 
 function makeAdditivePayment(
   accepted: ExactPaymentRequirements,
-  options: { requestHash?: Hash32Hex; transactionId?: Hash32Hex } = {},
+  options: {
+    requestHash?: Hash32Hex;
+    transactionId?: Hash32Hex;
+    paymentIdentifier?: string | null;
+  } = {},
 ): PaymentPayload {
   const requestHash = options.requestHash ?? testRequestFingerprint(accepted);
   const transactionId = options.transactionId ?? EXACT_TX_ID;
@@ -5379,13 +5591,18 @@ function makeAdditivePayment(
         inputIndex: 1,
       }),
     },
+    ...(options.paymentIdentifier === null
+      ? {}
+      : paymentIdentifierExtension(
+          options.paymentIdentifier ?? `exact_${requestHash}`,
+        )),
   };
 }
 
 function makeExactPayment(
   setup: ReturnType<typeof makeServer>,
   options: {
-    paymentIdentifier?: string;
+    paymentIdentifier?: string | null;
     transactionId?: Hash32Hex;
     paymentOutputIndex?: number;
     requestHash?: Hash32Hex;
@@ -5422,9 +5639,11 @@ function makeExactPayment(
         paymentOutputIndex,
       }),
     },
-    ...(options.paymentIdentifier
-      ? paymentIdentifierExtension(options.paymentIdentifier)
-      : {}),
+    ...(options.paymentIdentifier === null
+      ? {}
+      : paymentIdentifierExtension(
+          options.paymentIdentifier ?? `exact_${requestHash}`,
+        )),
   };
 }
 
@@ -5456,6 +5675,7 @@ function makeStandardExactPayment(
         inputIndex: 0,
       }),
     },
+    ...paymentIdentifierExtension(`exact_${requestHash}`),
   };
 }
 

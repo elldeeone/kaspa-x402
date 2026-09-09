@@ -33,7 +33,10 @@ import {
   mockRequestHash,
   paymentRequiredFor,
 } from "../examples/lib/mock-direct-mode.mjs";
-import { runBatchArtifactPersistenceProof } from "./live-adapter-reference.mjs";
+import {
+  runBatchArtifactPersistenceProof,
+  runExactPaymentAttemptPersistenceProof,
+} from "./live-adapter-reference.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = readOptions(process.argv.slice(2));
@@ -49,6 +52,12 @@ try {
   report.flows.exact = await runExactProof();
   report.flows.batch = await runBatchProof();
   report.flows.txV1 = runTxV1Proof();
+  report.flows.exactAttemptPersistence =
+    runExactPaymentAttemptPersistenceProof();
+  check(
+    "create-only exact artifact persistence and reservation restart recovery",
+    report.flows.exactAttemptPersistence,
+  );
   report.flows.batchArtifactPersistence = runBatchArtifactPersistenceProof();
   check(
     "atomic batch artifact persistence and interrupted-temp recovery",
@@ -218,6 +227,7 @@ async function runExactProof() {
     replayRequired.headers[PAYMENT_REQUIRED_HEADER],
     {
       url: replayUrl,
+      paymentIdentifier: "offline_exact_replay_0001",
     },
   );
   const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
@@ -254,8 +264,8 @@ async function runExactProof() {
       };
     },
   );
-  assert.equal(replay.status, 402);
-  assert.equal(replay.body.error, "invalid_payload");
+  assert.equal(replay.status, 409);
+  assert.equal(replay.body.error, "invalid_transaction_state");
   assert.equal(replayExecutions, 0);
   check("standard-native exact request-bound replay rejection", {
     status: replay.status,

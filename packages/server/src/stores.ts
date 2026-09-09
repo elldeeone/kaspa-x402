@@ -63,6 +63,8 @@ export interface ServerDurableStateLimits {
   maxBytes: number;
   /** Maximum record bundles owned by one authenticated payer identity. */
   maxRecordsPerPayer: number;
+  /** Maximum independently provisioned additive exact heads. */
+  maxExactHeads: number;
   /** Replay/cache retention horizon for terminal record bundles. */
   terminalRetentionMs: number;
 }
@@ -84,6 +86,7 @@ const DEFAULT_DURABLE_STATE_LIMITS: ServerDurableStateLimits = {
   maxRecords: 10_000,
   maxBytes: 512 * 1024 * 1024,
   maxRecordsPerPayer: 1_000,
+  maxExactHeads: 256,
   terminalRetentionMs: 24 * 60 * 60 * 1_000,
 };
 
@@ -701,6 +704,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       if (sameOutpoint(current.currentOutpoint, record.currentOutpoint)) {
         throw new Error("exact head outpoint is already registered");
       }
+    }
+    if (this.#exactHeads.size >= this.#limits.maxExactHeads) {
+      throw new Error("exact head admission limit exceeded");
     }
     this.#exactHeads.set(record.headId, clone(record));
     return clone(record);
@@ -1587,6 +1593,7 @@ function assertDurableStateLimits(limits: ServerDurableStateLimits): void {
     [limits.maxRecords, "record limit"],
     [limits.maxBytes, "byte limit"],
     [limits.maxRecordsPerPayer, "per-payer record limit"],
+    [limits.maxExactHeads, "exact head limit"],
     [limits.terminalRetentionMs, "terminal retention"],
   ] as const) {
     if (!Number.isSafeInteger(value) || value <= 0)
