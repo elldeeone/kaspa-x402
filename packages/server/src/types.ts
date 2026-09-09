@@ -320,6 +320,8 @@ export interface TopUpVerifier {
 export interface ServerChannelRecord {
   channelId: Hash32Hex;
   covenantId: Hash32Hex;
+  /** Monotonic transition counter used with complete-snapshot compare-and-set. */
+  version: SompiString;
   genesisEvidence: CovenantGenesisVerification;
   channelConfig: ChannelConfig;
   escrowAddress: string;
@@ -335,11 +337,102 @@ export interface ServerChannelRecord {
 }
 
 export interface ServerChannelStore {
+  readonly coordinationScope: StoreCoordinationScope;
+  /** Stable deployment/storage domain used to pair the store with its lock. */
+  readonly coordinationDomain: string;
   loadChannel(channelId: Hash32Hex): Promise<ServerChannelRecord | undefined>;
-  /** Atomically preserves the one-covenant-lineage-to-one-channel invariant. */
-  saveChannel(channel: ServerChannelRecord): Promise<void>;
-  retireChannel(channelId: Hash32Hex, reason?: string): Promise<void>;
+  /** Registers immutable genesis state. Existing live state cannot be replaced. */
+  registerChannel(channel: ServerChannelRecord): Promise<void>;
+  /** Retires the exact leased snapshot and releases the lease atomically. */
+  retireChannel(
+    channelId: Hash32Hex,
+    leaseId: Hash32Hex,
+    expected: ServerChannelRecord,
+    reason?: string,
+  ): Promise<void>;
   listChannels(): Promise<ServerChannelRecord[]>;
+}
+
+export type StoreCoordinationScope = "process-local" | "deployment-wide";
+export type LockCoordinationScope = "process-local" | "deployment-wide";
+
+export type ChannelOperationKind =
+  | "payment"
+  | "deposit"
+  | "top-up"
+  | "claim"
+  | "refund"
+  | "recovery"
+  | "retirement";
+
+export type ChannelOperationLeaseStatus =
+  | "reserved"
+  | "pending"
+  | "recovery-required";
+
+/** One durable owner for every side-effecting operation on a channel lineage. */
+export interface ChannelOperationLeaseRecord {
+  leaseId: Hash32Hex;
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  kind: ChannelOperationKind;
+  expected: ServerChannelRecord | null;
+  status: ChannelOperationLeaseStatus;
+  createdAt: string;
+  updatedAt: string;
+  recoveryReason?: string;
+}
+
+export interface ChannelOperationLeaseClaimResult {
+  lease: ChannelOperationLeaseRecord;
+  created: boolean;
+}
+
+export interface ChannelOperationLeaseStore {
+  /** Atomically reserves the complete channel snapshot for one operation. */
+  claimChannelOperation(
+    lease: ChannelOperationLeaseRecord,
+  ): Promise<ChannelOperationLeaseClaimResult>;
+  loadChannelOperation(
+    channelId: Hash32Hex,
+  ): Promise<ChannelOperationLeaseRecord | undefined>;
+  /** Releases only a lease that provably crossed no protected-effect boundary. */
+  abandonChannelOperation(
+    leaseId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
+}
+
+export type PaymentIdentifierReservationStatus =
+  | "reserved"
+  | "pending"
+  | "recovery-required"
+  | "completed"
+  | "safely-released";
+
+export type PaymentKind = "exact" | "batch-settlement";
+
+/** Immutable ownership claimed before settlement, broadcast, or protected work. */
+export interface PaymentIdentifierReservationClaim {
+  id: string;
+  fingerprint: Hash32Hex;
+  paymentPayloadHash: Hash32Hex;
+  paymentScopeId: Hash32Hex;
+  paymentKind: PaymentKind;
+  ownerId: Hash32Hex;
+  payerId: string;
+  channelId?: Hash32Hex;
+  transactionId?: Hash32Hex;
+  paymentOutputIndex?: number;
+}
+
+export interface PaymentIdentifierReservationRecord
+  extends PaymentIdentifierReservationClaim {
+  status: PaymentIdentifierReservationStatus;
+  createdAt: string;
+  updatedAt: string;
+  recoveryReason?: string;
 }
 
 export interface PaymentIdentifierRecord {
@@ -383,6 +476,9 @@ export interface IdempotencyStore {
   loadPaymentIdentifier(
     id: string,
   ): Promise<PaymentIdentifierRecord | undefined>;
+  loadPaymentIdentifierReservation(
+    id: string,
+  ): Promise<PaymentIdentifierReservationRecord | undefined>;
 }
 
 export interface ExactPaymentRecord {
@@ -437,6 +533,10 @@ export interface ExactSettlementAttemptRecord {
   handlerCompletedAt?: string;
   head?: ExactSettlementHeadClaim;
   recoveryReason?: string;
+  /** Global idempotency ownership claimed atomically with this attempt. */
+  paymentIdentifier?: PaymentIdentifierReservationClaim;
+  /** Stable admission identity used for per-payer durable limits. */
+  payerId: string;
 }
 
 export interface ExactSettlementClaimResult {
@@ -467,21 +567,14 @@ export interface SettlementCommit {
   channel: ServerChannelRecord;
   commitment: BatchCommitmentRecord;
   paymentIdentifier?: PaymentIdentifierRecord;
-  expected: {
-    channelId: Hash32Hex;
-    covenantId: Hash32Hex;
-    fundingAmount: SompiString;
-    chargedCumulativeAmount: SompiString;
-    claimedCumulativeAmount: SompiString;
-    signedMaxClaimable: SompiString;
-    voucherSignature?: SignatureHex;
-    activeOutpoint: FundingOutpoint;
-    activeScriptPublicKey: ByteHex;
-    status: ChannelStatus;
-  };
+  /** Complete immutable snapshot checked by the final atomic transition. */
+  expected: ServerChannelRecord;
 }
 
-export type BatchSettlementAttemptStatus = "pending" | "applied";
+export type BatchSettlementAttemptStatus =
+  | "pending"
+  | "applied"
+  | "safely-released";
 
 /** Durable evidence written before protected batch work can begin. */
 export interface BatchSettlementAttemptRecord {
@@ -500,6 +593,23 @@ export interface BatchSettlementAttemptRecord {
   handlerResult?: ProtectedHandlerResult;
   handlerCompletedAt?: string;
   recoveryReason?: string;
+  /** Selects the shared per-channel lease class for this payment. */
+  operationKind: "payment" | "deposit" | "top-up";
+  /** Stable admission identity used for per-payer durable limits. */
+  payerId: string;
+  /** Global idempotency ownership claimed atomically with this attempt. */
+  paymentIdentifier?: PaymentIdentifierReservationClaim;
+  /**
+   * Genesis/top-up state installed in the same transaction as the attempt and
+   * lease. `previous` is null only for a new singleton covenant lineage.
+   */
+  channelTransition?: {
+    previous: ServerChannelRecord | null;
+    next: ServerChannelRecord;
+  };
+  /** Terminal replay pointers retained after the handler payload is compacted. */
+  commitmentId?: Hash32Hex;
+  completedPaymentIdentifier?: string;
 }
 
 export interface BatchSettlementClaimResult {
@@ -525,6 +635,12 @@ export interface BatchSettlementAttemptStore {
   ): Promise<void>;
   /** Records an uncertain handler outcome that requires explicit operator recovery. */
   markBatchHandlerRecoveryRequired(
+    attemptId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void>;
+  /** Releases only a not-started attempt and its identifier/channel ownership. */
+  abandonBatchSettlement(
     attemptId: Hash32Hex,
     reason: string,
     observedAt: string,
@@ -644,6 +760,10 @@ export interface ClaimAttemptRecord {
   continuationOutpoint?: FundingOutpoint;
   continuationScriptPublicKey?: ByteHex;
   continuationFundingAmount?: SompiString;
+  /** Lease reserved before transaction construction or broadcast. */
+  operationLeaseId: Hash32Hex;
+  /** Complete snapshot reserved before transaction construction. */
+  expected: ServerChannelRecord;
 }
 
 export interface ClaimAttemptStore {
@@ -663,6 +783,7 @@ export interface ClaimAttemptStore {
 export interface ServerStateStore
   extends
     ServerChannelStore,
+    ChannelOperationLeaseStore,
     CommitmentStore,
     IdempotencyStore,
     SettlementCommitStore,
@@ -672,6 +793,9 @@ export interface ServerStateStore
     ClaimAttemptStore {}
 
 export interface ChannelLockManager {
+  readonly coordinationScope: LockCoordinationScope;
+  /** Must equal the deployment-wide store domain when scope is shared. */
+  readonly coordinationDomain: string;
   runExclusive<T>(channelId: Hash32Hex, fn: () => Promise<T>): Promise<T>;
 }
 
@@ -847,6 +971,8 @@ export interface VerifiedBatchPayment {
   commitExpectedChannel: ServerChannelRecord;
   voucher: Voucher;
   openedChannel: boolean;
+  /** Predecessor captured before an atomic deposit/top-up transition. */
+  channelTransitionPrevious?: ServerChannelRecord | null;
 }
 
 export interface VerifiedExactPayment {
@@ -860,6 +986,8 @@ export interface VerifiedExactPayment {
   profile: ExactProfile;
   transactionId: Hash32Hex;
   requestAuthorizationId: Hash32Hex;
+  /** Authenticated signer identity used for stable per-payer admission. */
+  payerPublicKey: PublicKeyHex;
   paymentOutputIndex: number;
   transaction?: PreparedTransaction;
   transactionEncoding?: ExactTransactionEncoding;

@@ -143,6 +143,20 @@ export function normalizeExactSettlementAttempt(
   if (typeof input.transaction !== "string" || input.transaction.length === 0)
     throw new Error("exact settlement transaction is required");
   if (
+    typeof input.payerId !== "string" ||
+    input.payerId.length === 0 ||
+    input.payerId.length > 256
+  )
+    throw new Error("exact settlement payer identity is invalid");
+  if (
+    input.paymentIdentifier &&
+    (input.paymentIdentifier.ownerId.toLowerCase() !==
+      input.transactionId.toLowerCase() ||
+      input.paymentIdentifier.transactionId?.toLowerCase() !==
+        input.transactionId.toLowerCase())
+  )
+    throw new Error("exact payment identifier owner does not match its attempt");
+  if (
     input.requiredFinality !== "accepted" &&
     input.requiredFinality !== "confirmed"
   ) {

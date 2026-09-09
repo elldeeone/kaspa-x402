@@ -12,6 +12,7 @@ import {
   type BatchCommitmentRecord,
   type BatchSettlementAttemptRecord,
   type ClaimAttemptRecord,
+  type ChannelOperationLeaseRecord,
   type ExactPaymentRecord,
   type ExactSettlementCommit,
   type ExactHeadRecord,
@@ -20,6 +21,7 @@ import {
   type ExactHeadUnavailableResult,
   type ExactSettlementAttemptRecord,
   type PaymentIdentifierRecord,
+  type PaymentIdentifierReservationClaim,
   type ProtectedHandlerResult,
   type ServerChannelRecord,
   type ServerStateStore,
@@ -87,6 +89,457 @@ describe("exact head manifest", () => {
   });
 });
 
+describe("durable crash checkpoints", () => {
+  it("survives restart after exact reservation, broadcast, handler, and commit writes", async () => {
+    let store = await DurableMockServerChannelStore.create(
+      new DurableMockJournal(),
+    );
+    const claim = exactIdentifierClaim(TX, TX);
+    await store.claimExactSettlement(
+      exactSettlementAttempt({
+        profile: "standard-native",
+        head: undefined,
+        paymentIdentifier: claim,
+      }),
+    );
+    store = await store.restart();
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      status: "pending",
+    });
+    await expect(
+      store.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "reserved" });
+
+    await store.recordExactSettlementBroadcast(
+      TX,
+      "broadcast",
+      "2026-07-07T00:00:01.000Z",
+    );
+    store = await store.restart();
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      status: "broadcast",
+    });
+    await expect(
+      store.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "pending" });
+
+    await store.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:02.000Z",
+    );
+    await store.beginExactHandler(TX, "2026-07-07T00:00:03.000Z");
+    store = await store.restart();
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      status: "accepted",
+      handlerStartedAt: "2026-07-07T00:00:03.000Z",
+    });
+
+    await store.recordExactHandlerResult(
+      TX,
+      { body: "durable", chargedAmount: "20000000" },
+      "2026-07-07T00:00:04.000Z",
+    );
+    store = await store.restart();
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      handlerResult: { body: "durable", chargedAmount: "20000000" },
+    });
+
+    await store.commitExactPayment({
+      payment: exactPayment({
+        profile: "standard-native",
+        amount: "20000000",
+        paymentOutputIndex: 0,
+      }),
+      paymentIdentifier: {
+        id: claim.id,
+        fingerprint: claim.fingerprint,
+        paymentPayloadHash: claim.paymentPayloadHash,
+        response: response(),
+        settlement: settlement(),
+        paymentScopeId: claim.paymentScopeId,
+        transactionId: TX,
+        paymentOutputIndex: 0,
+      },
+    });
+    store = await store.restart();
+    await expect(store.loadExactPayment(TX)).resolves.toBeDefined();
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      status: "applied",
+    });
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.not.toHaveProperty(
+      "handlerResult",
+    );
+    await expect(
+      store.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "completed" });
+  });
+});
+
+describe("memory durable-state limits", () => {
+  for (const candidateKind of ["exact", "batch"] as const) {
+    it(`preserves safely released identifiers when ${candidateKind} replacement admission fails`, async () => {
+      const current = channel();
+      const store = new MemoryServerChannelStore([current], {
+        limits: {
+          maxRecords: 10,
+          maxBytes: 4 * 1024 * 1024,
+          maxRecordsPerPayer: 1,
+        },
+      });
+      const releasedOwner = "aa".repeat(32);
+      const blockerId = "bb".repeat(32);
+      const candidateId = "cc".repeat(32);
+      const releasedClaim = {
+        ...exactIdentifierClaim(releasedOwner, releasedOwner),
+        payerId: "payer:a",
+      };
+      await store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: releasedOwner,
+          profile: "standard-native",
+          head: undefined,
+          payerId: "payer:a",
+          paymentIdentifier: releasedClaim,
+        }),
+      );
+      await store.abandonExactSettlement(
+        releasedOwner,
+        "trusted pre-effect rejection",
+        "2026-07-07T00:00:01.000Z",
+      );
+      await store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: blockerId,
+          profile: "standard-native",
+          head: undefined,
+          payerId: "payer:b",
+        }),
+      );
+
+      const reservationBefore = await store.loadPaymentIdentifierReservation(
+        releasedClaim.id,
+      );
+      const statsBefore = store.durableStateStats();
+      const candidate =
+        candidateKind === "exact"
+          ? exactSettlementAttempt({
+              transactionId: candidateId,
+              profile: "standard-native",
+              head: undefined,
+              payerId: "payer:b",
+              paymentIdentifier: {
+                ...exactIdentifierClaim(candidateId, candidateId),
+                id: releasedClaim.id,
+                payerId: "payer:b",
+              },
+            })
+          : batchSettlementAttempt(current, {
+              attemptId: candidateId,
+              payerId: "payer:b",
+              paymentIdentifier: {
+                ...batchIdentifierClaim(candidateId, current.channelId),
+                id: releasedClaim.id,
+                payerId: "payer:b",
+              },
+            });
+      const claimCandidate = () =>
+        candidateKind === "exact"
+          ? store.claimExactSettlement(
+              candidate as ExactSettlementAttemptRecord,
+            )
+          : store.claimBatchSettlement(
+              candidate as BatchSettlementAttemptRecord,
+            );
+
+      await expect(claimCandidate()).rejects.toThrow("per-payer limit exceeded");
+      await expect(
+        store.loadPaymentIdentifierReservation(releasedClaim.id),
+      ).resolves.toEqual(reservationBefore);
+      expect(store.durableStateStats()).toEqual(statsBefore);
+      if (candidateKind === "exact") {
+        await expect(
+          store.loadExactSettlementAttempt(candidateId),
+        ).resolves.toBeUndefined();
+      } else {
+        await expect(
+          store.loadBatchSettlementAttempt(candidateId),
+        ).resolves.toBeUndefined();
+        await expect(
+          store.loadChannelOperation(current.channelId),
+        ).resolves.toBeUndefined();
+      }
+
+      await store.abandonExactSettlement(
+        blockerId,
+        "trusted pre-effect rejection",
+        "2026-07-07T00:00:02.000Z",
+      );
+      await expect(claimCandidate()).resolves.toMatchObject({ created: true });
+    });
+  }
+
+  it("replaces a safely released record when its durable key is reused", async () => {
+    const store = new MemoryServerChannelStore([], {
+      limits: { maxRecords: 1, maxRecordsPerPayer: 1 },
+    });
+    const claim = exactIdentifierClaim(TX, TX);
+    const attempt = exactSettlementAttempt({
+      profile: "standard-native",
+      head: undefined,
+      paymentIdentifier: claim,
+    });
+    await store.claimExactSettlement(attempt);
+    await store.abandonExactSettlement(
+      TX,
+      "trusted pre-effect rejection",
+      "2026-07-07T00:00:01.000Z",
+    );
+
+    await expect(store.claimExactSettlement(attempt)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(
+      store.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "reserved", ownerId: TX });
+    expect(store.durableStateStats()).toMatchObject({
+      records: 1,
+      openRecords: 1,
+      payerRecords: { "payer:test": 1 },
+    });
+  });
+
+  it("retains two thousand compact terminal batch attempts within hard limits", async () => {
+    const base = channel();
+    const initial = channel({
+      fundingAmount: "1000000",
+      genesisEvidence: { ...base.genesisEvidence, genesisAmount: "1000000" },
+    });
+    const store = new MemoryServerChannelStore([initial], {
+      limits: { maxRecords: 2_000, maxRecordsPerPayer: 2_001 },
+    });
+    let current = initial;
+
+    for (let index = 0; index < 2_000; index += 1) {
+      const attemptId = (index + 1).toString(16).padStart(64, "0");
+      const requestFingerprint = (10_000 + index)
+        .toString(16)
+        .padStart(64, "0");
+      const payloadHash = (20_000 + index)
+        .toString(16)
+        .padStart(64, "0");
+      const commitmentId = (30_000 + index)
+        .toString(16)
+        .padStart(64, "0");
+      const nextCharge = (BigInt(current.chargedCumulativeAmount) + 1n).toString();
+      const attempt = batchSettlementAttempt(current, {
+        attemptId,
+        requestFingerprint,
+        paymentPayloadHash: payloadHash,
+        maximumCharge: "1",
+      });
+      await store.claimBatchSettlement(attempt);
+      await store.beginBatchHandler(
+        attemptId,
+        "2026-07-07T00:00:01.000Z",
+      );
+      await store.recordBatchHandlerResult(
+        attemptId,
+        { chargedAmount: "1" },
+        "2026-07-07T00:00:02.000Z",
+      );
+      const next: ServerChannelRecord = {
+        ...current,
+        version: (BigInt(current.version) + 1n).toString(),
+        chargedCumulativeAmount: nextCharge,
+        signedMaxClaimable: nextCharge,
+        voucherSignature: "16".repeat(64),
+        lastCommitmentId: commitmentId,
+      };
+      await store.commitSettlement({
+        batchAttemptId: attemptId,
+        expected: current,
+        channel: next,
+        commitment: {
+          commitmentId,
+          channelId: current.channelId,
+          covenantId: current.covenantId,
+          requestFingerprint,
+          paymentRequirementsHash: REQUIREMENTS,
+          paymentPayloadHash: payloadHash,
+          activeOutpoint: current.activeOutpoint,
+          activeScriptPublicKey: current.activeScriptPublicKey,
+          voucher: {
+            covenantId: current.covenantId,
+            amount: nextCharge,
+            signature: "16".repeat(64),
+          },
+          chargedAmount: "1",
+          chargedCumulativeBefore: current.chargedCumulativeAmount,
+          chargedCumulativeAfter: nextCharge,
+          claimedCumulativeAmount: current.claimedCumulativeAmount,
+          settlement: settlement(),
+          response: response(),
+        },
+      });
+      current = next;
+    }
+
+    expect(store.durableStateStats()).toMatchObject({
+      records: 2_000,
+      openRecords: 0,
+    });
+    await expect(store.loadBatchSettlementAttempt("1".padStart(64, "0")))
+      .resolves.toMatchObject({ status: "applied" });
+    await expect(
+      store.claimBatchSettlement(
+        batchSettlementAttempt(current, {
+          attemptId: "7fff".padStart(64, "0"),
+          requestFingerprint: "7ffe".padStart(64, "0"),
+          paymentPayloadHash: "7ffd".padStart(64, "0"),
+          maximumCharge: "1",
+        }),
+      ),
+    ).rejects.toThrow("record limit exceeded");
+  });
+
+  it("reserves the complete duplicated terminal response bundle", async () => {
+    const store = new MemoryServerChannelStore([], {
+      limits: { maxBytes: 300_000 },
+    });
+
+    await expect(
+      store.claimExactSettlement(
+        exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+      ),
+    ).rejects.toThrow("byte limit exceeded");
+    expect(store.durableStateStats()).toMatchObject({ records: 0, bytes: 0 });
+  });
+
+  it("accounts for safely released identifier records until bounded expiry", async () => {
+    let now = 0;
+    const store = new MemoryServerChannelStore([], {
+      limits: {
+        maxRecords: 1,
+        maxBytes: 1024 * 1024,
+        maxRecordsPerPayer: 1,
+        terminalRetentionMs: 100,
+      },
+      now: () => now,
+    });
+    const firstIdentifier = exactIdentifierClaim(TX, TX);
+    await store.claimExactSettlement(
+      exactSettlementAttempt({
+        profile: "standard-native",
+        head: undefined,
+        paymentIdentifier: firstIdentifier,
+      }),
+    );
+    await store.abandonExactSettlement(
+      TX,
+      "trusted pre-effect rejection",
+      "2026-07-07T00:00:01.000Z",
+    );
+
+    for (let index = 1; index < 5; index += 1) {
+      const transactionId = (100 + index).toString(16).padStart(64, "0");
+      await store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId,
+          profile: "standard-native",
+          head: undefined,
+          paymentIdentifier: exactIdentifierClaim(transactionId, transactionId),
+        }),
+      );
+      await store.abandonExactSettlement(
+        transactionId,
+        "trusted pre-effect rejection",
+        "2026-07-07T00:00:01.000Z",
+      );
+    }
+
+    expect(store.durableStateStats()).toMatchObject({
+      records: 1,
+      openRecords: 0,
+    });
+    expect(store.durableStateStats().bytes).toBeGreaterThan(0);
+    const next = exactSettlementAttempt({
+      transactionId: OTHER_TX,
+      profile: "standard-native",
+      head: undefined,
+      paymentIdentifier: {
+        ...exactIdentifierClaim(OTHER_TX, OTHER_TX),
+        id: "pay_8d5d747be160e280504c099d984bcfe1",
+      },
+    });
+    await expect(store.claimExactSettlement(next)).rejects.toThrow(
+      "record limit exceeded",
+    );
+
+    now = 101;
+    await expect(store.claimExactSettlement(next)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(
+      store.loadPaymentIdentifierReservation(firstIdentifier.id),
+    ).resolves.toBeUndefined();
+  });
+
+  it("compacts terminal responses but retains replay ownership", async () => {
+    let now = 0;
+    const store = new MemoryServerChannelStore([], {
+      limits: {
+        maxRecords: 1,
+        maxBytes: 1024 * 1024,
+        maxRecordsPerPayer: 1,
+        terminalRetentionMs: 100,
+      },
+      now: () => now,
+    });
+    await store.claimExactSettlement(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+    );
+    await store.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:01.000Z",
+    );
+    await store.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await store.recordExactHandlerResult(
+      TX,
+      { chargedAmount: "20000000" },
+      "2026-07-07T00:00:03.000Z",
+    );
+    await store.commitExactPayment({
+      payment: exactPayment({
+        profile: "standard-native",
+        amount: "20000000",
+        paymentOutputIndex: 0,
+      }),
+    });
+    now = 101;
+    await expect(
+      store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+        }),
+      ),
+    ).rejects.toThrow("record limit exceeded");
+    await expect(store.loadExactPayment(TX)).resolves.toMatchObject({
+      response: {
+        status: 409,
+        body: { error: "replay_record_retained" },
+      },
+    });
+    expect(store.durableStateStats()).toMatchObject({
+      records: 1,
+      openRecords: 0,
+    });
+  });
+});
+
 function defineStoreContract(factory: StoreFactory): void {
   it("atomically binds one covenant lineage to one channel", async () => {
     const store = await factory.create();
@@ -99,21 +552,24 @@ function defineStoreContract(factory: StoreFactory): void {
       },
     });
 
-    await store.saveChannel(first);
-    await expect(store.saveChannel(alias)).rejects.toThrow(
+    await store.registerChannel(first);
+    await expect(store.registerChannel(alias)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(store.loadChannel(first.channelId)).resolves.toEqual(first);
     await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
     await expect(
-      store.saveChannel({ ...first, covenantId: "1e".repeat(32) }),
-    ).rejects.toThrow("lineage cannot change");
+      store.registerChannel({ ...first, covenantId: "1e".repeat(32) }),
+    ).rejects.toThrow("cannot be replaced");
   });
 
   it("preserves covenant lineage ownership through settlement and retirement", async () => {
     const first = channel();
     let store = await factory.create([first]);
-    await store.retireChannel(first.channelId);
+    await store.claimChannelOperation(
+      channelOperation(first, "retirement", ATTEMPT),
+    );
+    await store.retireChannel(first.channelId, ATTEMPT, first);
     if (store instanceof DurableMockServerChannelStore) {
       store = await store.restart();
     }
@@ -124,20 +580,10 @@ function defineStoreContract(factory: StoreFactory): void {
         salt: "1d".repeat(32),
       },
     });
-    const commit = settlementCommit(alias, {
-      chargedCumulativeAmount: "100",
-      signedMaxClaimable: "100",
-      voucherSignature: "16".repeat(64),
-    });
-    await stageBatchAttempt(store, commit);
-
-    await expect(store.commitSettlement(commit)).rejects.toThrow(
+    await expect(store.registerChannel(alias)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(store.loadChannel(alias.channelId)).resolves.toBeUndefined();
-    await expect(
-      store.loadCommitment(commit.commitment.commitmentId),
-    ).resolves.toBeUndefined();
   });
 
   it("consumes exact transaction ids once while allowing identical retries", async () => {
@@ -167,16 +613,17 @@ function defineStoreContract(factory: StoreFactory): void {
 
   it("rejects conflicting payment identifier commits atomically", async () => {
     const store = await factory.create();
-    await store.commitExactPayment({
-      payment: exactPayment({ transactionId: TX }),
-      paymentIdentifier: paymentIdentifier({ paymentScopeId: TX }),
-    });
+    await stageExactAttemptWithIdentifier(store, TX, TX);
 
     await expect(
-      store.commitExactPayment({
-        payment: exactPayment({ transactionId: OTHER_TX }),
-        paymentIdentifier: paymentIdentifier({ paymentScopeId: OTHER_TX }),
-      }),
+      store.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+          paymentIdentifier: exactIdentifierClaim(OTHER_TX, OTHER_TX),
+        }),
+      ),
     ).rejects.toThrow("payment identifier");
     await expect(store.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
   });
@@ -380,8 +827,10 @@ function defineStoreContract(factory: StoreFactory): void {
     await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
       handlerStartedAt: "2026-07-07T00:00:04.000Z",
-      handlerResult: { body: "download", chargedAmount: "20000000" },
     });
+    await expect(store.loadExactSettlementAttempt(TX)).resolves.not.toHaveProperty(
+      "handlerResult",
+    );
 
     if (store instanceof DurableMockServerChannelStore) {
       store = await store.restart();
@@ -397,14 +846,25 @@ function defineStoreContract(factory: StoreFactory): void {
 
   it("releases only unaccepted attempts and can fail a head closed", async () => {
     const store = await factory.create();
+    const paymentIdentifier = exactIdentifierClaim(TX, TX);
     await store.registerExactHead(exactHead());
-    await store.claimExactSettlement(exactSettlementAttempt());
+    await store.claimExactSettlement(
+      exactSettlementAttempt({ paymentIdentifier }),
+    );
+    await store.recordExactSettlementBroadcast(
+      TX,
+      "broadcast",
+      "2026-07-07T00:00:01.000Z",
+    );
     await store.abandonExactSettlement(
       TX,
       "trusted node rejected transaction",
       "2026-07-07T00:00:02.000Z",
     );
     await expect(store.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(
+      store.loadPaymentIdentifierReservation(paymentIdentifier.id),
+    ).resolves.toMatchObject({ status: "safely-released" });
     await expect(store.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "available",
       claimTransactionId: undefined,
@@ -455,13 +915,19 @@ function defineStoreContract(factory: StoreFactory): void {
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
-    const store = await factory.create([channel()]);
+    const store = await factory.create([
+      {
+        ...channel(),
+        version: "1",
+        chargedCumulativeAmount: "1",
+        signedMaxClaimable: "1",
+      },
+    ]);
     const staleCommit = settlementCommit(channel(), {
       chargedCumulativeAmount: "100",
     });
-    await store.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
 
-    await expect(store.commitSettlement(staleCommit)).rejects.toThrow(
+    await expect(stageBatchAttempt(store, staleCommit)).rejects.toThrow(
       "channel state changed",
     );
     await expect(
@@ -490,8 +956,100 @@ function defineStoreContract(factory: StoreFactory): void {
       store.loadBatchSettlementAttempt(commit.batchAttemptId),
     ).resolves.toMatchObject({
       status: "applied",
-      handlerResult: { chargedAmount: "100" },
     });
+    await expect(
+      store.loadBatchSettlementAttempt(commit.batchAttemptId),
+    ).resolves.not.toHaveProperty("handlerResult");
+  });
+
+  it("rejects impossible same-outpoint deposit transitions atomically", async () => {
+    const invalid: Array<{
+      previous?: ServerChannelRecord;
+      mutation: Partial<ServerChannelRecord>;
+      message: string;
+    }> = [
+      {
+        mutation: { fundingAmount: "1001" },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { activeScriptPublicKey: "0000" + "aa".repeat(34) },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { escrowAddress: "kaspatest:other-escrow" },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { status: "retired" },
+        message: "deposit transition requires an active channel",
+      },
+      {
+        previous: channel({ status: "retired" }),
+        mutation: { status: "active" },
+        message: "deposit transition requires an active channel",
+      },
+    ];
+
+    for (const [index, testCase] of invalid.entries()) {
+      const previous = testCase.previous ?? channel();
+      const store = await factory.create([previous]);
+      const next = {
+        ...previous,
+        version: "1",
+        ...testCase.mutation,
+      };
+      const attemptId = (index + 1).toString(16).padStart(64, "0");
+      await expect(
+        store.claimBatchSettlement(
+          batchSettlementAttempt(next, {
+            attemptId,
+            operationKind: "deposit",
+            channelTransition: { previous, next },
+          }),
+        ),
+      ).rejects.toThrow(testCase.message);
+      await expect(store.loadChannel(previous.channelId)).resolves.toEqual(
+        previous,
+      );
+      await expect(
+        store.loadBatchSettlementAttempt(attemptId),
+      ).resolves.toBeUndefined();
+      await expect(
+        store.loadChannelOperation(previous.channelId),
+      ).resolves.toBeUndefined();
+    }
+
+    const previous = channel();
+    const store = await factory.create([previous]);
+    const noOpTopUp = { ...previous, version: "1" };
+    await expect(
+      store.claimBatchSettlement(
+        batchSettlementAttempt(noOpTopUp, {
+          attemptId: "ff".repeat(32),
+          operationKind: "top-up",
+          channelTransition: { previous, next: noOpTopUp },
+        }),
+      ),
+    ).rejects.toThrow("top-up must replace the active outpoint");
+    await expect(store.loadChannel(previous.channelId)).resolves.toEqual(
+      previous,
+    );
+
+    const invalidGenesis = channel({ status: "retired" });
+    const genesisStore = await factory.create();
+    await expect(
+      genesisStore.claimBatchSettlement(
+        batchSettlementAttempt(invalidGenesis, {
+          attemptId: "fe".repeat(32),
+          operationKind: "deposit",
+          channelTransition: { previous: null, next: invalidGenesis },
+        }),
+      ),
+    ).rejects.toThrow("new channel must begin active");
+    await expect(
+      genesisStore.loadChannel(invalidGenesis.channelId),
+    ).resolves.toBeUndefined();
   });
 
   it("rejects malformed batch settlement attempts before durable state changes", async () => {
@@ -592,23 +1150,16 @@ function defineStoreContract(factory: StoreFactory): void {
 
   it("rejects conflicting batch payment identifiers atomically", async () => {
     const store = await factory.create([channel()]);
-    await store.commitExactPayment({
-      payment: exactPayment({ transactionId: TX }),
-      paymentIdentifier: paymentIdentifier({ paymentScopeId: TX }),
-    });
-    const conflicting = settlementCommit(channel(), {
-      chargedCumulativeAmount: "100",
-    });
-    await stageBatchAttempt(store, conflicting);
+    await stageExactAttemptWithIdentifier(store, TX, TX);
 
     await expect(
-      store.commitSettlement({
-        ...conflicting,
-        paymentIdentifier: paymentIdentifier({ paymentScopeId: CHANNEL_ID }),
+      store.claimBatchSettlement({
+        ...batchSettlementAttempt(channel()),
+        paymentIdentifier: batchIdentifierClaim(ATTEMPT, CHANNEL_ID),
       }),
     ).rejects.toThrow("payment identifier");
     await expect(
-      store.loadCommitment(conflicting.commitment.commitmentId),
+      store.loadCommitment("15".repeat(32)),
     ).resolves.toBeUndefined();
     await expect(store.loadChannel(CHANNEL_ID)).resolves.toMatchObject({
       chargedCumulativeAmount: "0",
@@ -616,8 +1167,9 @@ function defineStoreContract(factory: StoreFactory): void {
   });
 
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
-    const store = await factory.create([channel()]);
+    const store = await factory.create([claimableChannel()]);
     const first = claimAttempt({ attemptId: ATTEMPT });
+    await reserveClaim(store, first);
     await store.saveClaimAttempt(first);
     await expect(
       store.saveClaimAttempt(claimAttempt({ attemptId: OTHER_TX })),
@@ -636,22 +1188,31 @@ function defineStoreContract(factory: StoreFactory): void {
     await store.saveClaimAttempt(broadcast);
     await store.saveClaimAttempt(accepted);
 
-    await store.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
     await expect(
       store.applyClaimAttempt(
-        { ...channel(), claimedCumulativeAmount: "100" },
+        claimSuccessor(claimableChannel(), first),
         accepted,
       ),
-    ).rejects.toThrow("channel state changed");
+    ).resolves.toBeUndefined();
+    await expect(store.loadChannel(CHANNEL_ID)).resolves.toMatchObject({
+      version: "1",
+      claimedCumulativeAmount: "100",
+      fundingAmount: "900",
+    });
   });
 
   it("binds claim attempts to one immutable artifact and monotonic state", async () => {
-    const store = await factory.create([channel()]);
+    const store = await factory.create([claimableChannel()]);
     const pending = claimAttempt({ attemptId: ATTEMPT });
+    await reserveClaim(store, pending);
     await store.saveClaimAttempt(pending);
 
     await expect(
-      store.saveClaimAttempt({ ...pending, transactionId: OTHER_TX }),
+      store.saveClaimAttempt({
+        ...pending,
+        transactionId: OTHER_TX,
+        continuationOutpoint: { ...pending.continuationOutpoint!, txid: OTHER_TX },
+      }),
     ).rejects.toThrow("immutable artifact");
     await expect(
       store.saveClaimAttempt({ ...pending, transaction: "cd".repeat(32) }),
@@ -695,19 +1256,20 @@ function defineStoreContract(factory: StoreFactory): void {
     ).rejects.toThrow("same-state update");
     await expect(
       store.applyClaimAttempt(
-        { ...channel(), claimedCumulativeAmount: "100" },
-        { ...accepted, transactionId: OTHER_TX },
+        claimSuccessor(claimableChannel(), accepted),
+        {
+          ...accepted,
+          transactionId: OTHER_TX,
+          continuationOutpoint: {
+            ...accepted.continuationOutpoint!,
+            txid: OTHER_TX,
+          },
+        },
       ),
     ).rejects.toThrow("persisted accepted attempt");
-    const changedChannel = {
-      ...channel(),
-      chargedCumulativeAmount: "1",
-      signedMaxClaimable: "1",
-    };
-    await store.saveChannel(changedChannel);
     await expect(
       store.applyClaimAttempt(
-        { ...changedChannel, claimedCumulativeAmount: "100" },
+        claimSuccessor(claimableChannel(), accepted),
         {
           ...accepted,
           chargedCumulativeAmount: "1",
@@ -719,16 +1281,17 @@ function defineStoreContract(factory: StoreFactory): void {
       accepted,
     );
     await expect(store.loadChannel(CHANNEL_ID)).resolves.toEqual(
-      changedChannel,
+      claimableChannel(),
     );
   });
 
   it("persists the claim finality threshold and rejects weaker acceptance", async () => {
-    let store = await factory.create([channel()]);
+    let store = await factory.create([claimableChannel()]);
     const pending: ClaimAttemptRecord = {
       ...claimAttempt({ attemptId: ATTEMPT }),
       requiredFinality: "confirmed",
     };
+    await reserveClaim(store, pending);
     await store.saveClaimAttempt(pending);
     if (store instanceof DurableMockServerChannelStore) {
       store = await store.restart();
@@ -774,6 +1337,8 @@ async function stageBatchAttempt(
     paymentPayloadHash: commit.commitment.paymentPayloadHash,
     maximumCharge: commit.commitment.chargedAmount,
     expected: commit.expected,
+    operationKind: "payment",
+    payerId: "payer:test",
     status: "pending",
     createdAt: now,
     updatedAt: now,
@@ -801,20 +1366,9 @@ function batchSettlementAttempt(
     paymentRequirementsHash: REQUIREMENTS,
     paymentPayloadHash: PAYLOAD,
     maximumCharge: "100",
-    expected: {
-      channelId: current.channelId,
-      covenantId: current.covenantId,
-      fundingAmount: current.fundingAmount,
-      chargedCumulativeAmount: current.chargedCumulativeAmount,
-      claimedCumulativeAmount: current.claimedCumulativeAmount,
-      signedMaxClaimable: current.signedMaxClaimable,
-      ...(current.voucherSignature
-        ? { voucherSignature: current.voucherSignature }
-        : {}),
-      activeOutpoint: current.activeOutpoint,
-      activeScriptPublicKey: current.activeScriptPublicKey,
-      status: current.status,
-    },
+    operationKind: "payment",
+    payerId: "payer:test",
+    expected: clone(current),
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
@@ -823,8 +1377,14 @@ function batchSettlementAttempt(
 }
 
 type DurableMockOperation =
-  | { type: "saveChannel"; channel: ServerChannelRecord }
-  | { type: "retireChannel"; channelId: string; reason?: string }
+  | { type: "registerChannel"; channel: ServerChannelRecord }
+  | { type: "claimChannelOperation"; record: ChannelOperationLeaseRecord }
+  | {
+      type: "retireChannel";
+      channelId: string;
+      leaseId: string;
+      expected: ServerChannelRecord;
+    }
   | { type: "commitSettlement"; record: SettlementCommit }
   | { type: "claimBatchSettlement"; record: BatchSettlementAttemptRecord }
   | { type: "beginBatchHandler"; attemptId: string; startedAt: string }
@@ -922,15 +1482,29 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
     return DurableMockServerChannelStore.create(this.#journal);
   }
 
-  async saveChannel(channel: ServerChannelRecord): Promise<void> {
-    await this.#write({ type: "saveChannel", channel }, () =>
-      super.saveChannel(channel),
+  async registerChannel(channel: ServerChannelRecord): Promise<void> {
+    await this.#write({ type: "registerChannel", channel }, () =>
+      super.registerChannel(channel),
     );
   }
 
-  async retireChannel(channelId: string, reason?: string): Promise<void> {
-    await this.#write({ type: "retireChannel", channelId, reason }, () =>
-      super.retireChannel(channelId),
+  async claimChannelOperation(record: ChannelOperationLeaseRecord) {
+    const result = await super.claimChannelOperation(record);
+    if (!this.#hydrating && result.created)
+      this.#journal.operations.push(
+        clone({ type: "claimChannelOperation", record }),
+      );
+    return result;
+  }
+
+  async retireChannel(
+    channelId: string,
+    leaseId: string,
+    expected: ServerChannelRecord,
+  ): Promise<void> {
+    await this.#write(
+      { type: "retireChannel", channelId, leaseId, expected },
+      () => super.retireChannel(channelId, leaseId, expected),
     );
   }
 
@@ -1158,11 +1732,18 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
 
   async #apply(operation: DurableMockOperation): Promise<void> {
     switch (operation.type) {
-      case "saveChannel":
-        await super.saveChannel(operation.channel);
+      case "registerChannel":
+        await super.registerChannel(operation.channel);
+        return;
+      case "claimChannelOperation":
+        await super.claimChannelOperation(operation.record);
         return;
       case "retireChannel":
-        await super.retireChannel(operation.channelId);
+        await super.retireChannel(
+          operation.channelId,
+          operation.leaseId,
+          operation.expected,
+        );
         return;
       case "commitSettlement":
         await super.commitSettlement(operation.record);
@@ -1262,6 +1843,7 @@ function channel(
   return {
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
+    version: "0",
     genesisEvidence: {
       covenantId: COVENANT_ID,
       authorizingInput: { txid: "1b".repeat(32), index: 0 },
@@ -1294,11 +1876,24 @@ function channel(
   };
 }
 
+function claimableChannel(): ServerChannelRecord {
+  return channel({
+    chargedCumulativeAmount: "100",
+    signedMaxClaimable: "100",
+    voucherSignature: "16".repeat(64),
+  });
+}
+
 function settlementCommit(
   previous: ServerChannelRecord,
   next: Partial<ServerChannelRecord>,
 ): SettlementCommit {
-  const updated = { ...previous, ...next };
+  const updated = {
+    ...previous,
+    version: (BigInt(previous.version) + 1n).toString(),
+    lastCommitmentId: "15".repeat(32),
+    ...next,
+  };
   const commitment: BatchCommitmentRecord = {
     commitmentId: "15".repeat(32),
     channelId: previous.channelId,
@@ -1324,20 +1919,7 @@ function settlementCommit(
     batchAttemptId: ATTEMPT,
     channel: updated,
     commitment,
-    expected: {
-      channelId: previous.channelId,
-      covenantId: previous.covenantId,
-      fundingAmount: previous.fundingAmount,
-      chargedCumulativeAmount: previous.chargedCumulativeAmount,
-      claimedCumulativeAmount: previous.claimedCumulativeAmount,
-      signedMaxClaimable: previous.signedMaxClaimable,
-      ...(previous.voucherSignature
-        ? { voucherSignature: previous.voucherSignature }
-        : {}),
-      activeOutpoint: previous.activeOutpoint,
-      activeScriptPublicKey: previous.activeScriptPublicKey,
-      status: previous.status,
-    },
+    expected: clone(previous),
   };
 }
 
@@ -1406,6 +1988,7 @@ function exactSettlementAttempt(
     payToScriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
     requiredFinality: "accepted",
+    payerId: "payer:test",
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
@@ -1425,7 +2008,7 @@ function exactSettlementAttempt(
 }
 
 function claimAttempt(input: { attemptId: string }): ClaimAttemptRecord {
-  const current = channel();
+  const current = claimableChannel();
   return {
     attemptId: input.attemptId,
     channelId: current.channelId,
@@ -1437,12 +2020,136 @@ function claimAttempt(input: { attemptId: string }): ClaimAttemptRecord {
     chargedCumulativeAmount: current.chargedCumulativeAmount,
     claimedCumulativeAmount: current.claimedCumulativeAmount,
     signedMaxClaimable: current.signedMaxClaimable,
+    voucherSignature: current.voucherSignature,
     channelStatus: current.status,
     transaction: "ab".repeat(32),
     transactionId: TX,
     requiredFinality: "accepted",
+    operationLeaseId: input.attemptId,
+    expected: clone(current),
+    continuationOutpoint: { txid: TX, index: 1 },
+    continuationScriptPublicKey: SCRIPT,
+    continuationFundingAmount: "900",
     status: "pending",
   };
+}
+
+function channelOperation(
+  current: ServerChannelRecord,
+  kind: ChannelOperationLeaseRecord["kind"],
+  leaseId: string,
+): ChannelOperationLeaseRecord {
+  return {
+    leaseId,
+    channelId: current.channelId,
+    covenantId: current.covenantId,
+    kind,
+    expected: clone(current),
+    status: "reserved",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  };
+}
+
+async function reserveClaim(
+  store: ServerStateStore,
+  attempt: ClaimAttemptRecord,
+): Promise<void> {
+  await store.claimChannelOperation(
+    channelOperation(attempt.expected, "claim", attempt.operationLeaseId),
+  );
+}
+
+function claimSuccessor(
+  current: ServerChannelRecord,
+  attempt: ClaimAttemptRecord,
+): ServerChannelRecord {
+  return {
+    ...current,
+    version: (BigInt(current.version) + 1n).toString(),
+    activeOutpoint: attempt.continuationOutpoint!,
+    activeScriptPublicKey: attempt.continuationScriptPublicKey!,
+    fundingAmount: attempt.continuationFundingAmount!,
+    claimedCumulativeAmount: (
+      BigInt(current.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
+    ).toString(),
+  };
+}
+
+function exactIdentifierClaim(
+  ownerId: string,
+  paymentScopeId: string,
+): PaymentIdentifierReservationClaim {
+  return {
+    id: "pay_7d5d747be160e280504c099d984bcfe0",
+    fingerprint: REQUEST,
+    paymentPayloadHash: PAYLOAD,
+    paymentScopeId,
+    paymentKind: "exact",
+    ownerId,
+    payerId: "payer:test",
+    transactionId: ownerId,
+    paymentOutputIndex: 0,
+  };
+}
+
+function batchIdentifierClaim(
+  ownerId: string,
+  paymentScopeId: string,
+): PaymentIdentifierReservationClaim {
+  return {
+    id: "pay_7d5d747be160e280504c099d984bcfe0",
+    fingerprint: REQUEST,
+    paymentPayloadHash: PAYLOAD,
+    paymentScopeId,
+    paymentKind: "batch-settlement",
+    ownerId,
+    payerId: "payer:test",
+    channelId: paymentScopeId,
+  };
+}
+
+async function stageExactAttemptWithIdentifier(
+  store: ServerStateStore,
+  transactionId: string,
+  paymentScopeId: string,
+): Promise<void> {
+  const claim = exactIdentifierClaim(transactionId, paymentScopeId);
+  await store.claimExactSettlement(
+    exactSettlementAttempt({
+      transactionId,
+      profile: "standard-native",
+      head: undefined,
+      paymentIdentifier: claim,
+    }),
+  );
+  await store.acceptExactSettlement(
+    transactionId,
+    "accepted",
+    "2026-07-07T00:00:01.000Z",
+  );
+  await store.beginExactHandler(
+    transactionId,
+    "2026-07-07T00:00:02.000Z",
+  );
+  await store.recordExactHandlerResult(
+    transactionId,
+    { chargedAmount: "20000000" },
+    "2026-07-07T00:00:03.000Z",
+  );
+  await store.commitExactPayment({
+    payment: exactPayment({
+      transactionId,
+      profile: "standard-native",
+      paymentOutputIndex: 0,
+      amount: "20000000",
+    }),
+    paymentIdentifier: {
+      ...paymentIdentifier({ paymentScopeId }),
+      transactionId,
+      paymentOutputIndex: 0,
+    },
+  });
 }
 
 function paymentIdentifier(

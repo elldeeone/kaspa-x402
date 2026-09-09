@@ -2,11 +2,13 @@ import { describe, expect, it } from "vitest";
 import type {
   BatchCommitmentRecord,
   BatchSettlementAttemptRecord,
+  ChannelOperationLeaseRecord,
   ClaimAttemptRecord,
   ExactHeadRecord,
   ExactPaymentRecord,
   ExactSettlementAttemptRecord,
   PaymentIdentifierRecord,
+  PaymentIdentifierReservationClaim,
   ServerChannelRecord,
   SettlementCommit,
 } from "@kaspa-x402/server";
@@ -15,7 +17,11 @@ import {
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
-import { GatewayLedger, type GatewayStorage } from "../src/state.js";
+import {
+  DurableGatewayLockManager,
+  GatewayLedger,
+  type GatewayStorage,
+} from "../src/state.js";
 
 const CHANNEL_ID = "11".repeat(32);
 const COVENANT_ID = "10".repeat(32);
@@ -48,20 +54,21 @@ describe("gateway durable ledger", () => {
       },
     });
 
-    await ledger.saveChannel(first);
-    await expect(ledger.saveChannel(alias)).rejects.toThrow(
+    await ledger.registerChannel(first);
+    await expect(ledger.registerChannel(alias)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(ledger.loadChannel(first.channelId)).resolves.toEqual(first);
     await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
   });
 
-  it("preserves covenant lineage ownership through settlement and restart", async () => {
+  it("preserves covenant lineage ownership through retirement and restart", async () => {
     const storage = new FakeStorage();
     let ledger = new GatewayLedger(storage);
     const first = channel();
-    await ledger.saveChannel(first);
-    await ledger.retireChannel(first.channelId);
+    await ledger.registerChannel(first);
+    await ledger.claimChannelOperation(channelOperation(first, "retirement"));
+    await ledger.retireChannel(first.channelId, ATTEMPT, first);
     ledger = new GatewayLedger(storage);
     const alias = channel({
       channelId: "12".repeat(32),
@@ -70,30 +77,10 @@ describe("gateway durable ledger", () => {
         salt: "13".repeat(32),
       },
     });
-    const attempt = batchSettlementAttempt(alias);
-    await ledger.claimBatchSettlement(attempt);
-    await ledger.beginBatchHandler(
-      attempt.attemptId,
-      "2026-07-07T00:00:01.000Z",
-    );
-    await ledger.recordBatchHandlerResult(
-      attempt.attemptId,
-      { chargedAmount: "100" },
-      "2026-07-07T00:00:02.000Z",
-    );
-    const commit = settlementCommit(alias, {
-      chargedCumulativeAmount: "100",
-      signedMaxClaimable: "100",
-      voucherSignature: "16".repeat(64),
-    });
-
-    await expect(ledger.commitSettlement(commit)).rejects.toThrow(
+    await expect(ledger.registerChannel(alias)).rejects.toThrow(
       "covenant lineage is already registered",
     );
     await expect(ledger.loadChannel(alias.channelId)).resolves.toBeUndefined();
-    await expect(
-      ledger.loadCommitment(commit.commitment.commitmentId),
-    ).resolves.toBeUndefined();
   });
 
   it("commits exact transaction ids once while allowing identical retries", async () => {
@@ -116,16 +103,17 @@ describe("gateway durable ledger", () => {
 
   it("keeps conflicting payment identifiers atomic", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.commitExactPayment({
-      payment: exactPayment({ transactionId: TX }),
-      paymentIdentifier: paymentIdentifier({ paymentScopeId: TX }),
-    });
+    await stageExactAttemptWithIdentifier(ledger, TX, TX);
 
     await expect(
-      ledger.commitExactPayment({
-        payment: exactPayment({ transactionId: OTHER_TX }),
-        paymentIdentifier: paymentIdentifier({ paymentScopeId: OTHER_TX }),
-      }),
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+          paymentIdentifier: exactIdentifierClaim(OTHER_TX, OTHER_TX),
+        }),
+      ),
     ).rejects.toThrow("payment identifier");
     await expect(ledger.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
   });
@@ -289,14 +277,24 @@ describe("gateway durable ledger", () => {
     await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
       handlerStartedAt: "2026-07-07T00:00:04.000Z",
-      handlerResult: { body: "download", chargedAmount: "20000000" },
     });
+    await expect(
+      ledger.loadExactSettlementAttempt(TX),
+    ).resolves.not.toHaveProperty("handlerResult");
   });
 
   it("releases rejected attempts and fails uncertain heads closed", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
+    const paymentIdentifier = exactIdentifierClaim(TX, TX);
     await ledger.registerExactHead(exactHead());
-    await ledger.claimExactSettlement(exactSettlementAttempt());
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({ paymentIdentifier }),
+    );
+    await ledger.recordExactSettlementBroadcast(
+      TX,
+      "broadcast",
+      "2026-07-07T00:00:01.000Z",
+    );
     await ledger.abandonExactSettlement(
       TX,
       "trusted node rejected transaction",
@@ -306,6 +304,9 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.loadExactSettlementAttempt(TX),
     ).resolves.toBeUndefined();
+    await expect(
+      ledger.loadPaymentIdentifierReservation(paymentIdentifier.id),
+    ).resolves.toMatchObject({ status: "safely-released" });
     await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
       status: "available",
       claimTransactionId: undefined,
@@ -332,8 +333,12 @@ describe("gateway durable ledger", () => {
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.saveChannel(channel());
-    await ledger.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
+    await ledger.registerChannel({
+      ...channel(),
+      version: "1",
+      chargedCumulativeAmount: "1",
+      signedMaxClaimable: "1",
+    });
 
     const stale = settlementCommit(channel(), {
       chargedCumulativeAmount: "100",
@@ -349,7 +354,7 @@ describe("gateway durable ledger", () => {
   it("persists protected batch work before atomically applying settlement", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const previous = channel();
-    await ledger.saveChannel(previous);
+    await ledger.registerChannel(previous);
     const attempt = batchSettlementAttempt(previous);
 
     await expect(ledger.claimBatchSettlement(attempt)).resolves.toMatchObject({
@@ -392,8 +397,10 @@ describe("gateway durable ledger", () => {
     ).resolves.toMatchObject({
       status: "applied",
       paymentPayloadHash: PAYLOAD,
-      handlerResult: { body: "download", chargedAmount: "100" },
     });
+    await expect(
+      ledger.loadBatchSettlementAttempt(ATTEMPT),
+    ).resolves.not.toHaveProperty("handlerResult");
     await expect(ledger.loadChannel(CHANNEL_ID)).resolves.toMatchObject({
       covenantId: COVENANT_ID,
       chargedCumulativeAmount: "100",
@@ -404,7 +411,7 @@ describe("gateway durable ledger", () => {
   it("rejects malformed batch settlement attempts before durable state changes", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const current = channel();
-    await ledger.saveChannel(current);
+    await ledger.registerChannel(current);
     const base = batchSettlementAttempt(current);
     const invalid: Array<{
       name: string;
@@ -501,7 +508,7 @@ describe("gateway durable ledger", () => {
   it("fails a started batch handler closed for explicit recovery", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const previous = channel();
-    await ledger.saveChannel(previous);
+    await ledger.registerChannel(previous);
     await ledger.claimBatchSettlement(batchSettlementAttempt(previous));
     await ledger.beginBatchHandler(ATTEMPT, "2026-07-07T00:00:02.000Z");
     await ledger.markBatchHandlerRecoveryRequired(
@@ -515,6 +522,499 @@ describe("gateway durable ledger", () => {
     ).resolves.toMatchObject({
       status: "pending",
       recoveryReason: "handler outcome is uncertain",
+    });
+  });
+
+  it("retains identifier ownership across crashes through recovery and commit", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const claim = exactIdentifierClaim(TX, TX);
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({
+        profile: "standard-native",
+        head: undefined,
+        paymentIdentifier: claim,
+      }),
+    );
+    await expect(
+      ledger.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "reserved", ownerId: TX });
+
+    ledger = new GatewayLedger(storage);
+    await ledger.recordExactSettlementBroadcast(
+      TX,
+      "broadcast",
+      "2026-07-07T00:00:01.000Z",
+    );
+    await expect(
+      ledger.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "pending" });
+    await ledger.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:02.000Z",
+    );
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:03.000Z");
+    await ledger.markExactHandlerRecoveryRequired(
+      TX,
+      "crash after protected effect",
+      "2026-07-07T00:00:04.000Z",
+    );
+    await expect(
+      ledger.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "recovery-required" });
+    await expect(
+      ledger.abandonExactSettlement(
+        TX,
+        "unsafe release",
+        "2026-07-07T00:00:05.000Z",
+      ),
+    ).rejects.toThrow("accepted exact settlement cannot be abandoned");
+
+    ledger = new GatewayLedger(storage);
+    await ledger.recordExactHandlerResult(
+      TX,
+      { body: "recovered", chargedAmount: "20000000" },
+      "2026-07-07T00:00:06.000Z",
+    );
+    await ledger.commitExactPayment({
+      payment: exactPayment({ profile: "standard-native", amount: "20000000" }),
+      paymentIdentifier: {
+        ...paymentIdentifier({ paymentScopeId: TX }),
+        transactionId: TX,
+        paymentOutputIndex: 0,
+      },
+    });
+    await expect(
+      ledger.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("safely releases only a pre-effect identifier reservation", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const claim = exactIdentifierClaim(TX, TX);
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({
+        profile: "standard-native",
+        head: undefined,
+        paymentIdentifier: claim,
+      }),
+    );
+    await ledger.abandonExactSettlement(
+      TX,
+      "trusted rejection before broadcast",
+      "2026-07-07T00:00:01.000Z",
+    );
+    await expect(
+      ledger.loadPaymentIdentifierReservation(claim.id),
+    ).resolves.toMatchObject({ status: "safely-released" });
+
+    ledger = new GatewayLedger(storage);
+    await expect(
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+          paymentIdentifier: exactIdentifierClaim(OTHER_TX, OTHER_TX),
+        }),
+      ),
+    ).resolves.toMatchObject({ created: true });
+  });
+
+  it("serializes independent ledgers on one channel and opens its handler once", async () => {
+    const storage = new FakeStorage();
+    const first = new GatewayLedger(storage);
+    const second = new GatewayLedger(storage);
+    const current = channel();
+    await first.registerChannel(current);
+    const claims = await Promise.allSettled([
+      first.claimBatchSettlement(batchSettlementAttempt(current)),
+      second.claimBatchSettlement(
+        batchSettlementAttempt(current, {
+          attemptId: OTHER_TX,
+          paymentPayloadHash: OTHER_TX,
+        }),
+      ),
+    ]);
+    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    const winner = claims[0]!.status === "fulfilled" ? ATTEMPT : OTHER_TX;
+    const starts = await Promise.all([
+      first.beginBatchHandler(winner, "2026-07-07T00:00:01.000Z"),
+      second.beginBatchHandler(winner, "2026-07-07T00:00:02.000Z"),
+    ]);
+    expect(starts.sort()).toEqual([false, true]);
+  });
+
+  it("uses one durable lease namespace for every channel operation kind", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const current = channel();
+    await ledger.registerChannel(current);
+    const kinds: ChannelOperationLeaseRecord["kind"][] = [
+      "payment",
+      "deposit",
+      "top-up",
+      "claim",
+      "refund",
+      "recovery",
+      "retirement",
+    ];
+    for (const [index, kind] of kinds.entries()) {
+      const leaseId = (index + 1).toString(16).padStart(64, "0");
+      await expect(
+        ledger.claimChannelOperation({
+          ...channelOperation(current, kind),
+          leaseId,
+        }),
+      ).resolves.toMatchObject({ created: true, lease: { kind } });
+      await expect(
+        ledger.loadChannelOperation(current.channelId),
+      ).resolves.toMatchObject({ leaseId, kind });
+      await ledger.abandonChannelOperation(
+        leaseId,
+        "pre-effect test release",
+        "2026-07-07T00:00:01.000Z",
+      );
+    }
+    await expect(
+      ledger.claimChannelOperation({
+        ...channelOperation(current, "payment"),
+        kind: "invalid" as ChannelOperationLeaseRecord["kind"],
+      }),
+    ).rejects.toThrow("channel operation kind is invalid");
+  });
+
+  it("atomically registers only one competing genesis transition", async () => {
+    const storage = new FakeStorage();
+    const first = new GatewayLedger(storage);
+    const second = new GatewayLedger(storage);
+    const leftChannel = channel({
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+    const rightChannel = channel({
+      channelId: "12".repeat(32),
+      channelConfig: { ...leftChannel.channelConfig, salt: "13".repeat(32) },
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+    const claims = await Promise.allSettled([
+      first.claimBatchSettlement(
+        batchSettlementAttempt(leftChannel, {
+          operationKind: "deposit",
+          channelTransition: { previous: null, next: leftChannel },
+        }),
+      ),
+      second.claimBatchSettlement(
+        batchSettlementAttempt(rightChannel, {
+          attemptId: OTHER_TX,
+          paymentPayloadHash: OTHER_TX,
+          operationKind: "deposit",
+          channelTransition: { previous: null, next: rightChannel },
+        }),
+      ),
+    ]);
+    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    await expect(first.listChannels()).resolves.toHaveLength(1);
+  });
+
+  it("rejects impossible same-outpoint deposit transitions atomically", async () => {
+    const invalid: Array<{
+      previous?: ServerChannelRecord;
+      mutation: Partial<ServerChannelRecord>;
+      message: string;
+    }> = [
+      {
+        mutation: { fundingAmount: "1001" },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { activeScriptPublicKey: "0000" + "aa".repeat(34) },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { escrowAddress: "kaspatest:other-escrow" },
+        message: "same-outpoint deposit state is inconsistent",
+      },
+      {
+        mutation: { status: "retired" },
+        message: "deposit transition requires an active channel",
+      },
+      {
+        previous: channel({ status: "retired" }),
+        mutation: { status: "active" },
+        message: "deposit transition requires an active channel",
+      },
+    ];
+
+    for (const [index, testCase] of invalid.entries()) {
+      const previous = testCase.previous ?? channel();
+      const ledger = new GatewayLedger(new FakeStorage());
+      await ledger.registerChannel(previous);
+      const next = {
+        ...previous,
+        version: "1",
+        ...testCase.mutation,
+      };
+      const attemptId = (index + 1).toString(16).padStart(64, "0");
+      await expect(
+        ledger.claimBatchSettlement(
+          batchSettlementAttempt(next, {
+            attemptId,
+            operationKind: "deposit",
+            channelTransition: { previous, next },
+          }),
+        ),
+      ).rejects.toThrow(testCase.message);
+      await expect(ledger.loadChannel(previous.channelId)).resolves.toEqual(
+        previous,
+      );
+      await expect(
+        ledger.loadBatchSettlementAttempt(attemptId),
+      ).resolves.toBeUndefined();
+      await expect(
+        ledger.loadChannelOperation(previous.channelId),
+      ).resolves.toBeUndefined();
+    }
+
+    const previous = channel();
+    const noOpLedger = new GatewayLedger(new FakeStorage());
+    await noOpLedger.registerChannel(previous);
+    const noOpTopUp = { ...previous, version: "1" };
+    await expect(
+      noOpLedger.claimBatchSettlement(
+        batchSettlementAttempt(noOpTopUp, {
+          attemptId: "ff".repeat(32),
+          operationKind: "top-up",
+          channelTransition: { previous, next: noOpTopUp },
+        }),
+      ),
+    ).rejects.toThrow("top-up must replace the active outpoint");
+    await expect(noOpLedger.loadChannel(previous.channelId)).resolves.toEqual(
+      previous,
+    );
+
+    const invalidGenesis = channel({ status: "retired" });
+    const genesisLedger = new GatewayLedger(new FakeStorage());
+    await expect(
+      genesisLedger.claimBatchSettlement(
+        batchSettlementAttempt(invalidGenesis, {
+          attemptId: "fe".repeat(32),
+          operationKind: "deposit",
+          channelTransition: { previous: null, next: invalidGenesis },
+        }),
+      ),
+    ).rejects.toThrow("new channel must begin active");
+    await expect(
+      genesisLedger.loadChannel(invalidGenesis.channelId),
+    ).resolves.toBeUndefined();
+  });
+
+  it("preserves valid same-outpoint refreshes and verified top-ups", async () => {
+    const previous = channel();
+    const refreshLedger = new GatewayLedger(new FakeStorage());
+    await refreshLedger.registerChannel(previous);
+    const refreshed = channel({
+      version: "1",
+      signedMaxClaimable: "100",
+      voucherSignature: "16".repeat(64),
+    });
+    await expect(
+      refreshLedger.claimBatchSettlement(
+        batchSettlementAttempt(refreshed, {
+          operationKind: "deposit",
+          channelTransition: { previous, next: refreshed },
+        }),
+      ),
+    ).resolves.toMatchObject({ created: true });
+
+    const topUpLedger = new GatewayLedger(new FakeStorage());
+    await topUpLedger.registerChannel(previous);
+    const toppedUp = channel({
+      version: "1",
+      activeOutpoint: { txid: OTHER_TX, index: 0 },
+      activeScriptPublicKey: "0000" + "aa".repeat(34),
+      escrowAddress: "kaspatest:replacement-escrow",
+      fundingAmount: "1001",
+    });
+    await expect(
+      topUpLedger.claimBatchSettlement(
+        batchSettlementAttempt(toppedUp, {
+          attemptId: OTHER_TX,
+          operationKind: "top-up",
+          channelTransition: { previous, next: toppedUp },
+        }),
+      ),
+    ).resolves.toMatchObject({ created: true });
+  });
+
+  it("bounds open durable records and never expires recovery-required work", async () => {
+    let now = 0;
+    const ledger = new GatewayLedger(new FakeStorage(), {
+      limits: {
+        maxRecords: 1,
+        maxBytes: 1024 * 1024,
+        maxRecordsPerPayer: 1,
+        terminalRetentionMs: 100,
+      },
+      now: () => now,
+    });
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+    );
+    await ledger.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:01.000Z",
+    );
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await ledger.markExactHandlerRecoveryRequired(
+      TX,
+      "uncertain protected effect",
+      "2026-07-07T00:00:03.000Z",
+    );
+    now = 1_000;
+    await expect(
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+        }),
+      ),
+    ).rejects.toThrow("record limit exceeded");
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
+      recoveryReason: "uncertain protected effect",
+    });
+  });
+
+  it("reserves the complete duplicated terminal response bundle", async () => {
+    const ledger = new GatewayLedger(new FakeStorage(), {
+      limits: { maxBytes: 300_000 },
+    });
+
+    await expect(
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+      ),
+    ).rejects.toThrow("byte limit exceeded");
+  });
+
+  it("accounts for safely released identifier records until bounded expiry", async () => {
+    let now = 0;
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage, {
+      limits: {
+        maxRecords: 1,
+        maxBytes: 1024 * 1024,
+        maxRecordsPerPayer: 1,
+        terminalRetentionMs: 100,
+      },
+      now: () => now,
+    });
+    const firstIdentifier = exactIdentifierClaim(TX, TX);
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({
+        profile: "standard-native",
+        head: undefined,
+        paymentIdentifier: firstIdentifier,
+      }),
+    );
+    await ledger.abandonExactSettlement(
+      TX,
+      "trusted pre-effect rejection",
+      "2026-07-07T00:00:01.000Z",
+    );
+
+    for (let index = 1; index < 5; index += 1) {
+      const transactionId = (100 + index).toString(16).padStart(64, "0");
+      await ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId,
+          profile: "standard-native",
+          head: undefined,
+          paymentIdentifier: exactIdentifierClaim(transactionId, transactionId),
+        }),
+      );
+      await ledger.abandonExactSettlement(
+        transactionId,
+        "trusted pre-effect rejection",
+        "2026-07-07T00:00:01.000Z",
+      );
+    }
+
+    await expect(storage.get("durable-budget:meta")).resolves.toMatchObject({
+      records: 1,
+    });
+    expect(
+      (await storage.list({ prefix: "durable-budget:terminal:" })).size,
+    ).toBe(1);
+    const next = exactSettlementAttempt({
+      transactionId: OTHER_TX,
+      profile: "standard-native",
+      head: undefined,
+      paymentIdentifier: {
+        ...exactIdentifierClaim(OTHER_TX, OTHER_TX),
+        id: "pay_8d5d747be160e280504c099d984bcfe1",
+      },
+    });
+    await expect(ledger.claimExactSettlement(next)).rejects.toThrow(
+      "record limit exceeded",
+    );
+
+    now = 101;
+    await expect(ledger.claimExactSettlement(next)).resolves.toMatchObject({
+      created: true,
+    });
+    await expect(
+      ledger.loadPaymentIdentifierReservation(firstIdentifier.id),
+    ).resolves.toBeUndefined();
+  });
+
+  it("compacts terminal responses without evicting replay tombstones", async () => {
+    let now = 0;
+    const ledger = new GatewayLedger(new FakeStorage(), {
+      limits: {
+        maxRecords: 1,
+        maxBytes: 1024 * 1024,
+        maxRecordsPerPayer: 1,
+        terminalRetentionMs: 100,
+      },
+      now: () => now,
+    });
+    await ledger.claimExactSettlement(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }),
+    );
+    await ledger.acceptExactSettlement(
+      TX,
+      "accepted",
+      "2026-07-07T00:00:01.000Z",
+    );
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await ledger.recordExactHandlerResult(
+      TX,
+      { chargedAmount: "20000000" },
+      "2026-07-07T00:00:03.000Z",
+    );
+    await ledger.commitExactPayment({
+      payment: exactPayment({ profile: "standard-native", amount: "20000000" }),
+    });
+    now = 101;
+    await expect(
+      ledger.claimExactSettlement(
+        exactSettlementAttempt({
+          transactionId: OTHER_TX,
+          profile: "standard-native",
+          head: undefined,
+        }),
+      ),
+    ).rejects.toThrow("record limit exceeded");
+    await expect(ledger.loadExactPayment(TX)).resolves.toMatchObject({
+      response: {
+        status: 409,
+        body: { error: "replay_record_retained" },
+      },
     });
   });
 
@@ -537,6 +1037,33 @@ describe("gateway durable ledger", () => {
     await expect(
       ledger.acquireLock(CHANNEL_ID, "third", 2_200, 1_000),
     ).resolves.toBe(true);
+  });
+
+  it("renews a gateway lock while protected work is still running", async () => {
+    const storage = new FakeStorage();
+    const first = new DurableGatewayLockManager(new GatewayLedger(storage), 90);
+    const second = new DurableGatewayLockManager(new GatewayLedger(storage), 90);
+    const events: string[] = [];
+    let releaseFirst!: () => void;
+    const held = new Promise<void>((resolve) => {
+      releaseFirst = resolve;
+    });
+    const firstRun = first.runExclusive(CHANNEL_ID, async () => {
+      events.push("first-start");
+      await held;
+      events.push("first-end");
+    });
+
+    await new Promise((resolve) => setTimeout(resolve, 110));
+    const secondRun = second.runExclusive(CHANNEL_ID, async () => {
+      events.push("second-start");
+    });
+    await new Promise((resolve) => setTimeout(resolve, 20));
+    expect(events).toEqual(["first-start"]);
+
+    releaseFirst();
+    await Promise.all([firstRun, secondRun]);
+    expect(events).toEqual(["first-start", "first-end", "second-start"]);
   });
 
   it("rate limits by fixed windows", async () => {
@@ -636,8 +1163,9 @@ describe("gateway durable ledger", () => {
 
   it("allows one open claim attempt per channel and applies by snapshot", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.saveChannel(channel());
+    await ledger.registerChannel(claimableChannel());
     const first = claimAttempt({ attemptId: ATTEMPT });
+    await reserveClaim(ledger, first);
     await ledger.saveClaimAttempt(first);
 
     await expect(
@@ -655,23 +1183,27 @@ describe("gateway durable ledger", () => {
     };
     await ledger.saveClaimAttempt(broadcast);
     await ledger.saveClaimAttempt(accepted);
-    await ledger.saveChannel({ ...channel(), chargedCumulativeAmount: "1" });
     await expect(
       ledger.applyClaimAttempt(
-        { ...channel(), claimedCumulativeAmount: "100" },
+        claimSuccessor(claimableChannel(), first),
         accepted,
       ),
-    ).rejects.toThrow("channel state changed");
+    ).resolves.toBeUndefined();
   });
 
   it("binds claim attempts to one immutable artifact and monotonic state", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.saveChannel(channel());
+    await ledger.registerChannel(claimableChannel());
     const pending = claimAttempt({ attemptId: ATTEMPT });
+    await reserveClaim(ledger, pending);
     await ledger.saveClaimAttempt(pending);
 
     await expect(
-      ledger.saveClaimAttempt({ ...pending, transactionId: OTHER_TX }),
+      ledger.saveClaimAttempt({
+        ...pending,
+        transactionId: OTHER_TX,
+        continuationOutpoint: { ...pending.continuationOutpoint!, txid: OTHER_TX },
+      }),
     ).rejects.toThrow("immutable artifact");
     await expect(
       ledger.saveClaimAttempt({ ...pending, transaction: "cd".repeat(32) }),
@@ -715,8 +1247,15 @@ describe("gateway durable ledger", () => {
     ).rejects.toThrow("same-state update");
     await expect(
       ledger.applyClaimAttempt(
-        { ...channel(), claimedCumulativeAmount: "100" },
-        { ...accepted, transactionId: OTHER_TX },
+        claimSuccessor(claimableChannel(), accepted),
+        {
+          ...accepted,
+          transactionId: OTHER_TX,
+          continuationOutpoint: {
+            ...accepted.continuationOutpoint!,
+            txid: OTHER_TX,
+          },
+        },
       ),
     ).rejects.toThrow("persisted accepted attempt");
     const changedChannel = {
@@ -724,10 +1263,9 @@ describe("gateway durable ledger", () => {
       chargedCumulativeAmount: "1",
       signedMaxClaimable: "1",
     };
-    await ledger.saveChannel(changedChannel);
     await expect(
       ledger.applyClaimAttempt(
-        { ...changedChannel, claimedCumulativeAmount: "100" },
+        claimSuccessor(claimableChannel(), accepted),
         {
           ...accepted,
           chargedCumulativeAmount: "1",
@@ -739,13 +1277,14 @@ describe("gateway durable ledger", () => {
       accepted,
     );
     await expect(ledger.loadChannel(CHANNEL_ID)).resolves.toEqual(
-      changedChannel,
+      claimableChannel(),
     );
   });
 });
 
 class FakeStorage implements GatewayStorage {
   #values = new Map<string, unknown>();
+  #transactionTail: Promise<void> = Promise.resolve();
   readonly listRequests: Array<{
     prefix?: string;
     start?: string;
@@ -789,12 +1328,20 @@ class FakeStorage implements GatewayStorage {
   async transaction<T>(
     closure: (txn: GatewayStorage) => Promise<T>,
   ): Promise<T> {
+    const previous = this.#transactionTail;
+    let release!: () => void;
+    this.#transactionTail = new Promise<void>((resolve) => {
+      release = resolve;
+    });
+    await previous;
     const snapshot = structuredClone(Array.from(this.#values.entries()));
     try {
       return await closure(this);
     } catch (error) {
       this.#values = new Map(snapshot);
       throw error;
+    } finally {
+      release();
     }
   }
 }
@@ -805,6 +1352,7 @@ function channel(
   return {
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
+    version: "0",
     genesisEvidence: {
       covenantId: COVENANT_ID,
       authorizingInput: { txid: FUNDING_TX, index: 1 },
@@ -837,11 +1385,65 @@ function channel(
   };
 }
 
+function claimableChannel(): ServerChannelRecord {
+  return channel({
+    chargedCumulativeAmount: "100",
+    signedMaxClaimable: "100",
+    voucherSignature: "16".repeat(64),
+  });
+}
+
+function channelOperation(
+  current: ServerChannelRecord,
+  kind: ChannelOperationLeaseRecord["kind"],
+): ChannelOperationLeaseRecord {
+  return {
+    leaseId: ATTEMPT,
+    channelId: current.channelId,
+    covenantId: current.covenantId,
+    kind,
+    expected: structuredClone(current),
+    status: "reserved",
+    createdAt: "2026-07-07T00:00:00.000Z",
+    updatedAt: "2026-07-07T00:00:00.000Z",
+  };
+}
+
+async function reserveClaim(
+  ledger: GatewayLedger,
+  attempt: ClaimAttemptRecord,
+): Promise<void> {
+  await ledger.claimChannelOperation(
+    channelOperation(attempt.expected, "claim"),
+  );
+}
+
+function claimSuccessor(
+  previous: ServerChannelRecord,
+  attempt: ClaimAttemptRecord,
+): ServerChannelRecord {
+  return {
+    ...previous,
+    version: (BigInt(previous.version) + 1n).toString(),
+    activeOutpoint: attempt.continuationOutpoint!,
+    activeScriptPublicKey: attempt.continuationScriptPublicKey!,
+    fundingAmount: attempt.continuationFundingAmount!,
+    claimedCumulativeAmount: (
+      BigInt(previous.claimedCumulativeAmount) + BigInt(attempt.claimAmount)
+    ).toString(),
+  };
+}
+
 function settlementCommit(
   previous: ServerChannelRecord,
   next: Partial<ServerChannelRecord>,
 ): SettlementCommit {
-  const updated = { ...previous, ...next };
+  const updated = {
+    ...previous,
+    version: (BigInt(previous.version) + 1n).toString(),
+    lastCommitmentId: "15".repeat(32),
+    ...next,
+  };
   const commitment: BatchCommitmentRecord = {
     commitmentId: "15".repeat(32),
     channelId: previous.channelId,
@@ -872,18 +1474,7 @@ function settlementCommit(
     batchAttemptId: ATTEMPT,
     channel: updated,
     commitment,
-    expected: {
-      channelId: previous.channelId,
-      covenantId: previous.covenantId,
-      fundingAmount: previous.fundingAmount,
-      chargedCumulativeAmount: previous.chargedCumulativeAmount,
-      claimedCumulativeAmount: previous.claimedCumulativeAmount,
-      signedMaxClaimable: previous.signedMaxClaimable,
-      voucherSignature: previous.voucherSignature,
-      activeOutpoint: previous.activeOutpoint,
-      activeScriptPublicKey: previous.activeScriptPublicKey,
-      status: previous.status,
-    },
+    expected: structuredClone(previous),
   };
 }
 
@@ -899,18 +1490,9 @@ function batchSettlementAttempt(
     paymentRequirementsHash: REQUIREMENTS,
     paymentPayloadHash: PAYLOAD,
     maximumCharge: "100",
-    expected: {
-      channelId: previous.channelId,
-      covenantId: previous.covenantId,
-      fundingAmount: previous.fundingAmount,
-      chargedCumulativeAmount: previous.chargedCumulativeAmount,
-      claimedCumulativeAmount: previous.claimedCumulativeAmount,
-      signedMaxClaimable: previous.signedMaxClaimable,
-      voucherSignature: previous.voucherSignature,
-      activeOutpoint: previous.activeOutpoint,
-      activeScriptPublicKey: previous.activeScriptPublicKey,
-      status: previous.status,
-    },
+    operationKind: "payment",
+    payerId: "payer:test",
+    expected: structuredClone(previous),
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
@@ -988,6 +1570,7 @@ function exactSettlementAttempt(
     payToScriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
     requiredFinality: "accepted",
+    payerId: "payer:test",
     status: "pending",
     createdAt: "2026-07-07T00:00:00.000Z",
     updatedAt: "2026-07-07T00:00:00.000Z",
@@ -1004,6 +1587,64 @@ function exactSettlementAttempt(
     },
     ...overrides,
   };
+}
+
+function exactIdentifierClaim(
+  ownerId: string,
+  paymentScopeId: string,
+): PaymentIdentifierReservationClaim {
+  return {
+    id: "payment-id",
+    fingerprint: REQUEST,
+    paymentPayloadHash: PAYLOAD,
+    paymentScopeId,
+    paymentKind: "exact",
+    ownerId,
+    payerId: "payer:test",
+    transactionId: ownerId,
+    paymentOutputIndex: 0,
+  };
+}
+
+async function stageExactAttemptWithIdentifier(
+  ledger: GatewayLedger,
+  transactionId: string,
+  paymentScopeId: string,
+): Promise<void> {
+  await ledger.claimExactSettlement(
+    exactSettlementAttempt({
+      transactionId,
+      profile: "standard-native",
+      head: undefined,
+      paymentIdentifier: exactIdentifierClaim(transactionId, paymentScopeId),
+    }),
+  );
+  await ledger.acceptExactSettlement(
+    transactionId,
+    "accepted",
+    "2026-07-07T00:00:01.000Z",
+  );
+  await ledger.beginExactHandler(
+    transactionId,
+    "2026-07-07T00:00:02.000Z",
+  );
+  await ledger.recordExactHandlerResult(
+    transactionId,
+    { chargedAmount: "20000000" },
+    "2026-07-07T00:00:03.000Z",
+  );
+  await ledger.commitExactPayment({
+    payment: exactPayment({
+      transactionId,
+      profile: "standard-native",
+      amount: "20000000",
+    }),
+    paymentIdentifier: {
+      ...paymentIdentifier({ paymentScopeId }),
+      transactionId,
+      paymentOutputIndex: 0,
+    },
+  });
 }
 
 function paymentIdentifier(
@@ -1028,21 +1669,28 @@ function paymentIdentifier(
 function claimAttempt(
   overrides: Partial<ClaimAttemptRecord> = {},
 ): ClaimAttemptRecord {
+  const current = claimableChannel();
   return {
     attemptId: ATTEMPT,
     channelId: CHANNEL_ID,
     covenantId: COVENANT_ID,
-    activeOutpoint: { txid: TX, index: 0 },
-    activeScriptPublicKey: SCRIPT,
-    fundingAmount: "1000",
+    activeOutpoint: current.activeOutpoint,
+    activeScriptPublicKey: current.activeScriptPublicKey,
+    fundingAmount: current.fundingAmount,
     claimAmount: "100",
-    chargedCumulativeAmount: "0",
-    claimedCumulativeAmount: "0",
-    signedMaxClaimable: "0",
-    channelStatus: "active",
+    chargedCumulativeAmount: current.chargedCumulativeAmount,
+    claimedCumulativeAmount: current.claimedCumulativeAmount,
+    signedMaxClaimable: current.signedMaxClaimable,
+    voucherSignature: current.voucherSignature,
+    channelStatus: current.status,
     transaction: "aa",
     transactionId: TX,
     requiredFinality: "accepted",
+    operationLeaseId: ATTEMPT,
+    expected: structuredClone(current),
+    continuationOutpoint: { txid: TX, index: 1 },
+    continuationScriptPublicKey: SCRIPT,
+    continuationFundingAmount: "900",
     status: "pending",
     ...overrides,
   };

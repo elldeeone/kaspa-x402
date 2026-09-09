@@ -31,6 +31,7 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
+  MemoryChannelLockManager,
   MemoryServerChannelStore,
   type AddressCodec,
   type ChainUtxo,
@@ -948,7 +949,8 @@ describe("direct-mode facilitator", () => {
   });
 
   it("checks exact replay after deriving the exact-transaction id", async () => {
-    const initial = makeFacilitator();
+    const lockManager = new MemoryChannelLockManager();
+    const initial = makeFacilitator({ lockManager });
     const paymentPayload = makeExactPayment(initial.server);
     const settlement = await initial.facilitator.settle({
       x402Version: X402_VERSION,
@@ -977,6 +979,7 @@ describe("direct-mode facilitator", () => {
     }));
     const replaySetup = makeFacilitator({
       store: initial.store,
+      lockManager,
       exactTransactionVerifier: {
         verifyExactPayment: verifier,
       },

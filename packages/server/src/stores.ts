@@ -1,9 +1,12 @@
 import {
+  KASPA_X402_RESOURCE_BUDGET,
+  applyBatchClaimAccounting,
   batchLaneAccounting,
   parseBatchLaneAmount,
   type Hash32Hex,
 } from "@kaspa-x402/core";
 import {
+  assertBatchDepositTransition,
   assertBatchHandlerResultTransition,
   batchSettlementAttemptIsReadyToCommit,
   batchSettlementAttemptsMatch,
@@ -23,6 +26,8 @@ import type {
   BatchCommitmentRecord,
   BatchSettlementAttemptRecord,
   BatchSettlementClaimResult,
+  ChannelOperationLeaseClaimResult,
+  ChannelOperationLeaseRecord,
   ChannelLockManager,
   ClaimAttemptRecord,
   ExactPaymentRecord,
@@ -35,12 +40,68 @@ import type {
   ExactSettlementAttemptRecord,
   ExactSettlementClaimResult,
   PaymentIdentifierRecord,
+  PaymentIdentifierReservationClaim,
+  PaymentIdentifierReservationRecord,
   ServerChannelRecord,
   ServerStateStore,
   SettlementCommit,
 } from "./types.js";
 
+let memoryCoordinationSequence = 0;
+
+export interface ServerDurableStateLimits {
+  /** Maximum logical protected-payment records, open plus retained terminal. */
+  maxRecords: number;
+  /** Maximum aggregate bytes reserved by those record bundles. */
+  maxBytes: number;
+  /** Maximum record bundles owned by one authenticated payer identity. */
+  maxRecordsPerPayer: number;
+  /** Replay/cache retention horizon for terminal record bundles. */
+  terminalRetentionMs: number;
+}
+
+export interface MemoryServerStateStoreOptions {
+  limits?: Partial<ServerDurableStateLimits>;
+  now?: () => number;
+}
+
+export interface ServerDurableStateStats {
+  records: number;
+  bytes: number;
+  openRecords: number;
+  recoveryRequiredRecords: number;
+  payerRecords: Readonly<Record<string, number>>;
+}
+
+const DEFAULT_DURABLE_STATE_LIMITS: ServerDurableStateLimits = {
+  maxRecords: 10_000,
+  maxBytes: 512 * 1024 * 1024,
+  maxRecordsPerPayer: 1_000,
+  terminalRetentionMs: 24 * 60 * 60 * 1_000,
+};
+
+type BudgetRecord = {
+  key: string;
+  kind: "batch" | "exact";
+  attemptId: Hash32Hex;
+  payerId: string;
+  bytes: number;
+  terminalAt?: number;
+  compactedAt?: number;
+  commitmentId?: Hash32Hex;
+  paymentIdentifier?: string;
+  safelyReleased?: boolean;
+};
+
+const MAX_DURABLE_HANDLER_RESULT_BYTES = 256 * 1024;
+const MAX_DURABLE_RESPONSE_BYTES =
+  MAX_DURABLE_HANDLER_RESULT_BYTES +
+  KASPA_X402_RESOURCE_BUDGET.maxEncodedHeaderBytes +
+  1024;
+
 export class MemoryServerChannelStore implements ServerStateStore {
+  readonly coordinationScope = "process-local" as const;
+  readonly coordinationDomain: string;
   readonly #channels = new Map<Hash32Hex, ServerChannelRecord>();
   readonly #channelByCovenantId = new Map<Hash32Hex, Hash32Hex>();
   readonly #commitments = new Map<Hash32Hex, BatchCommitmentRecord>();
@@ -49,10 +110,67 @@ export class MemoryServerChannelStore implements ServerStateStore {
   readonly #exactHeads = new Map<Hash32Hex, ExactHeadRecord>();
   readonly #exactAttempts = new Map<Hash32Hex, ExactSettlementAttemptRecord>();
   readonly #paymentIdentifiers = new Map<string, PaymentIdentifierRecord>();
+  readonly #paymentIdentifierReservations = new Map<
+    string,
+    PaymentIdentifierReservationRecord
+  >();
   readonly #claimAttempts = new Map<Hash32Hex, ClaimAttemptRecord>();
+  readonly #channelOperations = new Map<
+    Hash32Hex,
+    ChannelOperationLeaseRecord
+  >();
+  readonly #channelByLeaseId = new Map<Hash32Hex, Hash32Hex>();
+  readonly #openBatchAttemptByChannel = new Map<Hash32Hex, Hash32Hex>();
+  readonly #openClaimAttemptByChannel = new Map<Hash32Hex, Hash32Hex>();
+  readonly #limits: ServerDurableStateLimits;
+  readonly #now: () => number;
+  readonly #budgetRecords = new Map<string, BudgetRecord>();
+  readonly #payerBudgetCounts = new Map<string, number>();
+  readonly #terminalBudgetQueue = new Map<string, number>();
+  #budgetBytes = 0;
 
-  constructor(channels: readonly ServerChannelRecord[] = []) {
+  constructor(
+    channels: readonly ServerChannelRecord[] = [],
+    options: MemoryServerStateStoreOptions = {},
+  ) {
+    this.coordinationDomain = `memory-store:${++memoryCoordinationSequence}`;
+    this.#limits = { ...DEFAULT_DURABLE_STATE_LIMITS, ...options.limits };
+    this.#now = options.now ?? Date.now;
+    assertDurableStateLimits(this.#limits);
     for (const channel of channels) this.#setChannel(channel);
+  }
+
+  durableStateStats(): ServerDurableStateStats {
+    this.#pruneTerminalBudgetRecords();
+    let openRecords = 0;
+    let recoveryRequiredRecords = 0;
+    for (const record of this.#budgetRecords.values()) {
+      if (record.terminalAt === undefined) openRecords += 1;
+      const reservation = record.paymentIdentifier
+        ? this.#paymentIdentifierReservations.get(record.paymentIdentifier)
+        : undefined;
+      const batch =
+        record.kind === "batch"
+          ? this.#batchAttempts.get(record.attemptId)
+          : undefined;
+      const exact =
+        record.kind === "exact"
+          ? this.#exactAttempts.get(record.attemptId)
+          : undefined;
+      if (
+        reservation?.status === "recovery-required" ||
+        batch?.recoveryReason !== undefined ||
+        exact?.recoveryReason !== undefined
+      )
+        recoveryRequiredRecords += 1;
+    }
+    return {
+      records: this.#budgetRecords.size,
+      bytes: this.#budgetBytes,
+      openRecords,
+      recoveryRequiredRecords,
+      payerRecords: Object.fromEntries(this.#payerBudgetCounts),
+    };
   }
 
   async loadChannel(
@@ -62,18 +180,84 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return channel ? clone(channel) : undefined;
   }
 
-  async saveChannel(channel: ServerChannelRecord): Promise<void> {
+  async registerChannel(channel: ServerChannelRecord): Promise<void> {
+    const existing = this.#channels.get(channel.channelId);
+    if (existing) {
+      if (stableJson(existing) !== stableJson(channel))
+        throw new Error("existing channel state cannot be replaced");
+      return;
+    }
     this.#setChannel(channel);
   }
 
-  async retireChannel(channelId: Hash32Hex): Promise<void> {
+  async retireChannel(
+    channelId: Hash32Hex,
+    leaseId: Hash32Hex,
+    expected: ServerChannelRecord,
+  ): Promise<void> {
     const channel = this.#channels.get(channelId);
     if (!channel) return;
-    this.#channels.set(channelId, { ...channel, status: "retired" });
+    const lease = this.#requireChannelOperation(channelId, leaseId);
+    if (lease.kind !== "retirement")
+      throw new Error("channel operation lease is not a retirement");
+    if (!sameChannelSnapshot(channel, expected) ||
+        !sameChannelSnapshot(channel, lease.expected))
+      throw new Error("channel state changed before retirement");
+    this.#channels.set(channelId, {
+      ...channel,
+      version: incrementVersion(channel.version),
+      status: "retired",
+    });
+    this.#channelOperations.delete(channelId);
+    this.#channelByLeaseId.delete(leaseId);
   }
 
   async listChannels(): Promise<ServerChannelRecord[]> {
     return Array.from(this.#channels.values()).map(clone);
+  }
+
+  async claimChannelOperation(
+    input: ChannelOperationLeaseRecord,
+  ): Promise<ChannelOperationLeaseClaimResult> {
+    const lease = normalizeChannelOperationLease(input);
+    const existing = this.#channelOperations.get(lease.channelId);
+    if (existing) {
+      if (!channelOperationLeasesMatch(existing, lease))
+        throw new Error("channel already has a conflicting durable operation");
+      return { lease: clone(existing), created: false };
+    }
+    if (!sameChannelSnapshot(this.#channels.get(lease.channelId), lease.expected))
+      throw new Error("channel state changed before operation claim");
+    this.#channelOperations.set(lease.channelId, clone(lease));
+    this.#channelByLeaseId.set(lease.leaseId, lease.channelId);
+    return { lease: clone(lease), created: true };
+  }
+
+  async loadChannelOperation(
+    channelId: Hash32Hex,
+  ): Promise<ChannelOperationLeaseRecord | undefined> {
+    const lease = this.#channelOperations.get(channelId.toLowerCase());
+    return lease ? clone(lease) : undefined;
+  }
+
+  async abandonChannelOperation(
+    leaseId: Hash32Hex,
+    _reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    assertIsoDate(observedAt, "channel operation abandonment time");
+    const lease = this.#findChannelOperationByLeaseId(leaseId);
+    if (!lease) return;
+    if (lease.status !== "reserved")
+      throw new Error("uncertain channel operation cannot be abandoned");
+    if (
+      this.#openBatchAttemptByChannel.get(lease.channelId) === lease.leaseId ||
+      this.#openClaimAttemptByChannel.get(lease.channelId) !== undefined
+    ) {
+      throw new Error("attempt-owned channel operation must use its safe abandon path");
+    }
+    this.#channelOperations.delete(lease.channelId);
+    this.#channelByLeaseId.delete(lease.leaseId);
   }
 
   #setChannel(channel: ServerChannelRecord): void {
@@ -115,6 +299,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return record ? clone(record) : undefined;
   }
 
+  async loadPaymentIdentifierReservation(
+    id: string,
+  ): Promise<PaymentIdentifierReservationRecord | undefined> {
+    const record = this.#paymentIdentifierReservations.get(id);
+    return record ? clone(record) : undefined;
+  }
+
   async loadExactPayment(
     transactionId: Hash32Hex,
   ): Promise<ExactPaymentRecord | undefined> {
@@ -131,23 +322,66 @@ export class MemoryServerChannelStore implements ServerStateStore {
     if (!batchSettlementAttemptIsReadyToCommit(attempt, record)) {
       throw new Error("batch settlement attempt is not ready to apply");
     }
+    const lease = this.#requireChannelOperation(
+      attempt.channelId,
+      attempt.attemptId,
+    );
+    if (
+      lease.kind !== attempt.operationKind ||
+      (lease.status !== "pending" && lease.status !== "recovery-required")
+    ) {
+      throw new Error("batch settlement does not own the channel operation");
+    }
     const paymentIdentifier = record.paymentIdentifier
       ? clone(record.paymentIdentifier)
       : undefined;
     const commitment = clone(record.commitment);
     const channel = clone(record.channel);
-    if (paymentIdentifier)
-      this.#assertPaymentIdentifierAvailable(paymentIdentifier);
+    this.#assertSettlementTransition(current!, channel, commitment);
+    this.#assertCompletedPaymentIdentifier(attempt, paymentIdentifier);
     this.#assertChannelBinding(channel);
-    this.#commitments.set(commitment.commitmentId, commitment);
-    if (paymentIdentifier)
-      this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
-    this.#setChannel(channel);
-    this.#batchAttempts.set(attempt.attemptId, {
-      ...attempt,
+    const {
+      handlerResult: _handlerResult,
+      handlerCompletedAt: _handlerCompletedAt,
+      channelTransition: _channelTransition,
+      ...compactAttempt
+    } = attempt;
+    const appliedAttempt: BatchSettlementAttemptRecord = {
+      ...compactAttempt,
       status: "applied",
+      recoveryReason: undefined,
+      commitmentId: commitment.commitmentId,
+      completedPaymentIdentifier: paymentIdentifier?.id,
       updatedAt: new Date().toISOString(),
+    };
+    const terminalBudgetBytes = durableByteLength({
+      attempt: appliedAttempt,
+      commitment,
+      paymentIdentifier,
     });
+    this.#assertTerminalBudgetFits(
+      `batch:${attempt.attemptId}`,
+      terminalBudgetBytes,
+    );
+    this.#commitments.set(commitment.commitmentId, commitment);
+    if (paymentIdentifier) {
+      this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
+      this.#completePaymentIdentifierReservation(
+        attempt.paymentIdentifier!,
+        attempt.updatedAt,
+      );
+    }
+    this.#setChannel(channel);
+    this.#batchAttempts.set(attempt.attemptId, appliedAttempt);
+    this.#openBatchAttemptByChannel.delete(attempt.channelId);
+    this.#channelOperations.delete(attempt.channelId);
+    this.#channelByLeaseId.delete(attempt.attemptId);
+    this.#terminalizeBudgetRecord(
+      `batch:${attempt.attemptId}`,
+      terminalBudgetBytes,
+      commitment.commitmentId,
+      paymentIdentifier?.id,
+    );
   }
 
   async claimBatchSettlement(
@@ -162,23 +396,55 @@ export class MemoryServerChannelStore implements ServerStateStore {
         );
       return { attempt: clone(existing), created: false };
     }
-    if (
-      !matchesExpectedChannel(
-        this.#channels.get(attempt.channelId),
-        attempt.expected,
-      )
-    ) {
+    const current = this.#channels.get(attempt.channelId);
+    const transition = attempt.channelTransition;
+    if (transition) {
+      if (!sameChannelSnapshot(current, transition.previous))
+        throw new Error("channel state changed before deposit transition");
+      if (!sameChannelSnapshot(transition.next, attempt.expected))
+        throw new Error("deposit transition does not match attempt snapshot");
+      assertBatchDepositTransition(
+        transition.previous,
+        transition.next,
+        attempt.operationKind,
+      );
+      this.#assertChannelBinding(transition.next);
+    } else if (!matchesExpectedChannel(current, attempt.expected)) {
       throw new Error("channel state changed before batch settlement claim");
     }
-    for (const current of this.#batchAttempts.values()) {
-      if (
-        current.channelId === attempt.channelId &&
-        current.status === "pending"
-      ) {
-        throw new Error("channel already has a pending batch settlement");
-      }
-    }
+    const openAttemptId = this.#openBatchAttemptByChannel.get(attempt.channelId);
+    if (openAttemptId)
+      throw new Error("channel already has a pending batch settlement");
+    if (this.#channelOperations.has(attempt.channelId))
+      throw new Error("channel already has a conflicting durable operation");
+    this.#assertPaymentIdentifierClaimAvailable(attempt.paymentIdentifier);
+    this.#admitBudgetRecord(
+      `batch:${attempt.attemptId}`,
+      "batch",
+      attempt.attemptId,
+      attempt.payerId,
+      attempt.paymentIdentifier?.id,
+      durableOpenRecordBytes(attempt),
+      attempt.paymentIdentifier,
+    );
+    if (transition) this.#setChannel(transition.next);
+    this.#reservePaymentIdentifier(attempt.paymentIdentifier, attempt.createdAt);
     this.#batchAttempts.set(attempt.attemptId, clone(attempt));
+    this.#openBatchAttemptByChannel.set(
+      attempt.channelId,
+      attempt.attemptId,
+    );
+    this.#channelOperations.set(attempt.channelId, {
+      leaseId: attempt.attemptId,
+      channelId: attempt.channelId,
+      covenantId: attempt.covenantId,
+      kind: attempt.operationKind,
+      expected: clone(attempt.expected),
+      status: "reserved",
+      createdAt: attempt.createdAt,
+      updatedAt: attempt.updatedAt,
+    });
+    this.#channelByLeaseId.set(attempt.attemptId, attempt.channelId);
     return { attempt: clone(attempt), created: true };
   }
 
@@ -201,6 +467,14 @@ export class MemoryServerChannelStore implements ServerStateStore {
       handlerStartedAt: startedAt,
       updatedAt: startedAt,
     });
+    this.#updateChannelOperation(attempt.channelId, attempt.attemptId, {
+      status: "pending",
+      updatedAt: startedAt,
+    });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
+      updatedAt: startedAt,
+    });
     return true;
   }
 
@@ -219,6 +493,57 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: undefined,
       updatedAt: completedAt,
     });
+    this.#updateChannelOperation(attempt.channelId, attempt.attemptId, {
+      status: "pending",
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
+  }
+
+  async abandonBatchSettlement(
+    attemptId: Hash32Hex,
+    reason: string,
+    observedAt: string,
+  ): Promise<void> {
+    const attempt = this.#requireBatchAttempt(attemptId);
+    assertIsoDate(observedAt, "batch settlement abandonment time");
+    if (
+      attempt.status !== "pending" ||
+      attempt.handlerStartedAt ||
+      attempt.handlerResult ||
+      attempt.recoveryReason
+    ) {
+      throw new Error("uncertain or completed batch settlement cannot be abandoned");
+    }
+    this.#requireChannelOperation(attempt.channelId, attempt.attemptId);
+    this.#releasePaymentIdentifierReservation(
+      attempt.paymentIdentifier,
+      reason,
+      observedAt,
+    );
+    this.#batchAttempts.delete(attempt.attemptId);
+    this.#openBatchAttemptByChannel.delete(attempt.channelId);
+    this.#channelOperations.delete(attempt.channelId);
+    this.#channelByLeaseId.delete(attempt.attemptId);
+    if (attempt.paymentIdentifier) {
+      this.#terminalizeBudgetRecord(
+        `batch:${attempt.attemptId}`,
+        durableByteLength({
+          paymentIdentifierReservation:
+            this.#paymentIdentifierReservations.get(attempt.paymentIdentifier.id),
+        }),
+        undefined,
+        attempt.paymentIdentifier.id,
+        true,
+      );
+    } else {
+      this.#deleteBudgetRecord(`batch:${attempt.attemptId}`);
+    }
   }
 
   async markBatchHandlerRecoveryRequired(
@@ -240,6 +565,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: reason,
       updatedAt: observedAt,
     });
+    this.#updateChannelOperation(attempt.channelId, attempt.attemptId, {
+      status: "recovery-required",
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "recovery-required",
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
   }
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
@@ -258,31 +593,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
       }
       return;
     }
-    if (record.paymentIdentifier) {
-      const existingIdentifier = this.#paymentIdentifiers.get(
-        record.paymentIdentifier.id,
-      );
-      if (
-        existingIdentifier &&
-        (existingIdentifier.fingerprint !==
-          record.paymentIdentifier.fingerprint ||
-          existingIdentifier.paymentPayloadHash !==
-            record.paymentIdentifier.paymentPayloadHash ||
-          existingIdentifier.paymentScopeId !==
-            record.paymentIdentifier.paymentScopeId)
-      ) {
-        throw new Error(
-          "payment identifier was already committed for a different payment",
-        );
-      }
-      this.#paymentIdentifiers.set(
-        record.paymentIdentifier.id,
-        clone(record.paymentIdentifier),
-      );
-    }
     const attempt = this.#exactAttempts.get(
       payment.transactionId.toLowerCase(),
     );
+    if (record.paymentIdentifier) {
+      if (!attempt)
+        throw new Error("payment identifier completion requires its reserved attempt");
+      this.#assertCompletedPaymentIdentifier(attempt, record.paymentIdentifier);
+    }
+    let appliedAttempt: ExactSettlementAttemptRecord | undefined;
+    let terminalBudgetBytes: number | undefined;
     if (attempt) {
       if (
         attempt.status !== "accepted" ||
@@ -291,13 +611,48 @@ export class MemoryServerChannelStore implements ServerStateStore {
       ) {
         throw new Error("exact settlement attempt is not ready to apply");
       }
-      this.#exactAttempts.set(payment.transactionId, {
-        ...attempt,
+      const {
+        handlerResult: _handlerResult,
+        handlerCompletedAt: _handlerCompletedAt,
+        ...compactAttempt
+      } = attempt;
+      appliedAttempt = {
+        ...compactAttempt,
         status: "applied",
+        transaction: "",
+        recoveryReason: undefined,
         updatedAt: new Date().toISOString(),
+      };
+      terminalBudgetBytes = durableByteLength({
+        attempt: appliedAttempt,
+        payment,
+        paymentIdentifier: record.paymentIdentifier,
       });
+      this.#assertTerminalBudgetFits(
+        `exact:${attempt.transactionId}`,
+        terminalBudgetBytes,
+      );
+      this.#exactAttempts.set(payment.transactionId, appliedAttempt);
+    }
+    if (record.paymentIdentifier) {
+      this.#paymentIdentifiers.set(
+        record.paymentIdentifier.id,
+        clone(record.paymentIdentifier),
+      );
+      this.#completePaymentIdentifierReservation(
+        attempt!.paymentIdentifier!,
+        new Date().toISOString(),
+      );
     }
     this.#exactPayments.set(key, payment);
+    if (attempt) {
+      this.#terminalizeBudgetRecord(
+        `exact:${attempt.transactionId}`,
+        terminalBudgetBytes!,
+        undefined,
+        record.paymentIdentifier?.id,
+      );
+    }
   }
 
   async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
@@ -355,15 +710,28 @@ export class MemoryServerChannelStore implements ServerStateStore {
         );
       return { attempt: clone(existing), created: false };
     }
+    this.#assertPaymentIdentifierClaimAvailable(attempt.paymentIdentifier);
+    let claimedHead: ExactHeadRecord | undefined;
     if (attempt.profile === "additive") {
       if (!attempt.head)
         throw new Error("additive exact settlement requires a head claim");
       const head = this.#exactHeads.get(attempt.head.headId);
       if (!head) throw new Error("exact head changed before settlement claim");
-      this.#exactHeads.set(head.headId, claimExactHead(head, attempt));
+      claimedHead = claimExactHead(head, attempt);
     } else if (attempt.head) {
       throw new Error("standard-native exact settlement cannot claim a head");
     }
+    this.#admitBudgetRecord(
+      `exact:${attempt.transactionId}`,
+      "exact",
+      attempt.transactionId,
+      attempt.payerId,
+      attempt.paymentIdentifier?.id,
+      durableOpenRecordBytes(attempt),
+      attempt.paymentIdentifier,
+    );
+    if (claimedHead) this.#exactHeads.set(claimedHead.headId, claimedHead);
+    this.#reservePaymentIdentifier(attempt.paymentIdentifier, attempt.createdAt);
     this.#exactAttempts.set(attempt.transactionId, clone(attempt));
     return { attempt: clone(attempt), created: true };
   }
@@ -386,6 +754,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
       ...attempt,
       status: "broadcast",
       finality,
+      updatedAt: observedAt,
+    });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
       updatedAt: observedAt,
     });
   }
@@ -414,6 +786,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
       finality,
       updatedAt: observedAt,
     });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
+      updatedAt: observedAt,
+    });
   }
 
   async beginExactHandler(
@@ -425,6 +801,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     this.#exactAttempts.set(attempt.transactionId, {
       ...attempt,
       handlerStartedAt: startedAt,
+      updatedAt: startedAt,
+    });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
       updatedAt: startedAt,
     });
     return true;
@@ -449,6 +829,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: undefined,
       updatedAt: completedAt,
     });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "pending",
+      recoveryReason: undefined,
+      updatedAt: completedAt,
+    });
   }
 
   async markExactHandlerRecoveryRequired(
@@ -469,6 +854,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: reason,
       updatedAt: observedAt,
     });
+    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
+      status: "recovery-required",
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
   }
 
   async abandonExactSettlement(
@@ -479,16 +869,40 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const attempt = this.#requireExactAttempt(transactionId);
     if (attempt.status === "accepted" || attempt.status === "applied")
       throw new Error("accepted exact settlement cannot be abandoned");
+    if (
+      attempt.handlerStartedAt ||
+      attempt.handlerResult ||
+      attempt.recoveryReason
+    ) {
+      throw new Error("uncertain exact settlement cannot be abandoned");
+    }
+    let releasedHead: ExactHeadRecord | undefined;
     if (attempt.head) {
       const head = this.#exactHeads.get(attempt.head.headId);
-      if (head)
-        this.#exactHeads.set(
-          head.headId,
-          releaseExactHeadClaim(head, attempt, observedAt),
-        );
+      if (head) releasedHead = releaseExactHeadClaim(head, attempt, observedAt);
     }
+    this.#releasePaymentIdentifierReservation(
+      attempt.paymentIdentifier,
+      reason,
+      observedAt,
+      true,
+    );
+    if (releasedHead) this.#exactHeads.set(releasedHead.headId, releasedHead);
     this.#exactAttempts.delete(attempt.transactionId);
-    void reason;
+    if (attempt.paymentIdentifier) {
+      this.#terminalizeBudgetRecord(
+        `exact:${attempt.transactionId}`,
+        durableByteLength({
+          paymentIdentifierReservation:
+            this.#paymentIdentifierReservations.get(attempt.paymentIdentifier.id),
+        }),
+        undefined,
+        attempt.paymentIdentifier.id,
+        true,
+      );
+    } else {
+      this.#deleteBudgetRecord(`exact:${attempt.transactionId}`);
+    }
   }
 
   async markExactHeadUnavailable(
@@ -533,48 +947,265 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return attempt;
   }
 
-  #assertPaymentIdentifierAvailable(
-    paymentIdentifier: PaymentIdentifierRecord,
+  #assertPaymentIdentifierClaimAvailable(
+    claim: PaymentIdentifierReservationClaim | undefined,
   ): void {
-    const existingIdentifier = this.#paymentIdentifiers.get(
-      paymentIdentifier.id,
-    );
+    if (!claim) return;
+    assertPaymentIdentifierReservationClaim(claim);
+    const completed = this.#paymentIdentifiers.get(claim.id);
     if (
-      existingIdentifier &&
-      (existingIdentifier.fingerprint !== paymentIdentifier.fingerprint ||
-        existingIdentifier.paymentPayloadHash !==
-          paymentIdentifier.paymentPayloadHash ||
-        existingIdentifier.paymentScopeId !== paymentIdentifier.paymentScopeId)
+      completed &&
+      (completed.fingerprint !== claim.fingerprint ||
+        completed.paymentPayloadHash !== claim.paymentPayloadHash ||
+        completed.paymentScopeId !== claim.paymentScopeId)
+    ) {
+      throw new Error("payment identifier is already owned by another payment");
+    }
+    const existing = this.#paymentIdentifierReservations.get(claim.id);
+    if (
+      existing &&
+      existing.status !== "safely-released" &&
+      !paymentIdentifierReservationClaimsMatch(existing, claim)
+    ) {
+      throw new Error("payment identifier is already owned by another payment");
+    }
+  }
+
+  #safelyReleasedPaymentIdentifierReclaim(
+    claim: PaymentIdentifierReservationClaim | undefined,
+  ): { reservationId: string; budget: BudgetRecord } | undefined {
+    if (!claim) return undefined;
+    const released = this.#paymentIdentifierReservations.get(claim.id);
+    if (!released || released.status !== "safely-released") return undefined;
+    const budgetKey = `${
+      released.paymentKind === "exact" ? "exact" : "batch"
+    }:${released.ownerId}`;
+    const budget = this.#budgetRecords.get(budgetKey);
+    if (
+      !budget?.safelyReleased ||
+      budget.attemptId !== released.ownerId ||
+      budget.paymentIdentifier !== claim.id
     ) {
       throw new Error(
-        "payment identifier was already committed for a different payment",
+        "safely released payment identifier budget is inconsistent",
       );
     }
+    return { reservationId: claim.id, budget };
+  }
+
+  #reservePaymentIdentifier(
+    claim: PaymentIdentifierReservationClaim | undefined,
+    observedAt: string,
+  ): void {
+    if (!claim) return;
+    const existing = this.#paymentIdentifierReservations.get(claim.id);
+    if (existing && existing.status !== "safely-released") return;
+    this.#paymentIdentifierReservations.set(claim.id, {
+      ...clone(claim),
+      status: "reserved",
+      createdAt: observedAt,
+      updatedAt: observedAt,
+    });
+  }
+
+  #updatePaymentIdentifierReservation(
+    claim: PaymentIdentifierReservationClaim | undefined,
+    update: Pick<PaymentIdentifierReservationRecord, "status" | "updatedAt"> &
+      Pick<Partial<PaymentIdentifierReservationRecord>, "recoveryReason">,
+  ): void {
+    if (!claim) return;
+    const existing = this.#paymentIdentifierReservations.get(claim.id);
+    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
+      throw new Error("payment identifier reservation ownership changed");
+    if (
+      existing.status === "completed" ||
+      existing.status === "safely-released"
+    )
+      throw new Error("terminal payment identifier reservation cannot change");
+    this.#paymentIdentifierReservations.set(claim.id, {
+      ...existing,
+      ...update,
+    });
+  }
+
+  #completePaymentIdentifierReservation(
+    claim: PaymentIdentifierReservationClaim,
+    observedAt: string,
+  ): void {
+    const existing = this.#paymentIdentifierReservations.get(claim.id);
+    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
+      throw new Error("payment identifier completion lost its reservation");
+    if (existing.status === "safely-released")
+      throw new Error("released payment identifier cannot be completed");
+    this.#paymentIdentifierReservations.set(claim.id, {
+      ...existing,
+      status: "completed",
+      recoveryReason: undefined,
+      updatedAt: observedAt,
+    });
+  }
+
+  #releasePaymentIdentifierReservation(
+    claim: PaymentIdentifierReservationClaim | undefined,
+    reason: string,
+    observedAt: string,
+    allowPending = false,
+  ): void {
+    if (!claim) return;
+    const existing = this.#paymentIdentifierReservations.get(claim.id);
+    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
+      throw new Error("payment identifier release lost its reservation");
+    if (
+      (existing.status !== "reserved" &&
+        !(allowPending && existing.status === "pending")) ||
+      existing.recoveryReason !== undefined
+    )
+      throw new Error("uncertain or completed payment identifier cannot be released");
+    this.#paymentIdentifierReservations.set(claim.id, {
+      ...existing,
+      status: "safely-released",
+      recoveryReason: reason,
+      updatedAt: observedAt,
+    });
+  }
+
+  #assertCompletedPaymentIdentifier(
+    attempt:
+      | BatchSettlementAttemptRecord
+      | ExactSettlementAttemptRecord
+      | undefined,
+    completed: PaymentIdentifierRecord | undefined,
+  ): void {
+    const claim = attempt?.paymentIdentifier;
+    if (!claim && !completed) return;
+    if (
+      !claim ||
+      !completed ||
+      claim.id !== completed.id ||
+      claim.fingerprint !== completed.fingerprint ||
+      claim.paymentPayloadHash !== completed.paymentPayloadHash ||
+      claim.paymentScopeId !== completed.paymentScopeId ||
+      claim.channelId !== completed.channelId ||
+      claim.transactionId !== completed.transactionId ||
+      claim.paymentOutputIndex !== completed.paymentOutputIndex
+    ) {
+      throw new Error("payment identifier completion does not match reservation");
+    }
+    const reservation = this.#paymentIdentifierReservations.get(claim.id);
+    if (
+      !reservation ||
+      !paymentIdentifierReservationClaimsMatch(reservation, claim) ||
+      reservation.status === "safely-released"
+    )
+      throw new Error("payment identifier completion lost its reservation");
+    this.#assertPaymentIdentifierClaimAvailable(claim);
+  }
+
+  #requireChannelOperation(
+    channelId: Hash32Hex,
+    leaseId: Hash32Hex,
+  ): ChannelOperationLeaseRecord {
+    const lease = this.#channelOperations.get(channelId);
+    if (!lease || lease.leaseId !== leaseId)
+      throw new Error("channel operation lease was not found");
+    return lease;
+  }
+
+  #findChannelOperationByLeaseId(
+    leaseId: Hash32Hex,
+  ): ChannelOperationLeaseRecord | undefined {
+    const channelId = this.#channelByLeaseId.get(leaseId);
+    return channelId ? this.#channelOperations.get(channelId) : undefined;
+  }
+
+  #updateChannelOperation(
+    channelId: Hash32Hex,
+    leaseId: Hash32Hex,
+    update: Pick<ChannelOperationLeaseRecord, "status" | "updatedAt"> &
+      Pick<Partial<ChannelOperationLeaseRecord>, "recoveryReason">,
+  ): void {
+    const lease = this.#requireChannelOperation(channelId, leaseId);
+    this.#channelOperations.set(channelId, { ...lease, ...update });
+  }
+
+  #assertSettlementTransition(
+    previous: ServerChannelRecord,
+    next: ServerChannelRecord,
+    commitment: BatchCommitmentRecord,
+  ): void {
+    assertImmutableChannelIdentity(previous, next);
+    if (
+      next.fundingAmount !== previous.fundingAmount ||
+      next.claimedCumulativeAmount !== previous.claimedCumulativeAmount ||
+      !sameOutpoint(next.activeOutpoint, previous.activeOutpoint) ||
+      next.activeScriptPublicKey.toLowerCase() !==
+        previous.activeScriptPublicKey.toLowerCase() ||
+      parseBatchLaneAmount(next.chargedCumulativeAmount, "next charged amount") <
+        parseBatchLaneAmount(previous.chargedCumulativeAmount, "previous charged amount") ||
+      parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
+        parseBatchLaneAmount(previous.signedMaxClaimable, "previous signed ceiling") ||
+      next.lastCommitmentId !== commitment.commitmentId
+      || next.version !== incrementVersion(previous.version)
+    ) {
+      throw new Error("settlement would roll back or replace channel state");
+    }
+    batchLaneAccounting(next);
+  }
+
+  #assertClaimTransition(
+    previous: ServerChannelRecord,
+    next: ServerChannelRecord,
+    attempt: ClaimAttemptRecord,
+  ): void {
+    assertImmutableChannelIdentity(previous, next);
+    const expected = applyBatchClaimAccounting(previous, attempt.claimAmount);
+    if (
+      next.fundingAmount !== expected.fundingAmount ||
+      next.claimedCumulativeAmount !== expected.claimedCumulativeAmount ||
+      next.chargedCumulativeAmount !== previous.chargedCumulativeAmount ||
+      next.signedMaxClaimable !== previous.signedMaxClaimable ||
+      next.lastCommitmentId !== previous.lastCommitmentId ||
+      next.voucherSignature !== previous.voucherSignature ||
+      next.version !== incrementVersion(previous.version) ||
+      !attempt.continuationOutpoint ||
+      !sameOutpoint(next.activeOutpoint, attempt.continuationOutpoint) ||
+      next.activeScriptPublicKey.toLowerCase() !==
+        attempt.continuationScriptPublicKey?.toLowerCase()
+    )
+      throw new Error("claim transition is not the reserved monotonic successor");
+    batchLaneAccounting(next);
   }
 
   async loadOpenClaimAttempt(
     channelId: Hash32Hex,
   ): Promise<ClaimAttemptRecord | undefined> {
-    for (const record of this.#claimAttempts.values()) {
-      if (record.channelId === channelId && record.status !== "applied")
-        return clone(record);
-    }
-    return undefined;
+    const attemptId = this.#openClaimAttemptByChannel.get(channelId);
+    const record = attemptId ? this.#claimAttempts.get(attemptId) : undefined;
+    return record && record.status !== "applied" ? clone(record) : undefined;
   }
 
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     const existing = this.#claimAttempts.get(record.attemptId);
     const attempt = normalizeClaimAttempt(record, existing);
-    for (const existing of this.#claimAttempts.values()) {
-      if (
-        existing.channelId === attempt.channelId &&
-        existing.status !== "applied" &&
-        existing.attemptId !== attempt.attemptId
-      ) {
-        throw new Error("claim attempt is already pending");
-      }
+    const openAttemptId = this.#openClaimAttemptByChannel.get(attempt.channelId);
+    if (openAttemptId && openAttemptId !== attempt.attemptId) {
+      throw new Error("claim attempt is already pending");
     }
+    const lease = this.#requireChannelOperation(
+      attempt.channelId,
+      attempt.operationLeaseId,
+    );
+    if (
+      lease.kind !== "claim" ||
+      !sameChannelSnapshot(lease.expected, attempt.expected)
+    )
+      throw new Error("claim attempt does not own the channel snapshot");
     this.#claimAttempts.set(attempt.attemptId, attempt);
+    this.#openClaimAttemptByChannel.set(attempt.channelId, attempt.attemptId);
+    this.#updateChannelOperation(attempt.channelId, attempt.operationLeaseId, {
+      status: "pending",
+      updatedAt: new Date().toISOString(),
+    });
   }
 
   async applyClaimAttempt(
@@ -590,6 +1221,12 @@ export class MemoryServerChannelStore implements ServerStateStore {
     ) {
       throw new Error("claim apply must match the persisted accepted attempt");
     }
+    const lease = this.#requireChannelOperation(
+      currentAttempt.channelId,
+      currentAttempt.operationLeaseId,
+    );
+    if (lease.kind !== "claim")
+      throw new Error("claim apply does not own the channel operation");
     const currentChannel = this.#channels.get(channel.channelId);
     if (
       !currentChannel ||
@@ -613,21 +1250,205 @@ export class MemoryServerChannelStore implements ServerStateStore {
     ) {
       throw new Error("channel state changed before claim apply");
     }
+    this.#assertClaimTransition(currentChannel, channel, currentAttempt);
     this.#setChannel(channel);
     this.#claimAttempts.set(currentAttempt.attemptId, {
       ...clone(currentAttempt),
       status: "applied",
     });
+    this.#openClaimAttemptByChannel.delete(currentAttempt.channelId);
+    this.#channelOperations.delete(currentAttempt.channelId);
+    this.#channelByLeaseId.delete(currentAttempt.operationLeaseId);
   }
 
   async abandonClaimAttempt(attemptId: Hash32Hex): Promise<void> {
     const currentAttempt = this.#claimAttempts.get(attemptId);
     if (!currentAttempt || currentAttempt.status === "applied") return;
+    if (currentAttempt.status === "accepted")
+      throw new Error("accepted claim attempt cannot be abandoned");
+    this.#requireChannelOperation(
+      currentAttempt.channelId,
+      currentAttempt.operationLeaseId,
+    );
     this.#claimAttempts.delete(attemptId);
+    this.#openClaimAttemptByChannel.delete(currentAttempt.channelId);
+    this.#channelOperations.delete(currentAttempt.channelId);
+    this.#channelByLeaseId.delete(currentAttempt.operationLeaseId);
+  }
+
+  #admitBudgetRecord(
+    key: string,
+    kind: BudgetRecord["kind"],
+    attemptId: Hash32Hex,
+    payerId: string,
+    paymentIdentifier: string | undefined,
+    bytes: number,
+    replacementClaim: PaymentIdentifierReservationClaim | undefined,
+  ): void {
+    this.#pruneTerminalBudgetRecords();
+    const replacement =
+      this.#safelyReleasedPaymentIdentifierReclaim(replacementClaim);
+    const existing = this.#budgetRecords.get(key);
+    if (existing && existing !== replacement?.budget)
+      throw new Error("durable budget reservation already exists");
+    const replacedRecordCount = replacement ? 1 : 0;
+    const replacedBytes = replacement?.budget.bytes ?? 0;
+    const replacedPayerRecordCount =
+      replacement?.budget.payerId === payerId ? 1 : 0;
+    const projectedPayerRecords =
+      (this.#payerBudgetCounts.get(payerId) ?? 0) -
+      replacedPayerRecordCount +
+      1;
+    if (
+      this.#budgetRecords.size - replacedRecordCount + 1 >
+      this.#limits.maxRecords
+    ) {
+      throw new Error("durable protected-payment record limit exceeded");
+    }
+    if (this.#budgetBytes - replacedBytes + bytes > this.#limits.maxBytes)
+      throw new Error("durable protected-payment byte limit exceeded");
+    if (projectedPayerRecords > this.#limits.maxRecordsPerPayer)
+      throw new Error("durable protected-payment per-payer limit exceeded");
+    if (replacement) {
+      this.#deleteBudgetRecord(replacement.budget.key);
+      this.#paymentIdentifierReservations.delete(replacement.reservationId);
+    }
+    const payerRecords = this.#payerBudgetCounts.get(payerId) ?? 0;
+    this.#budgetRecords.set(key, {
+      key,
+      kind,
+      attemptId,
+      payerId,
+      bytes,
+      ...(paymentIdentifier ? { paymentIdentifier } : {}),
+    });
+    this.#budgetBytes += bytes;
+    this.#payerBudgetCounts.set(payerId, payerRecords + 1);
+  }
+
+  #terminalizeBudgetRecord(
+    key: string,
+    bytes: number,
+    commitmentId?: Hash32Hex,
+    paymentIdentifier?: string,
+    safelyReleased = false,
+  ): void {
+    const current = this.#budgetRecords.get(key);
+    if (!current) throw new Error("durable budget reservation is missing");
+    if (bytes > current.bytes)
+      throw new Error("durable terminal bundle exceeded its reserved byte quota");
+    const terminalAt = this.#now();
+    this.#budgetBytes += bytes - current.bytes;
+    this.#budgetRecords.set(key, {
+      ...current,
+      bytes,
+      terminalAt,
+      ...(commitmentId ? { commitmentId } : {}),
+      ...(paymentIdentifier ? { paymentIdentifier } : {}),
+      ...(safelyReleased ? { safelyReleased: true } : {}),
+    });
+    this.#terminalBudgetQueue.set(key, terminalAt);
+    this.#pruneTerminalBudgetRecords();
+  }
+
+  #assertTerminalBudgetFits(key: string, bytes: number): void {
+    const current = this.#budgetRecords.get(key);
+    if (!current) throw new Error("durable budget reservation is missing");
+    if (bytes > current.bytes)
+      throw new Error("durable terminal bundle exceeded its reserved byte quota");
+  }
+
+  #deleteBudgetRecord(key: string): void {
+    const record = this.#budgetRecords.get(key);
+    if (!record) return;
+    this.#terminalBudgetQueue.delete(key);
+    this.#budgetRecords.delete(key);
+    this.#budgetBytes -= record.bytes;
+    const payerRecords = this.#payerBudgetCounts.get(record.payerId) ?? 0;
+    if (payerRecords <= 1) this.#payerBudgetCounts.delete(record.payerId);
+    else this.#payerBudgetCounts.set(record.payerId, payerRecords - 1);
+  }
+
+  #pruneTerminalBudgetRecords(): void {
+    const cutoff = this.#now() - this.#limits.terminalRetentionMs;
+    while (this.#terminalBudgetQueue.size > 0) {
+      const key = this.#terminalBudgetQueue.keys().next().value!;
+      const record = this.#budgetRecords.get(key);
+      if (!record || record.terminalAt === undefined) {
+        this.#terminalBudgetQueue.delete(key);
+        continue;
+      }
+      if (record.terminalAt > cutoff) break;
+      this.#terminalBudgetQueue.delete(key);
+      if (record.safelyReleased) {
+        if (record.paymentIdentifier) {
+          const reservation = this.#paymentIdentifierReservations.get(
+            record.paymentIdentifier,
+          );
+          if (
+            reservation?.status === "safely-released" &&
+            reservation.ownerId === record.attemptId
+          ) {
+            this.#paymentIdentifierReservations.delete(record.paymentIdentifier);
+          }
+        }
+        this.#deleteBudgetRecord(key);
+        continue;
+      }
+      if (record.kind === "batch") {
+        this.#batchAttempts.delete(record.attemptId);
+        if (record.commitmentId) {
+          const commitment = this.#commitments.get(record.commitmentId);
+          if (commitment)
+            this.#commitments.set(record.commitmentId, {
+              ...commitment,
+              response: expiredReplayResponse(),
+            });
+        }
+      } else {
+        this.#exactAttempts.delete(record.attemptId);
+        const payment = this.#exactPayments.get(
+          exactPaymentKey(record.attemptId),
+        );
+        if (payment)
+          this.#exactPayments.set(exactPaymentKey(record.attemptId), {
+            ...payment,
+            response: expiredReplayResponse(),
+          });
+      }
+      if (record.paymentIdentifier) {
+        const paymentIdentifier = this.#paymentIdentifiers.get(
+          record.paymentIdentifier,
+        );
+        if (paymentIdentifier)
+          this.#paymentIdentifiers.set(record.paymentIdentifier, {
+            ...paymentIdentifier,
+            response: expiredReplayResponse(),
+          });
+      }
+      const bytes = durableByteLength({
+        attemptId: record.attemptId,
+        payment: this.#exactPayments.get(exactPaymentKey(record.attemptId)),
+        commitment: record.commitmentId
+          ? this.#commitments.get(record.commitmentId)
+          : undefined,
+        paymentIdentifier: record.paymentIdentifier
+          ? this.#paymentIdentifiers.get(record.paymentIdentifier)
+          : undefined,
+      });
+      this.#budgetBytes += bytes - record.bytes;
+      this.#budgetRecords.set(key, {
+        ...record,
+        bytes,
+        compactedAt: this.#now(),
+      });
+    }
   }
 }
 
 export class MemoryChannelLockManager implements ChannelLockManager {
+  readonly coordinationScope = "process-local" as const;
+  readonly coordinationDomain = `memory-lock:${++memoryCoordinationSequence}`;
   readonly #tails = new Map<Hash32Hex, Promise<void>>();
 
   async runExclusive<T>(
@@ -695,6 +1516,158 @@ function stableJson(value: unknown): string {
     .join(",")}}`;
 }
 
+function sameChannelSnapshot(
+  left: ServerChannelRecord | null | undefined,
+  right: ServerChannelRecord | null | undefined,
+): boolean {
+  if (left == null || right == null) return left == null && right == null;
+  return stableJson(left) === stableJson(right);
+}
+
+function incrementVersion(version: string): string {
+  return (parseBatchLaneAmount(version, "channel version") + 1n).toString();
+}
+
+function durableByteLength(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function durableOpenRecordBytes(value: unknown): number {
+  // Terminal replay state may cache the response in both the payment or
+  // commitment and the payment-identifier record. Reserve both copies before
+  // protected work starts so a successful effect cannot exceed the byte quota.
+  return durableByteLength(value) + 2 * MAX_DURABLE_RESPONSE_BYTES;
+}
+
+function expiredReplayResponse(): import("./types.js").ServerResponse {
+  return {
+    status: 409,
+    headers: {},
+    body: { error: "replay_record_retained" },
+  };
+}
+
+function assertDurableStateLimits(limits: ServerDurableStateLimits): void {
+  for (const [value, label] of [
+    [limits.maxRecords, "record limit"],
+    [limits.maxBytes, "byte limit"],
+    [limits.maxRecordsPerPayer, "per-payer record limit"],
+    [limits.terminalRetentionMs, "terminal retention"],
+  ] as const) {
+    if (!Number.isSafeInteger(value) || value <= 0)
+      throw new Error(`durable state ${label} must be a positive safe integer`);
+  }
+}
+
+function assertImmutableChannelIdentity(
+  previous: ServerChannelRecord,
+  next: ServerChannelRecord,
+): void {
+  if (
+    previous.channelId !== next.channelId ||
+    previous.covenantId.toLowerCase() !== next.covenantId.toLowerCase() ||
+    stableJson(previous.genesisEvidence) !== stableJson(next.genesisEvidence) ||
+    stableJson(previous.channelConfig) !== stableJson(next.channelConfig)
+  )
+    throw new Error("channel immutable identity cannot change");
+}
+
+function normalizeChannelOperationLease(
+  input: ChannelOperationLeaseRecord,
+): ChannelOperationLeaseRecord {
+  if (
+    !isLowerHash32(input.leaseId) ||
+    !isLowerHash32(input.channelId) ||
+    !isNonzeroLowerHash32(input.covenantId)
+  )
+    throw new Error("channel operation identifiers must be canonical lowercase");
+  if (input.status !== "reserved")
+    throw new Error("new channel operation must be reserved");
+  if (
+    input.kind !== "payment" &&
+    input.kind !== "deposit" &&
+    input.kind !== "top-up" &&
+    input.kind !== "claim" &&
+    input.kind !== "refund" &&
+    input.kind !== "recovery" &&
+    input.kind !== "retirement"
+  )
+    throw new Error("channel operation kind is invalid");
+  if (
+    input.expected &&
+    (input.expected.channelId !== input.channelId ||
+      input.expected.covenantId !== input.covenantId)
+  )
+    throw new Error("channel operation snapshot identity is inconsistent");
+  assertIsoDate(input.createdAt, "channel operation creation time");
+  assertIsoDate(input.updatedAt, "channel operation update time");
+  return clone(input);
+}
+
+function channelOperationLeasesMatch(
+  existing: ChannelOperationLeaseRecord,
+  input: ChannelOperationLeaseRecord,
+): boolean {
+  return (
+    existing.leaseId === input.leaseId &&
+    existing.channelId === input.channelId &&
+    existing.covenantId === input.covenantId &&
+    existing.kind === input.kind &&
+    sameChannelSnapshot(existing.expected, input.expected)
+  );
+}
+
+function assertPaymentIdentifierReservationClaim(
+  claim: PaymentIdentifierReservationClaim,
+): void {
+  if (
+    typeof claim.id !== "string" ||
+    claim.id.length === 0 ||
+    claim.id.length > 256 ||
+    typeof claim.payerId !== "string" ||
+    claim.payerId.length === 0 ||
+    claim.payerId.length > 256 ||
+    !isLowerHash32(claim.fingerprint) ||
+    !isLowerHash32(claim.paymentPayloadHash) ||
+    !isLowerHash32(claim.paymentScopeId) ||
+    !isLowerHash32(claim.ownerId)
+  )
+    throw new Error("payment identifier reservation is invalid");
+  if (claim.paymentKind === "batch-settlement") {
+    if (!claim.channelId || claim.transactionId || claim.paymentOutputIndex !== undefined)
+      throw new Error("batch payment identifier ownership is invalid");
+  } else if (claim.paymentKind === "exact") {
+    if (
+      !claim.transactionId ||
+      claim.channelId ||
+      !Number.isInteger(claim.paymentOutputIndex) ||
+      claim.paymentOutputIndex! < 0
+    )
+      throw new Error("exact payment identifier ownership is invalid");
+  } else {
+    throw new Error("payment identifier kind is invalid");
+  }
+}
+
+function paymentIdentifierReservationClaimsMatch(
+  left: PaymentIdentifierReservationClaim,
+  right: PaymentIdentifierReservationClaim,
+): boolean {
+  const project = (value: PaymentIdentifierReservationClaim) => ({
+    id: value.id,
+    fingerprint: value.fingerprint,
+    paymentPayloadHash: value.paymentPayloadHash,
+    paymentScopeId: value.paymentScopeId,
+    paymentKind: value.paymentKind,
+    ownerId: value.ownerId,
+    payerId: value.payerId,
+    channelId: value.channelId,
+    transactionId: value.transactionId,
+    paymentOutputIndex: value.paymentOutputIndex,
+  });
+  return stableJson(project(left)) === stableJson(project(right));
+}
+
 function assertExactHandlerResultTransition(
   attempt: ExactSettlementAttemptRecord,
   result: import("./types.js").ProtectedHandlerResult,
@@ -726,7 +1699,10 @@ function assertExactHandlerResultTransition(
   } catch {
     throw new Error("exact handler result must be JSON serializable");
   }
-  if (new TextEncoder().encode(serialized).byteLength > 256 * 1024)
+  if (
+    new TextEncoder().encode(serialized).byteLength >
+    MAX_DURABLE_HANDLER_RESULT_BYTES
+  )
     throw new Error("exact handler result exceeds the durable size limit");
   if (
     result.chargedAmount !== undefined &&
@@ -808,7 +1784,8 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
     !isLowerHash32(attempt.channelId) ||
     !isNonzeroLowerHash32(attempt.covenantId) ||
     !isLowerHash32(attempt.activeOutpoint.txid) ||
-    !isLowerHash32(attempt.transactionId)
+    !isLowerHash32(attempt.transactionId) ||
+    !isLowerHash32(attempt.operationLeaseId)
   ) {
     throw new Error("claim attempt identifiers must be canonical lowercase");
   }
@@ -833,6 +1810,22 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
     claimedCumulativeAmount: attempt.claimedCumulativeAmount,
     signedMaxClaimable: attempt.signedMaxClaimable,
   });
+  if (
+    attempt.expected.channelId !== attempt.channelId ||
+    attempt.expected.covenantId !== attempt.covenantId ||
+    attempt.expected.fundingAmount !== attempt.fundingAmount ||
+    attempt.expected.chargedCumulativeAmount !==
+      attempt.chargedCumulativeAmount ||
+    attempt.expected.claimedCumulativeAmount !==
+      attempt.claimedCumulativeAmount ||
+    attempt.expected.signedMaxClaimable !== attempt.signedMaxClaimable ||
+    attempt.expected.voucherSignature !== attempt.voucherSignature ||
+    attempt.expected.status !== attempt.channelStatus ||
+    !sameOutpoint(attempt.expected.activeOutpoint, attempt.activeOutpoint) ||
+    attempt.expected.activeScriptPublicKey.toLowerCase() !==
+      attempt.activeScriptPublicKey.toLowerCase()
+  )
+    throw new Error("claim attempt snapshot is inconsistent");
   const continuationFields = [
     attempt.continuationOutpoint,
     attempt.continuationScriptPublicKey,
@@ -903,26 +1896,5 @@ function matchesExpectedChannel(
   current: ServerChannelRecord | undefined,
   expected: SettlementCommit["expected"],
 ): boolean {
-  if (!current) {
-    return (
-      expected.chargedCumulativeAmount === "0" &&
-      expected.claimedCumulativeAmount === "0" &&
-      expected.signedMaxClaimable === "0"
-    );
-  }
-  return (
-    current.channelId === expected.channelId &&
-    current.covenantId === expected.covenantId &&
-    current.fundingAmount === expected.fundingAmount &&
-    current.chargedCumulativeAmount === expected.chargedCumulativeAmount &&
-    current.claimedCumulativeAmount === expected.claimedCumulativeAmount &&
-    current.signedMaxClaimable === expected.signedMaxClaimable &&
-    current.voucherSignature === expected.voucherSignature &&
-    current.status === expected.status &&
-    current.activeOutpoint.txid.toLowerCase() ===
-      expected.activeOutpoint.txid.toLowerCase() &&
-    current.activeOutpoint.index === expected.activeOutpoint.index &&
-    current.activeScriptPublicKey.toLowerCase() ===
-      expected.activeScriptPublicKey.toLowerCase()
-  );
+  return sameChannelSnapshot(current, expected);
 }

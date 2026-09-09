@@ -13,6 +13,12 @@ manager.
 - Different keys may run concurrently.
 - Lock acquisition and release are visible to every process that can accept the
   same payment, covenant lineage, or payment identifier.
+- Stores and locks declare a stable coordination domain. A deployment-wide
+  store is accepted only with a deployment-wide lock for that same domain;
+  reusing a store with independent process-local locks is rejected.
+- Time-limited distributed locks renew while `fn` is running. Durable attempt
+  ownership and snapshot compare-and-set remain the correctness boundary if a
+  lock is lost.
 
 ## Required Scopes
 
@@ -37,6 +43,11 @@ replace it.
 The post-verification exact lock is the handler-safety lock. Durable stores still
 need unique transaction-id replay records because locks can expire, fail, or be
 lost during process shutdown.
+
+Before the handler, exact and batch paths also reserve their durable transaction
+or channel owner. Therefore an expired lock cannot admit a second handler: the
+second process finds the existing pending or recovery-required attempt and
+recovers it instead.
 
 The same rule applies to batch lanes. A lock does not prove which transaction
 won an outpoint race and does not recover a KIP-20 head. Claim, top-up, and refund

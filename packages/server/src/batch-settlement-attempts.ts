@@ -6,6 +6,7 @@ import {
 import type {
   BatchSettlementAttemptRecord,
   ProtectedHandlerResult,
+  ServerChannelRecord,
   SettlementCommit,
 } from "./types.js";
 
@@ -21,6 +22,35 @@ export function normalizeBatchSettlementAttempt(
   ) {
     throw new Error("batch settlement identifiers must be canonical lowercase");
   }
+  if (
+    input.operationKind !== "payment" &&
+    input.operationKind !== "deposit" &&
+    input.operationKind !== "top-up"
+  )
+    throw new Error("batch settlement operation kind is invalid");
+  if (
+    typeof input.payerId !== "string" ||
+    input.payerId.length === 0 ||
+    input.payerId.length > 256
+  )
+    throw new Error("batch settlement payer identity is invalid");
+  if (input.channelTransition) {
+    if (input.operationKind === "payment")
+      throw new Error("ordinary payment cannot install a channel transition");
+    if (
+      input.channelTransition.next.channelId !== input.channelId ||
+      input.channelTransition.next.covenantId !== input.covenantId ||
+      stableJson(input.channelTransition.next) !== stableJson(input.expected)
+    )
+      throw new Error("batch channel transition is inconsistent");
+  } else if (input.operationKind !== "payment") {
+    throw new Error("deposit and top-up attempts require an atomic channel transition");
+  }
+  if (
+    input.paymentIdentifier &&
+    input.paymentIdentifier.ownerId !== input.attemptId
+  )
+    throw new Error("batch payment identifier owner does not match its attempt");
   if (
     input.channelId !== input.expected.channelId ||
     input.covenantId !== input.expected.covenantId
@@ -60,8 +90,71 @@ export function batchSettlementAttemptsMatch(
     left.paymentRequirementsHash === right.paymentRequirementsHash &&
     left.paymentPayloadHash === right.paymentPayloadHash &&
     left.maximumCharge === right.maximumCharge &&
+    left.operationKind === right.operationKind &&
+    left.payerId === right.payerId &&
+    stableJson(left.paymentIdentifier) === stableJson(right.paymentIdentifier) &&
+    stableJson(left.channelTransition) === stableJson(right.channelTransition) &&
     stableJson(left.expected) === stableJson(right.expected)
   );
+}
+
+export function assertBatchDepositTransition(
+  previous: ServerChannelRecord | null,
+  next: ServerChannelRecord,
+  kind: BatchSettlementAttemptRecord["operationKind"],
+): void {
+  batchLaneAccounting(next);
+  if (!previous) {
+    if (kind !== "deposit")
+      throw new Error("new channel requires a deposit operation");
+    if (next.version !== "0")
+      throw new Error("new channel must begin at version zero");
+    if (next.status !== "active")
+      throw new Error("new channel must begin active");
+    return;
+  }
+  assertImmutableChannelIdentity(previous, next);
+  if (previous.status !== "active" || next.status !== "active")
+    throw new Error("deposit transition requires an active channel");
+  if (
+    next.chargedCumulativeAmount !== previous.chargedCumulativeAmount ||
+    next.claimedCumulativeAmount !== previous.claimedCumulativeAmount ||
+    next.lastCommitmentId !== previous.lastCommitmentId ||
+    next.version !== incrementVersion(previous.version) ||
+    parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
+      parseBatchLaneAmount(
+        previous.signedMaxClaimable,
+        "previous signed ceiling",
+      ) ||
+    parseBatchLaneAmount(next.fundingAmount, "next funding amount") <
+      parseBatchLaneAmount(previous.fundingAmount, "previous funding amount")
+  ) {
+    throw new Error("deposit transition would roll back monotonic channel state");
+  }
+  const outpointChanged = !sameOutpoint(
+    previous.activeOutpoint,
+    next.activeOutpoint,
+  );
+  if (outpointChanged && kind !== "top-up")
+    throw new Error("only a verified top-up may replace the active outpoint");
+  if (!outpointChanged && kind === "top-up")
+    throw new Error("top-up must replace the active outpoint");
+  if (
+    !outpointChanged &&
+    (next.fundingAmount !== previous.fundingAmount ||
+      next.activeScriptPublicKey.toLowerCase() !==
+        previous.activeScriptPublicKey.toLowerCase() ||
+      next.escrowAddress !== previous.escrowAddress)
+  ) {
+    throw new Error("same-outpoint deposit state is inconsistent");
+  }
+  if (
+    outpointChanged &&
+    parseBatchLaneAmount(next.fundingAmount, "top-up funding amount") <=
+      parseBatchLaneAmount(previous.fundingAmount, "previous funding amount")
+  ) {
+    throw new Error("top-up funding must increase");
+  }
 }
 
 export function batchSettlementAttemptIsReadyToCommit(
@@ -95,10 +188,10 @@ export function assertBatchHandlerResultTransition(
   assertDurableHandlerResult(result, completedAt);
   if (
     result.chargedAmount !== undefined &&
-    parseBatchLaneAmount(result.chargedAmount, "batch handler charge") >
-      parseBatchLaneAmount(attempt.maximumCharge, "maximum batch charge")
+    parseBatchLaneAmount(result.chargedAmount, "batch handler charge") !==
+      parseBatchLaneAmount(attempt.maximumCharge, "accepted batch charge")
   ) {
-    throw new Error("batch handler charge exceeds the accepted amount");
+    throw new Error("batch handler charge must equal the accepted fixed charge");
   }
   if (
     attempt.handlerResult &&
@@ -150,6 +243,34 @@ function isLowerHash32(value: string): value is Hash32Hex {
 
 function isNonzeroLowerHash32(value: string): value is Hash32Hex {
   return isLowerHash32(value) && !/^0{64}$/.test(value);
+}
+
+function assertImmutableChannelIdentity(
+  previous: ServerChannelRecord,
+  next: ServerChannelRecord,
+): void {
+  if (
+    previous.channelId !== next.channelId ||
+    previous.covenantId.toLowerCase() !== next.covenantId.toLowerCase() ||
+    stableJson(previous.genesisEvidence) !== stableJson(next.genesisEvidence) ||
+    stableJson(previous.channelConfig) !== stableJson(next.channelConfig)
+  ) {
+    throw new Error("channel immutable identity cannot change");
+  }
+}
+
+function sameOutpoint(
+  left: { txid: string; index: number },
+  right: { txid: string; index: number },
+): boolean {
+  return (
+    left.txid.toLowerCase() === right.txid.toLowerCase() &&
+    left.index === right.index
+  );
+}
+
+function incrementVersion(version: string): string {
+  return (parseBatchLaneAmount(version, "channel version") + 1n).toString();
 }
 
 function stableJson(value: unknown): string {

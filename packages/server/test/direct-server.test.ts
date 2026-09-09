@@ -1275,8 +1275,12 @@ describe("direct-mode server", () => {
     ).resolves.toMatchObject({
       status: "applied",
       handlerStartedAt: expect.any(String),
-      handlerCompletedAt: expect.any(String),
-      handlerResult: { body: "download" },
+    });
+    await expect(
+      store.loadExactSettlementAttempt(EXACT_TX_ID),
+    ).resolves.not.toHaveProperty("handlerResult");
+    await expect(store.loadExactPayment(EXACT_TX_ID)).resolves.toMatchObject({
+      response: { body: "download" },
     });
   });
 
@@ -1322,6 +1326,63 @@ describe("direct-mode server", () => {
     expect(recovered.status).toBe(200);
     expect(recovered.body).toBe("recovered");
     expect(handlerInvocations).toBe(1);
+  });
+
+  it("enforces exact per-payer quotas by authenticated signer public key", async () => {
+    const store = new MemoryServerChannelStore([], {
+      limits: {
+        maxRecords: 10,
+        maxBytes: 8 * 1024 * 1024,
+        maxRecordsPerPayer: 1,
+      },
+    });
+    const setup = makeServer({
+      store,
+      exactTransactionVerifier: {
+        verifyExactPayment(request) {
+          return {
+            transactionId: request.transaction,
+            paymentOutput: {
+              amount: request.amount,
+              scriptPublicKey: request.payToScriptPublicKey,
+            },
+            finality: "accepted",
+            requestAuthorization: fakeAuthorizationEvidence(
+              request.authorization,
+            ),
+          };
+        },
+      },
+    });
+    const firstPayment = makeExactPayment(setup, {
+      transactionId: "a1".repeat(32),
+    });
+    const secondPayment = makeExactPayment(setup, {
+      transactionId: "a2".repeat(32),
+    });
+    let executions = 0;
+
+    const first = await setup.server.handlePaidRequest(
+      requestWithPayment(firstPayment),
+      async () => {
+        executions += 1;
+        return { body: "first" };
+      },
+    );
+    const second = await setup.server.handlePaidRequest(
+      requestWithPayment(secondPayment),
+      async () => {
+        executions += 1;
+        return { body: "must not run" };
+      },
+    );
+
+    expect(first.status).toBe(200);
+    expect(second.status).not.toBe(200);
+    expect(executions).toBe(1);
+    expect(store.durableStateStats().payerRecords).toEqual({
+      [CLIENT_KEY]: 1,
+    });
   });
 
   it("rejects an exact authorization replayed against a different request", async () => {
@@ -1545,6 +1606,8 @@ describe("direct-mode server", () => {
         canonicalLockRequested = resolve;
       });
       const lockManager = {
+        coordinationScope: memoryLockManager.coordinationScope,
+        coordinationDomain: memoryLockManager.coordinationDomain,
         runExclusive<T>(key: Hash32Hex, fn: () => Promise<T>): Promise<T> {
           if (key === canonicalLockKey) canonicalLockRequested();
           return memoryLockManager.runExclusive(key, fn);
@@ -2678,6 +2741,93 @@ describe("direct-mode server", () => {
     );
   });
 
+  it("runs one protected effect across two server instances sharing one store", async () => {
+    const store = new MemoryServerChannelStore();
+    const lockManager = new MemoryChannelLockManager();
+    const first = makeServer({ store, lockManager });
+    const second = makeServer({ store, lockManager });
+    const payment = makeDepositPayment(first);
+    const deposit = payment.payload.payload;
+    if (deposit.type !== "deposit-voucher")
+      throw new Error("expected deposit voucher");
+    second.chain.setUtxo({
+      outpoint: deposit.fundingOutpoint,
+      amount: deposit.fundingAmountSompi,
+      scriptPublicKey: deposit.activeScriptPublicKey,
+      finality: "accepted",
+    });
+    let handlerCalls = 0;
+    const handler = async () => {
+      handlerCalls += 1;
+      return { body: "shared", chargedAmount: "100" };
+    };
+
+    const responses = await Promise.all([
+      first.server.handlePaidRequest(
+        requestWithPayment(payment.payload),
+        handler,
+      ),
+      second.server.handlePaidRequest(
+        requestWithPayment(payment.payload),
+        handler,
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status)).toEqual([200, 200]);
+    expect(responses.map((response) => response.body)).toEqual([
+      "shared",
+      "shared",
+    ]);
+    expect(handlerCalls).toBe(1);
+  });
+
+  it("lets one exact-or-batch request own an identifier across two instances", async () => {
+    const store = new MemoryServerChannelStore();
+    const lockManager = new MemoryChannelLockManager();
+    const exact = makeServer({
+      store,
+      lockManager,
+      requirePaymentIdentifier: true,
+    });
+    const batch = makeServer({
+      store,
+      lockManager,
+      requirePaymentIdentifier: true,
+    });
+    const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
+    const exactPayment = makeExactPayment(exact, { paymentIdentifier });
+    const batchPayment = makeDepositPayment(batch, { paymentIdentifier });
+    let handlerCalls = 0;
+    const handler = async () => {
+      handlerCalls += 1;
+      return { body: "winner", chargedAmount: "100" };
+    };
+
+    const responses = await Promise.all([
+      exact.server.handlePaidRequest(requestWithPayment(exactPayment), handler),
+      batch.server.handlePaidRequest(
+        requestWithPayment(batchPayment.payload),
+        handler,
+      ),
+    ]);
+
+    expect(responses.map((response) => response.status).sort()).toEqual([
+      200, 409,
+    ]);
+    expect(handlerCalls).toBe(1);
+    await expect(
+      store.loadPaymentIdentifierReservation(paymentIdentifier),
+    ).resolves.toMatchObject({ status: "completed" });
+  });
+
+  it("rejects shared-store servers that use independent local locks", () => {
+    const store = new MemoryServerChannelStore();
+    makeServer({ store });
+    expect(() => makeServer({ store })).toThrow(
+      "shared store cannot be used by multiple server instances",
+    );
+  });
+
   it("accepts a voucher-only retry on an existing channel", async () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
@@ -3215,7 +3365,50 @@ describe("direct-mode server", () => {
     });
   });
 
-  it("retries from persisted genesis evidence after admission evidence is pruned", async () => {
+  it("allows operator recovery after a crash before the batch recovery marker", async () => {
+    const store = new UnmarkedBatchRecoveryStore();
+    const setup = makeServer({ store });
+    const payment = makeDepositPayment(setup);
+    const request = requestWithPayment(payment.payload, {
+      requestHash: "aa".repeat(32),
+    });
+    let executions = 0;
+
+    const failed = await setup.server.handlePaidRequest(request, async () => {
+      executions += 1;
+      throw new Error("process exited after protected work");
+    });
+
+    expect(failed.status).toBe(500);
+    expect(store.attemptId).toBeDefined();
+    await expect(
+      store.loadBatchSettlementAttempt(store.attemptId!),
+    ).resolves.toMatchObject({ handlerStartedAt: expect.any(String) });
+    await expect(
+      store.loadBatchSettlementAttempt(store.attemptId!),
+    ).resolves.not.toHaveProperty("recoveryReason");
+
+    await expect(
+      setup.server.recoverBatchHandler(store.attemptId!, {
+        body: "undercharged",
+        chargedAmount: "0",
+      }),
+    ).rejects.toThrow("accepted fixed charge");
+    await expect(
+      setup.server.recoverBatchHandler(store.attemptId!, { body: "recovered" }),
+    ).resolves.toMatchObject({
+      handlerResult: { body: "recovered", chargedAmount: "100" },
+    });
+    const recovered = await setup.server.handlePaidRequest(request, async () => {
+      executions += 1;
+      return { body: "must not run", chargedAmount: "100" };
+    });
+
+    expect(recovered).toMatchObject({ status: 200, body: "recovered" });
+    expect(executions).toBe(1);
+  });
+
+  it("does not register genesis state when atomic attempt admission fails", async () => {
     const store = new FailingBatchClaimStore();
     const setup = makeServer({ store });
     const payment = makeDepositPayment(setup);
@@ -3240,9 +3433,10 @@ describe("direct-mode server", () => {
       },
     );
 
-    expect(retried.status).toBe(200);
-    expect(executions).toBe(1);
-    expect(setup.chain.genesisVerificationCount).toBe(1);
+    expect(retried.status).toBe(402);
+    expect(executions).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(2);
+    await expect(setup.store.loadChannel(payment.channelId)).resolves.toBeUndefined();
   });
 
   it("rejects covenant genesis evidence with an extra unauthorized output", async () => {
@@ -3353,12 +3547,18 @@ describe("direct-mode server", () => {
 
   it("offers a fresh rolling channel after the stored refund window expires", async () => {
     const store = new MemoryServerChannelStore();
+    const lockManager = new MemoryChannelLockManager();
     const rolling = {
       minimumRefundLeadDaa: "100",
       allowRollingRefundTimeoutDaa: true,
       maximumRefundHorizonDaa: "1000",
     } as const;
-    const initial = makeServer({ ...rolling, store, refundTimeoutDaa: "2000" });
+    const initial = makeServer({
+      ...rolling,
+      store,
+      lockManager,
+      refundTimeoutDaa: "2000",
+    });
     initial.chain.daa = "1000";
     const deposit = makeDepositPayment(initial);
     await initial.server.handlePaidRequest(
@@ -3375,6 +3575,7 @@ describe("direct-mode server", () => {
     const refreshed = makeServer({
       ...rolling,
       store,
+      lockManager,
       refundTimeoutDaa: "2900",
     });
     refreshed.chain.daa = "1900";
@@ -3549,7 +3750,8 @@ describe("direct-mode server", () => {
 
   it("rejects voucher-only payments when stored channel terms no longer match the server", async () => {
     const store = new MemoryServerChannelStore();
-    const firstServer = makeServer({ store });
+    const lockManager = new MemoryChannelLockManager();
+    const firstServer = makeServer({ store, lockManager });
     const deposit = makeDepositPayment(firstServer);
     await firstServer.server.handlePaidRequest(
       requestWithPayment(deposit.payload),
@@ -3558,6 +3760,7 @@ describe("direct-mode server", () => {
     const channel = await requireChannel(store, deposit.channelId);
     const changedServer = makeServer({
       store,
+      lockManager,
       payTo: "kaspatest:changed-payout",
     });
     const voucher = makeVoucherPayment(changedServer, channel);
@@ -3601,7 +3804,7 @@ describe("direct-mode server", () => {
       async () => ({ chargedAmount: "100" }),
     );
     const retired = await requireChannel(setup.store, deposit.channelId);
-    await setup.store.saveChannel({ ...retired, status: "retired" });
+    await retireChannelForTest(setup.store, retired);
     const retry = makeDepositPayment(setup, { voucherAmount: "170" });
 
     const response = await setup.server.handlePaidRequest(
@@ -3622,7 +3825,7 @@ describe("direct-mode server", () => {
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
-    await setup.store.saveChannel({ ...channel, status: "retired" });
+    await retireChannelForTest(setup.store, channel);
     const voucher = makeVoucherPayment(setup, channel);
 
     const response = await setup.server.handlePaidRequest(
@@ -3802,7 +4005,7 @@ describe("direct-mode server", () => {
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, payment.channelId);
-    await setup.store.saveChannel({ ...channel, status: "retired" });
+    await retireChannelForTest(setup.store, channel);
 
     await expect(setup.server.previewClaim(payment.channelId)).rejects.toThrow(
       "channel is not active",
@@ -4090,7 +4293,9 @@ describe("direct-mode server", () => {
   });
 
   it("rejects accepted claim recovery when the channel epoch changed", async () => {
+    const store = new SnapshotSkewStore();
     const setup = makeServer({
+      store,
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
           return {
@@ -4113,8 +4318,9 @@ describe("direct-mode server", () => {
       "funding outpoint",
     );
     const channel = await requireChannel(setup.store, payment.channelId);
-    await setup.store.saveChannel({
+    store.skewChannel({
       ...channel,
+      version: (BigInt(channel.version) + 1n).toString(),
       chargedCumulativeAmount: "150",
       signedMaxClaimable: "150",
     });
@@ -4131,7 +4337,9 @@ describe("direct-mode server", () => {
   });
 
   it("rejects accepted claim recovery when signed channel state changed", async () => {
+    const store = new SnapshotSkewStore();
     const setup = makeServer({
+      store,
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
           return {
@@ -4154,7 +4362,7 @@ describe("direct-mode server", () => {
       "funding outpoint",
     );
     const channel = await requireChannel(setup.store, payment.channelId);
-    await setup.store.saveChannel({ ...channel, signedMaxClaimable: "101" });
+    store.skewChannel({ ...channel, signedMaxClaimable: "101" });
     setup.chain.setUtxo({
       outpoint: { txid: CLAIM_TX, index: 1 },
       amount: "900",
@@ -4311,8 +4519,10 @@ describe("direct-mode server", () => {
 
   it("keeps a persisted confirmed claim threshold after restart under accepted policy", async () => {
     const store = new MemoryServerChannelStore();
+    const lockManager = new MemoryChannelLockManager();
     const initial = makeServer({
       store,
+      lockManager,
       acceptedFinality: "confirmed",
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
@@ -4352,7 +4562,11 @@ describe("direct-mode server", () => {
       finality: "accepted",
     });
 
-    const restarted = makeServer({ store, acceptedFinality: "accepted" });
+    const restarted = makeServer({
+      store,
+      lockManager,
+      acceptedFinality: "accepted",
+    });
     restarted.chain.setUtxo({
       outpoint: { txid: CLAIM_TX, index: 1 },
       amount: "900",
@@ -4381,8 +4595,10 @@ describe("direct-mode server", () => {
 
   it("tightens a persisted accepted claim threshold after restart under confirmed policy", async () => {
     const store = new MemoryServerChannelStore();
+    const lockManager = new MemoryChannelLockManager();
     const initial = makeServer({
       store,
+      lockManager,
       acceptedFinality: "accepted",
       claimBuilder: {
         async buildClaimTransaction({ claimAmount }) {
@@ -4413,7 +4629,11 @@ describe("direct-mode server", () => {
       finality: "accepted",
     });
 
-    const restarted = makeServer({ store, acceptedFinality: "confirmed" });
+    const restarted = makeServer({
+      store,
+      lockManager,
+      acceptedFinality: "confirmed",
+    });
     restarted.chain.setUtxo({
       outpoint: { txid: CLAIM_TX, index: 1 },
       amount: "900",
@@ -5303,6 +5523,30 @@ async function requireChannel(
   return channel;
 }
 
+async function retireChannelForTest(
+  store: ServerChannelStore,
+  channel: ServerChannelRecord,
+): Promise<void> {
+  const leaseId = sha256Hex(
+    stableStringify({
+      scope: "kaspa-x402:test:retirement",
+      channelId: channel.channelId,
+      version: channel.version,
+    }),
+  );
+  await store.claimChannelOperation({
+    leaseId,
+    channelId: channel.channelId,
+    covenantId: channel.covenantId,
+    kind: "retirement",
+    expected: channel,
+    status: "reserved",
+    createdAt: "2026-01-01T00:00:00.000Z",
+    updatedAt: "2026-01-01T00:00:00.000Z",
+  });
+  await store.retireChannel(channel.channelId, leaseId, channel);
+}
+
 function paymentIdentifierExtension(id: string) {
   return {
     extensions: {
@@ -5533,6 +5777,23 @@ class FailingBatchClaimStore extends MemoryServerChannelStore {
   }
 }
 
+class UnmarkedBatchRecoveryStore extends MemoryServerChannelStore {
+  attemptId?: Hash32Hex;
+
+  async claimBatchSettlement(record: BatchSettlementAttemptRecord) {
+    this.attemptId = record.attemptId;
+    return super.claimBatchSettlement(record);
+  }
+
+  async markBatchHandlerRecoveryRequired(
+    _attemptId: Hash32Hex,
+    _reason: string,
+    _observedAt: string,
+  ): Promise<void> {
+    throw new Error("transport failed before recovery marker persistence");
+  }
+}
+
 class FailingExactCommitStore extends MemoryServerChannelStore {
   #remainingFailures: number;
 
@@ -5556,6 +5817,21 @@ class FailingApplyClaimStore extends MemoryServerChannelStore {
     _attempt: ClaimAttemptRecord,
   ): Promise<void> {
     throw new Error("claim apply unavailable");
+  }
+}
+
+class SnapshotSkewStore extends MemoryServerChannelStore {
+  readonly #skewedChannels = new Map<Hash32Hex, ServerChannelRecord>();
+
+  skewChannel(channel: ServerChannelRecord): void {
+    this.#skewedChannels.set(channel.channelId, structuredClone(channel));
+  }
+
+  async loadChannel(
+    channelId: Hash32Hex,
+  ): Promise<ServerChannelRecord | undefined> {
+    const skewed = this.#skewedChannels.get(channelId);
+    return skewed ? structuredClone(skewed) : super.loadChannel(channelId);
   }
 }
 

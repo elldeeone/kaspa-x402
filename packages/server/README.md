@@ -19,6 +19,8 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - stores exact transaction replay records before returning protected content;
 - stores per-request settlement commitments before advancing channel charge state;
 - supports payment identifier idempotency for exact and batch payment-payload retries;
+- reserves payment identifiers and one per-channel operation owner atomically
+  before protected work, preserving uncertain ownership across restart;
 - returns corrective `402` responses with channel state where possible;
 - returns MCP payment-required tool results, requires a trusted configured MCP
   server `audience` in the tool-call fingerprint, reads
@@ -29,6 +31,9 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
 - persists A/S/T/V lane state, enforces advertised reserve R, accepts same-ID
   top-ups, and exposes partial-claim execution and restart-recovery hooks with
   durable pending-attempt reconciliation.
+- rejects multi-instance store/lock topologies that do not share one declared
+  deployment coordination domain, and bounds durable attempts by aggregate,
+  byte, per-payer, and terminal-response retention policies.
 
 Mainnet runtime use fails closed unless `allowMainnet: true` is set.
 

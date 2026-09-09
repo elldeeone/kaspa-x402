@@ -494,12 +494,16 @@ async function createGateway(
 }
 
 class AddressRecordingStore implements ServerStateStore {
+  readonly coordinationScope: ServerStateStore["coordinationScope"];
+  readonly coordinationDomain: string;
   readonly #inner: GatewayStateClient;
   readonly #book: ScriptAddressBook;
 
   constructor(inner: GatewayStateClient, book: ScriptAddressBook) {
     this.#inner = inner;
     this.#book = book;
+    this.coordinationScope = inner.coordinationScope;
+    this.coordinationDomain = inner.coordinationDomain;
   }
 
   async loadChannel(channelId: string) {
@@ -508,9 +512,11 @@ class AddressRecordingStore implements ServerStateStore {
     return channel;
   }
 
-  async saveChannel(channel: Parameters<ServerStateStore["saveChannel"]>[0]) {
+  async registerChannel(
+    channel: Parameters<ServerStateStore["registerChannel"]>[0],
+  ) {
     this.#recordChannel(channel);
-    return this.#inner.saveChannel(channel);
+    return this.#inner.registerChannel(channel);
   }
 
   async listChannels() {
@@ -519,8 +525,31 @@ class AddressRecordingStore implements ServerStateStore {
     return channels;
   }
 
-  retireChannel(channelId: string, reason?: string) {
-    return this.#inner.retireChannel(channelId, reason);
+  retireChannel(
+    channelId: string,
+    leaseId: string,
+    expected: Parameters<ServerStateStore["retireChannel"]>[2],
+    reason?: string,
+  ) {
+    return this.#inner.retireChannel(channelId, leaseId, expected, reason);
+  }
+
+  claimChannelOperation(
+    record: Parameters<ServerStateStore["claimChannelOperation"]>[0],
+  ) {
+    return this.#inner.claimChannelOperation(record);
+  }
+
+  loadChannelOperation(channelId: string) {
+    return this.#inner.loadChannelOperation(channelId);
+  }
+
+  abandonChannelOperation(
+    leaseId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.abandonChannelOperation(leaseId, reason, observedAt);
   }
 
   loadCommitment(commitmentId: string) {
@@ -565,8 +594,20 @@ class AddressRecordingStore implements ServerStateStore {
     );
   }
 
+  abandonBatchSettlement(
+    attemptId: string,
+    reason: string,
+    observedAt: string,
+  ) {
+    return this.#inner.abandonBatchSettlement(attemptId, reason, observedAt);
+  }
+
   loadPaymentIdentifier(id: string) {
     return this.#inner.loadPaymentIdentifier(id);
+  }
+
+  loadPaymentIdentifierReservation(id: string) {
+    return this.#inner.loadPaymentIdentifierReservation(id);
   }
 
   loadExactPayment(transactionId: string) {
@@ -714,7 +755,7 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.abandonClaimAttempt(attemptId, reason);
   }
 
-  #recordChannel(channel: Parameters<ServerStateStore["saveChannel"]>[0]) {
+  #recordChannel(channel: Parameters<ServerStateStore["registerChannel"]>[0]) {
     this.#book.recordOutpoint(
       channel.activeOutpoint,
       channel.activeScriptPublicKey,

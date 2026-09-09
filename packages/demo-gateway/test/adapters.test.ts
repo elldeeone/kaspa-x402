@@ -1698,6 +1698,7 @@ function batchChannel(
   return {
     channelId: "c3".repeat(32),
     covenantId,
+    version: "0",
     genesisEvidence: {
       covenantId,
       authorizingInput: { txid: "c4".repeat(32), index: 0 },
