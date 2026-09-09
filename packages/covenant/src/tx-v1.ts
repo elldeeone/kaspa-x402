@@ -46,7 +46,7 @@ export interface BatchGenesisTxV1Input {
   escrowAmount: Uint64Value;
   escrowScriptPublicKey: string;
   escrowRedeemScript: string;
-  initialSettledTotal: Uint64Value;
+  initialClaimedCumulativeAmount: Uint64Value;
   /** Genesis is singleton-only. Any non-empty value is rejected. */
   changeOutputs?: readonly TxV1OutputPlan[];
   fee: Uint64Value;
@@ -64,8 +64,8 @@ export interface BatchClaimTxV1Input {
   activeScriptPublicKey: string;
   activeRedeemScript: string;
   covenantId: string;
-  settledTotal: Uint64Value;
-  totalAuthorized: Uint64Value;
+  claimedCumulativeAmount: Uint64Value;
+  authorizedCumulativeAmount: Uint64Value;
   claimAmount: Uint64Value;
   successorScriptPublicKey: string;
   successorRedeemScript: string;
@@ -91,11 +91,12 @@ export interface BatchTopUpTxV1Input {
   activeScriptPublicKey: string;
   activeRedeemScript: string;
   covenantId: string;
-  settledTotal: Uint64Value;
+  claimedCumulativeAmount: Uint64Value;
   successorAmount: Uint64Value;
   successorScriptPublicKey: string;
   successorRedeemScript: string;
   clientSignature: string | Uint8Array;
+  providerSignature: string | Uint8Array;
   fundingInputs: readonly TxV1FundingInputPlan[];
   changeOutputs?: readonly TxV1OutputPlan[];
   expectedRefundScriptPublicKeyHash: string;
@@ -190,7 +191,7 @@ export interface TxV1SignatureEvidence {
 }
 
 interface TxV1ArtifactBase {
-  format: "kaspa-x402-tx-v1-reference-v2";
+  format: "kaspa-x402-tx-v1-reference-v3";
   transaction: TxV1ReferenceTransaction;
   serializedTransaction: string;
   transactionId: string;
@@ -209,7 +210,7 @@ export interface BatchGenesisTxV1Artifact extends TxV1ArtifactBase {
     amount: string;
     scriptPublicKey: string;
     redeemScript: string;
-    settledTotal: "0";
+    claimedCumulativeAmount: "0";
     outpoint: FundingOutpoint;
   };
 }
@@ -222,7 +223,7 @@ export interface BatchClaimTxV1Artifact extends TxV1ArtifactBase {
     amount: string;
     source: "server-output";
     claimAmount: string;
-    totalAuthorized: string;
+    authorizedCumulativeAmount: string;
     serverOutputAmount: string;
     continuationOutputAmount: string;
   };
@@ -232,7 +233,7 @@ export interface BatchClaimTxV1Artifact extends TxV1ArtifactBase {
     scriptPublicKey: string;
     redeemScript: string;
     covenantId: string;
-    settledTotal: string;
+    claimedCumulativeAmount: string;
     outpoint: FundingOutpoint;
   };
   compute: TxV1ComputeEvidence;
@@ -248,7 +249,7 @@ export interface BatchTopUpTxV1Artifact extends TxV1ArtifactBase {
     scriptPublicKey: string;
     redeemScript: string;
     covenantId: string;
-    settledTotal: string;
+    claimedCumulativeAmount: string;
     outpoint: FundingOutpoint;
   };
   compute: TxV1ComputeEvidence;
@@ -288,7 +289,7 @@ export interface BatchRefundTransactionBuilder {
   buildBatchRefundTxV1(input: BatchRefundTxV1Input): BatchRefundTxV1Artifact;
 }
 
-const FORMAT = "kaspa-x402-tx-v1-reference-v2" as const;
+const FORMAT = "kaspa-x402-tx-v1-reference-v3" as const;
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
 const SIG_HASH_ALL = 0x01;
 const ZERO_HASH = "00".repeat(32);
@@ -370,8 +371,13 @@ export function transactionV1CovenantId(
 
 export function buildBatchGenesisTxV1Artifact(input: BatchGenesisTxV1Input): BatchGenesisTxV1Artifact {
   if (input.fundingInputs.length === 0) throw new Error("batch genesis requires at least one funding input");
-  const initialSettledTotal = normalizeNonNegativeInt64(input.initialSettledTotal, "initialSettledTotal");
-  if (initialSettledTotal !== 0n) throw new Error("batch genesis settled total must be 0");
+  const initialClaimedCumulativeAmount = normalizeNonNegativeInt64(
+    input.initialClaimedCumulativeAmount,
+    "initialClaimedCumulativeAmount",
+  );
+  if (initialClaimedCumulativeAmount !== 0n) {
+    throw new Error("batch genesis claimed cumulative amount must be 0");
+  }
 
   const escrowAmount = normalizePositiveInt64(input.escrowAmount, "escrowAmount");
   const fee = normalizeUint64(input.fee, "fee");
@@ -430,7 +436,7 @@ export function buildBatchGenesisTxV1Artifact(input: BatchGenesisTxV1Input): Bat
       amount: escrowAmount.toString(),
       scriptPublicKey: escrowScriptPublicKey,
       redeemScript: escrowRedeemScript,
-      settledTotal: "0",
+      claimedCumulativeAmount: "0",
       outpoint: { txid: debug.txid.digest, index: 0 },
     },
   };
@@ -439,19 +445,29 @@ export function buildBatchGenesisTxV1Artifact(input: BatchGenesisTxV1Input): Bat
 export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchClaimTxV1Artifact {
   const compute = normalizeComputeEvidence(input.computeBudget, input.scriptUnitsEstimate, "claim");
   const activeAmount = normalizePositiveInt64(input.activeAmount, "activeAmount");
-  const settledTotal = normalizeNonNegativeInt64(input.settledTotal, "settledTotal");
-  const totalAuthorized = normalizeNonNegativeInt64(input.totalAuthorized, "totalAuthorized");
+  const claimedCumulativeAmount = normalizeNonNegativeInt64(
+    input.claimedCumulativeAmount,
+    "claimedCumulativeAmount",
+  );
+  const authorizedCumulativeAmount = normalizeNonNegativeInt64(
+    input.authorizedCumulativeAmount,
+    "authorizedCumulativeAmount",
+  );
   const claimAmount = normalizeNonNegativeInt64(input.claimAmount, "claimAmount");
   const fee = normalizeUint64(input.fee, "fee");
   const covenantId = normalizeNonzeroHash32(input.covenantId, "covenantId");
 
-  if (totalAuthorized <= settledTotal) throw new Error("signed cumulative ceiling must exceed settled total");
-  if (claimAmount === 0n) throw new Error("claim amount must be positive");
-  if (claimAmount > totalAuthorized - settledTotal) {
-    throw new Error("claim amount exceeds the remaining signed cumulative ceiling");
+  if (authorizedCumulativeAmount <= claimedCumulativeAmount) {
+    throw new Error("signed cumulative authorization must exceed the claimed cumulative amount");
   }
-  const successorSettledTotal = settledTotal + claimAmount;
-  if (successorSettledTotal > I64_MAX) throw new Error("successor settled total must fit signed int64");
+  if (claimAmount === 0n) throw new Error("claim amount must be positive");
+  if (claimAmount > authorizedCumulativeAmount - claimedCumulativeAmount) {
+    throw new Error("claim amount exceeds the remaining signed cumulative authorization");
+  }
+  const successorClaimedCumulativeAmount = claimedCumulativeAmount + claimAmount;
+  if (successorClaimedCumulativeAmount > I64_MAX) {
+    throw new Error("successor claimed cumulative amount must fit signed int64");
+  }
   if (claimAmount >= activeAmount) throw new Error("claim continuation output must be positive");
   if (fee >= claimAmount) throw new Error("claim amount must exceed the transaction fee");
 
@@ -485,7 +501,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
   const signatureScript = `${buildClaimArgs({
     serverSignature: input.serverSignature,
     voucherSignature: input.voucherSignature,
-    totalAuthorized,
+    authorizedCumulativeAmount,
     claimAmount,
   })}${pushDataHex(activeRedeemScript)}`;
   const inputs = [
@@ -510,7 +526,11 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
     mass,
   });
   const debug = buildDigestDebug(transaction);
-  const voucher = voucherDigest({ network: input.network, covenantId, totalAuthorized });
+  const voucher = voucherDigest({
+    network: input.network,
+    covenantId,
+    authorizedCumulativeAmount,
+  });
 
   return {
     format: FORMAT,
@@ -528,7 +548,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
       amount: fee.toString(),
       source: "server-output",
       claimAmount: claimAmount.toString(),
-      totalAuthorized: totalAuthorized.toString(),
+      authorizedCumulativeAmount: authorizedCumulativeAmount.toString(),
       serverOutputAmount: serverOutputAmount.toString(),
       continuationOutputAmount: continuationOutputAmount.toString(),
     },
@@ -538,7 +558,7 @@ export function buildBatchClaimTxV1Artifact(input: BatchClaimTxV1Input): BatchCl
       scriptPublicKey: successorScriptPublicKey,
       redeemScript: successorRedeemScript,
       covenantId,
-      settledTotal: successorSettledTotal.toString(),
+      claimedCumulativeAmount: successorClaimedCumulativeAmount.toString(),
       outpoint: { txid: debug.txid.digest, index: 1 },
     },
     compute,
@@ -550,7 +570,10 @@ export function buildBatchTopUpTxV1Artifact(input: BatchTopUpTxV1Input): BatchTo
   const compute = normalizeComputeEvidence(input.computeBudget, input.scriptUnitsEstimate, "top-up");
   const activeAmount = normalizePositiveInt64(input.activeAmount, "activeAmount");
   const successorAmount = normalizePositiveInt64(input.successorAmount, "successorAmount");
-  const settledTotal = normalizeNonNegativeInt64(input.settledTotal, "settledTotal");
+  const claimedCumulativeAmount = normalizeNonNegativeInt64(
+    input.claimedCumulativeAmount,
+    "claimedCumulativeAmount",
+  );
   const fee = normalizeUint64(input.fee, "fee");
   const covenantId = normalizeNonzeroHash32(input.covenantId, "covenantId");
   if (successorAmount <= activeAmount) throw new Error("top-up successor amount must exceed the active amount");
@@ -586,7 +609,10 @@ export function buildBatchTopUpTxV1Artifact(input: BatchTopUpTxV1Input): BatchTo
   const outputs = normalizeOutputs(input.outputs ?? expectedOutputs);
   assertExactOutputs(outputs, expectedOutputs, "top-up");
 
-  const signatureScript = `${buildTopUpArgs({ clientSignature: input.clientSignature })}${pushDataHex(activeRedeemScript)}`;
+  const signatureScript = `${buildTopUpArgs({
+    clientSignature: input.clientSignature,
+    providerSignature: input.providerSignature,
+  })}${pushDataHex(activeRedeemScript)}`;
   const inputs = [
     buildReferenceInput({
       previousOutpoint: input.activeOutpoint,
@@ -633,7 +659,7 @@ export function buildBatchTopUpTxV1Artifact(input: BatchTopUpTxV1Input): BatchTo
       scriptPublicKey: successorScriptPublicKey,
       redeemScript: successorRedeemScript,
       covenantId,
-      settledTotal: settledTotal.toString(),
+      claimedCumulativeAmount: claimedCumulativeAmount.toString(),
       outpoint: { txid: debug.txid.digest, index: 0 },
     },
     compute,

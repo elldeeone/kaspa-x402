@@ -20,9 +20,9 @@
           },
           "activeScriptPublicKey": "0000aa207299b931ba72a20f97f25ef7ec1d77695037482b30ec7c4626a4a0503e0bb9f887",
           "fundingAmount": "90000000",
-          "chargedCumulativeAmount": "1700000",
+          "authorizedCumulativeAmount": "1700000",
           "claimedCumulativeAmount": "0",
-          "signedMaxClaimable": "2500000"
+          "status": "open"
         }
       }
     },

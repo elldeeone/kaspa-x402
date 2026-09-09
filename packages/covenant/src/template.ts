@@ -1,5 +1,10 @@
 import crypto from "node:crypto";
 import { blake2b } from "blakejs";
+import {
+  ESCROW_V4_COMPILED_BASE,
+  ESCROW_V4_CONSTRUCTOR_SLOTS,
+  ESCROW_V4_SELECTORS,
+} from "./generated/escrow-v4-template.js";
 
 export type NetworkId = "kaspa:mainnet" | "kaspa:testnet-10";
 
@@ -15,7 +20,7 @@ export interface EscrowTemplateParams {
   payoutScriptPublicKeyHash: string;
   refundScriptPublicKeyHash: string;
   timeoutDaa: bigint | number | string;
-  settledTotal: bigint | number | string;
+  claimedCumulativeAmount: bigint | number | string;
 }
 
 export interface ScriptPublicKey {
@@ -34,12 +39,13 @@ export type KaspaAddressEncoder = (input: DeriveEscrowAddressInput) => string;
 export interface ClaimArgsInput {
   serverSignature: string | Uint8Array;
   voucherSignature: string | Uint8Array;
-  totalAuthorized: bigint | number | string;
+  authorizedCumulativeAmount: bigint | number | string;
   claimAmount: bigint | number | string;
 }
 
 export interface TopUpArgsInput {
   clientSignature: string | Uint8Array;
+  providerSignature: string | Uint8Array;
 }
 
 export interface RefundArgsInput {
@@ -49,7 +55,7 @@ export interface RefundArgsInput {
 export interface VoucherPreimageInput {
   network: NetworkId;
   covenantId: string;
-  totalAuthorized: bigint | number | string;
+  authorizedCumulativeAmount: bigint | number | string;
 }
 
 export interface Kip10AdditiveTemplateParams {
@@ -62,9 +68,9 @@ export interface ParsedKip10AdditiveRedeemScript {
   amount: string;
 }
 
-export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v3";
-export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v2";
-export const ESCROW_VOUCHER_DOMAIN_TAG = "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b";
+export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v4";
+export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v3";
+export const ESCROW_VOUCHER_DOMAIN_TAG = "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af0292570";
 export const SCRIPT_INT64_MAX = 0x7fff_ffff_ffff_ffffn;
 export const KIP10_ADDITIVE_TEMPLATE_ID = "kaspa-x402-kip10-additive-v1";
 export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
@@ -77,66 +83,58 @@ const HEX_BYTE_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U64_DECIMAL_PATTERN =
   /^(?:0|[1-9][0-9]{0,18}|1[0-7][0-9]{18}|18[0-3][0-9]{17}|184[0-3][0-9]{16}|1844[0-5][0-9]{15}|18446[0-6][0-9]{14}|184467[0-3][0-9]{13}|1844674[0-3][0-9]{12}|184467440[0-6][0-9]{10}|1844674407[0-2][0-9]{9}|18446744073[0-6][0-9]{8}|1844674407370[0-8][0-9]{6}|18446744073709[0-4][0-9]{5}|184467440737095[0-4][0-9]{4}|18446744073709550[0-9]{3}|18446744073709551[0-5][0-9]{2}|1844674407370955160[0-9]{1}|1844674407370955161[0-4]|18446744073709551615)$/;
 
-// silverc 28a16f0ee194dcb288a5aaf371abd0f4b77f462e slot map for
-// contracts/kaspa-x402-escrow-v3.sil. State is the fixed-width little-endian
-// int64 between V3_SEG_0 and V3_SEG_1. Every constructor slot is fixed-width,
-// including timeout, so silverc's generated state-transition offsets remain
-// valid for every supported parameter value.
-const V3_SEG_0 = "6b08";
-const V3_SEG_1 =
-  "6c760423959b4287637554798201419d7553798201409d75527982589d757882589d75b9cbb9cf76d27653799c695379765979597959795979b2519c69b5009c69b3519c69b4529c69b9009c69b9bd08000000000000000087695379014001417f010187695379";
-const V3_SEG_2 =
-  "ac69b9cf76d0519c6976d2519c69b9cb519c69b900cc519c6900d5200000000000000000000000000000000000000000000000000000000000000000876951d578876920dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b";
-const V3_SEG_3 = "7e787e53797e547978a8";
-const V3_SEG_4 = "d76953795379587900a269785979a0697600a069785979947878a169b9be5279789f6900c200a06900c25379a16900c3a8";
-const V3_SEG_5 =
-  "876951c2785479949c695a795379935f79519c69b900cc0108527958cd7eb976c902080494765193bc7c7eb976c97602fe83937cbc7eaa02000001aa7e01207e7c7e01877e78c3887575757575757575757575757575757575757575757551677604525888a6876375788201419d75b9cbb9cf76d27653799c695379765679b2519c69b5009c69b351a069b400a069b452a169b9009c69b9bd080000000000000000876976014001417f0101876976";
-const V3_SEG_6 =
-  "ac69b9cf76d0519c6976d2519c69b9cb519c69b900cc009c6900d5788769527900a26900c2b9bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a06951c3a8";
-const V3_SEG_7 =
-  "87696852795779519c69b900cc0108527958cd7eb976c902080494765193bc7c7eb976c97602fe83937cbc7eaa02000001aa7e01207e7c7e01877e78c38875757575757575757575755167760417a2027b876375788201419d75b2519c69b3519c69b4519c69b9009c69b9bd0800000000000000008769";
-const V3_SEG_8 = "7600050088526a74a569b078014001417f0101876978";
-const V3_SEG_9 =
-  "ac69b9cf76d0519c6976d2009c69b9cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c2b9bea16900c3a8";
-const V3_SEG_10 = "876975757551676a686868";
-
 export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   const client = hexToBytes(params.clientPublicKey, 32, "clientPublicKey");
   const server = hexToBytes(params.serverPublicKey, 32, "serverPublicKey");
   const payoutScriptPublicKeyHash = hexToBytes(params.payoutScriptPublicKeyHash, 32, "payoutScriptPublicKeyHash");
   const refundScriptPublicKeyHash = hexToBytes(params.refundScriptPublicKeyHash, 32, "refundScriptPublicKeyHash");
   const timeout = normalizeScriptInt64(params.timeoutDaa, "timeoutDaa");
-  const settledTotal = normalizeScriptInt64(params.settledTotal, "settledTotal");
+  const claimedCumulativeAmount = normalizeScriptInt64(
+    params.claimedCumulativeAmount,
+    "claimedCumulativeAmount",
+  );
   if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
     throw new Error("timeoutDaa must remain below the consensus timestamp boundary");
   }
   const network = networkHash(params.network);
 
-  return bytesToHex(
-    concatBytes([
-      hexToBytes(V3_SEG_0, undefined, "V3_SEG_0"),
-      int64Le(settledTotal),
-      hexToBytes(V3_SEG_1, undefined, "V3_SEG_1"),
-      pushData(server),
-      hexToBytes(V3_SEG_2, undefined, "V3_SEG_2"),
-      pushData(network),
-      hexToBytes(V3_SEG_3, undefined, "V3_SEG_3"),
-      pushData(client),
-      hexToBytes(V3_SEG_4, undefined, "V3_SEG_4"),
-      pushData(payoutScriptPublicKeyHash),
-      hexToBytes(V3_SEG_5, undefined, "V3_SEG_5"),
-      pushData(client),
-      hexToBytes(V3_SEG_6, undefined, "V3_SEG_6"),
-      pushData(refundScriptPublicKeyHash),
-      hexToBytes(V3_SEG_7, undefined, "V3_SEG_7"),
-      pushData(int64Le(timeout)),
-      hexToBytes(V3_SEG_8, undefined, "V3_SEG_8"),
-      pushData(client),
-      hexToBytes(V3_SEG_9, undefined, "V3_SEG_9"),
-      pushData(refundScriptPublicKeyHash),
-      hexToBytes(V3_SEG_10, undefined, "V3_SEG_10"),
-    ]),
+  const script = hexToBytes(
+    ESCROW_V4_COMPILED_BASE,
+    undefined,
+    "ESCROW_V4_COMPILED_BASE",
   );
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.claimedCumulativeAmount,
+    int64Le(claimedCumulativeAmount),
+  );
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey,
+    server,
+  );
+  patchConstructorSlot(script, ESCROW_V4_CONSTRUCTOR_SLOTS.networkHash, network);
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.clientPublicKey,
+    client,
+  );
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.payoutScriptPublicKeyHash,
+    payoutScriptPublicKeyHash,
+  );
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.refundScriptPublicKeyHash,
+    refundScriptPublicKeyHash,
+  );
+  patchConstructorSlot(
+    script,
+    ESCROW_V4_CONSTRUCTOR_SLOTS.timeoutDaa,
+    int64Le(timeout),
+  );
+  return bytesToHex(script);
 }
 
 export function buildKip10AdditiveRedeemScript(params: Kip10AdditiveTemplateParams): string {
@@ -233,36 +231,58 @@ export function deriveEscrowAddress(params: EscrowTemplateParams, encodeAddress:
 export function buildClaimArgs(input: ClaimArgsInput): string {
   const serverSignature = bytesFromHexOrBytes(input.serverSignature, 65, "serverSignature");
   const voucherSignature = bytesFromHexOrBytes(input.voucherSignature, 64, "voucherSignature");
-  const totalAuthorizedValue = normalizeScriptInt64(input.totalAuthorized, "totalAuthorized");
+  const authorizedCumulativeAmountValue = normalizeScriptInt64(
+    input.authorizedCumulativeAmount,
+    "authorizedCumulativeAmount",
+  );
   const claimAmountValue = normalizeScriptInt64(input.claimAmount, "claimAmount");
-  if (totalAuthorizedValue === 0n) throw new Error("totalAuthorized must be positive");
+  if (authorizedCumulativeAmountValue === 0n) {
+    throw new Error("authorizedCumulativeAmount must be positive");
+  }
   if (claimAmountValue === 0n) throw new Error("claimAmount must be positive");
-  const totalAuthorized = int64Le(totalAuthorizedValue);
+  const authorizedCumulativeAmount = int64Le(authorizedCumulativeAmountValue);
   const claimAmount = int64Le(claimAmountValue);
   return bytesToHex(
     concatBytes([
       pushData(serverSignature),
       pushData(voucherSignature),
-      pushData(totalAuthorized),
+      pushData(authorizedCumulativeAmount),
       pushData(claimAmount),
-      pushData(Uint8Array.of(0x23, 0x95, 0x9b, 0x42)),
+      pushData(hexToBytes(ESCROW_V4_SELECTORS.claim, 4, "claim selector")),
     ]),
   );
 }
 
 export function buildTopUpArgs(input: TopUpArgsInput): string {
   const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
-  return bytesToHex(concatBytes([pushData(clientSignature), pushData(Uint8Array.of(0x52, 0x58, 0x88, 0xa6))]));
+  const providerSignature = bytesFromHexOrBytes(input.providerSignature, 65, "providerSignature");
+  return bytesToHex(
+    concatBytes([
+      pushData(clientSignature),
+      pushData(providerSignature),
+      pushData(hexToBytes(ESCROW_V4_SELECTORS.topUp, 4, "top-up selector")),
+    ]),
+  );
 }
 
 export function buildRefundArgs(input: RefundArgsInput): string {
   const clientSignature = bytesFromHexOrBytes(input.clientSignature, 65, "clientSignature");
-  return bytesToHex(concatBytes([pushData(clientSignature), pushData(Uint8Array.of(0x17, 0xa2, 0x02, 0x7b))]));
+  return bytesToHex(
+    concatBytes([
+      pushData(clientSignature),
+      pushData(hexToBytes(ESCROW_V4_SELECTORS.refund, 4, "refund selector")),
+    ]),
+  );
 }
 
 export function voucherPreimage(input: VoucherPreimageInput): string {
-  const totalAuthorized = normalizeScriptInt64(input.totalAuthorized, "totalAuthorized");
-  if (totalAuthorized === 0n) throw new Error("totalAuthorized must be positive");
+  const authorizedCumulativeAmount = normalizeScriptInt64(
+    input.authorizedCumulativeAmount,
+    "authorizedCumulativeAmount",
+  );
+  if (authorizedCumulativeAmount === 0n) {
+    throw new Error("authorizedCumulativeAmount must be positive");
+  }
   const covenantId = hexToBytes(input.covenantId, 32, "covenantId");
   if (covenantId.every((byte) => byte === 0)) throw new Error("covenantId must identify a bound KIP-20 lineage");
   return bytesToHex(
@@ -270,7 +290,7 @@ export function voucherPreimage(input: VoucherPreimageInput): string {
       hexToBytes(ESCROW_VOUCHER_DOMAIN_TAG, 32, "domainTag"),
       networkHash(input.network),
       covenantId,
-      int64Le(totalAuthorized),
+      int64Le(authorizedCumulativeAmount),
     ]),
   );
 }
@@ -354,6 +374,22 @@ function concatBytes(parts: readonly Uint8Array[]): Uint8Array {
     offset += part.byteLength;
   }
   return output;
+}
+
+function patchConstructorSlot(
+  script: Uint8Array,
+  slot: { readonly offsets: readonly number[]; readonly bytes: number },
+  value: Uint8Array,
+): void {
+  if (value.byteLength !== slot.bytes) {
+    throw new Error("constructor slot value has the wrong width");
+  }
+  for (const offset of slot.offsets) {
+    if (offset < 0 || offset + slot.bytes > script.byteLength) {
+      throw new Error("constructor slot is outside the compiled template");
+    }
+    script.set(value, offset);
+  }
 }
 
 function bytesEqual(left: Uint8Array, right: Uint8Array): boolean {

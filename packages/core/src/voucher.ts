@@ -8,7 +8,7 @@ import type { Hash32Hex, NetworkId, SompiString } from "./types.js";
 export type VoucherDigestInput = {
   network: NetworkId | string;
   covenantId: Hash32Hex;
-  amount: SompiString;
+  authorizedCumulativeAmount: SompiString;
 };
 
 export function voucherDomainTag(): string {
@@ -36,7 +36,12 @@ export function voucherPreimage(input: VoucherDigestInput): Uint8Array {
     sha256(VOUCHER_DOMAIN_TAG),
     sha256(network),
     covenantId,
-    le64(parseBatchLaneAmount(input.amount, "voucher amount")),
+    le64(
+      parseBatchLaneAmount(
+        input.authorizedCumulativeAmount,
+        "voucher authorized cumulative amount",
+      ),
+    ),
   ]);
 }
 

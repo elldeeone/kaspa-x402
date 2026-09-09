@@ -3,39 +3,39 @@
   "description": "Alpha.11 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   "mainnetReadiness": {},
   "invariant": {
-    "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
-    "voucherDigest": "ed819801913f3f95046d0073cfc9045c8215ad73e90d240d8a202fafc2086f82",
-    "totalAuthorized": "30000000",
+    "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+    "voucherDigest": "b85dd980b70afc6f124fcdf4b0058a8188966f6c37ed212fe5d1105bb6034944",
+    "authorizedCumulativeAmount": "30000000",
     "sequence": [
       {
         "step": 0,
         "path": "vectors/tx-v1/batch-genesis.json",
         "kind": "tx-v1-batch-genesis",
-        "transactionId": "1a0a4e997f44ae710891847dcc1a23bea13510959af9b07101a7273fe9e1b4a2"
+        "transactionId": "60019816493fc1ac424a29b5c0607ce06c9a345c5c770b3507742736a73d85fc"
       },
       {
         "step": 1,
         "path": "vectors/tx-v1/batch-claim.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "6d72b60848a7d549890f7f9ea323c0e1cb4f2cb3d3aff792eed232e9120e653e"
+        "transactionId": "37775727c86c9e02479ca0a13b012f186fd84e6a10bca866b9dbbe23e45bbbcd"
       },
       {
         "step": 2,
         "path": "vectors/tx-v1/batch-claim-second.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "b46916d4906d788791a42c8ccaa98b06e73b1f832547c2605ed58ed178cdcb0e"
+        "transactionId": "042cca4c791505d1fcbc611736842267ad83293f77ed0e11b18a161995e5a73b"
       },
       {
         "step": 3,
         "path": "vectors/tx-v1/batch-top-up.json",
         "kind": "tx-v1-batch-top-up",
-        "transactionId": "d2f92b5b4e84a2a500825eee0c93bb12034f003e0ee2992e1a45b2363553a7c2"
+        "transactionId": "9ff50c34b55cee69618571d63a0cfff49049a9be7fcb3aac1684be56cad82f03"
       },
       {
         "step": 4,
         "path": "vectors/tx-v1/batch-refund.json",
         "kind": "tx-v1-batch-refund",
-        "transactionId": "77753a4734d8610b0613fec76ff9a65a876fa371511971b6e95de7675ee95fd9"
+        "transactionId": "676762871a593e3a19a3c9fb128aa68caa0750ab91ca407e2f986fd60d5a6bdc"
       }
     ]
   },
@@ -62,7 +62,7 @@
       "name": "tx-v1-batch-top-up",
       "path": "vectors/tx-v1/batch-top-up.json",
       "validation": "full-consensus-and-script-execution-offline-reference",
-      "description": "Client-authorized top-up preserving the stable covenant id and settled state."
+      "description": "Client-and-provider-authorized top-up preserving the stable covenant id and claimed state."
     },
     {
       "name": "tx-v1-batch-refund",

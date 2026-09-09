@@ -1,0 +1,265 @@
+{
+  "kind": "batch-interop-v3",
+  "description": "Language-independent Alpha.11 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
+  "scope": {
+    "transactionEvidenceIncluded": false,
+    "reason": "KIP-20 genesis and successor transaction evidence is maintained in transaction-v1 vectors; this vector covers the non-transaction protocol layer."
+  },
+  "channel": {
+    "config": {
+      "network": "kaspa:testnet-10",
+      "asset": "KAS",
+      "templateId": "kaspa-x402-escrow-v4",
+      "clientPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+      "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "refundAddress": "kaspatest:qzvfczmkedtrju0aexl0x8kqds6kpueyn4hwnewc83tky4vkup0k7mkzgqdwu",
+      "refundTimeoutDaa": "123456789",
+      "salt": "5555555555555555555555555555555555555555555555555555555555555555"
+    },
+    "preimage": "e9954a4b2db1c403282761c82c06f2049c94ec5d6d27412108ffeff3533776f23b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649360e7ea7b4df80d6824805f69c1c95012b11fb85911992c319458c81d99c5b2bb74353c2e9909b0bbf129547ce6ad644d2ca7b0d2ca408d74137eb92c062446823989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967d4c1d1ffd4bc51d19c6dac6d544664a6381362c8fccb753f5076dbfb2f8ceb8cac0e713ea308eb9e4549e842eaf149d889a3b0c5c76ae05f5cd81f96d8f7612b15cd5b07000000005555555555555555555555555555555555555555555555555555555555555555",
+    "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45"
+  },
+  "lineage": {
+    "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+    "genesisDerivation": {
+      "authorizingInput": {
+        "txid": "0101010101010101010101010101010101010101010101010101010101010101",
+        "index": 0
+      },
+      "authorizedOutputs": [
+        {
+          "index": 0,
+          "amount": "90000000",
+          "scriptPublicKey": "0000aa205e3fca412270622080c67c1bb26ec4e3af925b5d1bb54002f1c6897d9f06cd9387"
+        }
+      ],
+      "note": "Canonical KIP-20 id derivation input only; this is not accepted transaction evidence."
+    },
+    "currentHead": {
+      "outpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "scriptPublicKey": "0000aa20cc5a46b370d03c06ebc84c2f9bebbe2559593de9ef84d7135b21d08ebf7e155187"
+    },
+    "successorHead": {
+      "outpoint": {
+        "txid": "4545454545454545454545454545454545454545454545454545454545454545",
+        "index": 1
+      },
+      "scriptPublicKey": "0000aa2083925b246e5dfcf169608907a7c42b2f06bf334eb63c412148679cd2bf417a4c87"
+    }
+  },
+  "voucher": {
+    "input": {
+      "network": "kaspa:testnet-10",
+      "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+      "authorizedCumulativeAmount": "25000000"
+    },
+    "preimage": "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af02925703b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649364457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c40787d0100000000",
+    "digest": "582f5506880f87338e5f05230ac80b33921fc910c0a5567d048e13f24a8a7209",
+    "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    "signature": "3ccbf094de81b2a9eb28aea2f70f5b3cf85297b20f3459037b9db1216b38c4319ca769a9775d56945b04dd7174e8aa44a8aa2891df565f8c962c7b5d270e3981",
+    "expected": "valid-schnorr-signature"
+  },
+  "paymentRequirements": {
+    "value": {
+      "scheme": "batch-settlement",
+      "network": "kaspa:testnet-10",
+      "amount": "1000000",
+      "asset": "KAS",
+      "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+      "maxTimeoutSeconds": 60,
+      "extra": {
+        "binding": "kaspa-escrow-v3",
+        "templateId": "kaspa-x402-escrow-v4",
+        "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+        "minDepositSompi": "90000000",
+        "claimReserveSompi": "2000000",
+        "refundTimeoutDaa": "123456789",
+        "securityContextHash": "8888888888888888888888888888888888888888888888888888888888888888"
+      }
+    },
+    "preimage": "7b226163636570746564223a7b22616d6f756e74223a2231303030303030222c226173736574223a224b4153222c226578747261223a7b2262696e64696e67223a226b617370612d657363726f772d7633222c22636c61696d52657365727665536f6d7069223a2232303030303030222c226d696e4465706f736974536f6d7069223a223930303030303030222c22726566756e6454696d656f7574446161223a22313233343536373839222c227365637572697479436f6e7465787448617368223a2238383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838383838222c227365727665725075626c69634b6579223a2235366233323862333063386266353833396532343035383734373837393430386264623336323431646339633265376336313966616131326232393230393637222c2274656d706c6174654964223a226b617370612d783430322d657363726f772d7634227d2c226d617854696d656f75745365636f6e6473223a36302c226e6574776f726b223a226b617370613a746573746e65742d3130222c22706179546f223a226b61737061746573743a717275657237327936387365326a6e6c657a756d37636871363738737a68367671616d7a36357a3779726e7667356e7135646e706b7730676774396c7a222c22736368656d65223a2262617463682d736574746c656d656e74227d2c2273636f7065223a226b617370613a783430323a62617463682d7061796d656e742d726571756972656d656e74733a7633227d",
+    "sha256": "59aefc816647309f71b373d010891b8f297853d445608a560395e688417706d7"
+  },
+  "presentation": {
+    "input": {
+      "requestFingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "acceptedRequirementsHash": "59aefc816647309f71b373d010891b8f297853d445608a560395e688417706d7",
+      "securityContextHash": "8888888888888888888888888888888888888888888888888888888888888888",
+      "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45",
+      "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+      "voucherDigest": "582f5506880f87338e5f05230ac80b33921fc910c0a5567d048e13f24a8a7209",
+      "paymentIdentifier": "invoice-batch-7",
+      "nonce": "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa",
+      "expiresAt": "2026-09-09T02:00:30.000Z"
+    },
+    "preimage": "{\"acceptedRequirementsHash\":\"59aefc816647309f71b373d010891b8f297853d445608a560395e688417706d7\",\"channelId\":\"fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45\",\"covenantId\":\"4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c\",\"expiresAt\":\"2026-09-09T02:00:30.000Z\",\"nonce\":\"aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa\",\"paymentIdentifier\":\"invoice-batch-7\",\"requestFingerprint\":\"9999999999999999999999999999999999999999999999999999999999999999\",\"scope\":\"kaspa:x402:batch-presentation:v1\",\"securityContextHash\":\"8888888888888888888888888888888888888888888888888888888888888888\",\"voucherDigest\":\"582f5506880f87338e5f05230ac80b33921fc910c0a5567d048e13f24a8a7209\"}",
+    "digest": "a4d251841fc98aa41c199e628abaa3c9ea6e575d48d0e073b261984e12630d73",
+    "signerPublicKey": "989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6f",
+    "signature": "7217f3ce9f791e235fa2c6e7e1a5f7c35b90f9b5a57f56c189d423e7d3362b11e27946383281ed8bd0a61863132759d79a4ad8e716f63a4ed869f3e4a3433303",
+    "expected": "valid-schnorr-signature"
+  },
+  "commitment": {
+    "input": {
+      "accepted": {
+        "scheme": "batch-settlement",
+        "network": "kaspa:testnet-10",
+        "amount": "1000000",
+        "asset": "KAS",
+        "payTo": "kaspatest:qruer72y68se2jnlezum7chq678szh6vqamz65z7yrnvg5nq5dnpkw0ggt9lz",
+        "maxTimeoutSeconds": 60,
+        "extra": {
+          "binding": "kaspa-escrow-v3",
+          "templateId": "kaspa-x402-escrow-v4",
+          "serverPublicKey": "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967",
+          "minDepositSompi": "90000000",
+          "claimReserveSompi": "2000000",
+          "refundTimeoutDaa": "123456789",
+          "securityContextHash": "8888888888888888888888888888888888888888888888888888888888888888"
+        }
+      },
+      "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45",
+      "presentationDigest": "a4d251841fc98aa41c199e628abaa3c9ea6e575d48d0e073b261984e12630d73",
+      "requestFingerprint": "9999999999999999999999999999999999999999999999999999999999999999",
+      "activeOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "voucher": {
+        "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+        "authorizedCumulativeAmount": "25000000",
+        "signature": "3ccbf094de81b2a9eb28aea2f70f5b3cf85297b20f3459037b9db1216b38c4319ca769a9775d56945b04dd7174e8aa44a8aa2891df565f8c962c7b5d270e3981"
+      },
+      "fixedCharge": "1000000",
+      "authorizedCumulativeBefore": "24000000",
+      "authorizedCumulativeAfter": "25000000",
+      "claimedCumulativeAmount": "17000000"
+    },
+    "preimage": "5dcd4ddfea8bb6c0703a4ea322742273add05279660498f628c228594bf4dc84fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd454457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7ca4d251841fc98aa41c199e628abaa3c9ea6e575d48d0e073b261984e12630d73999999999999999999999999999999999999999999999999999999999999999959aefc816647309f71b373d010891b8f297853d445608a560395e688417706d744444444444444444444444444444444444444444444444444444444444444440200000000366e010000000040787d01000000001e55a2fb2ad87fce69395bfe0a53061aa6dd7e7d9ec5c6ab5576710579466f5a40420f00000000004066030100000000",
+    "commitmentId": "78a5b5817a1750f733fe5e7f04430e029d64c485d0db0202afbfd11399e20a34"
+  },
+  "accounting": {
+    "reserveAmount": "2000000",
+    "claimAmount": "8000000",
+    "beforeRequest": {
+      "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45",
+      "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+      "activeOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "activeScriptPublicKey": "0000aa20cc5a46b370d03c06ebc84c2f9bebbe2559593de9ef84d7135b21d08ebf7e155187",
+      "fundingAmount": "90000000",
+      "authorizedCumulativeAmount": "24000000",
+      "claimedCumulativeAmount": "17000000"
+    },
+    "afterRequest": {
+      "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45",
+      "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+      "activeOutpoint": {
+        "txid": "4444444444444444444444444444444444444444444444444444444444444444",
+        "index": 2
+      },
+      "activeScriptPublicKey": "0000aa20cc5a46b370d03c06ebc84c2f9bebbe2559593de9ef84d7135b21d08ebf7e155187",
+      "fundingAmount": "90000000",
+      "authorizedCumulativeAmount": "25000000",
+      "claimedCumulativeAmount": "17000000"
+    },
+    "afterClaim": {
+      "channelId": "fb680b6e4b5aff1346e7b8a986a02ba823ab22d558ee7444abaf6bcd14e2fd45",
+      "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+      "activeOutpoint": {
+        "txid": "4545454545454545454545454545454545454545454545454545454545454545",
+        "index": 1
+      },
+      "activeScriptPublicKey": "0000aa2083925b246e5dfcf169608907a7c42b2f06bf334eb63c412148679cd2bf417a4c87",
+      "fundingAmount": "82000000",
+      "authorizedCumulativeAmount": "25000000",
+      "claimedCumulativeAmount": "25000000"
+    },
+    "derivedBeforeRequest": {
+      "fundingAmount": "90000000",
+      "chargedCumulativeAmount": "24000000",
+      "claimedCumulativeAmount": "17000000",
+      "signedMaxClaimable": "24000000",
+      "activeChargedAmount": "7000000",
+      "remainingAuthorizedAmount": "7000000"
+    },
+    "derivedAfterRequest": {
+      "fundingAmount": "90000000",
+      "chargedCumulativeAmount": "25000000",
+      "claimedCumulativeAmount": "17000000",
+      "signedMaxClaimable": "25000000",
+      "activeChargedAmount": "8000000",
+      "remainingAuthorizedAmount": "8000000"
+    },
+    "derivedAfterClaim": {
+      "fundingAmount": "82000000",
+      "chargedCumulativeAmount": "25000000",
+      "claimedCumulativeAmount": "25000000",
+      "signedMaxClaimable": "25000000",
+      "activeChargedAmount": "0",
+      "remainingAuthorizedAmount": "0"
+    }
+  },
+  "expiry": {
+    "timeoutDaa": "123456789",
+    "lockTimeBoundary": "500000000000",
+    "rule": "the refund transaction lock time is at least timeoutDaa and consensus can accept it only when the current DAA score strictly exceeds that lock time",
+    "cases": [
+      {
+        "currentDaa": "123456788",
+        "expected": "refund-not-mature"
+      },
+      {
+        "currentDaa": "123456789",
+        "expected": "refund-not-mature"
+      },
+      {
+        "currentDaa": "123456790",
+        "expected": "refund-mature"
+      },
+      {
+        "timeoutDaa": "500000000000",
+        "expected": "invalid-timestamp-domain-timeout"
+      }
+    ]
+  },
+  "finality": {
+    "ordering": [
+      "mempool",
+      "accepted",
+      "confirmed"
+    ],
+    "cases": [
+      {
+        "actual": "mempool",
+        "required": "accepted",
+        "expected": false
+      },
+      {
+        "actual": "accepted",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "accepted",
+        "required": "confirmed",
+        "expected": false
+      },
+      {
+        "actual": "confirmed",
+        "required": "accepted",
+        "expected": true
+      },
+      {
+        "actual": "confirmed",
+        "required": "confirmed",
+        "expected": true
+      }
+    ]
+  }
+}

@@ -14,10 +14,10 @@ This directory holds implementation-independent vectors for:
 Vectors should be consumable without importing the TypeScript SDK.
 
 Alpha.11 also publishes the normative batch covenant source at
-`contracts/kaspa-x402-escrow-v3.sil` and its language-neutral constructor and
-byte fixture at `contracts/fixtures/kaspa-x402-escrow-v3.json`. Together with
+`contracts/kaspa-x402-escrow-v4.sil` and its language-neutral constructor and
+byte fixture at `contracts/fixtures/kaspa-x402-escrow-v4.json`. Together with
 this directory, those artifacts are sufficient to reconstruct and verify the
-batch-v2 contract without importing the TypeScript SDK.
+batch-v3 contract without importing the TypeScript SDK.
 
 ## Layout
 
@@ -39,9 +39,10 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
-- `batch-interop-v2`: reconstruct the Alpha.11 channel, KIP-20 lineage id,
-  voucher, request commitment, lifetime accounting, DAA expiry boundaries,
-  and finality ordering. Transaction evidence remains in `tx-v1/`.
+- `batch-interop-v3`: reconstruct the Alpha.11 channel, KIP-20 lineage id,
+  v3 voucher, request presentation and commitment, fixed-charge accounting,
+  DAA expiry boundaries, and finality ordering. Transaction evidence remains
+  in `tx-v1/`.
 - `x402-http`: validate decoded objects and recompute the three HTTP headers. The
   exact-transaction fixture is also verified against the hosted verifier and the
   pinned rusty-kaspa consensus harness so its KIP-10 script and transaction shape

@@ -6,14 +6,20 @@ export const SUPPORTED_NETWORKS = [
 ] as const;
 
 export const ASSET_ID = "KAS";
-export const ESCROW_BINDING_ID = "kaspa-escrow-v2";
-export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v3";
+export const ESCROW_BINDING_ID = "kaspa-escrow-v3";
+export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v4";
 
-export const VOUCHER_DOMAIN_TAG = "kaspa:x402:escrow-voucher:v2";
-export const CHANNEL_DOMAIN_TAG = "kaspa:x402:channel:v1";
+export const VOUCHER_DOMAIN_TAG = "kaspa:x402:escrow-voucher:v3";
+export const CHANNEL_DOMAIN_TAG = "kaspa:x402:channel:v2";
 export const BATCH_PAYMENT_REQUIREMENTS_DOMAIN_TAG =
-  "kaspa:x402:batch-payment-requirements:v2";
-export const BATCH_COMMITMENT_DOMAIN_TAG = "kaspa:x402:batch-commitment:v2";
+  "kaspa:x402:batch-payment-requirements:v3";
+export const BATCH_PAYMENT_INTENT_SCOPE =
+  "kaspa:x402:batch-payment-intent:v1";
+export const BATCH_PRESENTATION_VERSION =
+  "kaspa-x402-batch-presentation-v1";
+export const BATCH_PRESENTATION_SCOPE =
+  "kaspa:x402:batch-presentation:v1";
+export const BATCH_COMMITMENT_DOMAIN_TAG = "kaspa:x402:batch-commitment:v3";
 
 export const U32_MAX = 0xffff_ffff;
 export const U64_MAX = 0xffff_ffff_ffff_ffffn;

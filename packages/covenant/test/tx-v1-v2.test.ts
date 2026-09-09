@@ -50,8 +50,8 @@ function claimInput() {
     activeScriptPublicKey: ACTIVE_SPK,
     activeRedeemScript: ACTIVE_REDEEM,
     covenantId: COVENANT_ID,
-    settledTotal: "100000",
-    totalAuthorized: "400000",
+    claimedCumulativeAmount: "100000",
+    authorizedCumulativeAmount: "400000",
     claimAmount: "250000",
     successorScriptPublicKey: SUCCESSOR_SPK,
     successorRedeemScript: SUCCESSOR_REDEEM,
@@ -72,11 +72,11 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       escrowAmount: "90000000",
       escrowScriptPublicKey: ACTIVE_SPK,
       escrowRedeemScript: ACTIVE_REDEEM,
-      initialSettledTotal: "0",
+      initialClaimedCumulativeAmount: "0",
       fee: "1000",
     });
 
-    expect(artifact.format).toBe("kaspa-x402-tx-v1-reference-v2");
+    expect(artifact.format).toBe("kaspa-x402-tx-v1-reference-v3");
     expect(artifact.transaction.version).toBe(1);
     expect(artifact.transaction.inputs).toHaveLength(2);
     expect(artifact.transaction.inputs.every((input) => input.utxo.covenantId === null)).toBe(true);
@@ -113,7 +113,7 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       escrowAmount: "900000",
       escrowScriptPublicKey: ACTIVE_SPK,
       escrowRedeemScript: ACTIVE_REDEEM,
-      initialSettledTotal: "0",
+      initialClaimedCumulativeAmount: "0",
       fee: "1000",
     };
     expect(() =>
@@ -150,24 +150,24 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
         covenant: { authorizingInput: 0, covenantId: COVENANT_ID },
       },
     ]);
-    expect(artifact.continuation.settledTotal).toBe("350000");
-    expect(artifact.fee).toMatchObject({ source: "server-output", amount: "1000", totalAuthorized: "400000" });
+    expect(artifact.continuation.claimedCumulativeAmount).toBe("350000");
+    expect(artifact.fee).toMatchObject({ source: "server-output", amount: "1000", authorizedCumulativeAmount: "400000" });
     expect(artifact.voucherDigest).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("rejects zero, stale, over-ceiling, terminal, and signed-int overflow claims", () => {
     expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), claimAmount: "0" })).toThrow("claim amount must be positive");
-    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), totalAuthorized: "100000" })).toThrow(
-      "signed cumulative ceiling must exceed settled total",
+    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), authorizedCumulativeAmount: "100000" })).toThrow(
+      "signed cumulative authorization must exceed the claimed cumulative amount",
     );
     expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), claimAmount: "300001" })).toThrow(
-      "claim amount exceeds the remaining signed cumulative ceiling",
+      "claim amount exceeds the remaining signed cumulative authorization",
     );
-    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), claimAmount: "1000000", totalAuthorized: "1100000" })).toThrow(
+    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), claimAmount: "1000000", authorizedCumulativeAmount: "1100000" })).toThrow(
       "claim continuation output must be positive",
     );
-    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), totalAuthorized: I64_MAX_PLUS_ONE })).toThrow(
-      "totalAuthorized must fit signed int64",
+    expect(() => buildBatchClaimTxV1Artifact({ ...claimInput(), authorizedCumulativeAmount: I64_MAX_PLUS_ONE })).toThrow(
+      "authorizedCumulativeAmount must fit signed int64",
     );
   });
 
@@ -177,7 +177,7 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       escrowAmount: I64_MAX,
       escrowScriptPublicKey: ACTIVE_SPK,
       escrowRedeemScript: ACTIVE_REDEEM,
-      initialSettledTotal: "0",
+      initialClaimedCumulativeAmount: "0",
       fee: "0",
     });
     expect(genesis.escrow.amount).toBe(I64_MAX);
@@ -187,7 +187,7 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
         escrowAmount: I64_MAX_PLUS_ONE,
         escrowScriptPublicKey: ACTIVE_SPK,
         escrowRedeemScript: ACTIVE_REDEEM,
-        initialSettledTotal: "0",
+        initialClaimedCumulativeAmount: "0",
         fee: "0",
       }),
     ).toThrow("escrowAmount must fit signed int64");
@@ -204,11 +204,12 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       activeScriptPublicKey: ACTIVE_SPK,
       activeRedeemScript: ACTIVE_REDEEM,
       covenantId: COVENANT_ID,
-      settledTotal: "350000",
+      claimedCumulativeAmount: "350000",
       successorAmount: I64_MAX,
       successorScriptPublicKey: ACTIVE_SPK,
       successorRedeemScript: ACTIVE_REDEEM,
       clientSignature: TX_SIGNATURE,
+      providerSignature: TX_SIGNATURE,
       fundingInputs: [fundingInput("05", 0, "1000")],
       expectedRefundScriptPublicKeyHash: spkHash(P2PK_A),
       fee: "0",
@@ -288,11 +289,12 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       activeScriptPublicKey: ACTIVE_SPK,
       activeRedeemScript: ACTIVE_REDEEM,
       covenantId: "00".repeat(32),
-      settledTotal: "350000",
+      claimedCumulativeAmount: "350000",
       successorAmount: "1300000",
       successorScriptPublicKey: ACTIVE_SPK,
       successorRedeemScript: ACTIVE_REDEEM,
       clientSignature: TX_SIGNATURE,
+      providerSignature: TX_SIGNATURE,
       fundingInputs: [fundingInput("05", 0, "301000")],
       expectedRefundScriptPublicKeyHash: spkHash(P2PK_A),
       fee: "1000",
@@ -321,18 +323,19 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
     ).toThrow("covenantId must not be zero");
   });
 
-  it("builds a client-authorized top-up with the same state and one unbound refund change output", () => {
+  it("builds a client-and-provider-authorized top-up with the same state and one unbound refund change output", () => {
     const artifact = buildBatchTopUpTxV1Artifact({
       activeOutpoint: { txid: "44".repeat(32), index: 1 },
       activeAmount: "1000000",
       activeScriptPublicKey: ACTIVE_SPK,
       activeRedeemScript: ACTIVE_REDEEM,
       covenantId: COVENANT_ID,
-      settledTotal: "350000",
+      claimedCumulativeAmount: "350000",
       successorAmount: "1300000",
       successorScriptPublicKey: ACTIVE_SPK,
       successorRedeemScript: ACTIVE_REDEEM,
       clientSignature: TX_SIGNATURE,
+      providerSignature: TX_SIGNATURE,
       fundingInputs: [fundingInput("05", 0, "400000")],
       changeOutputs: [{ amount: "99000", scriptPublicKey: P2PK_A, covenant: null }],
       expectedRefundScriptPublicKeyHash: spkHash(P2PK_A),
@@ -346,7 +349,7 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
     expect(artifact.transaction.inputs[1]!.utxo.covenantId).toBeNull();
     expect(artifact.transaction.outputs[0]!.covenant).toEqual({ authorizingInput: 0, covenantId: COVENANT_ID });
     expect(artifact.transaction.outputs[1]!.covenant).toBeNull();
-    expect(artifact.continuation).toMatchObject({ amount: "1300000", settledTotal: "350000" });
+    expect(artifact.continuation).toMatchObject({ amount: "1300000", claimedCumulativeAmount: "350000" });
     expect(artifact.sighashes).toHaveLength(2);
   });
 
@@ -357,11 +360,12 @@ describe("Alpha.11 KIP-20 transaction-v1 builders", () => {
       activeScriptPublicKey: ACTIVE_SPK,
       activeRedeemScript: ACTIVE_REDEEM,
       covenantId: COVENANT_ID,
-      settledTotal: "350000",
+      claimedCumulativeAmount: "350000",
       successorAmount: "1300000",
       successorScriptPublicKey: ACTIVE_SPK,
       successorRedeemScript: ACTIVE_REDEEM,
       clientSignature: TX_SIGNATURE,
+      providerSignature: TX_SIGNATURE,
       fundingInputs: [fundingInput("05", 0, "301000")],
       expectedRefundScriptPublicKeyHash: spkHash(P2PK_A),
       fee: "1000",

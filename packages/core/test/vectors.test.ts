@@ -11,6 +11,8 @@ import {
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
+  batchPresentationDigest,
+  batchPresentationPreimage,
   decodePaymentRequiredEnvelopeHeader,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -169,6 +171,11 @@ type BatchInteropVector = {
     preimage: string;
     commitmentId: string;
   };
+  presentation: {
+    input: Parameters<typeof batchPresentationDigest>[0];
+    preimage: string;
+    digest: string;
+  };
   accounting: {
     reserveAmount: string;
     claimAmount: string;
@@ -222,6 +229,15 @@ function readJson<T>(relativePath: string): T {
   return JSON.parse(
     fs.readFileSync(path.join(repoRoot, relativePath), "utf8"),
   ) as T;
+}
+
+function laneState(state: ChannelState) {
+  return {
+    fundingAmount: state.fundingAmount,
+    chargedCumulativeAmount: state.authorizedCumulativeAmount,
+    claimedCumulativeAmount: state.claimedCumulativeAmount,
+    signedMaxClaimable: state.authorizedCumulativeAmount,
+  };
 }
 
 function foreignEvmEntry(): Record<string, unknown> {
@@ -844,8 +860,8 @@ describe("exact v2 language-independent interoperability vector", () => {
   });
 });
 
-describe("batch v2 language-independent interoperability vector", () => {
-  const vector = readJson<BatchInteropVector>("vectors/batch/interop-v2.json");
+describe("batch v3 language-independent interoperability vector", () => {
+  const vector = readJson<BatchInteropVector>("vectors/batch/interop-v3.json");
 
   it("reproduces the channel, voucher, requirements, and commitment digests", () => {
     expect(channelIdPreimageHex(vector.channel.config)).toBe(
@@ -865,6 +881,12 @@ describe("batch v2 language-independent interoperability vector", () => {
     ).toBe(vector.paymentRequirements.preimage);
     expect(batchPaymentRequirementsHash(vector.paymentRequirements.value)).toBe(
       vector.paymentRequirements.sha256,
+    );
+    expect(batchPresentationPreimage(vector.presentation.input)).toBe(
+      vector.presentation.preimage,
+    );
+    expect(batchPresentationDigest(vector.presentation.input)).toBe(
+      vector.presentation.digest,
     );
     expect(batchCommitmentPreimageHex(vector.commitment.input)).toBe(
       vector.commitment.preimage,
@@ -890,36 +912,36 @@ describe("batch v2 language-independent interoperability vector", () => {
   });
 
   it("reproduces lifetime accounting without resetting the voucher ceiling", () => {
-    expect(batchLaneAccounting(vector.accounting.beforeRequest)).toMatchObject({
-      activeChargedAmount: 7_300_000n,
-      remainingAuthorizedAmount: 13_000_000n,
+    expect(batchLaneAccounting(laneState(vector.accounting.beforeRequest))).toMatchObject({
+      activeChargedAmount: 7_000_000n,
+      remainingAuthorizedAmount: 7_000_000n,
     });
-    expect(batchLaneAccounting(vector.accounting.afterRequest)).toMatchObject({
+    expect(batchLaneAccounting(laneState(vector.accounting.afterRequest))).toMatchObject({
       activeChargedAmount: 8_000_000n,
-      remainingAuthorizedAmount: 13_000_000n,
+      remainingAuthorizedAmount: 8_000_000n,
     });
     expect(
       applyBatchClaimAccounting(
-        vector.accounting.afterRequest,
+        laneState(vector.accounting.afterRequest),
         vector.accounting.claimAmount,
       ),
     ).toMatchObject({
       fundingAmount: vector.accounting.afterClaim.fundingAmount,
       chargedCumulativeAmount:
-        vector.accounting.afterClaim.chargedCumulativeAmount,
+        vector.accounting.afterClaim.authorizedCumulativeAmount,
       claimedCumulativeAmount:
         vector.accounting.afterClaim.claimedCumulativeAmount,
-      signedMaxClaimable: vector.accounting.afterClaim.signedMaxClaimable,
+      signedMaxClaimable: vector.accounting.afterClaim.authorizedCumulativeAmount,
     });
-    expect(vector.accounting.afterClaim.signedMaxClaimable).toBe(
-      vector.accounting.beforeRequest.signedMaxClaimable,
+    expect(vector.accounting.afterClaim.authorizedCumulativeAmount).toBe(
+      vector.accounting.afterRequest.authorizedCumulativeAmount,
     );
     expect(vector.accounting.reserveAmount).toBe(
       vector.paymentRequirements.value.extra.claimReserveSompi,
     );
     expect(
       assertBatchVoucherReserve(
-        vector.accounting.afterRequest,
+        laneState(vector.accounting.afterRequest),
         vector.accounting.reserveAmount,
       ),
     ).toBe(true);
@@ -929,9 +951,10 @@ describe("batch v2 language-independent interoperability vector", () => {
     expect(() =>
       batchCommitmentId({
         ...vector.commitment.input,
-        chargedCumulativeAfter: vector.commitment.input.chargedCumulativeBefore,
+        authorizedCumulativeAfter:
+          vector.commitment.input.authorizedCumulativeBefore,
       }),
-    ).toThrow("prior amount plus the charge");
+    ).toThrow("prior amount plus the positive fixed charge");
 
     expect(
       batchCommitmentId({

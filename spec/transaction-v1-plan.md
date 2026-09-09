@@ -3,7 +3,7 @@
 Status: Alpha.11, Testnet-10 only
 
 The normative rules live in
-[`kaspa-batch-settlement-v2.md`](kaspa-batch-settlement-v2.md). This document is
+[`kaspa-batch-settlement-v3.md`](kaspa-batch-settlement-v3.md). This document is
 a compact map from those rules to the claim, top-up, and refund transaction-v1
 vectors.
 
@@ -41,7 +41,8 @@ output[1] = sole same-id successor (state S+D, value V-D)
 - Signature arguments: provider transaction signature, buyer voucher
   signature, `T_le64`, `D_le64`, claim selector, redeem script.
 - Covenant bound: `0 < D <= T-S` with guarded `S+D`.
-- Application bound: `D <= A-S`.
+- `T` is the exact sum of payer-approved fixed charges; there is no separate
+  provider-local actual-charge bound.
 - Output 0 script hashes to the constructor payout script hash.
 - Claim fee is `D-P` and reduces the provider payout only.
 - Exactly one same-id input and one authorized same-id output are allowed.
@@ -57,13 +58,13 @@ output[0]  = sole same-id successor (state S, value V' > V)
 output[1]  = optional unbound client change
 ```
 
-- The covenant input uses the client transaction signature and
-  `SIGHASH_ALL`.
+- The covenant input uses client and provider transaction signatures, both
+  `SIGHASH_ALL` over the complete populated transaction.
 - Output 0 is authorized by input 0 and preserves state `S` exactly.
 - Optional output 1 hashes to the configured refund script and has no covenant
   binding.
 - Exactly one same-id input and one same-id output are allowed.
-- Application totals `A`, `S`, and `T` are preserved.
+- Application totals `S` and `T` are preserved.
 
 ## Refund
 
@@ -85,7 +86,8 @@ output[0] = one unbound client refund output
 The transaction-v1 vector set MUST cover:
 
 - partial claim and repeated claim with the same lifetime voucher;
-- top-up with and without client change;
+- provider-co-signed top-up with and without client change;
+- consensus rejection of a client-only top-up;
 - refund at the DAA boundary;
 - wrong covenant id, duplicate same-id input/output, wrong authorizing input,
   wrong successor state/value, and bound payout/change/refund rejection;

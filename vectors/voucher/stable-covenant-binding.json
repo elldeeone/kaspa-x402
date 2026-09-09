@@ -2,11 +2,11 @@
   "kind": "voucher-digest",
   "description": "Alpha.11 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   "context": {
-    "domain": "kaspa:x402:escrow-voucher:v2",
+    "domain": "kaspa:x402:escrow-voucher:v3",
     "signedFields": [
       "network",
       "covenantId",
-      "amount"
+      "authorizedCumulativeAmount"
     ],
     "notSigned": [
       "activeOutpoint",
@@ -18,24 +18,24 @@
       "name": "base",
       "input": {
         "network": "kaspa:testnet-10",
-        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
-        "amount": "30000000"
+        "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+        "authorizedCumulativeAmount": "25000000"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649363f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc480c3c90100000000",
-        "digest": "ed819801913f3f95046d0073cfc9045c8215ad73e90d240d8a202fafc2086f82"
+        "preimage": "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af02925703b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649364457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c40787d0100000000",
+        "digest": "582f5506880f87338e5f05230ac80b33921fc910c0a5567d048e13f24a8a7209"
       }
     },
     {
       "name": "different-network",
       "input": {
         "network": "kaspa:mainnet",
-        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
-        "amount": "30000000"
+        "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+        "authorizedCumulativeAmount": "25000000"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b6ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc480c3c90100000000",
-        "digest": "12d36e1481e45a474010b23f1e5796eb8af55c5a8ec781bef42822925cc63a93"
+        "preimage": "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af02925706ddb20ecbb5fb6405b9e5d525fb2f4dced4cd6c094ec2fa675258583ae30c3ac4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c40787d0100000000",
+        "digest": "84fe30cc19273c9b41b47f78d9778dad07d9efe5a7daf86c666d27a62b19e021"
       }
     },
     {
@@ -43,23 +43,23 @@
       "input": {
         "network": "kaspa:testnet-10",
         "covenantId": "6767676767676767676767676767676767676767676767676767676767676767",
-        "amount": "30000000"
+        "authorizedCumulativeAmount": "25000000"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd64936676767676767676767676767676767676767676767676767676767676767676780c3c90100000000",
-        "digest": "d9ca0780042292d582a4e8a4c027ff1c31e18b2b0d33b3416cb2a585e942ff9e"
+        "preimage": "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af02925703b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd64936676767676767676767676767676767676767676767676767676767676767676740787d0100000000",
+        "digest": "4fc4a4313111246de28ac843ff5f2ca48c396008962b024c5086ac54ad6e4fa1"
       }
     },
     {
-      "name": "amount-plus-one",
+      "name": "authorized-plus-one",
       "input": {
         "network": "kaspa:testnet-10",
-        "covenantId": "3f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc4",
-        "amount": "30000001"
+        "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
+        "authorizedCumulativeAmount": "25000001"
       },
       "expected": {
-        "preimage": "dd08a0f48c41d89eda672cef33c3d43a4c2bd11083efbcd62dbbae0e018ec30b3b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649363f63860d946bd2805f13ce72c66ec0c6e3d6f44c38d413e4260e160b0265dbc481c3c90100000000",
-        "digest": "89e86c21bc51fa2b71b57c6e35d95e0ca22b939a861ec707fb944be33d2a7e27"
+        "preimage": "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af02925703b06c42cd879a4951fe465f255164917ac183fabd3facb8dc33705b7bbd649364457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c41787d0100000000",
+        "digest": "ea82e70ba3336e133de0b4e13338cfd36d26d8fcac63c6277b8012b6ae58d698"
       }
     }
   ]

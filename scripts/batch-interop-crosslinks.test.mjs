@@ -13,6 +13,8 @@ import {
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
+  batchPresentationDigest,
+  batchPresentationPreimage,
   channelId,
   channelIdPreimageHex,
   voucherDigest,
@@ -22,7 +24,7 @@ import { transactionV1CovenantId } from "../packages/covenant/dist/index.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const vector = JSON.parse(
-  fs.readFileSync(path.join(root, "vectors/batch/interop-v2.json"), "utf8"),
+  fs.readFileSync(path.join(root, "vectors/batch/interop-v3.json"), "utf8"),
 );
 
 test("accepts the canonical Alpha.11 batch core cross-links", () => {
@@ -61,10 +63,10 @@ test("rejects current-head evidence unrelated to the commitment", () => {
 
 test("rejects a claim that resets the lifetime voucher ceiling", () => {
   const mutated = structuredClone(vector);
-  mutated.accounting.afterClaim.signedMaxClaimable = "0";
+  mutated.accounting.afterClaim.authorizedCumulativeAmount = "0";
   assert.throws(
     () => assertBatchCoreCrossLinks(mutated),
-    /signed cumulative ceiling/,
+    /claimed cumulative amount|authorization preservation/,
   );
 });
 
@@ -78,7 +80,7 @@ test("rejects accounting that uses a different reserve than the accepted require
 });
 
 function assertBatchCoreCrossLinks(item) {
-  assert.equal(item.kind, "batch-interop-v2");
+  assert.equal(item.kind, "batch-interop-v3");
   assert.equal(item.scope.transactionEvidenceIncluded, false);
 
   const config = item.channel.config;
@@ -87,8 +89,8 @@ function assertBatchCoreCrossLinks(item) {
   const covenantId = item.lineage.covenantId;
 
   assert.notEqual(covenantId, "00".repeat(32), "covenant id is unbound sentinel");
-  assert.equal(config.templateId, "kaspa-x402-escrow-v3");
-  assert.equal(accepted.extra.binding, "kaspa-escrow-v2");
+  assert.equal(config.templateId, "kaspa-x402-escrow-v4");
+  assert.equal(accepted.extra.binding, "kaspa-escrow-v3");
   assert.equal(accepted.extra.templateId, config.templateId);
   assert.equal(accepted.network, config.network);
   assert.equal(accepted.asset, config.asset);
@@ -127,6 +129,25 @@ function assertBatchCoreCrossLinks(item) {
   );
 
   assert.equal(
+    batchPresentationPreimage(item.presentation.input),
+    item.presentation.preimage,
+  );
+  assert.equal(
+    batchPresentationDigest(item.presentation.input),
+    item.presentation.digest,
+  );
+  assert.equal(item.presentation.signerPublicKey, config.clientPublicKey);
+  assert.equal(
+    schnorr.verify(
+      Buffer.from(item.presentation.signature, "hex"),
+      Buffer.from(item.presentation.digest, "hex"),
+      Buffer.from(item.presentation.signerPublicKey, "hex"),
+    ),
+    true,
+    "presentation signature mismatch",
+  );
+
+  assert.equal(
     commitment.channelId,
     item.channel.channelId,
     "commitment channel id mismatch",
@@ -137,8 +158,27 @@ function assertBatchCoreCrossLinks(item) {
     item.lineage.currentHead.outpoint,
     "current head outpoint mismatch",
   );
-  assert.equal(commitment.voucher.amount, item.voucher.input.amount);
+  assert.equal(
+    commitment.voucher.authorizedCumulativeAmount,
+    item.voucher.input.authorizedCumulativeAmount,
+  );
   assert.equal(commitment.voucher.signature, item.voucher.signature);
+  assert.equal(commitment.presentationDigest, item.presentation.digest);
+  assert.equal(
+    item.presentation.input.acceptedRequirementsHash,
+    item.paymentRequirements.sha256,
+  );
+  assert.equal(
+    item.presentation.input.securityContextHash,
+    accepted.extra.securityContextHash,
+  );
+  assert.equal(item.presentation.input.channelId, item.channel.channelId);
+  assert.equal(item.presentation.input.covenantId, covenantId);
+  assert.equal(item.presentation.input.voucherDigest, item.voucher.digest);
+  assert.equal(
+    item.presentation.input.requestFingerprint,
+    commitment.requestFingerprint,
+  );
   assert.equal(
     batchPaymentRequirementsPreimageHex(accepted),
     item.paymentRequirements.preimage,
@@ -189,15 +229,21 @@ function assertBatchCoreCrossLinks(item) {
   );
 
   assert.deepEqual(
-    stringifyBigints(batchLaneAccounting(item.accounting.beforeRequest)),
+    stringifyBigints(
+      batchLaneAccounting(laneAccountingState(item.accounting.beforeRequest)),
+    ),
     item.accounting.derivedBeforeRequest,
   );
   assert.deepEqual(
-    stringifyBigints(batchLaneAccounting(item.accounting.afterRequest)),
+    stringifyBigints(
+      batchLaneAccounting(laneAccountingState(item.accounting.afterRequest)),
+    ),
     item.accounting.derivedAfterRequest,
   );
   assert.deepEqual(
-    stringifyBigints(batchLaneAccounting(item.accounting.afterClaim)),
+    stringifyBigints(
+      batchLaneAccounting(laneAccountingState(item.accounting.afterClaim)),
+    ),
     item.accounting.derivedAfterClaim,
   );
   assert.equal(
@@ -207,24 +253,38 @@ function assertBatchCoreCrossLinks(item) {
   );
   assert.equal(
     assertBatchVoucherReserve(
-      item.accounting.afterRequest,
+      laneAccountingState(item.accounting.afterRequest),
       item.accounting.reserveAmount,
     ),
     true,
   );
 
   const afterClaim = applyBatchClaimAccounting(
-    item.accounting.afterRequest,
+    laneAccountingState(item.accounting.afterRequest),
     item.accounting.claimAmount,
   );
-  for (const field of [
-    "fundingAmount",
-    "chargedCumulativeAmount",
-    "claimedCumulativeAmount",
-    "signedMaxClaimable",
-  ]) {
-    assert.equal(afterClaim[field], item.accounting.afterClaim[field]);
-  }
+  assert.equal(afterClaim.fundingAmount, item.accounting.afterClaim.fundingAmount);
+  assert.equal(
+    afterClaim.chargedCumulativeAmount,
+    item.accounting.afterClaim.authorizedCumulativeAmount,
+  );
+  assert.equal(
+    afterClaim.claimedCumulativeAmount,
+    item.accounting.afterClaim.claimedCumulativeAmount,
+  );
+  assert.equal(
+    afterClaim.signedMaxClaimable,
+    item.accounting.afterClaim.authorizedCumulativeAmount,
+  );
+}
+
+function laneAccountingState(state) {
+  return {
+    fundingAmount: state.fundingAmount,
+    chargedCumulativeAmount: state.authorizedCumulativeAmount,
+    claimedCumulativeAmount: state.claimedCumulativeAmount,
+    signedMaxClaimable: state.authorizedCumulativeAmount,
+  };
 }
 
 function stringifyBigints(value) {

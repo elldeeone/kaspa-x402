@@ -4,7 +4,9 @@ Status: draft
 
 Kaspa x402 treats MCP as a first-class transport for paid tools using `exact` and `batch-settlement`.
 
-MCP tools should advertise the cheapest safe scheme for the tool call. Fixed-price tools can use `exact`; variable token, compute, or frequently called metered tools should use `batch-settlement`.
+MCP tools should advertise the cheapest safe scheme for the tool call. One-shot
+fixed-price tools can use `exact`; repeated fixed-price invocations can use
+`batch-settlement`. Batch v3 is not a post-priced metering scheme.
 
 MCP servers must treat paid tool execution as a single idempotent operation. A retry with the same payment identifier and same tool-call fingerprint should return the cached paid result, not execute the tool again.
 
@@ -44,6 +46,12 @@ result._meta["x402/payment-response"] = SettlementResponse
 
 Servers should require the `payment-identifier` extension for idempotent agent retries.
 
+A batch offer MUST include `extra.mcpErrorChargeSompi` equal to its fixed
+`amount`. This tells the payer before authorization that an admitted
+invocation remains chargeable when the tool returns `isError`. A missing,
+zero, lower, or provider-selected post-service value is invalid; the server
+must reject the offer or use a different payment protocol.
+
 If settlement fails after tool execution, the server must not include the paid tool result in `content` or `structuredContent`. It must return an error result using the upstream payment-required shape plus a Kaspa settlement extension:
 
 ```text
@@ -74,12 +82,12 @@ accepted by this profile.
 Scheme-specific payment identity is enforced by the normal payment payload hash and settlement scope:
 
 - `exact`: transaction id and payment output index;
-- `batch-settlement`: channel id, stable covenant id, and lifetime voucher
-  amount.
+- `batch-settlement`: channel id, stable covenant id, v3 voucher digest, and
+  v1 request presentation digest.
 
 This avoids circular dependencies where a transaction id is not known until after the client creates the payment.
 
 For `batch-settlement`, a successful voucher-only tool response uses the
-non-empty commitment id as `transaction`, includes the actual charge as
-top-level `amount`, and carries the stable covenant id, persisted current head,
-and lifetime accounting metadata in `extensions.kaspa`.
+non-empty commitment id as `transaction`, includes the accepted fixed charge
+as top-level `amount`, and carries the stable covenant id, persisted current
+head, and lifetime accounting metadata in `extensions.kaspa`.

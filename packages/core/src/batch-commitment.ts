@@ -5,6 +5,7 @@ import {
   BATCH_SCRIPT_INT_MAX,
   ESCROW_BINDING_ID,
   ESCROW_TEMPLATE_ID,
+  KASPA_LOCK_TIME_THRESHOLD,
 } from "./constants.js";
 import {
   bytesToHex,
@@ -13,10 +14,11 @@ import {
   le32,
   le64,
   sha256,
+  utf8Bytes,
 } from "./binary.js";
 import { KaspaX402Error } from "./errors.js";
 import { parseBatchLaneAmount } from "./batch-lane.js";
-import { parseKaspaNetwork } from "./network.js";
+import { stableStringify } from "./stable-json.js";
 import type {
   BatchPaymentRequirements,
   FundingOutpoint,
@@ -28,24 +30,38 @@ import type {
 export interface BatchCommitmentInput {
   accepted: BatchPaymentRequirements;
   channelId: Hash32Hex;
+  presentationDigest: Hash32Hex;
   requestFingerprint: Hash32Hex;
   activeOutpoint: FundingOutpoint;
   voucher: Voucher;
-  chargedAmount: SompiString;
-  chargedCumulativeBefore: SompiString;
-  chargedCumulativeAfter: SompiString;
+  fixedCharge: SompiString;
+  authorizedCumulativeBefore: SompiString;
+  authorizedCumulativeAfter: SompiString;
   claimedCumulativeAmount: SompiString;
 }
 
 export function batchPaymentRequirementsPreimage(
   accepted: BatchPaymentRequirements,
 ): Uint8Array {
-  const network = parseKaspaNetwork(accepted.network);
+  const preimage = stableStringify({
+    scope: BATCH_PAYMENT_REQUIREMENTS_DOMAIN_TAG,
+    accepted,
+  });
+  const snapshot = (
+    JSON.parse(preimage) as { accepted: BatchPaymentRequirements }
+  ).accepted;
+
+  if (snapshot.network !== "kaspa:testnet-10") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_network",
+      "batch settlement v3 requires Kaspa Testnet-10",
+    );
+  }
   if (
-    accepted.scheme !== "batch-settlement" ||
-    accepted.asset !== ASSET_ID ||
-    accepted.extra.binding !== ESCROW_BINDING_ID ||
-    accepted.extra.templateId !== ESCROW_TEMPLATE_ID
+    snapshot.scheme !== "batch-settlement" ||
+    snapshot.asset !== ASSET_ID ||
+    snapshot.extra.binding !== ESCROW_BINDING_ID ||
+    snapshot.extra.templateId !== ESCROW_TEMPLATE_ID
   ) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
@@ -54,17 +70,34 @@ export function batchPaymentRequirementsPreimage(
   }
 
   const amount = parseBatchLaneAmount(
-    accepted.amount,
+    snapshot.amount,
     "payment requirement amount",
   );
+  if (amount === 0n) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "batch fixed charge must be positive",
+    );
+  }
   const minimumDeposit = parseBatchLaneAmount(
-    accepted.extra.minDepositSompi,
+    snapshot.extra.minDepositSompi,
     "minimum deposit",
   );
   const claimReserve = parseBatchLaneAmount(
-    accepted.extra.claimReserveSompi,
+    snapshot.extra.claimReserveSompi,
     "claim reserve",
   );
+  const refundTimeoutDaa = parseBatchLaneAmount(
+    snapshot.extra.refundTimeoutDaa,
+    "refund timeout DAA",
+  );
+  if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "refund timeout DAA must remain below the consensus timestamp boundary",
+    );
+  }
+  le64(snapshot.maxTimeoutSeconds);
   const requiredMinimumDeposit = amount + claimReserve;
   if (requiredMinimumDeposit > BATCH_SCRIPT_INT_MAX) {
     throw new KaspaX402Error(
@@ -78,26 +111,29 @@ export function batchPaymentRequirementsPreimage(
       "minimum deposit must cover the payment requirement amount plus claim reserve",
     );
   }
+  hexToBytes(snapshot.extra.securityContextHash, {
+    expectedLength: 32,
+    label: "securityContextHash",
+  });
+  if (
+    snapshot.extra.mcpErrorChargeSompi !== undefined &&
+    parseBatchLaneAmount(
+      snapshot.extra.mcpErrorChargeSompi,
+      "MCP error charge",
+    ) !== amount
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_amount",
+      "MCP error charge must equal the batch fixed charge",
+    );
+  }
 
-  return concatBytes([
-    sha256(BATCH_PAYMENT_REQUIREMENTS_DOMAIN_TAG),
-    sha256("batch-settlement"),
-    sha256(network),
-    sha256(ASSET_ID),
-    le64(amount),
-    sha256(accepted.payTo),
-    le64(accepted.maxTimeoutSeconds),
-    sha256(ESCROW_BINDING_ID),
-    sha256(accepted.extra.templateId),
-    hexToBytes(accepted.extra.serverPublicKey, {
-      expectedLength: 32,
-      errorCode: "invalid_kaspa_public_key",
-      label: "serverPublicKey",
-    }),
-    le64(minimumDeposit),
-    le64(claimReserve),
-    le64(accepted.extra.refundTimeoutDaa),
-  ]);
+  hexToBytes(snapshot.extra.serverPublicKey, {
+    expectedLength: 32,
+    errorCode: "invalid_kaspa_public_key",
+    label: "serverPublicKey",
+  });
+  return utf8Bytes(preimage);
 }
 
 export function batchPaymentRequirementsPreimageHex(
@@ -126,6 +162,10 @@ export function batchCommitmentPreimage(
       errorCode: "invalid_kaspa_x402_binding",
       label: "voucher.covenantId",
     }),
+    hexToBytes(input.presentationDigest, {
+      expectedLength: 32,
+      label: "presentationDigest",
+    }),
     hexToBytes(input.requestFingerprint, {
       expectedLength: 32,
       label: "requestFingerprint",
@@ -140,26 +180,25 @@ export function batchCommitmentPreimage(
       label: "activeOutpoint.txid",
     }),
     le32(input.activeOutpoint.index),
-    le64(parseBatchLaneAmount(input.voucher.amount, "voucher amount")),
+    le64(
+      parseBatchLaneAmount(
+        input.authorizedCumulativeBefore,
+        "authorized cumulative before",
+      ),
+    ),
+    le64(
+      parseBatchLaneAmount(
+        input.authorizedCumulativeAfter,
+        "authorized cumulative after",
+      ),
+    ),
     sha256(
       hexToBytes(input.voucher.signature, {
         expectedLength: 64,
         label: "voucher.signature",
       }),
     ),
-    le64(parseBatchLaneAmount(input.chargedAmount, "charged amount")),
-    le64(
-      parseBatchLaneAmount(
-        input.chargedCumulativeBefore,
-        "charged cumulative before",
-      ),
-    ),
-    le64(
-      parseBatchLaneAmount(
-        input.chargedCumulativeAfter,
-        "charged cumulative after",
-      ),
-    ),
+    le64(parseBatchLaneAmount(input.fixedCharge, "fixed charge")),
     le64(
       parseBatchLaneAmount(
         input.claimedCumulativeAmount,
@@ -177,35 +216,38 @@ export function batchCommitmentPreimageHex(
 
 export function batchCommitmentId(input: BatchCommitmentInput): Hash32Hex {
   const before = parseBatchLaneAmount(
-    input.chargedCumulativeBefore,
-    "charged cumulative before",
+    input.authorizedCumulativeBefore,
+    "authorized cumulative before",
   );
-  const charged = parseBatchLaneAmount(input.chargedAmount, "charged amount");
+  const fixedCharge = parseBatchLaneAmount(input.fixedCharge, "fixed charge");
   const after = parseBatchLaneAmount(
-    input.chargedCumulativeAfter,
-    "charged cumulative after",
+    input.authorizedCumulativeAfter,
+    "authorized cumulative after",
   );
   const claimed = parseBatchLaneAmount(
     input.claimedCumulativeAmount,
     "claimed cumulative amount",
   );
-  const authorized = parseBatchLaneAmount(input.voucher.amount, "voucher amount");
+  const voucherAuthorized = parseBatchLaneAmount(
+    input.voucher.authorizedCumulativeAmount,
+    "voucher authorized cumulative amount",
+  );
   if (claimed > before) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
-      "claimed cumulative amount cannot exceed the prior charged amount",
+      "claimed cumulative amount cannot exceed the prior authorization",
     );
   }
-  if (before + charged !== after) {
+  if (fixedCharge === 0n || before + fixedCharge !== after) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
-      "charged cumulative amount must equal the prior amount plus the charge",
+      "authorized cumulative amount must equal the prior amount plus the positive fixed charge",
     );
   }
-  if (after > authorized) {
+  if (after !== voucherAuthorized) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
-      "charged cumulative amount cannot exceed the signed voucher ceiling",
+      "voucher must sign the exact authorized cumulative amount after this charge",
     );
   }
   return bytesToHex(sha256(batchCommitmentPreimage(input)));

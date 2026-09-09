@@ -134,6 +134,23 @@ describe("direct-mode client", () => {
     expect(provider.deposits).toHaveLength(0);
   });
 
+  it("rejects zero-value batch offers before invoking the funding adapter", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider });
+    const required = makeRequired({ amount: "0" });
+    const rawHeader = Buffer.from(JSON.stringify(required), "utf8").toString(
+      "base64",
+    );
+
+    await expect(
+      client.createPayment(rawHeader, {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toMatchObject({ code: "invalid_kaspa_x402_accepted" });
+    expect(provider.deposits).toHaveLength(0);
+    expect(provider.topUps).toHaveLength(0);
+  });
+
   it("reuses an active channel and signs a monotonic cumulative voucher", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -162,7 +179,8 @@ describe("direct-mode client", () => {
     expect(secondPayment.paymentPayload.payload.type).toBe("voucher");
     expect(provider.deposits).toHaveLength(1);
     expect(
-      voucherBearingPayload(secondPayment.paymentPayload).voucher.amount,
+      voucherBearingPayload(secondPayment.paymentPayload).voucher
+        .authorizedCumulativeAmount,
     ).toBe("175");
   });
 
@@ -185,9 +203,10 @@ describe("direct-mode client", () => {
     expect(topped.paymentPayload.payload.type).toBe("deposit-voucher");
     expect(provider.topUps).toEqual([{ targetFundingAmount: "2000" }]);
     expect(topped.channel?.covenantId).toBe(first.channel?.covenantId);
-    expect(voucherBearingPayload(topped.paymentPayload).voucher.amount).toBe(
-      "1050",
-    );
+    expect(
+      voucherBearingPayload(topped.paymentPayload).voucher
+        .authorizedCumulativeAmount,
+    ).toBe("1050");
   });
 
   it("tops up a lane before a voucher would consume its advertised claim reserve", async () => {
@@ -1155,7 +1174,7 @@ describe("direct-mode client", () => {
       },
     );
     const bad = makeSettlement(payment.channel!, "100", {
-      chargedCumulativeAmount: "99",
+      authorizedCumulativeAmount: "99",
     });
 
     await expect(client.applySettlement(payment, bad)).rejects.toThrow(
@@ -1212,17 +1231,32 @@ describe("direct-mode client", () => {
       extensions: kaspaSettlementExtensions({
         commitmentId: COMMITMENT,
         chargedAmount: "99",
-        channelState: channelState(
-          payment.channel!,
-          "100",
-          payment.channel!.signedMaxClaimable,
-        ),
+        channelState: channelState(payment.channel!, "100"),
       }),
     };
 
     await expect(client.applySettlement(payment, bad)).rejects.toThrow(
       "charged amount",
     );
+  });
+
+  it("rejects a provider-local lower charge than the accepted fixed amount", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+      { url: "https://api.example.test/data" },
+    );
+    const bad = makeSettlement(payment.channel!, "99", {
+      authorizedCumulativeAmount: "99",
+    });
+
+    await expect(client.applySettlement(payment, bad)).rejects.toThrow(
+      "accepted fixed charge",
+    );
+    const [stored] = await store.loadChannels({});
+    expect(stored?.status).toBe("suspicious");
   });
 
   it("verifies deposit settlement funding amount", async () => {
@@ -1267,14 +1301,21 @@ describe("direct-mode client", () => {
       makeSettlement(firstPayment.channel!, "100"),
     );
 
-    const correctiveState = channelState(firstPayment.channel!, "100", "200");
+    const [preauthorized] = await store.loadChannels({});
+    if (!preauthorized) throw new Error("missing stored channel");
+    await store.saveChannel({
+      ...preauthorized,
+      signedMaxClaimable: "200",
+      latestVoucher: {
+        covenantId: preauthorized.covenantId,
+        authorizedCumulativeAmount: "200",
+        signature: "aa".repeat(64),
+      },
+    });
+    const correctiveState = channelState(preauthorized, "200");
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: correctiveState,
-      voucherState: {
-        amount: "200",
-        signature: "aa".repeat(64),
-      },
     });
     const correctivePayment = await client.createPayment(
       encodePaymentRequiredHeader(correctiveRequired),
@@ -1287,8 +1328,9 @@ describe("direct-mode client", () => {
     expect(correctivePayment.openedChannel).toBe(false);
     expect(correctivePayment.paymentPayload.payload.type).toBe("voucher");
     expect(
-      voucherBearingPayload(correctivePayment.paymentPayload).voucher.amount,
-    ).toBe("200");
+      voucherBearingPayload(correctivePayment.paymentPayload).voucher
+        .authorizedCumulativeAmount,
+    ).toBe("250");
   });
 
   it("recovers a changed active outpoint from verified corrective state", async () => {
@@ -1315,7 +1357,7 @@ describe("direct-mode client", () => {
       firstPayment,
       makeSettlement(firstPayment.channel!, "100"),
     );
-    const successorScriptPublicKey = v2EscrowScriptPublicKey(
+    const successorScriptPublicKey = v4EscrowScriptPublicKey(
       firstPayment.channel!,
       "100",
     );
@@ -1329,15 +1371,11 @@ describe("direct-mode client", () => {
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: {
-        ...channelState(firstPayment.channel!, "100", "100"),
+        ...channelState(firstPayment.channel!, "100"),
         activeOutpoint: replacementOutpoint,
         activeScriptPublicKey: successorScriptPublicKey,
         fundingAmount: "900",
         claimedCumulativeAmount: "100",
-      },
-      voucherState: {
-        amount: "100",
-        signature: "aa".repeat(64),
       },
     });
 
@@ -1353,9 +1391,10 @@ describe("direct-mode client", () => {
     expect(
       voucherBearingPayload(payment.paymentPayload).fundingOutpoint,
     ).toEqual(replacementOutpoint);
-    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
-      "150",
-    );
+    expect(
+      voucherBearingPayload(payment.paymentPayload).voucher
+        .authorizedCumulativeAmount,
+    ).toBe("150");
     const [stored] = await store.loadChannels({});
     expect(stored?.escrowAddress).toBe(
       `kaspatest:${sha256Hex(successorScriptPublicKey).slice(0, 32)}`,
@@ -1393,14 +1432,10 @@ describe("direct-mode client", () => {
     const correctiveRequired = makeRequired({
       amount: "50",
       channelState: {
-        ...channelState(original, "100", "100"),
+        ...channelState(original, "100"),
         activeOutpoint: replacementOutpoint,
         fundingAmount: "900",
         claimedCumulativeAmount: "100",
-      },
-      voucherState: {
-        amount: "100",
-        signature: "aa".repeat(64),
       },
     });
 
@@ -1431,20 +1466,23 @@ describe("direct-mode client", () => {
       firstPayment,
       makeSettlement(firstPayment.channel!, "100"),
     );
+    const [withoutProof] = await store.loadChannels({});
+    if (!withoutProof) throw new Error("missing stored channel");
+    await store.saveChannel({ ...withoutProof, latestVoucher: undefined });
 
     await expect(
       client.createPayment(
         encodePaymentRequiredHeader(
           makeRequired({
             amount: "50",
-            channelState: channelState(firstPayment.channel!, "100", "200"),
+            channelState: channelState(firstPayment.channel!, "200"),
           }),
         ),
         {
           url: "https://api.example.test/data",
         },
       ),
-    ).rejects.toThrow("requires voucher proof");
+    ).rejects.toThrow("locally retained voucher proof");
   });
 
   it("uses active unclaimed value after claims when checking balance and signing", async () => {
@@ -1470,7 +1508,7 @@ describe("direct-mode client", () => {
       signedMaxClaimable: "300",
       latestVoucher: {
         covenantId: stored.covenantId,
-        amount: "300",
+        authorizedCumulativeAmount: "300",
         signature: "dd".repeat(64),
       },
     });
@@ -1483,9 +1521,10 @@ describe("direct-mode client", () => {
     );
 
     expect(payment.openedChannel).toBe(false);
-    expect(voucherBearingPayload(payment.paymentPayload).voucher.amount).toBe(
-      "375",
-    );
+    expect(
+      voucherBearingPayload(payment.paymentPayload).voucher
+        .authorizedCumulativeAmount,
+    ).toBe("375");
   });
 
   it("drives paid HTTP fetch with PAYMENT headers", async () => {
@@ -1994,11 +2033,7 @@ describe("direct-mode client", () => {
             "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
               makeRequired({
                 amount: "50",
-                channelState: channelState(channel, "0", "200"),
-                voucherState: {
-                  amount: "200",
-                  signature: "aa".repeat(64),
-                },
+                channelState: channelState(channel, "0"),
               }),
             ),
           });
@@ -2389,7 +2424,11 @@ function makeClient(options: {
   fundingSource?: FundingSourceKind;
   fetch?: FetchLike;
   verifyVoucherSignature?: (
-    voucher: { covenantId: string; amount: string; signature: string },
+    voucher: {
+      covenantId: string;
+      authorizedCumulativeAmount: string;
+      signature: string;
+    },
     channel: DirectModeChannel,
   ) => boolean;
   refundBuilder?: RefundTransactionBuilder;
@@ -2427,7 +2466,6 @@ function makeRequired(input: {
   minDepositSompi?: string;
   claimReserveSompi?: string;
   channelState?: ChannelState;
-  voucherState?: { covenantId?: string; amount: string; signature: string };
   extensions?: PaymentRequired["extensions"];
 }): PaymentRequired {
   return {
@@ -2444,25 +2482,14 @@ function makeRequired(input: {
         payTo: "kaspatest:payout",
         maxTimeoutSeconds: 60,
         extra: {
-          binding: "kaspa-escrow-v2",
-          templateId: "kaspa-x402-escrow-v3",
+          binding: "kaspa-escrow-v3",
+          templateId: "kaspa-x402-escrow-v4",
           serverPublicKey: SERVER_KEY,
           minDepositSompi: input.minDepositSompi ?? "1000",
           claimReserveSompi: input.claimReserveSompi ?? "10",
           refundTimeoutDaa: "1000",
+          securityContextHash: "88".repeat(32),
           ...(input.channelState ? { channelState: input.channelState } : {}),
-          ...(input.voucherState
-            ? {
-                voucherState: {
-                  covenantId:
-                    input.voucherState.covenantId ??
-                    input.channelState?.covenantId ??
-                    COVENANT_ID,
-                  amount: input.voucherState.amount,
-                  signature: input.voucherState.signature,
-                },
-              }
-            : {}),
         },
       } satisfies BatchPaymentRequirements,
     ],
@@ -2624,7 +2651,6 @@ function makeSettlement(
         ...channelState(
           channel,
           addAmounts(channel.chargedCumulativeAmount, chargedAmount),
-          channel.signedMaxClaimable,
         ),
         ...stateOverrides,
       },
@@ -2669,8 +2695,7 @@ function voucherBearingPayload(
 
 function channelState(
   channel: DirectModeChannel,
-  chargedCumulativeAmount: string,
-  signedMaxClaimable: string,
+  authorizedCumulativeAmount: string,
 ): ChannelState {
   return {
     channelId: channel.id,
@@ -2678,15 +2703,14 @@ function channelState(
     activeOutpoint: channel.activeOutpoint,
     activeScriptPublicKey: channel.activeScriptPublicKey,
     fundingAmount: channel.fundingAmount,
-    chargedCumulativeAmount,
+    authorizedCumulativeAmount,
     claimedCumulativeAmount: channel.claimedCumulativeAmount,
-    signedMaxClaimable,
   };
 }
 
-function v2EscrowScriptPublicKey(
+function v4EscrowScriptPublicKey(
   channel: DirectModeChannel,
-  settledTotal: string,
+  claimedCumulativeAmount: string,
 ): string {
   const codec = new FakeAddressCodec();
   return serializedScriptPublicKey(
@@ -2703,7 +2727,7 @@ function v2EscrowScriptPublicKey(
         ),
       ),
       timeoutDaa: channel.config.refundTimeoutDaa,
-      settledTotal,
+      claimedCumulativeAmount,
     }),
   );
 }
@@ -2983,6 +3007,10 @@ class FakeSigner {
   }
 
   async signVoucher({ digest }: VoucherSignRequest) {
+    return `${digest}${digest}`;
+  }
+
+  async signBatchPresentation({ digest }: { digest: Hash32Hex }) {
     return `${digest}${digest}`;
   }
 

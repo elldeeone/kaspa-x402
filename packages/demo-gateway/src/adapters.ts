@@ -9,6 +9,8 @@ import {
 } from "@kaspa-x402/core";
 import type {
   AddressCodec,
+  BatchPresentationVerificationRequest,
+  BatchPresentationVerifier,
   ChainUtxo,
   ExactHeadReconciler,
   ExactHeadReconciliation,
@@ -1311,11 +1313,21 @@ export class RestExactTransactionVerifier implements ExactTransactionVerifier {
   }
 }
 
-export class NativeVoucherVerifier implements VoucherVerifier {
+export class NativeVoucherVerifier
+  implements VoucherVerifier, BatchPresentationVerifier
+{
   verifyVoucher(request: VoucherVerificationRequest): boolean {
     return verifyKaspaSchnorrDigest({
       digest: request.digest,
       signature: request.voucher.signature,
+      publicKey: request.clientPublicKey,
+    });
+  }
+
+  verifyPresentation(request: BatchPresentationVerificationRequest): boolean {
+    return verifyKaspaSchnorrDigest({
+      digest: request.digest,
+      signature: request.signature,
       publicKey: request.clientPublicKey,
     });
   }

@@ -90,7 +90,7 @@ export function batchLaneAccounting(
   };
 }
 
-/** Computes the monotonic cumulative voucher ceiling required for one request. */
+/** Computes the exact cumulative fixed-charge authorization for one request. */
 export function requiredBatchVoucherAmount(
   state: BatchLaneState,
   maximumNewCharge: SompiString,
@@ -100,15 +100,18 @@ export function requiredBatchVoucherAmount(
     maximumNewCharge,
     "maximum new charge",
   );
-  const requiredForCharge =
-    accounting.chargedCumulativeAmount + maximumCharge;
-  if (requiredForCharge > BATCH_SCRIPT_INT_MAX) {
+  const required = accounting.chargedCumulativeAmount + maximumCharge;
+  if (required > BATCH_SCRIPT_INT_MAX) {
     throw amountError("required voucher ceiling exceeds the batch covenant signed-int64 range");
   }
-  const required =
-    requiredForCharge > accounting.signedMaxClaimable
-      ? requiredForCharge
-      : accounting.signedMaxClaimable;
+  if (
+    accounting.signedMaxClaimable !== accounting.chargedCumulativeAmount &&
+    accounting.signedMaxClaimable !== required
+  ) {
+    throw amountError(
+      "existing voucher authorization does not match the current or requested fixed cumulative charge",
+    );
+  }
   if (required - accounting.claimedCumulativeAmount > accounting.fundingAmount) {
     throw amountError("required voucher authorization exceeds the active covenant value");
   }

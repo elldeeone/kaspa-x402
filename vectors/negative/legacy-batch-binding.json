@@ -1,25 +1,25 @@
 {
   "kind": "negative",
-  "name": "wrong-binding",
-  "description": "The exact scheme cannot use the escrow binding.",
+  "name": "legacy-batch-binding",
+  "description": "The Alpha.11 clean cutover rejects the former batch binding and escrow template.",
   "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
   "expectedError": "invalid_kaspa_x402_binding",
   "value": {
     "x402Version": 2,
     "resource": {
-      "url": "https://api.example.com/download.bin"
+      "url": "https://api.example.com/metered"
     },
     "accepts": [
       {
-        "scheme": "exact",
+        "scheme": "batch-settlement",
         "network": "kaspa:testnet-10",
         "amount": "1000000",
         "asset": "KAS",
         "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         "maxTimeoutSeconds": 60,
         "extra": {
-          "binding": "kaspa-escrow-v3",
-          "templateId": "kaspa-x402-escrow-v4",
+          "binding": "kaspa-escrow-v2",
+          "templateId": "kaspa-x402-escrow-v3",
           "serverPublicKey": "4444444444444444444444444444444444444444444444444444444444444444",
           "minDepositSompi": "90000000",
           "claimReserveSompi": "2000000",

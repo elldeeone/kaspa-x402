@@ -59,5 +59,6 @@ Servers may include multiple Kaspa entries in `PaymentRequired.accepts`. Clients
 
 If the server returns a corrective `402` for `batch-settlement`, it should
 include `accepts[].extra.channelState` with the stable `covenantId` and current
-outpoint. When asking the client to adopt a newer lifetime ceiling, it must also
-include the signed `accepts[].extra.voucherState`.
+outpoint. The server MUST NOT disclose a reusable voucher in corrective terms;
+the payer reconciles that public state against its locally retained latest
+signed voucher before authorizing a fresh request presentation.

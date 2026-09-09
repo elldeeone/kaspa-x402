@@ -1,4 +1,5 @@
 import type {
+  BatchPresentationAuthorization,
   BatchPaymentRequirements,
   ByteHex,
   ChannelConfig,
@@ -51,7 +52,7 @@ export interface EscrowDepositRequest {
   escrowAddress: string;
   escrowScriptPublicKey: ByteHex;
   amount: SompiString;
-  settledTotal: SompiString;
+  claimedCumulativeAmount: SompiString;
   fundingSource?: FundingSourceKind;
 }
 
@@ -217,6 +218,13 @@ export interface VoucherSignRequest {
   amount: SompiString;
 }
 
+export interface BatchPresentationSignRequest {
+  digest: Hash32Hex;
+  authorization: Omit<BatchPresentationAuthorization, "digest" | "signature">;
+  channel: DirectModeChannel;
+  accepted: BatchPaymentRequirements;
+}
+
 export interface RefundSignRequest {
   channel: DirectModeChannel;
   refundAmount: SompiString;
@@ -229,6 +237,10 @@ export interface ChannelSigner {
   randomSalt(): Promise<Hash32Hex>;
   randomNonce?(): Promise<Hash32Hex>;
   signVoucher(request: VoucherSignRequest): Promise<SignatureHex>;
+  /** Required for batch payments; signs one short-lived request presentation. */
+  signBatchPresentation?(
+    request: BatchPresentationSignRequest,
+  ): Promise<SignatureHex>;
   signRefund?(request: RefundSignRequest): Promise<SignatureHex>;
 }
 
@@ -260,7 +272,7 @@ export interface DirectModeChannel {
   /** True until the current genesis/top-up head has been admitted by the server. */
   requiresDepositVoucher: boolean;
   refundTimeoutDaa: SompiString;
-  templateId: "kaspa-x402-escrow-v3";
+  templateId: "kaspa-x402-escrow-v4";
   status: ChannelStatus;
 }
 

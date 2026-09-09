@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 
-const source = fs.readFileSync("contracts/kaspa-x402-escrow-v3.sil");
+const source = fs.readFileSync("contracts/kaspa-x402-escrow-v4.sil");
 const fixture = JSON.parse(
-  fs.readFileSync("contracts/fixtures/kaspa-x402-escrow-v3.json", "utf8"),
+  fs.readFileSync("contracts/fixtures/kaspa-x402-escrow-v4.json", "utf8"),
 );
 
 test("published artifacts reconstruct genesis and successor without project packages", () => {
@@ -20,7 +20,7 @@ test("published artifacts reconstruct genesis and successor without project pack
 
   const successor = renderRedeemScript({
     ...fixture.sample.params,
-    settledTotal: fixture.sample.successor.settledTotal,
+    claimedCumulativeAmount: fixture.sample.successor.claimedCumulativeAmount,
   });
   assert.equal(successor, fixture.sample.successor.redeemScript);
   assert.equal(

@@ -184,21 +184,24 @@ function mcpPaymentIdentity(paymentPayload: PaymentPayload): JsonRecord {
       return {
         scheme: paymentPayload.accepted.scheme,
         channelId: payload.channelId,
-        voucherAmount: payload.voucher.amount,
+        voucherAuthorizedCumulativeAmount:
+          payload.voucher.authorizedCumulativeAmount,
         payloadType: payload.type,
       };
     case "voucher":
       return {
         scheme: paymentPayload.accepted.scheme,
         channelId: payload.channelId,
-        voucherAmount: payload.voucher.amount,
+        voucherAuthorizedCumulativeAmount:
+          payload.voucher.authorizedCumulativeAmount,
         payloadType: payload.type,
       };
     case "claim":
       return {
         scheme: paymentPayload.accepted.scheme,
         channelId: payload.channelId,
-        voucherAmount: payload.voucher.amount,
+        voucherAuthorizedCumulativeAmount:
+          payload.voucher.authorizedCumulativeAmount,
         payloadType: payload.type,
       };
     case "refund":

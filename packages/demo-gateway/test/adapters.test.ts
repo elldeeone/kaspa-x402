@@ -1630,7 +1630,7 @@ describe("NativeVoucherVerifier", () => {
         preimage: "22".repeat(32),
         voucher: {
           covenantId: "23".repeat(32),
-          amount: "100",
+          authorizedCumulativeAmount: "100",
           signature,
         },
       }),
@@ -1643,7 +1643,7 @@ describe("NativeVoucherVerifier", () => {
         preimage: "22".repeat(32),
         voucher: {
           covenantId: "23".repeat(32),
-          amount: "100",
+          authorizedCumulativeAmount: "100",
           signature,
         },
       }),
@@ -1676,7 +1676,7 @@ describe("NativeVoucherVerifier", () => {
         preimage: "22".repeat(32),
         voucher: {
           covenantId: "23".repeat(32),
-          amount: "100",
+          authorizedCumulativeAmount: "100",
           signature,
         },
       }),
@@ -1710,7 +1710,7 @@ function batchChannel(
     channelConfig: {
       network: "kaspa:testnet-10",
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v3",
+      templateId: "kaspa-x402-escrow-v4",
       clientPublicKey: "c6".repeat(32),
       serverPublicKey: "c7".repeat(32),
       payTo: "kaspatest:payout",

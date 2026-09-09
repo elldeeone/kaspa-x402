@@ -14,9 +14,10 @@ For `exact`, this means selecting the advertised `kaspa-exact-v2` profile,
 verifying its `exact-transaction` artifact with trusted UTXO and consensus
 facts, broadcasting it if needed, and observing it at the required finality.
 
-For `batch-settlement`, this means verifying lifetime vouchers, tracking the
-stable covenant id plus current outpoint, and building partial claim, top-up,
-and refund transactions.
+For `batch-settlement`, this means verifying v3 lifetime vouchers and
+request-bound presentations, tracking the stable covenant id plus current
+outpoint, and building partial claim, provider-co-signed top-up, and refund
+transactions.
 
 ### Self-Hosted Facilitator Mode
 
@@ -51,7 +52,7 @@ POST /settle
       "network": "kaspa:testnet-10",
       "extra": {
         "asset": "KAS",
-        "binding": "kaspa-escrow-v2",
+        "binding": "kaspa-escrow-v3",
         "modes": ["verify", "settle", "claim"]
       }
     }
@@ -81,14 +82,13 @@ configured.
 }
 ```
 
-Kaspa facilitators may also accept `resource` and `requestHash` fields.
+Kaspa facilitators accept `resource` and `requestHash` fields.
 `requestHash` binds verification and settlement to the resource server's
 operation fingerprint. It is mandatory for `exact`, must match the mandatory
 signed request authorization in the payment payload, and cannot be inferred or
-removed. For batch vouchers a facilitator may still derive a deterministic
-local fingerprint when an explicit hash is absent. Servers that need portable
-idempotency across direct and facilitator mode should send `requestHash`
-explicitly for every scheme.
+removed. For batch v3, it is also mandatory and must match the signed
+presentation fingerprint. A facilitator MUST NOT derive either scheme's
+request identity only from the payment payload.
 
 Successful `/verify` returns x402 v2 `VerifyResponse`:
 
@@ -116,10 +116,11 @@ Invalid verification returns:
   independently recomputed transaction id. For `additive`, verification also
   atomically claims the expected head and settlement advances the durable head
   state through its recoverable stages;
-- `batch-settlement`: for voucher-only requests, store the actual charge and
-  lifetime signed ceiling atomically; for `deposit-voucher`, verify singleton
+- `batch-settlement`: for voucher-only requests, verify and consume the
+  request presentation and store the fixed charge and lifetime signed total
+  atomically; for `deposit-voucher`, verify singleton
   genesis or top-up lineage, wait for accepted Testnet-10 evidence, and store
-  the voucher commitment before returning success; for partial claim, top-up,
+  the voucher commitment before returning success; for partial claim, provider-co-signed top-up,
   or refund, save a crash-safe attempt before broadcast and wait for accepted
   evidence before advancing the persisted current outpoint and covenant state.
 

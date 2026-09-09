@@ -9,14 +9,15 @@
     "serverPublicKey",
     "minDepositSompi",
     "claimReserveSompi",
-    "refundTimeoutDaa"
+    "refundTimeoutDaa",
+    "securityContextHash"
   ],
   "properties": {
     "binding": {
-      "const": "kaspa-escrow-v2"
+      "const": "kaspa-escrow-v3"
     },
     "templateId": {
-      "const": "kaspa-x402-escrow-v3"
+      "const": "kaspa-x402-escrow-v4"
     },
     "serverPublicKey": {
       "type": "string",
@@ -31,6 +32,13 @@
     "refundTimeoutDaa": {
       "type": "string",
       "pattern": "^(?:0|[1-9][0-9]{0,10}|[1-4][0-9]{11})$"
+    },
+    "securityContextHash": {
+      "type": "string",
+      "pattern": "^[0-9a-fA-F]{64}$"
+    },
+    "mcpErrorChargeSompi": {
+      "$ref": "#/$defs/batchAmount"
     },
     "claimPolicy": {
       "type": "object",
@@ -54,9 +62,8 @@
         "activeOutpoint",
         "activeScriptPublicKey",
         "fundingAmount",
-        "chargedCumulativeAmount",
-        "claimedCumulativeAmount",
-        "signedMaxClaimable"
+        "authorizedCumulativeAmount",
+        "claimedCumulativeAmount"
       ],
       "properties": {
         "channelId": {
@@ -94,36 +101,11 @@
         "fundingAmount": {
           "$ref": "#/$defs/batchAmount"
         },
-        "chargedCumulativeAmount": {
+        "authorizedCumulativeAmount": {
           "$ref": "#/$defs/batchAmount"
         },
         "claimedCumulativeAmount": {
           "$ref": "#/$defs/batchAmount"
-        },
-        "signedMaxClaimable": {
-          "$ref": "#/$defs/batchAmount"
-        }
-      },
-      "additionalProperties": true
-    },
-    "voucherState": {
-      "type": "object",
-      "required": [
-        "covenantId",
-        "amount",
-        "signature"
-      ],
-      "properties": {
-        "covenantId": {
-          "type": "string",
-          "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$"
-        },
-        "amount": {
-          "$ref": "#/$defs/batchAmount"
-        },
-        "signature": {
-          "type": "string",
-          "pattern": "^[0-9a-fA-F]{128}$"
         }
       },
       "additionalProperties": true

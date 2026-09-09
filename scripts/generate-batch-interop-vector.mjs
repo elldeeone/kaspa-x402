@@ -5,13 +5,14 @@ import { fileURLToPath } from "node:url";
 
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-  applyBatchClaimAccounting,
   assertBatchVoucherReserve,
   batchCommitmentId,
   batchCommitmentPreimageHex,
   batchLaneAccounting,
   batchPaymentRequirementsHash,
   batchPaymentRequirementsPreimageHex,
+  batchPresentationDigest,
+  batchPresentationPreimage,
   channelId,
   channelIdPreimageHex,
   stableStringify,
@@ -41,7 +42,7 @@ const successorOutpoint = { txid: "45".repeat(32), index: 1 };
 const channelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v3",
+  templateId: "kaspa-x402-escrow-v4",
   clientPublicKey,
   serverPublicKey,
   payTo,
@@ -54,14 +55,14 @@ const payoutScriptPublicKey = `000020${bytesToHex(
   schnorr.getPublicKey(new Uint8Array(32).fill(8)),
 )}ac`;
 const refundScriptPublicKey = `000020${clientPublicKey}ac`;
-const escrowParams = (settledTotal) => ({
+const escrowParams = (claimedCumulativeAmount) => ({
   clientPublicKey,
   serverPublicKey,
   network: channelConfig.network,
   payoutScriptPublicKeyHash: sha256HexBytes(payoutScriptPublicKey),
   refundScriptPublicKeyHash: sha256HexBytes(refundScriptPublicKey),
   timeoutDaa: channelConfig.refundTimeoutDaa,
-  settledTotal,
+  claimedCumulativeAmount,
 });
 const genesisScriptPublicKey = serializedScriptPublicKey(
   escrowScriptPublicKey(escrowParams("0")),
@@ -86,12 +87,12 @@ const covenantId = transactionV1CovenantId(genesisAuthorizingInput, [
 const voucherInput = {
   network: channelConfig.network,
   covenantId,
-  amount: "30000000",
+  authorizedCumulativeAmount: "25000000",
 };
 const voucherDigestHex = voucherDigest(voucherInput);
 const voucher = {
   covenantId,
-  amount: voucherInput.amount,
+  authorizedCumulativeAmount: voucherInput.authorizedCumulativeAmount,
   signature: bytesToHex(
     schnorr.sign(
       Buffer.from(voucherDigestHex, "hex"),
@@ -118,24 +119,50 @@ const accepted = {
   payTo,
   maxTimeoutSeconds: 60,
   extra: {
-    binding: "kaspa-escrow-v2",
+    binding: "kaspa-escrow-v3",
     templateId: channelConfig.templateId,
     serverPublicKey,
     minDepositSompi: "90000000",
     claimReserveSompi: "2000000",
     refundTimeoutDaa: channelConfig.refundTimeoutDaa,
+    securityContextHash: "88".repeat(32),
   },
 };
 const requestFingerprint = "99".repeat(32);
+const presentationInput = {
+  requestFingerprint,
+  acceptedRequirementsHash: batchPaymentRequirementsHash(accepted),
+  securityContextHash: accepted.extra.securityContextHash,
+  channelId: resolvedChannelId,
+  covenantId,
+  voucherDigest: voucherDigestHex,
+  paymentIdentifier: "invoice-batch-7",
+  nonce: "aa".repeat(32),
+  expiresAt: "2026-09-09T02:00:30.000Z",
+};
+const presentationDigest = batchPresentationDigest(presentationInput);
+const presentation = {
+  version: "kaspa-x402-batch-presentation-v1",
+  ...presentationInput,
+  digest: presentationDigest,
+  signature: bytesToHex(
+    schnorr.sign(
+      Buffer.from(presentationDigest, "hex"),
+      clientPrivateKey,
+      new Uint8Array(32),
+    ),
+  ),
+};
 const commitmentInput = {
   accepted,
   channelId: resolvedChannelId,
+  presentationDigest,
   requestFingerprint,
   activeOutpoint,
   voucher,
-  chargedAmount: "700000",
-  chargedCumulativeBefore: "24300000",
-  chargedCumulativeAfter: "25000000",
+  fixedCharge: accepted.amount,
+  authorizedCumulativeBefore: "24000000",
+  authorizedCumulativeAfter: "25000000",
   claimedCumulativeAmount: "17000000",
 };
 const commitmentId = batchCommitmentId(commitmentInput);
@@ -145,23 +172,27 @@ const channelStateBefore = {
   activeOutpoint,
   activeScriptPublicKey,
   fundingAmount: "90000000",
-  chargedCumulativeAmount: commitmentInput.chargedCumulativeBefore,
+  authorizedCumulativeAmount: commitmentInput.authorizedCumulativeBefore,
   claimedCumulativeAmount: commitmentInput.claimedCumulativeAmount,
-  signedMaxClaimable: voucher.amount,
 };
 const channelStateAfterCharge = {
   ...channelStateBefore,
-  chargedCumulativeAmount: commitmentInput.chargedCumulativeAfter,
+  authorizedCumulativeAmount: commitmentInput.authorizedCumulativeAfter,
 };
 const claimAmount = "8000000";
 const channelStateAfterClaim = {
   ...channelStateAfterCharge,
-  ...applyBatchClaimAccounting(channelStateAfterCharge, claimAmount),
+  fundingAmount: (
+    BigInt(channelStateAfterCharge.fundingAmount) - BigInt(claimAmount)
+  ).toString(),
+  claimedCumulativeAmount: (
+    BigInt(channelStateAfterCharge.claimedCumulativeAmount) + BigInt(claimAmount)
+  ).toString(),
   activeOutpoint: successorOutpoint,
   activeScriptPublicKey: successorScriptPublicKey,
 };
 assertBatchVoucherReserve(
-  channelStateAfterCharge,
+  laneAccountingState(channelStateAfterCharge),
   accepted.extra.claimReserveSompi,
 );
 
@@ -184,6 +215,7 @@ const paymentPayload = {
     fundingOutpoint: activeOutpoint,
     activeScriptPublicKey,
     voucher,
+    presentation,
   },
 };
 const settlementResponse = {
@@ -191,12 +223,12 @@ const settlementResponse = {
   transaction: commitmentId,
   network: channelConfig.network,
   payer: refundAddress,
-  amount: commitmentInput.chargedAmount,
+  amount: commitmentInput.fixedCharge,
   extensions: {
     kaspa: {
       commitmentId,
       covenantId,
-      chargedAmount: commitmentInput.chargedAmount,
+      chargedAmount: commitmentInput.fixedCharge,
       channelState: channelStateAfterCharge,
     },
   },
@@ -205,7 +237,7 @@ const settlementResponse = {
 const baseChannelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v3",
+  templateId: "kaspa-x402-escrow-v4",
   clientPublicKey: "33".repeat(32),
   serverPublicKey: "44".repeat(32),
   payTo:
@@ -235,7 +267,7 @@ const voucherCases = [
   ["base", voucherInput],
   ["different-network", { ...voucherInput, network: "kaspa:mainnet" }],
   ["different-covenant-id", { ...voucherInput, covenantId: "67".repeat(32) }],
-  ["amount-plus-one", { ...voucherInput, amount: "30000001" }],
+  ["authorized-plus-one", { ...voucherInput, authorizedCumulativeAmount: "25000001" }],
 ].map(([name, input]) => ({
   name,
   input,
@@ -249,8 +281,8 @@ const voucherVector = {
   description:
     "Alpha.11 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   context: {
-    domain: "kaspa:x402:escrow-voucher:v2",
-    signedFields: ["network", "covenantId", "amount"],
+    domain: "kaspa:x402:escrow-voucher:v3",
+    signedFields: ["network", "covenantId", "authorizedCumulativeAmount"],
     notSigned: ["activeOutpoint", "activeScriptPublicKey"],
   },
   cases: voucherCases,
@@ -276,7 +308,7 @@ const httpVector = {
 };
 
 const interopVector = {
-  kind: "batch-interop-v2",
+  kind: "batch-interop-v3",
   description:
     "Language-independent Alpha.11 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
   scope: {
@@ -324,6 +356,14 @@ const interopVector = {
     preimage: batchPaymentRequirementsPreimageHex(accepted),
     sha256: batchPaymentRequirementsHash(accepted),
   },
+  presentation: {
+    input: presentationInput,
+    preimage: batchPresentationPreimage(presentationInput),
+    digest: presentationDigest,
+    signerPublicKey: clientPublicKey,
+    signature: presentation.signature,
+    expected: "valid-schnorr-signature",
+  },
   commitment: {
     input: commitmentInput,
     preimage: batchCommitmentPreimageHex(commitmentInput),
@@ -335,11 +375,11 @@ const interopVector = {
     beforeRequest: channelStateBefore,
     afterRequest: channelStateAfterCharge,
     afterClaim: channelStateAfterClaim,
-    derivedBeforeRequest: stringifyBigints(batchLaneAccounting(channelStateBefore)),
+    derivedBeforeRequest: stringifyBigints(batchLaneAccounting(laneAccountingState(channelStateBefore))),
     derivedAfterRequest: stringifyBigints(
-      batchLaneAccounting(channelStateAfterCharge),
+      batchLaneAccounting(laneAccountingState(channelStateAfterCharge)),
     ),
-    derivedAfterClaim: stringifyBigints(batchLaneAccounting(channelStateAfterClaim)),
+    derivedAfterClaim: stringifyBigints(batchLaneAccounting(laneAccountingState(channelStateAfterClaim))),
   },
   expiry: {
     timeoutDaa: channelConfig.refundTimeoutDaa,
@@ -370,7 +410,16 @@ const interopVector = {
 writeOrCheck("vectors/channel-id/base.json", channelVector);
 writeOrCheck("vectors/voucher/stable-covenant-binding.json", voucherVector);
 writeOrCheck("vectors/x402-http/batch-voucher.json", httpVector);
-writeOrCheck("vectors/batch/interop-v2.json", interopVector);
+writeOrCheck("vectors/batch/interop-v3.json", interopVector);
+
+function laneAccountingState(state) {
+  return {
+    fundingAmount: state.fundingAmount,
+    chargedCumulativeAmount: state.authorizedCumulativeAmount,
+    claimedCumulativeAmount: state.claimedCumulativeAmount,
+    signedMaxClaimable: state.authorizedCumulativeAmount,
+  };
+}
 
 function writeOrCheck(relativePath, value) {
   const output = path.join(root, relativePath);

@@ -2,6 +2,8 @@ import { describe, expect, it, vi } from "vitest";
 
 import {
   X402_VERSION,
+  batchPaymentRequirementsHash,
+  batchPresentationDigest,
   channelId,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
@@ -383,13 +385,10 @@ describe("direct-mode facilitator", () => {
     });
   });
 
-  it("settles batch deposit vouchers with actual charge below the signed ceiling", async () => {
+  it("settles batch deposit vouchers at the payer-approved fixed charge", async () => {
     const { facilitator, server, chain } = makeFacilitator();
     const paymentPayload = makeDepositPayment(server, chain);
-    const paymentRequirements = {
-      ...paymentPayload.accepted,
-      amount: "70",
-    } as BatchPaymentRequirements;
+    const paymentRequirements = paymentPayload.accepted;
 
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
@@ -404,12 +403,12 @@ describe("direct-mode facilitator", () => {
     });
     const settlementExtra = readKaspaSettlementExtension(settlement);
     expect(settlement.transaction).toBe(settlementExtra?.commitmentId);
-    expect(settlement.amount).toBe("70");
-    expect(settlementExtra?.chargedAmount).toBe("70");
+    expect(settlement.amount).toBe("100");
+    expect(settlementExtra?.chargedAmount).toBe("100");
     expect(settlementExtra?.fundingAmount).toBe("1000");
     expect(settlementExtra?.channelState).toMatchObject({
-      chargedCumulativeAmount: "70",
-      signedMaxClaimable: "100",
+      authorizedCumulativeAmount: "100",
+      claimedCumulativeAmount: "0",
     });
   });
 
@@ -577,7 +576,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v2",
+            binding: "kaspa-escrow-v3",
             modes: ["verify", "settle"],
           },
         },
@@ -657,7 +656,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v2",
+            binding: "kaspa-escrow-v3",
             modes: ["claim", "refund"],
           },
         },
@@ -701,7 +700,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v2",
+            binding: "kaspa-escrow-v3",
             modes: ["claim"],
           },
         },
@@ -719,7 +718,7 @@ describe("direct-mode facilitator", () => {
           channelId: depositPayload.channelId,
           fundingOutpoint: depositPayload.fundingOutpoint,
           activeScriptPublicKey: depositPayload.activeScriptPublicKey,
-          claimAmount: depositPayload.voucher.amount,
+          claimAmount: depositPayload.voucher.authorizedCumulativeAmount,
           voucher: depositPayload.voucher,
         },
       } as PaymentPayload,
@@ -747,7 +746,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v2",
+            binding: "kaspa-escrow-v3",
             modes: ["claim"],
           },
         },
@@ -763,7 +762,7 @@ describe("direct-mode facilitator", () => {
         channelId: depositPayload.channelId,
         fundingOutpoint: depositPayload.fundingOutpoint,
         activeScriptPublicKey: depositPayload.activeScriptPublicKey,
-        claimAmount: depositPayload.voucher.amount,
+        claimAmount: depositPayload.voucher.authorizedCumulativeAmount,
         voucher: depositPayload.voucher,
       },
     } as PaymentPayload;
@@ -796,7 +795,7 @@ describe("direct-mode facilitator", () => {
           scheme: "batch-settlement",
           network: "kaspa:testnet-10",
           extra: {
-            binding: "kaspa-escrow-v2",
+            binding: "kaspa-escrow-v3",
             modes: ["refund"],
           },
         },
@@ -816,7 +815,7 @@ describe("direct-mode facilitator", () => {
           fundingOutpoint: depositPayload.fundingOutpoint,
           activeScriptPublicKey: depositPayload.activeScriptPublicKey,
           refundAddress: depositPayload.channelConfig.refundAddress,
-          refundAmount: depositPayload.voucher.amount,
+          refundAmount: depositPayload.voucher.authorizedCumulativeAmount,
           clientSignature: "12".repeat(65),
         },
       } as PaymentPayload,
@@ -1076,6 +1075,11 @@ function makeFacilitator(
         return voucher.signature === `${digest}${digest}`;
       },
     },
+    batchPresentationVerifier: {
+      verifyPresentation({ digest, signature }) {
+        return signature === `${digest}${digest}`;
+      },
+    },
     exactProfile: "standard-native",
     ...serverOverrides,
     exactTransactionVerifier: exactVerifierExplicitlyDisabled
@@ -1188,7 +1192,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v3",
+    templateId: "kaspa-x402-escrow-v4",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,
@@ -1205,21 +1209,29 @@ function makeDepositPayment(
     scriptPublicKey: derived.activeScriptPublicKey,
     finality: "accepted",
   });
+  const id = channelId(channelConfig);
+  const voucher = signVoucher({
+    network: accepted.network,
+    covenantId: COVENANT_ID,
+    amount: accepted.amount,
+  });
   return {
     x402Version: X402_VERSION,
     accepted,
     payload: {
       type: "deposit-voucher",
       channelConfig,
-      channelId: channelId(channelConfig),
+      channelId: id,
       escrowAddress: derived.escrowAddress,
       fundingOutpoint,
       fundingAmountSompi: accepted.extra.minDepositSompi,
       activeScriptPublicKey: derived.activeScriptPublicKey,
-      voucher: signVoucher({
-        network: accepted.network,
+      voucher,
+      presentation: signBatchPresentation({
+        accepted,
+        channelId: id,
         covenantId: COVENANT_ID,
-        amount: accepted.amount,
+        voucher,
       }),
     },
   };
@@ -1253,7 +1265,7 @@ function deriveEscrow(channelConfig: ChannelConfig): {
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
-    settledTotal: "0",
+    claimedCumulativeAmount: "0",
   };
   const script = escrowScriptPublicKey(params);
   return {
@@ -1269,12 +1281,44 @@ function signVoucher(input: {
   covenantId: Hash32Hex;
   amount: string;
 }) {
-  const digest = voucherDigest(input);
+  const digest = voucherDigest({
+    network: input.network,
+    covenantId: input.covenantId,
+    authorizedCumulativeAmount: input.amount,
+  });
   return {
     covenantId: input.covenantId,
-    amount: input.amount,
+    authorizedCumulativeAmount: input.amount,
     signature: `${digest}${digest}`,
   };
+}
+
+function signBatchPresentation(input: {
+  accepted: BatchPaymentRequirements;
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  voucher: { authorizedCumulativeAmount: string };
+}) {
+  const unsigned = {
+    version: "kaspa-x402-batch-presentation-v1" as const,
+    requestFingerprint: REQUEST_HASH,
+    acceptedRequirementsHash: batchPaymentRequirementsHash(input.accepted),
+    securityContextHash: input.accepted.extra.securityContextHash,
+    channelId: input.channelId,
+    covenantId: input.covenantId,
+    voucherDigest: voucherDigest({
+      network: input.accepted.network,
+      covenantId: input.covenantId,
+      authorizedCumulativeAmount: input.voucher.authorizedCumulativeAmount,
+    }),
+    paymentIdentifier: null,
+    nonce: SALT,
+    expiresAt: new Date(
+      Date.now() + input.accepted.maxTimeoutSeconds * 1_000 - 1_000,
+    ).toISOString(),
+  };
+  const digest = batchPresentationDigest(unsigned);
+  return { ...unsigned, digest, signature: `${digest}${digest}` };
 }
 
 class FakeAddressCodec implements AddressCodec {

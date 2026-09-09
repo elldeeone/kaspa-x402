@@ -96,7 +96,7 @@
           "const": "KAS"
         },
         "templateId": {
-          "const": "kaspa-x402-escrow-v3"
+          "const": "kaspa-x402-escrow-v4"
         },
         "clientPublicKey": {
           "$ref": "#/$defs/pubkey32"
@@ -152,12 +152,12 @@
     },
     "voucher": {
       "type": "object",
-      "required": ["covenantId", "amount", "signature"],
+      "required": ["covenantId", "authorizedCumulativeAmount", "signature"],
       "properties": {
         "covenantId": {
           "$ref": "#/$defs/covenantId"
         },
-        "amount": {
+        "authorizedCumulativeAmount": {
           "$ref": "#/$defs/batchAmount"
         },
         "signature": {
@@ -165,6 +165,63 @@
         }
       },
       "additionalProperties": true
+    },
+    "presentation": {
+      "type": "object",
+      "required": [
+        "version",
+        "requestFingerprint",
+        "acceptedRequirementsHash",
+        "securityContextHash",
+        "channelId",
+        "covenantId",
+        "voucherDigest",
+        "paymentIdentifier",
+        "nonce",
+        "expiresAt",
+        "digest",
+        "signature"
+      ],
+      "properties": {
+        "version": {
+          "const": "kaspa-x402-batch-presentation-v1"
+        },
+        "requestFingerprint": {
+          "$ref": "#/$defs/hash32"
+        },
+        "acceptedRequirementsHash": {
+          "$ref": "#/$defs/hash32"
+        },
+        "securityContextHash": {
+          "$ref": "#/$defs/hash32"
+        },
+        "channelId": {
+          "$ref": "#/$defs/hash32"
+        },
+        "covenantId": {
+          "$ref": "#/$defs/covenantId"
+        },
+        "voucherDigest": {
+          "$ref": "#/$defs/hash32"
+        },
+        "paymentIdentifier": {
+          "type": ["string", "null"]
+        },
+        "nonce": {
+          "$ref": "#/$defs/hash32"
+        },
+        "expiresAt": {
+          "type": "string",
+          "pattern": "^[0-9]{4}-[0-9]{2}-[0-9]{2}T[0-9]{2}:[0-9]{2}:[0-9]{2}(?:\\.[0-9]{3})?Z$"
+        },
+        "digest": {
+          "$ref": "#/$defs/hash32"
+        },
+        "signature": {
+          "$ref": "#/$defs/signature64"
+        }
+      },
+      "additionalProperties": false
     }
   },
   "allOf": [
@@ -209,7 +266,8 @@
           "fundingOutpoint",
           "fundingAmountSompi",
           "activeScriptPublicKey",
-          "voucher"
+          "voucher",
+          "presentation"
         ]
       }
     },
@@ -229,7 +287,8 @@
           "clientPublicKey",
           "fundingOutpoint",
           "activeScriptPublicKey",
-          "voucher"
+          "voucher",
+          "presentation"
         ]
       }
     },

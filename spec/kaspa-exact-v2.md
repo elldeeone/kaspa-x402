@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: active Alpha.11 exact binding, unchanged from Alpha.9
+Status: active Alpha.11 exact binding
 
 This document defines the Kaspa network binding for x402 v2 `exact`. It
 supersedes `kaspa-exact-v1` for new implementations while preserving the v1
@@ -19,8 +19,10 @@ This binding defines two profiles:
 | `standard-native` | default  | One standard native-KAS merchant output equals the advertised amount.        |
 | `additive`        | optional | A merchant KIP-10 head successor increases by exactly the advertised amount. |
 
-Use `batch-settlement` instead for repeated or variable-cost requests where
-off-chain cumulative vouchers should amortize on-chain settlement.
+Use `batch-settlement` instead for repeated fixed-price invocations where
+request-bound cumulative vouchers should amortize on-chain settlement. Batch v3
+does not permit a provider to advertise one amount and choose a lower
+post-service charge.
 
 ## Identifiers
 
@@ -600,6 +602,13 @@ authorization. Funding providers MUST expose an `authorizeExactPayment`
 boundary, and deployments SHOULD pin allowed origins, profiles, recipients,
 and a maximum amount before signing.
 
+The equivalent batch boundary is deliberately separate. Exact authorization
+continues to bind one complete transaction and request as defined above; it
+MUST NOT be widened into standing channel, top-up, or cumulative-voucher
+authority. Batch implementations use the complete payer-controlled intent and
+short-lived presentation authorization defined by
+[batch settlement v3](kaspa-batch-settlement-v3.md).
+
 ## Additive concurrency and head recovery
 
 - A head MAY be referenced by many unexpired challenges.
@@ -774,4 +783,4 @@ unavailable_kaspa_exact_head
 - [KIP-10: Transaction introspection opcodes](https://github.com/kaspanet/kips/blob/master/kip-0010.md)
 - [Rusty Kaspa](https://github.com/kaspanet/rusty-kaspa)
 - [Historical alpha.7 exact binding](/v0.1.0-alpha.7/spec/kaspa-exact-v1.md)
-- [Kaspa x402 Batch Settlement Binding v2](kaspa-batch-settlement-v2.md)
+- [Kaspa x402 Batch Settlement Binding v3](kaspa-batch-settlement-v3.md)

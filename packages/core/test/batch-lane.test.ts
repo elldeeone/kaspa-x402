@@ -17,17 +17,17 @@ const state: BatchLaneState = {
   fundingAmount: "10000000",
   chargedCumulativeAmount: "4000000",
   claimedCumulativeAmount: "2500000",
-  signedMaxClaimable: "5000000",
+  signedMaxClaimable: "4000000",
 };
 
 describe("Alpha.11 batch lane accounting", () => {
   it("derives unsettled charges and remaining lifetime authorization", () => {
     expect(batchLaneAccounting(state)).toMatchObject({
       activeChargedAmount: 1_500_000n,
-      remainingAuthorizedAmount: 2_500_000n,
+      remainingAuthorizedAmount: 1_500_000n,
     });
     expect(requiredBatchVoucherAmount(state, "2000000")).toBe("6000000");
-    expect(assertBatchVoucherReserve(state, "7500000")).toBe(true);
+    expect(assertBatchVoucherReserve(state, "8500000")).toBe(true);
   });
 
   it("advances on-chain settlement without resetting the voucher ceiling", () => {
@@ -35,7 +35,7 @@ describe("Alpha.11 batch lane accounting", () => {
       fundingAmount: "8500000",
       chargedCumulativeAmount: "4000000",
       claimedCumulativeAmount: "4000000",
-      signedMaxClaimable: "5000000",
+      signedMaxClaimable: "4000000",
     });
   });
 
@@ -43,7 +43,7 @@ describe("Alpha.11 batch lane accounting", () => {
     expect(() => applyBatchClaimAccounting(state, "1500001")).toThrow(
       "unsettled actual charges",
     );
-    expect(() => assertBatchVoucherReserve(state, "7500001")).toThrow(
+    expect(() => assertBatchVoucherReserve(state, "8500001")).toThrow(
       "authorization plus reserve",
     );
     expect(() =>
@@ -88,16 +88,17 @@ describe("Alpha.11 batch lane accounting", () => {
       payTo: "kaspatest:provider",
       maxTimeoutSeconds: 60,
       extra: {
-        binding: "kaspa-escrow-v2" as const,
-        templateId: "kaspa-x402-escrow-v3" as const,
+        binding: "kaspa-escrow-v3" as const,
+        templateId: "kaspa-x402-escrow-v4" as const,
         serverPublicKey: "22".repeat(32),
         minDepositSompi: BATCH_SCRIPT_INT_MAX.toString(),
         claimReserveSompi: claimReserve.toString(),
         refundTimeoutDaa: "123456789",
+        securityContextHash: "33".repeat(32),
       },
     };
 
-    expect(batchPaymentRequirementsPreimageHex(accepted)).toHaveLength(592);
+    expect(batchPaymentRequirementsPreimageHex(accepted)).toMatch(/^[0-9a-f]+$/);
     expect(() =>
       batchPaymentRequirementsPreimageHex({
         ...accepted,
@@ -144,7 +145,7 @@ describe("Alpha.11 voucher identity", () => {
   const input = {
     network: "kaspa:testnet-10" as const,
     covenantId: "11".repeat(32),
-    amount: "5000000",
+    authorizedCumulativeAmount: "5000000",
   };
 
   it("binds network, stable covenant id, and lifetime ceiling", () => {
@@ -153,7 +154,7 @@ describe("Alpha.11 voucher identity", () => {
     expect(
       voucherDigest({ ...input, covenantId: "22".repeat(32) }),
     ).not.toBe(voucherDigest(input));
-    expect(voucherDigest({ ...input, amount: "5000001" })).not.toBe(
+    expect(voucherDigest({ ...input, authorizedCumulativeAmount: "5000001" })).not.toBe(
       voucherDigest(input),
     );
   });

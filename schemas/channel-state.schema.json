@@ -9,9 +9,8 @@
     "activeOutpoint",
     "activeScriptPublicKey",
     "fundingAmount",
-    "chargedCumulativeAmount",
-    "claimedCumulativeAmount",
-    "signedMaxClaimable"
+    "authorizedCumulativeAmount",
+    "claimedCumulativeAmount"
   ],
   "properties": {
     "channelId": {
@@ -49,13 +48,10 @@
     "fundingAmount": {
       "$ref": "#/$defs/batchAmount"
     },
-    "chargedCumulativeAmount": {
+    "authorizedCumulativeAmount": {
       "$ref": "#/$defs/batchAmount"
     },
     "claimedCumulativeAmount": {
-      "$ref": "#/$defs/batchAmount"
-    },
-    "signedMaxClaimable": {
       "$ref": "#/$defs/batchAmount"
     }
   },

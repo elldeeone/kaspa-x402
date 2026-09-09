@@ -8,7 +8,7 @@ export type SignatureHex = string;
 export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v2";
+export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v3";
 export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
 export type ExactProfile = "standard-native" | "additive";
@@ -69,15 +69,16 @@ export interface ClaimPolicy extends JsonRecord {
 }
 
 export interface BatchRequirementsExtra extends JsonRecord {
-  binding: "kaspa-escrow-v2";
-  templateId: "kaspa-x402-escrow-v3";
+  binding: "kaspa-escrow-v3";
+  templateId: "kaspa-x402-escrow-v4";
   serverPublicKey: PublicKeyHex;
   minDepositSompi: SompiString;
   claimReserveSompi: SompiString;
   refundTimeoutDaa: SompiString;
+  securityContextHash: Hash32Hex;
+  mcpErrorChargeSompi?: SompiString;
   claimPolicy?: ClaimPolicy;
   channelState?: ChannelState;
-  voucherState?: Voucher;
   assetKind?: "native";
   assetDecimals?: 8;
 }
@@ -126,15 +127,80 @@ export interface FundingOutpoint {
 export interface Voucher extends JsonRecord {
   /** Stable KIP-20 covenant lineage authorized by this voucher. */
   covenantId: Hash32Hex;
-  /** Lifetime cumulative settlement ceiling for the covenant lineage. */
-  amount: SompiString;
+  /** Exact lifetime cumulative fixed charges authorized for this lineage. */
+  authorizedCumulativeAmount: SompiString;
   signature: SignatureHex;
+}
+
+export interface BatchPresentationAuthorization extends JsonRecord {
+  version: "kaspa-x402-batch-presentation-v1";
+  requestFingerprint: Hash32Hex;
+  acceptedRequirementsHash: Hash32Hex;
+  securityContextHash: Hash32Hex;
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  voucherDigest: Hash32Hex;
+  paymentIdentifier: string | null;
+  nonce: Hash32Hex;
+  expiresAt: string;
+  digest: Hash32Hex;
+  signature: SignatureHex;
+}
+
+export type BatchPaymentOperation = "open" | "charge" | "top-up";
+
+export interface BatchPaymentAuthorizationIntent extends JsonRecord {
+  scope: "kaspa:x402:batch-payment-intent:v1";
+  operation: BatchPaymentOperation;
+  origin: string;
+  resource: string;
+  network: "kaspa:testnet-10";
+  asset: "KAS";
+  payTo: string;
+  serverPublicKey: PublicKeyHex;
+  clientPublicKey: PublicKeyHex | null;
+  requestFingerprint: Hash32Hex;
+  acceptedRequirementsHash: Hash32Hex;
+  securityContextHash: Hash32Hex;
+  fixedChargeSompi: SompiString;
+  mcpErrorChargeSompi: SompiString | null;
+  authorizedCumulativeBefore: SompiString;
+  authorizedCumulativeAfter: SompiString;
+  claimedCumulativeAmount: SompiString;
+  initialDepositSompi: SompiString;
+  currentFundingSompi: SompiString;
+  topUpSompi: SompiString;
+  resultingFundingSompi: SompiString;
+  resultingExposureSompi: SompiString;
+  claimReserveSompi: SompiString;
+  refundTimeoutDaa: SompiString;
+  authoritativeCurrentDaa: SompiString;
+  refundDistanceDaa: SompiString;
+  fundingSource: string;
+  channelId: Hash32Hex | null;
+  covenantId: Hash32Hex | null;
+  paymentIdentifier: string | null;
+}
+
+export interface BatchPaymentAuthorizationPolicy {
+  maximumBatchChargeSompi: SompiString;
+  maximumInitialDepositSompi: SompiString;
+  maximumTopUpSompi: SompiString;
+  maximumCumulativeAuthorizationSompi: SompiString;
+  maximumTotalExposureSompi: SompiString;
+  minimumRefundLeadDaa: SompiString;
+  maximumRefundHorizonDaa: SompiString;
+  allowedOrigins: readonly string[];
+  allowedResources: readonly string[];
+  allowedPayTo: readonly string[];
+  allowedServerPublicKeys: readonly PublicKeyHex[];
+  allowedFundingSources: readonly string[];
 }
 
 export interface ChannelConfig extends JsonRecord {
   network: NetworkId;
   asset: "KAS";
-  templateId: "kaspa-x402-escrow-v3";
+  templateId: "kaspa-x402-escrow-v4";
   clientPublicKey: PublicKeyHex;
   serverPublicKey: PublicKeyHex;
   payTo: string;
@@ -150,11 +216,10 @@ export interface ChannelState extends JsonRecord {
   activeOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   fundingAmount: SompiString;
-  chargedCumulativeAmount: SompiString;
+  /** Exact lifetime cumulative fixed charges authorized by the payer. */
+  authorizedCumulativeAmount: SompiString;
   /** On-chain lifetime gross amount removed from escrow, including claim fees. */
   claimedCumulativeAmount: SompiString;
-  /** Latest signed lifetime cumulative ceiling; it does not reset on rotation. */
-  signedMaxClaimable: SompiString;
 }
 
 export interface ExactTransactionPayload extends JsonRecord {
@@ -179,6 +244,7 @@ export interface DepositVoucherPayload extends JsonRecord {
   fundingTransaction?: ByteHex;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
+  presentation: BatchPresentationAuthorization;
 }
 
 export interface VoucherPayload extends JsonRecord {
@@ -188,6 +254,7 @@ export interface VoucherPayload extends JsonRecord {
   fundingOutpoint: FundingOutpoint;
   activeScriptPublicKey: ByteHex;
   voucher: Voucher;
+  presentation: BatchPresentationAuthorization;
 }
 
 export interface ClaimPayload extends JsonRecord {

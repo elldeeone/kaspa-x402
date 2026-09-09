@@ -328,7 +328,8 @@ async function runBatchProof() {
   check("batch deposit-voucher payload creation", {
     channelId: deposit.channel?.id,
     covenantId: deposit.channel?.covenantId,
-    voucherAmount: deposit.paymentPayload.payload.voucher.amount,
+    voucherAuthorizedCumulativeAmount:
+      deposit.paymentPayload.payload.voucher.authorizedCumulativeAmount,
     verifiedSingletonGenesis:
       deposit.channel?.genesisEvidence.authorizedOutputCount === 1,
     activeOutpoint: deposit.channel?.activeOutpoint,
@@ -369,7 +370,7 @@ async function runBatchProof() {
   assert.equal(depositSettlement.amount, "50000");
   assert.equal(depositSettlementMetadata.chargedAmount, "50000");
   assert.equal(
-    depositSettlementMetadata.channelState?.chargedCumulativeAmount,
+    depositSettlementMetadata.channelState?.authorizedCumulativeAmount,
     "50000",
   );
   const appliedDeposit = await client.applySettlement(
@@ -397,10 +398,14 @@ async function runBatchProof() {
   assert.equal(voucher.scheme, "batch-settlement");
   assert.equal(voucher.openedChannel, false);
   assert.equal(voucher.paymentPayload.payload.type, "voucher");
-  assert.equal(voucher.paymentPayload.payload.voucher.amount, "100000");
+  assert.equal(
+    voucher.paymentPayload.payload.voucher.authorizedCumulativeAmount,
+    "100000",
+  );
   check("batch voucher-only payload creation", {
     channelId: voucher.channel?.id,
-    voucherAmount: voucher.paymentPayload.payload.voucher.amount,
+    voucherAuthorizedCumulativeAmount:
+      voucher.paymentPayload.payload.voucher.authorizedCumulativeAmount,
   });
 
   const voucherVerify = await facilitator.verify({
@@ -445,14 +450,14 @@ async function runBatchProof() {
     deposit.channel.id,
   );
   assert.equal(
-    correctiveAccepted.extra.channelState.chargedCumulativeAmount,
+    correctiveAccepted.extra.channelState.authorizedCumulativeAmount,
     "50000",
   );
   check("batch corrective 402 channel state", {
     status: corrective.status,
     channelId: correctiveAccepted.extra.channelState.channelId,
-    chargedCumulativeAmount:
-      correctiveAccepted.extra.channelState.chargedCumulativeAmount,
+    authorizedCumulativeAmount:
+      correctiveAccepted.extra.channelState.authorizedCumulativeAmount,
   });
 
   let executions = 0;
@@ -486,13 +491,13 @@ async function runBatchProof() {
   );
   assert.equal(voucherSettlementMetadata.chargedAmount, "50000");
   assert.equal(
-    voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
+    voucherSettlementMetadata.channelState?.authorizedCumulativeAmount,
     "100000",
   );
   check("batch voucher settlement", {
     commitmentId: voucherSettlementMetadata.commitmentId,
-    chargedCumulativeAmount:
-      voucherSettlementMetadata.channelState?.chargedCumulativeAmount,
+    authorizedCumulativeAmount:
+      voucherSettlementMetadata.channelState?.authorizedCumulativeAmount,
   });
 
   let cachedExecutions = 0;
@@ -548,14 +553,14 @@ async function runBatchProof() {
   const staleReplayAccepted = staleReplayRequired.accepts[0];
   assert.equal(staleReplayAccepted.scheme, "batch-settlement");
   assert.equal(
-    staleReplayAccepted.extra.channelState.chargedCumulativeAmount,
+    staleReplayAccepted.extra.channelState.authorizedCumulativeAmount,
     "100000",
   );
   check("batch corrective stale-voucher handling", {
     status: staleReplay.status,
     error: staleReplay.body.error,
-    chargedCumulativeAmount:
-      staleReplayAccepted.extra.channelState.chargedCumulativeAmount,
+    authorizedCumulativeAmount:
+      staleReplayAccepted.extra.channelState.authorizedCumulativeAmount,
   });
 
   const channels = await serverStore.listChannels();
@@ -565,7 +570,8 @@ async function runBatchProof() {
   const digest = voucherDigest({
     network: voucher.accepted.network,
     covenantId: voucher.paymentPayload.payload.voucher.covenantId,
-    amount: voucher.paymentPayload.payload.voucher.amount,
+    authorizedCumulativeAmount:
+      voucher.paymentPayload.payload.voucher.authorizedCumulativeAmount,
   });
   assert.equal(
     voucher.paymentPayload.payload.voucher.covenantId,
@@ -640,10 +646,10 @@ async function runBatchProof() {
 }
 
 function runTxV1Proof() {
-  const fixture = readJson("contracts/fixtures/kaspa-x402-escrow-v3.json");
+  const fixture = readJson("contracts/fixtures/kaspa-x402-escrow-v4.json");
   const source = fs.readFileSync(path.join(root, fixture.source));
   const fixtureReport = checkEscrowFixtureReproducibility(fixture, source);
-  assert.equal(fixture.templateId, "kaspa-x402-escrow-v3");
+  assert.equal(fixture.templateId, "kaspa-x402-escrow-v4");
   check("Alpha.11 escrow fixture reproducibility", {
     checks: fixtureReport.checks.length,
     compilerCommit: fixture.compiler?.checkedCommit,
@@ -663,7 +669,7 @@ function runTxV1Proof() {
   for (const [index, vector] of vectors.entries()) {
     assert.equal(vector.validation.status, "full-consensus-cross-validated");
     assert.equal(vector.sequence.step, index);
-    assert.equal(vector.expected.format, "kaspa-x402-tx-v1-reference-v2");
+    assert.equal(vector.expected.format, "kaspa-x402-tx-v1-reference-v3");
     assert.equal(vector.expected.transaction.version, 1);
     assert.equal(vector.expected.transactionId, vector.expected.txid.digest);
     assert.equal(vector.expected.serializedTransaction, vector.expected.hash.preimage);
@@ -718,7 +724,7 @@ function runTxV1Proof() {
     ),
     covenantId,
   );
-  assert.equal(genesis.escrow.settledTotal, "0");
+  assert.equal(genesis.escrow.claimedCumulativeAmount, "0");
   assert.deepEqual(genesis.escrow.outpoint, {
     txid: genesis.transactionId,
     index: genesis.escrow.outputIndex,
@@ -742,7 +748,10 @@ function runTxV1Proof() {
   for (const [index, vector] of claims.entries()) {
     const claim = vector.expected;
     assert.equal(claim.kind, "batch-claim");
-    assert.equal(vector.sequence.totalAuthorized, firstClaimVector.sequence.totalAuthorized);
+    assert.equal(
+      vector.sequence.authorizedCumulativeAmount,
+      firstClaimVector.sequence.authorizedCumulativeAmount,
+    );
     assert.equal(vector.sequence.voucherSignature, firstClaimVector.sequence.voucherSignature);
     assert.deepEqual(claim.transaction.inputs[0].previousOutpoint, prior.outpoint);
     assert.equal(claim.transaction.inputs[0].utxo.covenantId, covenantId);
@@ -753,8 +762,8 @@ function runTxV1Proof() {
       index: 1,
     });
     assert.equal(
-      BigInt(claim.continuation.settledTotal),
-      BigInt(prior.settledTotal) + BigInt(claim.fee.claimAmount),
+      BigInt(claim.continuation.claimedCumulativeAmount),
+      BigInt(prior.claimedCumulativeAmount) + BigInt(claim.fee.claimAmount),
     );
     assert.equal(
       BigInt(claim.continuation.amount),
@@ -762,7 +771,8 @@ function runTxV1Proof() {
     );
     assert.ok(
       BigInt(claim.fee.claimAmount) <
-        BigInt(claim.fee.totalAuthorized) - BigInt(prior.settledTotal),
+        BigInt(claim.fee.authorizedCumulativeAmount) -
+          BigInt(prior.claimedCumulativeAmount),
     );
     validateVectorCompute(claim, `claim ${index + 1}`);
     prior = claim.continuation;
@@ -775,7 +785,8 @@ function runTxV1Proof() {
     transactions: claims.map(({ expected }) => ({
       transactionId: expected.transactionId,
       claimAmount: expected.fee.claimAmount,
-      settledTotal: expected.continuation.settledTotal,
+      claimedCumulativeAmount:
+        expected.continuation.claimedCumulativeAmount,
       computeBudget: expected.compute.computeBudget,
     })),
   });
@@ -786,7 +797,10 @@ function runTxV1Proof() {
   assert.equal(topUp.transaction.inputs[0].utxo.covenantId, covenantId);
   assert.equal(topUp.continuation.covenantId, covenantId);
   assert.equal(topUp.continuation.outputIndex, 0);
-  assert.equal(topUp.continuation.settledTotal, prior.settledTotal);
+  assert.equal(
+    topUp.continuation.claimedCumulativeAmount,
+    prior.claimedCumulativeAmount,
+  );
   assert.equal(topUp.continuation.scriptPublicKey, prior.scriptPublicKey);
   assert.ok(BigInt(topUp.continuation.amount) > BigInt(prior.amount));
   assert.equal(
@@ -795,11 +809,16 @@ function runTxV1Proof() {
     ).length,
     1,
   );
+  assert.match(
+    topUpVector.input.providerSignature,
+    /^(?!0{130}$)[0-9a-f]{130}$/,
+  );
   validateVectorCompute(topUp, "top-up");
   check("batch top-up tx-v1 construction", {
     transactionId: topUp.transactionId,
     covenantId,
-    settledTotal: topUp.continuation.settledTotal,
+    claimedCumulativeAmount: topUp.continuation.claimedCumulativeAmount,
+    providerAuthorized: true,
     successorAmount: topUp.continuation.amount,
     computeBudget: topUp.compute.computeBudget,
   });
@@ -860,13 +879,14 @@ function runTxV1Proof() {
     claims: claims.map(({ expected }) => ({
       transactionId: expected.transactionId,
       continuationOutpoint: expected.continuation.outpoint,
-      settledTotal: expected.continuation.settledTotal,
+      claimedCumulativeAmount:
+        expected.continuation.claimedCumulativeAmount,
       computeBudget: expected.compute.computeBudget,
     })),
     topUp: {
       transactionId: topUp.transactionId,
       continuationOutpoint: topUp.continuation.outpoint,
-      settledTotal: topUp.continuation.settledTotal,
+      claimedCumulativeAmount: topUp.continuation.claimedCumulativeAmount,
       computeBudget: topUp.compute.computeBudget,
     },
     refund: {

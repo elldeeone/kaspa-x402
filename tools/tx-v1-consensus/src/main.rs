@@ -60,7 +60,7 @@ struct SequenceEvidence {
     step: usize,
     covenant_id: String,
     previous_transaction_id: Option<String>,
-    total_authorized: Option<String>,
+    authorized_cumulative_amount: Option<String>,
     voucher_signature: Option<String>,
 }
 
@@ -326,9 +326,10 @@ fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Va
 
     let claim1 = &vectors[1].1;
     let claim2 = &vectors[2].1;
-    if claim1.sequence.total_authorized != claim2.sequence.total_authorized
+    if claim1.sequence.authorized_cumulative_amount
+        != claim2.sequence.authorized_cumulative_amount
         || claim1.sequence.voucher_signature != claim2.sequence.voucher_signature
-        || claim1.sequence.total_authorized.as_deref() != Some("30000000")
+        || claim1.sequence.authorized_cumulative_amount.as_deref() != Some("30000000")
     {
         return Err(anyhow!("partial claims must reuse one lifetime voucher"));
     }
@@ -398,9 +399,9 @@ fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Va
         "genesisCovenantId": "rusty-kaspa-matched",
         "steps": ["genesis", "partial-claim-1", "partial-claim-2", "top-up", "refund"],
         "voucher": {
-            "totalAuthorized": claim1_ceiling,
+            "authorizedCumulativeAmount": claim1_ceiling,
             "reusedAcrossClaims": true,
-            "settledAfterSecondClaim": claim1_delta + claim2_delta,
+            "claimedAfterSecondClaim": claim1_delta + claim2_delta,
             "remainingHeadroom": claim1_ceiling - claim1_delta - claim2_delta,
         },
     }))
@@ -409,6 +410,7 @@ fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Va
 fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
     let claim1 = &vectors[1].1.expected;
     let claim2 = &vectors[2].1.expected;
+    let top_up = &vectors[3].1.expected;
     let refund = &vectors[4].1.expected;
 
     let mut exhausted = build_transaction(&claim2.transaction)?;
@@ -451,6 +453,15 @@ fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde
         "claim with wrong successor state script",
     )?;
 
+    let mut client_only_top_up = build_transaction(&top_up.transaction)?;
+    let client_only_top_up_entries = build_utxo_entries(&top_up.transaction)?;
+    zero_top_up_provider_signature(&mut client_only_top_up.inputs[0].signature_script)?;
+    expect_consensus_rejection(
+        &client_only_top_up,
+        &client_only_top_up_entries,
+        "client-only top-up without provider signature",
+    )?;
+
     let mut early_refund = build_transaction(&refund.transaction)?;
     let early_refund_entries = build_utxo_entries(&refund.transaction)?;
     early_refund.lock_time = early_refund
@@ -468,6 +479,7 @@ fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde
         "exhaustedVoucher": "rejected-by-full-TransactionValidator",
         "wrongCovenantId": "rejected-by-full-TransactionValidator",
         "wrongSuccessor": "rejected-by-full-TransactionValidator",
+        "clientOnlyTopUp": "rejected-by-full-TransactionValidator",
         "earlyRefund": "rejected-by-full-TransactionValidator",
     }))
 }
@@ -516,6 +528,22 @@ fn set_claim_delta(signature_script: &mut [u8], delta: u64) -> Result<()> {
     Ok(())
 }
 
+fn zero_top_up_provider_signature(signature_script: &mut [u8]) -> Result<()> {
+    let mut cursor = 0;
+    let client_signature = read_canonical_push(signature_script, &mut cursor)?;
+    if client_signature.len() != 65 {
+        return Err(anyhow!("top-up client signature ABI mismatch"));
+    }
+    let opcode = *signature_script
+        .get(cursor)
+        .ok_or_else(|| anyhow!("top-up provider signature push is missing"))?;
+    if opcode != 65 || cursor + 66 > signature_script.len() {
+        return Err(anyhow!("top-up provider signature ABI mismatch"));
+    }
+    signature_script[cursor + 1..cursor + 66].fill(0);
+    Ok(())
+}
+
 fn read_canonical_push<'a>(script: &'a [u8], cursor: &mut usize) -> Result<&'a [u8]> {
     let length = usize::from(
         *script
@@ -551,7 +579,7 @@ fn resign_embedded_signature(
 }
 
 fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> {
-    let relative_path = "vectors/batch/interop-v2.json";
+    let relative_path = "vectors/batch/interop-v3.json";
     let contents = fs::read_to_string(repo_root.join(relative_path))
         .with_context(|| format!("reading {relative_path}"))?;
     let vector: serde_json::Value =
@@ -559,7 +587,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
 
     expect_eq(
         json_string(&vector, "kind")?,
-        "batch-interop-v2",
+        "batch-interop-v3",
         "batch interop kind",
     )?;
     if vector["scope"]["transactionEvidenceIncluded"] != serde_json::Value::Bool(false) {
@@ -571,7 +599,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     let channel = &vector["channel"];
     let config = &channel["config"];
     let channel_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:channel:v1"),
+        sha256_bytes(b"kaspa:x402:channel:v2"),
         sha256_bytes(json_string(config, "network")?.as_bytes()),
         sha256_bytes(b"KAS"),
         sha256_bytes(json_string(config, "templateId")?.as_bytes()),
@@ -594,7 +622,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     )?;
     expect_eq(
         json_string(config, "templateId")?,
-        "kaspa-x402-escrow-v3",
+        "kaspa-x402-escrow-v4",
         "batch template",
     )?;
 
@@ -612,13 +640,13 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         "batch voucher covenant id",
     )?;
     let voucher_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:escrow-voucher:v2"),
+        sha256_bytes(b"kaspa:x402:escrow-voucher:v3"),
         sha256_bytes(json_string(voucher_input, "network")?.as_bytes()),
         parse_hex(
             json_string(voucher_input, "covenantId")?,
             "voucher covenant id",
         )?,
-        json_u64(voucher_input, "amount")?.to_le_bytes().to_vec(),
+        json_u64(voucher_input, "authorizedCumulativeAmount")?.to_le_bytes().to_vec(),
     ]);
     expect_eq(
         hex::encode(&voucher_preimage),
@@ -699,26 +727,13 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     }
     expect_eq(
         json_string(extra, "binding")?,
-        "kaspa-escrow-v2",
+        "kaspa-escrow-v3",
         "batch requirements binding",
     )?;
-    let requirements_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:batch-payment-requirements:v2"),
-        sha256_bytes(b"batch-settlement"),
-        sha256_bytes(json_string(accepted, "network")?.as_bytes()),
-        sha256_bytes(b"KAS"),
-        json_u64(accepted, "amount")?.to_le_bytes().to_vec(),
-        sha256_bytes(json_string(accepted, "payTo")?.as_bytes()),
-        json_u64_number(accepted, "maxTimeoutSeconds")?
-            .to_le_bytes()
-            .to_vec(),
-        sha256_bytes(b"kaspa-escrow-v2"),
-        sha256_bytes(json_string(extra, "templateId")?.as_bytes()),
-        parse_hex(json_string(extra, "serverPublicKey")?, "serverPublicKey")?,
-        json_u64(extra, "minDepositSompi")?.to_le_bytes().to_vec(),
-        json_u64(extra, "claimReserveSompi")?.to_le_bytes().to_vec(),
-        json_u64(extra, "refundTimeoutDaa")?.to_le_bytes().to_vec(),
-    ]);
+    let requirements_preimage = serde_json::to_vec(&json!({
+        "scope": "kaspa:x402:batch-payment-requirements:v3",
+        "accepted": accepted,
+    }))?;
     expect_eq(
         hex::encode(&requirements_preimage),
         json_string(requirements, "preimage")?,
@@ -731,19 +746,55 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         "batch payment requirements hash",
     )?;
 
+    let presentation = &vector["presentation"];
+    let presentation_input = &presentation["input"];
+    let presentation_preimage = serde_json::to_vec(&json!({
+        "scope": "kaspa:x402:batch-presentation:v1",
+        "requestFingerprint": presentation_input["requestFingerprint"],
+        "acceptedRequirementsHash": presentation_input["acceptedRequirementsHash"],
+        "securityContextHash": presentation_input["securityContextHash"],
+        "channelId": presentation_input["channelId"],
+        "covenantId": presentation_input["covenantId"],
+        "voucherDigest": presentation_input["voucherDigest"],
+        "paymentIdentifier": presentation_input["paymentIdentifier"],
+        "nonce": presentation_input["nonce"],
+        "expiresAt": presentation_input["expiresAt"],
+    }))?;
+    expect_eq(
+        String::from_utf8(presentation_preimage.clone())?,
+        json_string(presentation, "preimage")?,
+        "batch presentation preimage",
+    )?;
+    let presentation_digest = Sha256::digest(&presentation_preimage);
+    expect_eq(
+        hex::encode(presentation_digest),
+        json_string(presentation, "digest")?,
+        "batch presentation digest",
+    )?;
+    let presentation_signature = Signature::from_slice(&parse_hex(
+        json_string(presentation, "signature")?,
+        "batch presentation signature",
+    )?)?;
+    let presentation_message = Message::from_digest_slice(&presentation_digest)?;
+    SECP256K1.verify_schnorr(
+        &presentation_signature,
+        &presentation_message,
+        &voucher_public_key,
+    )?;
+
     let commitment = &vector["commitment"];
     let commitment_input = &commitment["input"];
     let active_outpoint = &commitment_input["activeOutpoint"];
     let commitment_voucher = &commitment_input["voucher"];
-    let before = json_u64(commitment_input, "chargedCumulativeBefore")?;
-    let charged = json_u64(commitment_input, "chargedAmount")?;
-    let after = json_u64(commitment_input, "chargedCumulativeAfter")?;
-    if before.checked_add(charged) != Some(after) {
+    let before = json_u64(commitment_input, "authorizedCumulativeBefore")?;
+    let fixed_charge = json_u64(commitment_input, "fixedCharge")?;
+    let after = json_u64(commitment_input, "authorizedCumulativeAfter")?;
+    if before.checked_add(fixed_charge) != Some(after) {
         return Err(anyhow!("batch commitment cumulative accounting mismatch"));
     }
     let claimed = json_u64(commitment_input, "claimedCumulativeAmount")?;
-    let authorized = json_u64(commitment_voucher, "amount")?;
-    if claimed > before || after > authorized {
+    let authorized = json_u64(commitment_voucher, "authorizedCumulativeAmount")?;
+    if claimed > before || after != authorized {
         return Err(anyhow!("batch commitment lifetime ceiling mismatch"));
     }
     if &commitment_input["accepted"] != accepted {
@@ -758,17 +809,22 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         return Err(anyhow!("batch commitment current head mismatch"));
     }
     if commitment_voucher["covenantId"] != voucher_input["covenantId"]
-        || commitment_voucher["amount"] != voucher_input["amount"]
+        || commitment_voucher["authorizedCumulativeAmount"]
+            != voucher_input["authorizedCumulativeAmount"]
         || commitment_voucher["signature"] != voucher["signature"]
     {
         return Err(anyhow!("batch commitment voucher mismatch"));
     }
     let commitment_preimage = concat_bytes(&[
-        sha256_bytes(b"kaspa:x402:batch-commitment:v2"),
+        sha256_bytes(b"kaspa:x402:batch-commitment:v3"),
         parse_hex(json_string(commitment_input, "channelId")?, "channelId")?,
         parse_hex(
             json_string(commitment_voucher, "covenantId")?,
             "commitment covenant id",
+        )?,
+        parse_hex(
+            json_string(commitment_input, "presentationDigest")?,
+            "presentation digest",
         )?,
         parse_hex(
             json_string(commitment_input, "requestFingerprint")?,
@@ -780,16 +836,13 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
             "active outpoint txid",
         )?,
         json_u32(active_outpoint, "index")?.to_le_bytes().to_vec(),
-        json_u64(commitment_voucher, "amount")?
-            .to_le_bytes()
-            .to_vec(),
+        before.to_le_bytes().to_vec(),
+        after.to_le_bytes().to_vec(),
         sha256_bytes(&parse_hex(
             json_string(commitment_voucher, "signature")?,
             "commitment voucher signature",
         )?),
-        charged.to_le_bytes().to_vec(),
-        before.to_le_bytes().to_vec(),
-        after.to_le_bytes().to_vec(),
+        fixed_charge.to_le_bytes().to_vec(),
         json_u64(commitment_input, "claimedCumulativeAmount")?
             .to_le_bytes()
             .to_vec(),
@@ -840,10 +893,9 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
             "batch accounting covenant id",
         )?;
         let funding = json_u64(state, "fundingAmount")?;
-        let charged = json_u64(state, "chargedCumulativeAmount")?;
-        let settled = json_u64(state, "claimedCumulativeAmount")?;
-        let signed = json_u64(state, "signedMaxClaimable")?;
-        if settled > charged || charged > signed || signed.saturating_sub(settled) > funding {
+        let authorized = json_u64(state, "authorizedCumulativeAmount")?;
+        let claimed = json_u64(state, "claimedCumulativeAmount")?;
+        if claimed > authorized || authorized.saturating_sub(claimed) > funding {
             return Err(anyhow!(
                 "batch accounting invariant failed for {state_name}"
             ));
@@ -856,6 +908,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
         "voucher": "sha256-and-schnorr-matched",
         "mutatedVoucherSignature": "rejected",
         "paymentRequirements": "sha256-matched",
+        "presentation": "sha256-and-schnorr-matched",
         "commitment": "sha256-matched",
         "genesisCovenantId": "rusty-kaspa-matched",
         "transactionEvidence": "separate-tx-v1-chain",
@@ -1834,12 +1887,6 @@ fn json_u64(value: &serde_json::Value, field: &str) -> Result<u64> {
     json_string(value, field)?
         .parse::<u64>()
         .with_context(|| format!("{field} must be a uint64 decimal string"))
-}
-
-fn json_u64_number(value: &serde_json::Value, field: &str) -> Result<u64> {
-    value[field]
-        .as_u64()
-        .ok_or_else(|| anyhow!("{field} must be an unsigned integer"))
 }
 
 fn execute_kip10_input(tx: &Transaction, utxo: &UtxoEntry) -> Result<()> {

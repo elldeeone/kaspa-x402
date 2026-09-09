@@ -746,7 +746,7 @@ function classifyRequirementEntry(
   }
   if (
     entry.scheme === "batch-settlement" &&
-    !BATCH_AMOUNT_DECIMAL_PATTERN.test(entry.amount)
+    (!BATCH_AMOUNT_DECIMAL_PATTERN.test(entry.amount) || entry.amount === "0")
   ) {
     return "invalid_kaspa_x402_amount";
   }
@@ -827,8 +827,10 @@ function classifyKaspaPaymentPayload(value: unknown): KaspaX402ErrorCode {
   )
     return "invalid_kaspa_signature";
   if (
-    voucher?.amount !== undefined &&
-    !BATCH_AMOUNT_DECIMAL_PATTERN.test(String(voucher.amount))
+    voucher?.authorizedCumulativeAmount !== undefined &&
+    !BATCH_AMOUNT_DECIMAL_PATTERN.test(
+      String(voucher.authorizedCumulativeAmount),
+    )
   )
     return "invalid_kaspa_x402_amount";
   if (
@@ -858,7 +860,7 @@ function classifySettlementResponse(value: unknown): KaspaX402ErrorCode {
 
 function isExpectedBindingForScheme(scheme: string, binding: unknown): boolean {
   if (scheme === "exact") return binding === "kaspa-exact-v2";
-  return scheme === "batch-settlement" && binding === "kaspa-escrow-v2";
+  return scheme === "batch-settlement" && binding === "kaspa-escrow-v3";
 }
 
 function isNonzeroHash32(value: unknown): boolean {

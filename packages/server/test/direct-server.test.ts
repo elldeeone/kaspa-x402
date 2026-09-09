@@ -4,6 +4,8 @@ import {
   MCP_PAYMENT_META_KEY,
   MCP_PAYMENT_RESPONSE_META_KEY,
   X402_VERSION,
+  batchPaymentRequirementsHash,
+  batchPresentationDigest,
   channelId,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -319,7 +321,7 @@ describe("direct-mode server", () => {
       "75",
     ]);
     expect(required.accepts[0]?.extra.binding).toBe("kaspa-exact-v2");
-    expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v2");
+    expect(required.accepts[1]?.extra.binding).toBe("kaspa-escrow-v3");
   });
 
   it("preserves batch fallback when an additive exact head is unavailable", async () => {
@@ -352,7 +354,7 @@ describe("direct-mode server", () => {
     expect(required.accepts.map((requirement) => requirement.scheme)).toEqual([
       "batch-settlement",
     ]);
-    expect(required.accepts[0]?.extra.binding).toBe("kaspa-escrow-v2");
+    expect(required.accepts[0]?.extra.binding).toBe("kaspa-escrow-v3");
   });
 
   it("returns MCP payment requirements for unpaid tool calls", async () => {
@@ -2387,7 +2389,7 @@ describe("direct-mode server", () => {
       requestWithPayment(payment.payload),
       async () => ({
         body: "secret",
-        chargedAmount: "70",
+        chargedAmount: "100",
       }),
     );
 
@@ -2395,14 +2397,14 @@ describe("direct-mode server", () => {
     expect(response.body).toBe("secret");
     expect(response.headers[PAYMENT_RESPONSE_HEADER]).toBeTruthy();
     const stored = await setup.store.loadChannel(payment.channelId);
-    expect(stored?.chargedCumulativeAmount).toBe("70");
+    expect(stored?.chargedCumulativeAmount).toBe("100");
     expect(stored?.signedMaxClaimable).toBe("100");
     expect(stored?.lastCommitmentId).toMatch(/^[0-9a-f]{64}$/);
     const commitment = await setup.store.loadCommitment(
       stored!.lastCommitmentId!,
     );
-    expect(commitment?.chargedAmount).toBe("70");
-    expect(commitment?.chargedCumulativeAfter).toBe("70");
+    expect(commitment?.chargedAmount).toBe("100");
+    expect(commitment?.chargedCumulativeAfter).toBe("100");
     expect(commitment?.response.status).toBe(200);
   });
 
@@ -2481,13 +2483,13 @@ describe("direct-mode server", () => {
 
     const response = await setup.server.handlePaidRequest(
       requestWithPayment(voucher),
-      async () => ({ body: "next", chargedAmount: "80" }),
+      async () => ({ body: "next", chargedAmount: "100" }),
     );
 
     expect(response.status).toBe(200);
     expect(response.body).toBe("next");
     const stored = await requireChannel(setup.store, deposit.channelId);
-    expect(stored.chargedCumulativeAmount).toBe("180");
+    expect(stored.chargedCumulativeAmount).toBe("200");
     expect(stored.signedMaxClaimable).toBe("200");
   });
 
@@ -2524,7 +2526,7 @@ describe("direct-mode server", () => {
 
     const response = await setup.server.handlePaidRequest(
       requestWithPayment(topUp.payload),
-      async () => ({ body: "topped", chargedAmount: "80" }),
+      async () => ({ body: "topped", chargedAmount: "100" }),
     );
 
     expect(response.status).toBe(200);
@@ -2532,7 +2534,7 @@ describe("direct-mode server", () => {
     const stored = await requireChannel(setup.store, deposit.channelId);
     expect(stored.activeOutpoint.txid).toBe(TOP_UP_TX);
     expect(stored.fundingAmount).toBe("1200");
-    expect(stored.chargedCumulativeAmount).toBe("180");
+    expect(stored.chargedCumulativeAmount).toBe("200");
     expect(stored.signedMaxClaimable).toBe("200");
   });
 
@@ -2629,6 +2631,83 @@ describe("direct-mode server", () => {
     ).resolves.toBeUndefined();
   });
 
+  it("rejects a captured batch presentation replayed against a different request", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    const request = requestWithPayment(payment.payload, {
+      body: { operation: "first" },
+    });
+    request.body = { operation: "second" };
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(request, async () => {
+      executed = true;
+      return { chargedAmount: "100" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects expired batch presentations", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    if (payment.payload.payload.type !== "deposit-voucher") {
+      throw new Error("expected deposit-voucher");
+    }
+    payment.payload.payload.presentation.expiresAt =
+      "2026-01-01T00:00:00.000Z";
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload),
+      async () => {
+        executed = true;
+        return { chargedAmount: "100" };
+      },
+    );
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
+    ).resolves.toBeUndefined();
+  });
+
+  it("rejects bad batch presentation signatures", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    const request = requestWithPayment(payment.payload);
+    const encoded = request.headers[PAYMENT_SIGNATURE_HEADER];
+    const captured = JSON.parse(
+      Buffer.from(encoded, "base64").toString("utf8"),
+    ) as PaymentPayload;
+    if (
+      captured.payload.type !== "deposit-voucher" &&
+      captured.payload.type !== "voucher"
+    ) {
+      throw new Error("expected voucher payment");
+    }
+    captured.payload.presentation.signature = "ff".repeat(64);
+    request.headers[PAYMENT_SIGNATURE_HEADER] =
+      encodePaymentSignatureHeader(captured);
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(request, async () => {
+      executed = true;
+      return { chargedAmount: "100" };
+    });
+
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(
+      setup.store.loadChannel(payment.channelId),
+    ).resolves.toBeUndefined();
+  });
+
   it("rejects payments for the wrong funding outpoint", async () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
@@ -2699,7 +2778,7 @@ describe("direct-mode server", () => {
       requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
-        return { body: "cached", chargedAmount: "50" };
+        return { body: "cached", chargedAmount: "100" };
       },
     );
     const second = await setup.server.handlePaidRequest(
@@ -2725,7 +2804,7 @@ describe("direct-mode server", () => {
       requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
-        return { body: "cached", chargedAmount: "50" };
+        return { body: "cached", chargedAmount: "100" };
       },
     );
     const second = await setup.server.handlePaidRequest(
@@ -2744,7 +2823,7 @@ describe("direct-mode server", () => {
     );
     expect(executions).toBe(1);
     const stored = await requireChannel(setup.store, payment.channelId);
-    expect(stored.chargedCumulativeAmount).toBe("50");
+    expect(stored.chargedCumulativeAmount).toBe("100");
     expect(stored.signedMaxClaimable).toBe("100");
   });
 
@@ -2754,7 +2833,7 @@ describe("direct-mode server", () => {
     await setup.server.handlePaidRequest(
       requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }),
       async () => ({
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -2762,7 +2841,7 @@ describe("direct-mode server", () => {
     await setup.server.handlePaidRequest(
       requestWithPayment(voucher, { requestHash: "bb".repeat(32) }),
       async () => ({
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
     let executed = false;
@@ -2790,7 +2869,7 @@ describe("direct-mode server", () => {
       requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
-        return { body: "cached", chargedAmount: "50" };
+        return { body: "cached", chargedAmount: "100" };
       },
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -2808,7 +2887,7 @@ describe("direct-mode server", () => {
     expect(second.body).toEqual({ error: "invalid_transaction_state" });
     expect(executions).toBe(1);
     const stored = await requireChannel(setup.store, deposit.channelId);
-    expect(stored.chargedCumulativeAmount).toBe("50");
+    expect(stored.chargedCumulativeAmount).toBe("100");
   });
 
   it("does not return cached content for a different payment payload", async () => {
@@ -2820,7 +2899,7 @@ describe("direct-mode server", () => {
       requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
       async () => ({
         body: "cached",
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
     const tampered = structuredClone(payment.payload);
@@ -2851,7 +2930,7 @@ describe("direct-mode server", () => {
       requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
       async () => ({
         body: "cached",
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
 
@@ -2878,7 +2957,7 @@ describe("direct-mode server", () => {
         requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
-          return { body: "durable", chargedAmount: "50" };
+          return { body: "durable", chargedAmount: "100" };
         },
       );
 
@@ -2891,7 +2970,7 @@ describe("direct-mode server", () => {
     await expect(
       setup.store.loadChannel(payment.channelId),
     ).resolves.toMatchObject({
-      chargedCumulativeAmount: "50",
+      chargedCumulativeAmount: "100",
     });
   });
 
@@ -2954,7 +3033,7 @@ describe("direct-mode server", () => {
     await setup.server.handlePaidRequest(
       requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
       async () => ({
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
 
@@ -2987,14 +3066,14 @@ describe("direct-mode server", () => {
         requestWithPayment(first.payload, { requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
-          return { chargedAmount: "50" };
+          return { chargedAmount: "100" };
         },
       ),
       setup.server.handlePaidRequest(
         requestWithPayment(second.payload, { requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
-          return { chargedAmount: "50" };
+          return { chargedAmount: "100" };
         },
       ),
     ]);
@@ -3017,7 +3096,7 @@ describe("direct-mode server", () => {
     await setup.server.handlePaidRequest(
       requestWithPayment(first.payload, { requestHash: "aa".repeat(32) }),
       async () => ({
-        chargedAmount: "50",
+        chargedAmount: "100",
       }),
     );
 
@@ -3120,12 +3199,12 @@ describe("direct-mode server", () => {
 
     const response = await setup.server.handlePaidRequest(
       requestWithPayment(retry),
-      async () => ({ chargedAmount: "25" }),
+      async () => ({ chargedAmount: "100" }),
     );
 
     expect(response.status).toBe(200);
     const updated = await requireChannel(setup.store, deposit.channelId);
-    expect(updated.chargedCumulativeAmount).toBe("125");
+    expect(updated.chargedCumulativeAmount).toBe("200");
   });
 
   it("accepts custom per-request payment amounts emitted by the server", async () => {
@@ -3254,7 +3333,7 @@ describe("direct-mode server", () => {
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
       requestWithPayment(deposit.payload),
-      async () => ({ chargedAmount: "70" }),
+      async () => ({ chargedAmount: "100" }),
     );
     const retired = await requireChannel(setup.store, deposit.channelId);
     await setup.store.saveChannel({ ...retired, status: "retired" });
@@ -3275,7 +3354,7 @@ describe("direct-mode server", () => {
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
       requestWithPayment(deposit.payload),
-      async () => ({ chargedAmount: "70" }),
+      async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
     await setup.store.saveChannel({ ...channel, status: "retired" });
@@ -3517,7 +3596,7 @@ describe("direct-mode server", () => {
       claimBuilder: {
         async buildClaimTransaction({ channel, claimAmount }) {
           const transactionId = claimTransactionIds[claimIndex++]!;
-          const settledTotal = (
+          const claimedCumulativeAmount = (
             BigInt(channel.claimedCumulativeAmount) + BigInt(claimAmount)
           ).toString();
           return {
@@ -3527,7 +3606,7 @@ describe("direct-mode server", () => {
             continuationOutpoint: { txid: transactionId, index: 1 },
             continuationScriptPublicKey: deriveEscrow(
               channel.channelConfig,
-              settledTotal,
+              claimedCumulativeAmount,
             ).activeScriptPublicKey,
             continuationFundingAmount: (
               BigInt(channel.fundingAmount) - BigInt(claimAmount)
@@ -4414,6 +4493,11 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         return voucher.signature === `${digest}${digest}`;
       },
     },
+    batchPresentationVerifier: {
+      verifyPresentation({ digest, signature }) {
+        return signature === `${digest}${digest}`;
+      },
+    },
     exactProfile: "standard-native",
     ...serverOverrides,
     exactTransactionVerifier: {
@@ -4754,7 +4838,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v3",
+    templateId: "kaspa-x402-escrow-v4",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,
@@ -4793,6 +4877,14 @@ function makeDepositPayment(
         fundingAmountSompi: fundingAmount,
         activeScriptPublicKey: derived.activeScriptPublicKey,
         voucher,
+        presentation: signBatchPresentation({
+          accepted,
+          channelId: id,
+          covenantId: voucher.covenantId,
+          voucher,
+          requestFingerprint: testBatchRequestFingerprint(accepted),
+          paymentIdentifier: options.paymentIdentifier ?? null,
+        }),
       },
       ...(options.paymentIdentifier
         ? paymentIdentifierExtension(options.paymentIdentifier)
@@ -4821,6 +4913,11 @@ function makeVoucherPayment(
     (BigInt(channel.signedMaxClaimable) > BigInt(requiredAmount)
       ? channel.signedMaxClaimable
       : requiredAmount);
+  const voucher = signVoucher({
+    network: accepted.network,
+    covenantId: channel.covenantId,
+    amount,
+  });
   return {
     x402Version: X402_VERSION,
     accepted,
@@ -4830,10 +4927,14 @@ function makeVoucherPayment(
       clientPublicKey: channel.channelConfig.clientPublicKey,
       fundingOutpoint: channel.activeOutpoint,
       activeScriptPublicKey: channel.activeScriptPublicKey,
-      voucher: signVoucher({
-        network: accepted.network,
+      voucher,
+      presentation: signBatchPresentation({
+        accepted,
+        channelId: channel.channelId,
         covenantId: channel.covenantId,
-        amount,
+        voucher,
+        requestFingerprint: testBatchRequestFingerprint(accepted),
+        paymentIdentifier: options.paymentIdentifier ?? null,
       }),
     },
     ...(options.paymentIdentifier
@@ -4852,6 +4953,36 @@ function requestWithPayment(
     body?: unknown;
   } = {},
 ) {
+  let requestPayment = paymentPayload;
+  if (
+    paymentPayload.accepted.scheme === "batch-settlement" &&
+    (paymentPayload.payload.type === "deposit-voucher" ||
+      paymentPayload.payload.type === "voucher")
+  ) {
+    requestPayment = structuredClone(paymentPayload);
+    if (
+      requestPayment.payload.type !== "deposit-voucher" &&
+      requestPayment.payload.type !== "voucher"
+    ) {
+      throw new Error("expected voucher payment");
+    }
+    const unsigned = {
+      ...requestPayment.payload.presentation,
+      requestFingerprint:
+        options.requestHash ??
+        testBatchRequestFingerprint(
+          requestPayment.accepted as BatchPaymentRequirements,
+          options.body,
+        ),
+      paymentIdentifier: testPaymentIdentifier(requestPayment),
+    };
+    const digest = batchPresentationDigest(unsigned);
+    requestPayment.payload.presentation = {
+      ...unsigned,
+      digest,
+      signature: `${digest}${digest}`,
+    };
+  }
   return {
     url: RESOURCE.url,
     resource: RESOURCE,
@@ -4861,7 +4992,7 @@ function requestWithPayment(
     paymentSchemes: options.paymentSchemes,
     requestHash: options.requestHash,
     headers: {
-      [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload),
+      [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(requestPayment),
     },
   };
 }
@@ -4915,7 +5046,7 @@ function paymentIdentifierExtension(id: string) {
 
 function deriveEscrow(
   channelConfig: ChannelConfig,
-  settledTotal = "0",
+  claimedCumulativeAmount = "0",
 ): {
   escrowAddress: string;
   activeScriptPublicKey: string;
@@ -4944,7 +5075,7 @@ function deriveEscrow(
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
-    settledTotal,
+    claimedCumulativeAmount,
   };
   const script = escrowScriptPublicKey(params);
   return {
@@ -4961,12 +5092,67 @@ function signVoucher(input: {
   amount: string;
   badSignature?: boolean;
 }) {
-  const digest = voucherDigest(input);
+  const digest = voucherDigest({
+    network: input.network,
+    covenantId: input.covenantId,
+    authorizedCumulativeAmount: input.amount,
+  });
   return {
     covenantId: input.covenantId,
-    amount: input.amount,
+    authorizedCumulativeAmount: input.amount,
     signature: input.badSignature ? "ff".repeat(64) : `${digest}${digest}`,
   };
+}
+
+function testBatchRequestFingerprint(
+  accepted: BatchPaymentRequirements,
+  body?: unknown,
+): Hash32Hex {
+  return sha256Hex(
+    stableStringify({
+      method: "GET",
+      url: RESOURCE.url,
+      body: body ?? null,
+      paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
+    }),
+  );
+}
+
+function testPaymentIdentifier(paymentPayload: PaymentPayload): string | null {
+  const extension = paymentPayload.extensions?.["payment-identifier"] as
+    | { info?: { id?: unknown } }
+    | undefined;
+  return typeof extension?.info?.id === "string" ? extension.info.id : null;
+}
+
+function signBatchPresentation(input: {
+  accepted: BatchPaymentRequirements;
+  channelId: Hash32Hex;
+  covenantId: Hash32Hex;
+  voucher: { authorizedCumulativeAmount: string; signature: string };
+  requestFingerprint: Hash32Hex;
+  paymentIdentifier: string | null;
+}) {
+  const unsigned = {
+    version: "kaspa-x402-batch-presentation-v1" as const,
+    requestFingerprint: input.requestFingerprint,
+    acceptedRequirementsHash: batchPaymentRequirementsHash(input.accepted),
+    securityContextHash: input.accepted.extra.securityContextHash,
+    channelId: input.channelId,
+    covenantId: input.covenantId,
+    voucherDigest: voucherDigest({
+      network: input.accepted.network,
+      covenantId: input.covenantId,
+      authorizedCumulativeAmount: input.voucher.authorizedCumulativeAmount,
+    }),
+    paymentIdentifier: input.paymentIdentifier,
+    nonce: SALT,
+    expiresAt: new Date(
+      Date.now() + input.accepted.maxTimeoutSeconds * 1_000 - 1_000,
+    ).toISOString(),
+  };
+  const digest = batchPresentationDigest(unsigned);
+  return { ...unsigned, digest, signature: `${digest}${digest}` };
 }
 
 function hexBytes(hex: string): Uint8Array {

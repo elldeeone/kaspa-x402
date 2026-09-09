@@ -4,6 +4,9 @@ import {
   applyBatchClaimAccounting,
   assertMainnetAllowed,
   assertBatchVoucherReserve,
+  batchPresentationDigest,
+  batchPresentationDigestInput,
+  batchPresentationExpiryError,
   batchLaneAccounting,
   batchCommitmentId,
   batchPaymentRequirementsHash,
@@ -128,7 +131,7 @@ export class DirectModeServer {
   constructor(config: DirectModeServerConfig) {
     this.#config = {
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v3",
+      templateId: "kaspa-x402-escrow-v4",
       maxTimeoutSeconds: 60,
       acceptedFinality: "accepted",
       exactProfile: "standard-native",
@@ -304,7 +307,7 @@ export class DirectModeServer {
         network: this.#config.network,
         extra: {
           asset: this.#config.asset,
-          binding: "kaspa-escrow-v2",
+          binding: "kaspa-escrow-v3",
           templateId: this.#config.templateId,
           modes: this.#config.claimBuilder
             ? ["verify", "settle", "claim"]
@@ -629,22 +632,11 @@ export class DirectModeServer {
           try {
             chargedAmount =
               handlerResult.chargedAmount ?? verified.accepted.amount;
-            if (
-              parseSompiString(chargedAmount) >
-              parseSompiString(verified.accepted.amount)
-            ) {
+            parseSompiString(chargedAmount);
+            if (chargedAmount !== verified.accepted.amount) {
               throw new KaspaX402Error(
                 "invalid_kaspa_settlement_response",
-                "handler charge exceeds accepted amount",
-              );
-            }
-            if (
-              verified.scheme === "exact" &&
-              chargedAmount !== verified.accepted.amount
-            ) {
-              throw new KaspaX402Error(
-                "invalid_kaspa_settlement_response",
-                "exact settlement amount must equal the accepted amount",
+                "settlement amount must equal the accepted fixed charge",
               );
             }
           } catch (error) {
@@ -1465,6 +1457,7 @@ export class DirectModeServer {
         paymentPayload,
         accepted,
         payload,
+        requestFingerprint,
       );
     }
     if (payload.type === "voucher") {
@@ -1473,6 +1466,7 @@ export class DirectModeServer {
         paymentPayload,
         accepted,
         payload,
+        requestFingerprint,
       );
     }
     throw new KaspaX402Error(
@@ -1752,6 +1746,7 @@ export class DirectModeServer {
     paymentPayload: PaymentPayload,
     accepted: BatchPaymentRequirements,
     payload: DepositVoucherPayload,
+    requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
     await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
@@ -1910,10 +1905,17 @@ export class DirectModeServer {
       accepted,
       payload.voucher,
     );
+    await this.#verifyBatchPresentation(
+      initial,
+      accepted,
+      paymentPayload,
+      requestFingerprint,
+      payload.voucher,
+    );
     return {
       scheme: "batch-settlement",
       paymentRequired,
-      paymentPayload,
+      paymentPayload: paymentPayload as VerifiedBatchPayment["paymentPayload"],
       accepted,
       channel: initial,
       commitExpectedChannel: existing ?? initial,
@@ -1927,6 +1929,7 @@ export class DirectModeServer {
     paymentPayload: PaymentPayload,
     accepted: BatchPaymentRequirements,
     payload: VoucherPayload,
+    requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     const channel = await this.#requireChannel(payload.channelId);
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
@@ -1967,10 +1970,17 @@ export class DirectModeServer {
       accepted,
       payload.voucher,
     );
+    await this.#verifyBatchPresentation(
+      channel,
+      accepted,
+      paymentPayload,
+      requestFingerprint,
+      payload.voucher,
+    );
     return {
       scheme: "batch-settlement",
       paymentRequired,
-      paymentPayload,
+      paymentPayload: paymentPayload as VerifiedBatchPayment["paymentPayload"],
       accepted,
       channel,
       commitExpectedChannel: channel,
@@ -1995,7 +2005,7 @@ export class DirectModeServer {
       channel,
       accepted.amount,
     );
-    if (voucher.amount !== requiredVoucherAmount) {
+    if (voucher.authorizedCumulativeAmount !== requiredVoucherAmount) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_amount",
         "voucher amount does not match required cumulative amount",
@@ -2003,7 +2013,7 @@ export class DirectModeServer {
     }
     const authorized = {
       ...channel,
-      signedMaxClaimable: voucher.amount,
+      signedMaxClaimable: voucher.authorizedCumulativeAmount,
       voucherSignature: voucher.signature,
     };
     validateChannelAccounting(authorized);
@@ -2011,7 +2021,7 @@ export class DirectModeServer {
     const input = {
       network: channel.channelConfig.network,
       covenantId: channel.covenantId,
-      amount: voucher.amount,
+      authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     };
     const verified = await this.#config.voucherVerifier.verifyVoucher({
       channelId: channel.channelId,
@@ -2025,6 +2035,84 @@ export class DirectModeServer {
         "invalid_kaspa_signature",
         "voucher signature was rejected",
       );
+  }
+
+  async #verifyBatchPresentation(
+    channel: ServerChannelRecord,
+    accepted: BatchPaymentRequirements,
+    paymentPayload: PaymentPayload,
+    requestFingerprint: Hash32Hex,
+    voucher: Voucher,
+  ): Promise<void> {
+    const payload = paymentPayload.payload;
+    if (payload.type !== "deposit-voucher" && payload.type !== "voucher") {
+      throw new KaspaX402Error(
+        "invalid_kaspa_payment_payload_type",
+        "batch presentation requires a voucher payment payload",
+      );
+    }
+    const presentation = payload.presentation;
+    const expectedVoucherDigest = voucherDigest({
+      network: channel.channelConfig.network,
+      covenantId: channel.covenantId,
+      authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
+    });
+    const expectedPaymentIdentifier = readPaymentIdentifier(paymentPayload) ?? null;
+    if (
+      presentation.version !== "kaspa-x402-batch-presentation-v1" ||
+      presentation.requestFingerprint.toLowerCase() !==
+        requestFingerprint.toLowerCase() ||
+      presentation.acceptedRequirementsHash.toLowerCase() !==
+        batchPaymentRequirementsHash(accepted) ||
+      presentation.securityContextHash.toLowerCase() !==
+        accepted.extra.securityContextHash.toLowerCase() ||
+      presentation.channelId.toLowerCase() !== channel.channelId.toLowerCase() ||
+      presentation.covenantId.toLowerCase() !==
+        channel.covenantId.toLowerCase() ||
+      presentation.voucherDigest.toLowerCase() !== expectedVoucherDigest ||
+      presentation.paymentIdentifier !== expectedPaymentIdentifier
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "batch presentation does not bind the selected request, terms, identity, channel, covenant, and voucher",
+      );
+    }
+    const expectedDigest = batchPresentationDigest(
+      batchPresentationDigestInput(presentation),
+    );
+    if (presentation.digest.toLowerCase() !== expectedDigest) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "batch presentation digest does not match its signed fields",
+      );
+    }
+    const assertLive = () => {
+      const expiryError = batchPresentationExpiryError({
+        maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+        expiresAt: presentation.expiresAt,
+      });
+      if (expiryError) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_signature",
+          `batch presentation expiry is invalid: ${expiryError}`,
+        );
+      }
+    };
+    assertLive();
+    const verified = await this.#config.batchPresentationVerifier.verifyPresentation({
+      channelId: channel.channelId,
+      clientPublicKey: channel.channelConfig.clientPublicKey,
+      digest: expectedDigest,
+      signature: presentation.signature,
+      presentation,
+    });
+    if (!verified) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        "batch presentation signature was rejected",
+      );
+    }
+    assertLive();
   }
 
   async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
@@ -2243,7 +2331,7 @@ export class DirectModeServer {
       return verified;
     const channel: ServerChannelRecord = {
       ...verified.channel,
-      signedMaxClaimable: verified.voucher.amount,
+      signedMaxClaimable: verified.voucher.authorizedCumulativeAmount,
       voucherSignature: verified.voucher.signature,
       status: "active",
     };
@@ -2492,18 +2580,19 @@ export class DirectModeServer {
     const commitmentId = batchCommitmentId({
       accepted: verified.accepted,
       channelId: verified.channel.channelId,
+      presentationDigest: verified.paymentPayload.payload.presentation.digest,
       requestFingerprint: fingerprint,
       activeOutpoint: verified.channel.activeOutpoint,
       voucher: verified.voucher,
-      chargedAmount,
-      chargedCumulativeBefore: verified.channel.chargedCumulativeAmount,
-      chargedCumulativeAfter: chargedCumulativeAmount,
+      fixedCharge: chargedAmount,
+      authorizedCumulativeBefore: verified.channel.chargedCumulativeAmount,
+      authorizedCumulativeAfter: chargedCumulativeAmount,
       claimedCumulativeAmount: verified.channel.claimedCumulativeAmount,
     });
     const channel: ServerChannelRecord = {
       ...verified.channel,
       chargedCumulativeAmount,
-      signedMaxClaimable: verified.voucher.amount,
+      signedMaxClaimable: verified.voucher.authorizedCumulativeAmount,
       voucherSignature: verified.voucher.signature,
       lastCommitmentId: commitmentId,
       status: "active",
@@ -2683,7 +2772,8 @@ export class DirectModeServer {
       return undefined;
     }
     if (
-      record.voucher.amount !== payload.voucher.amount ||
+      record.voucher.authorizedCumulativeAmount !==
+        payload.voucher.authorizedCumulativeAmount ||
       record.voucher.signature !== payload.voucher.signature
     )
       return undefined;
@@ -2794,7 +2884,6 @@ export class DirectModeServer {
       ...(reusableChannel
         ? {
             channel: reusableChannel,
-            voucherState: latestVoucher(reusableChannel),
           }
         : {}),
     });
@@ -2861,7 +2950,6 @@ export class DirectModeServer {
         this.#config.allowRollingRefundTimeoutDaa &&
         paymentPayload.payload.type === "deposit-voucher" &&
         !acceptedExtra.channelState &&
-        !acceptedExtra.voucherState &&
         batchRequirementMatchesRoute(this.#config, accepted, paymentAmount)
       ) {
         return {
@@ -2877,7 +2965,7 @@ export class DirectModeServer {
         scheme: "batch-settlement",
       });
     }
-    if (!acceptedExtra.channelState && !acceptedExtra.voucherState) {
+    if (!acceptedExtra.channelState) {
       if (
         batchRequirementMatchesRoute(this.#config, accepted, paymentAmount) &&
         accepted.extra.refundTimeoutDaa ===
@@ -2902,7 +2990,6 @@ export class DirectModeServer {
       amount: paymentAmount,
       scheme: "batch-settlement",
       channel,
-      voucherState: latestVoucher(channel),
     });
   }
 
@@ -3062,7 +3149,7 @@ function makeAcceptedRequirement(
     payTo: config.payTo,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     extra: {
-      binding: "kaspa-escrow-v2",
+      binding: "kaspa-escrow-v3",
       templateId: config.templateId,
       serverPublicKey: config.serverPublicKey,
       minDepositSompi: advertisedBatchMinimumDeposit(config, amount),
@@ -3070,11 +3157,18 @@ function makeAcceptedRequirement(
       refundTimeoutDaa:
         options.channel?.channelConfig.refundTimeoutDaa ??
         config.refundTimeoutDaa,
+      securityContextHash:
+        options.securityContextHash ??
+        sha256Hex(
+          stableStringify({
+            scope: "kaspa:x402:security-context:v1",
+            resource: options.resource,
+          }),
+        ),
       ...(config.claimPolicy ? { claimPolicy: config.claimPolicy } : {}),
       ...(options.channel
         ? { channelState: channelState(options.channel) }
         : {}),
-      ...(options.voucherState ? { voucherState: options.voucherState } : {}),
     },
   };
 }
@@ -3570,7 +3664,7 @@ function batchRequirementMatchesRoute(
     accepted.asset === "KAS" &&
     accepted.payTo === config.payTo &&
     accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
-    accepted.extra.binding === "kaspa-escrow-v2" &&
+    accepted.extra.binding === "kaspa-escrow-v3" &&
     accepted.extra.templateId === config.templateId &&
     accepted.extra.serverPublicKey === config.serverPublicKey &&
     accepted.extra.minDepositSompi ===
@@ -3634,7 +3728,7 @@ function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
 function deriveServerEscrow(
   config: ResolvedServerConfig,
   channelConfig: ChannelConfig,
-  settledTotal: SompiString = "0",
+  claimedCumulativeAmount: SompiString = "0",
 ): { escrowAddress: string; activeScriptPublicKey: string } {
   const payoutScriptPublicKeyHash = scriptPublicKeyHash(
     config.addressCodec.scriptPublicKeyForAddress(
@@ -3655,7 +3749,7 @@ function deriveServerEscrow(
     payoutScriptPublicKeyHash,
     refundScriptPublicKeyHash,
     timeoutDaa: channelConfig.refundTimeoutDaa,
-    settledTotal,
+    claimedCumulativeAmount,
   };
   const scriptPublicKey = escrowScriptPublicKey(params);
   return {
@@ -3673,9 +3767,8 @@ function channelState(channel: ServerChannelRecord) {
     activeOutpoint: channel.activeOutpoint,
     activeScriptPublicKey: channel.activeScriptPublicKey,
     fundingAmount: channel.fundingAmount,
-    chargedCumulativeAmount: channel.chargedCumulativeAmount,
+    authorizedCumulativeAmount: channel.signedMaxClaimable,
     claimedCumulativeAmount: channel.claimedCumulativeAmount,
-    signedMaxClaimable: channel.signedMaxClaimable,
   };
 }
 
@@ -3892,16 +3985,6 @@ async function markBatchHandlerRecoveryRequiredSafely(
   } catch {
     // A post-write transport error may mean the recovery marker is durable.
   }
-}
-
-function latestVoucher(channel: ServerChannelRecord): Voucher | undefined {
-  return channel.voucherSignature
-    ? {
-        covenantId: channel.covenantId,
-        amount: channel.signedMaxClaimable,
-        signature: channel.voucherSignature,
-      }
-    : undefined;
 }
 
 function claimAttemptId(

@@ -23,11 +23,11 @@ async function callTool(params) {
     async ({ params: paidParams }) => {
       const symbol = typeof paidParams.arguments?.symbol === "string" ? paidParams.arguments.symbol : "KAS";
       return {
-        chargedAmount: "175000",
+        chargedAmount: "250000",
         result: {
           structuredContent: {
             symbol,
-            price: "175000",
+            price: "250000",
           },
           content: [{ type: "text", text: `paid quote for ${symbol}` }],
         },

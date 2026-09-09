@@ -480,6 +480,7 @@ async function createGateway(
         : restChainProvider,
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
+    batchPresentationVerifier: new NativeVoucherVerifier(),
     exactTransactionVerifier: new RestExactTransactionVerifier(rest),
     exactHeadReconciler: new RestExactHeadReconciler(rest),
     topUpVerifier: restChainProvider,

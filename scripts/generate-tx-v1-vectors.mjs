@@ -33,10 +33,10 @@ const PAYOUT_SCRIPT_PUBLIC_KEY = `000020${PAYOUT_PUBLIC_KEY}ac`;
 // These values are the exact execution measurements returned by the pinned
 // full Rusty Kaspa TransactionValidator harness. During a contract change the
 // harness rejects stale values and reports the newly measured units.
-const FIRST_CLAIM_SCRIPT_UNITS = 208_020;
-const SECOND_CLAIM_SCRIPT_UNITS = 208_024;
-const TOP_UP_SCRIPT_UNITS = 107_127;
-const REFUND_SCRIPT_UNITS = 102_586;
+const FIRST_CLAIM_SCRIPT_UNITS = 208_362;
+const SECOND_CLAIM_SCRIPT_UNITS = 208_366;
+const TOP_UP_SCRIPT_UNITS = 207_737;
+const REFUND_SCRIPT_UNITS = 102_700;
 
 const escrowBaseParams = {
   clientPublicKey: CLIENT_PUBLIC_KEY,
@@ -46,11 +46,11 @@ const escrowBaseParams = {
   refundScriptPublicKeyHash: sha256HexBytes(CLIENT_SCRIPT_PUBLIC_KEY),
   timeoutDaa: "123456789",
 };
-const escrowAt = (settledTotal) => {
-  const params = { ...escrowBaseParams, settledTotal };
+const escrowAt = (claimedCumulativeAmount) => {
+  const params = { ...escrowBaseParams, claimedCumulativeAmount };
   const redeemScript = buildEscrowRedeemScript(params);
   return {
-    settledTotal,
+    claimedCumulativeAmount,
     redeemScript,
     scriptPublicKey: serializedScriptPublicKey(escrowScriptPublicKey(params)),
   };
@@ -96,15 +96,15 @@ const consensusValidation = {
 const genesisBuild = buildSignedGenesis();
 const genesis = genesisBuild.expected;
 const covenantId = genesis.covenantId;
-const totalAuthorized = "30000000";
+const authorizedCumulativeAmount = "30000000";
 const voucherSignature = signVoucher({
   network: escrowBaseParams.network,
   covenantId,
-  totalAuthorized,
+  authorizedCumulativeAmount,
 });
 const claim1Build = buildSignedClaim({
   active: genesis.escrow,
-  settledTotal: "0",
+  claimedCumulativeAmount: "0",
   successor: state8m,
   claimAmount: "8000000",
   scriptUnits: FIRST_CLAIM_SCRIPT_UNITS,
@@ -112,7 +112,7 @@ const claim1Build = buildSignedClaim({
 const claim1 = claim1Build.expected;
 const claim2Build = buildSignedClaim({
   active: claim1.continuation,
-  settledTotal: "8000000",
+  claimedCumulativeAmount: "8000000",
   successor: state17m,
   claimAmount: "9000000",
   scriptUnits: SECOND_CLAIM_SCRIPT_UNITS,
@@ -148,7 +148,7 @@ const vectors = [
   vector(
     "vectors/tx-v1/batch-top-up.json",
     "tx-v1-batch-top-up",
-    "Client-authorized top-up preserving the stable covenant id and settled state.",
+    "Client-and-provider-authorized top-up preserving the stable covenant id and claimed state.",
     3,
     topUpBuild,
   ),
@@ -171,9 +171,9 @@ const plan = {
     voucherDigest: voucherDigest({
       network: escrowBaseParams.network,
       covenantId,
-      totalAuthorized,
+      authorizedCumulativeAmount,
     }),
-    totalAuthorized,
+    authorizedCumulativeAmount,
     sequence: vectors.map(({ path: vectorPath, value }) => ({
       step: value.sequence.step,
       path: vectorPath,
@@ -205,7 +205,7 @@ function buildSignedGenesis() {
     escrowAmount: "90000000",
     escrowScriptPublicKey: state0.scriptPublicKey,
     escrowRedeemScript: state0.redeemScript,
-    initialSettledTotal: "0",
+    initialClaimedCumulativeAmount: "0",
     fee: "1000",
   };
   const mass = buildBatchGenesisTxV1Artifact(base).transaction.mass;
@@ -226,7 +226,7 @@ function buildSignedGenesis() {
   return { input, expected: buildBatchGenesisTxV1Artifact(input) };
 }
 
-function buildSignedClaim({ active, settledTotal, successor, claimAmount, scriptUnits }) {
+function buildSignedClaim({ active, claimedCumulativeAmount, successor, claimAmount, scriptUnits }) {
   const base = {
     network: escrowBaseParams.network,
     activeOutpoint: active.outpoint,
@@ -234,8 +234,8 @@ function buildSignedClaim({ active, settledTotal, successor, claimAmount, script
     activeScriptPublicKey: active.scriptPublicKey,
     activeRedeemScript: active.redeemScript,
     covenantId,
-    settledTotal,
-    totalAuthorized,
+    claimedCumulativeAmount,
+    authorizedCumulativeAmount,
     claimAmount,
     successorScriptPublicKey: successor.scriptPublicKey,
     successorRedeemScript: successor.redeemScript,
@@ -267,11 +267,12 @@ function buildSignedTopUp() {
     activeScriptPublicKey: state17m.scriptPublicKey,
     activeRedeemScript: state17m.redeemScript,
     covenantId,
-    settledTotal: "17000000",
+    claimedCumulativeAmount: "17000000",
     successorAmount: "90000000",
     successorScriptPublicKey: state17m.scriptPublicKey,
     successorRedeemScript: state17m.redeemScript,
     clientSignature: "00".repeat(65),
+    providerSignature: "00".repeat(65),
     fundingInputs: [fundingInput("05", 0, "20000000")],
     changeOutputs: [
       { amount: "2999000", scriptPublicKey: CLIENT_SCRIPT_PUBLIC_KEY, covenant: null },
@@ -289,6 +290,10 @@ function buildSignedTopUp() {
     clientSignature: transactionSignature(
       transactionV1Sighash(unsigned.transaction, 0).digest,
       CLIENT_PRIVATE_KEY,
+    ),
+    providerSignature: transactionSignature(
+      transactionV1Sighash(unsigned.transaction, 0).digest,
+      SERVER_PRIVATE_KEY,
     ),
     fundingInputs: [
       {
@@ -348,7 +353,8 @@ function vector(vectorPath, kind, description, step, build) {
           step === 0
             ? null
             : [genesis, claim1, claim2, topUp][step - 1].transactionId,
-        totalAuthorized: step === 1 || step === 2 ? totalAuthorized : null,
+        authorizedCumulativeAmount:
+          step === 1 || step === 2 ? authorizedCumulativeAmount : null,
         voucherSignature: step === 1 || step === 2 ? voucherSignature : null,
       },
       expected: build.expected,

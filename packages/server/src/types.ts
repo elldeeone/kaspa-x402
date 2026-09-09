@@ -1,9 +1,11 @@
 import type {
+  BatchPresentationAuthorization,
   BatchPaymentRequirements,
   ByteHex,
   ChannelConfig,
   ClaimPolicy,
   ChannelState,
+  DepositVoucherPayload,
   ExactPaymentRequirements,
   ExactProfile,
   ExactRequestAuthorization,
@@ -22,6 +24,7 @@ import type {
   SompiString,
   SupportedKind,
   Voucher,
+  VoucherPayload,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
 
@@ -101,6 +104,20 @@ export interface VoucherVerificationRequest {
 export interface VoucherVerifier {
   verifyVoucher(
     request: VoucherVerificationRequest,
+  ): Promise<boolean> | boolean;
+}
+
+export interface BatchPresentationVerificationRequest {
+  channelId: Hash32Hex;
+  clientPublicKey: PublicKeyHex;
+  digest: Hash32Hex;
+  signature: SignatureHex;
+  presentation: BatchPresentationAuthorization;
+}
+
+export interface BatchPresentationVerifier {
+  verifyPresentation(
+    request: BatchPresentationVerificationRequest,
   ): Promise<boolean> | boolean;
 }
 
@@ -720,7 +737,7 @@ export interface DirectModeServerConfig {
   payTo: string;
   serverPublicKey: PublicKeyHex;
   serverPrivateKey?: string;
-  templateId?: "kaspa-x402-escrow-v3";
+  templateId?: "kaspa-x402-escrow-v4";
   minDepositSompi: SompiString;
   /** Deterministic reserve the client must leave beyond its signed claim ceiling. */
   claimReserveSompi: SompiString;
@@ -737,6 +754,7 @@ export interface DirectModeServerConfig {
   chainProvider: ServerChainProvider;
   addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
+  batchPresentationVerifier: BatchPresentationVerifier;
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
@@ -757,11 +775,12 @@ export interface DirectModeServerConfig {
 
 export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;
+  /** Hash of the authenticated tenant/session/capability context for this challenge. */
+  securityContextHash?: Hash32Hex;
   amount?: SompiString;
   scheme?: "exact" | "batch-settlement";
   schemes?: readonly ("exact" | "batch-settlement")[];
   channel?: ServerChannelRecord;
-  voucherState?: Voucher;
   exactHead?: ExactHeadChallenge;
   error?: string;
 }
@@ -813,7 +832,10 @@ export interface ProtectedHandlerResult {
 export interface VerifiedBatchPayment {
   scheme: "batch-settlement";
   paymentRequired: PaymentRequired;
-  paymentPayload: PaymentPayload;
+  paymentPayload: PaymentPayload & {
+    accepted: BatchPaymentRequirements;
+    payload: DepositVoucherPayload | VoucherPayload;
+  };
   accepted: BatchPaymentRequirements;
   channel: ServerChannelRecord;
   commitExpectedChannel: ServerChannelRecord;

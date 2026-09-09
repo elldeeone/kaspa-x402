@@ -3,6 +3,7 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { schnorr } from "@noble/curves/secp256k1.js";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const U64_DECIMAL_PATTERN =
@@ -83,7 +84,7 @@ function isBatchAmountString(value) {
 function expectedBindingForScheme(scheme) {
   return {
     exact: "kaspa-exact-v2",
-    "batch-settlement": "kaspa-escrow-v2",
+    "batch-settlement": "kaspa-escrow-v3",
   }[scheme];
 }
 
@@ -116,7 +117,7 @@ function classifyInvalidValue(schemaId, value) {
     if (!isUint64String(requirement.amount)) return "invalid_kaspa_x402_amount";
     if (
       requirement.scheme === "batch-settlement" &&
-      !isBatchAmountString(requirement.amount)
+      (!isBatchAmountString(requirement.amount) || requirement.amount === "0")
     )
       return "invalid_kaspa_x402_amount";
     if (
@@ -168,8 +169,8 @@ function classifyInvalidValue(schemaId, value) {
     )
       return "invalid_kaspa_signature";
     if (
-      value?.voucher?.amount !== undefined &&
-      !isBatchAmountString(value.voucher.amount)
+      value?.voucher?.authorizedCumulativeAmount !== undefined &&
+      !isBatchAmountString(value.voucher.authorizedCumulativeAmount)
     )
       return "invalid_kaspa_x402_amount";
     if (
@@ -209,16 +210,16 @@ function classifyInvalidValue(schemaId, value) {
 
 function voucherPreimage(input) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:escrow-voucher:v2", "utf8")),
+    sha256(Buffer.from("kaspa:x402:escrow-voucher:v3", "utf8")),
     sha256(Buffer.from(input.network, "utf8")),
     hexToBytes(input.covenantId),
-    le64(input.amount),
+    le64(input.authorizedCumulativeAmount),
   ]);
 }
 
 function channelIdPreimage(input) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:channel:v1", "utf8")),
+    sha256(Buffer.from("kaspa:x402:channel:v2", "utf8")),
     sha256(Buffer.from(input.network, "utf8")),
     sha256(Buffer.from("KAS", "utf8")),
     sha256(Buffer.from(input.templateId, "utf8")),
@@ -232,37 +233,29 @@ function channelIdPreimage(input) {
 }
 
 function batchPaymentRequirementsPreimage(accepted) {
-  return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:batch-payment-requirements:v2", "utf8")),
-    sha256(Buffer.from("batch-settlement", "utf8")),
-    sha256(Buffer.from(accepted.network, "utf8")),
-    sha256(Buffer.from("KAS", "utf8")),
-    le64(accepted.amount),
-    sha256(Buffer.from(accepted.payTo, "utf8")),
-    le64(accepted.maxTimeoutSeconds),
-    sha256(Buffer.from("kaspa-escrow-v2", "utf8")),
-    sha256(Buffer.from(accepted.extra.templateId, "utf8")),
-    hexToBytes(accepted.extra.serverPublicKey),
-    le64(accepted.extra.minDepositSompi),
-    le64(accepted.extra.claimReserveSompi),
-    le64(accepted.extra.refundTimeoutDaa),
-  ]);
+  return Buffer.from(
+    stableStringify({
+      scope: "kaspa:x402:batch-payment-requirements:v3",
+      accepted,
+    }),
+    "utf8",
+  );
 }
 
 function batchCommitmentPreimage(input) {
   return Buffer.concat([
-    sha256(Buffer.from("kaspa:x402:batch-commitment:v2", "utf8")),
+    sha256(Buffer.from("kaspa:x402:batch-commitment:v3", "utf8")),
     hexToBytes(input.channelId),
     hexToBytes(input.voucher.covenantId),
+    hexToBytes(input.presentationDigest),
     hexToBytes(input.requestFingerprint),
     sha256(batchPaymentRequirementsPreimage(input.accepted)),
     hexToBytes(input.activeOutpoint.txid),
     le32(input.activeOutpoint.index),
-    le64(input.voucher.amount),
+    le64(input.authorizedCumulativeBefore),
+    le64(input.authorizedCumulativeAfter),
     sha256(hexToBytes(input.voucher.signature)),
-    le64(input.chargedAmount),
-    le64(input.chargedCumulativeBefore),
-    le64(input.chargedCumulativeAfter),
+    le64(input.fixedCharge),
     le64(input.claimedCumulativeAmount),
   ]);
 }
@@ -333,7 +326,7 @@ function assertTxV1Vector(file, vector, expectedKind) {
   }
   assertTxV1Validation(file, vector.validation);
   const artifact = vector.expected;
-  if (artifact.format !== "kaspa-x402-tx-v1-reference-v2") {
+  if (artifact.format !== "kaspa-x402-tx-v1-reference-v3") {
     throw new Error(`${file}: unexpected tx-v1 artifact format`);
   }
   if (artifact.kind !== expectedKind) {
@@ -991,7 +984,7 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactInteropVector(ajv, file, vector);
       break;
     }
-    case "batch-interop-v2": {
+    case "batch-interop-v3": {
       assertBatchInteropVector(ajv, file, vector, rootDir);
       break;
     }
@@ -1033,6 +1026,41 @@ function assertBatchInteropVector(ajv, file, vector, rootDir) {
   if (!SIGNATURE64_PATTERN.test(vector.voucher.signature)) {
     throw new Error(`${file}: voucher signature must be 64-byte hex`);
   }
+  if (
+    !schnorr.verify(
+      hexToBytes(vector.voucher.signature),
+      hexToBytes(vector.voucher.digest),
+      hexToBytes(vector.voucher.signerPublicKey),
+    )
+  ) {
+    throw new Error(`${file}: voucher signature does not verify`);
+  }
+
+  const presentationPreimage = stableStringify({
+    scope: "kaspa:x402:batch-presentation:v1",
+    ...vector.presentation.input,
+  });
+  assertEqual(
+    presentationPreimage,
+    vector.presentation.preimage,
+    `${file}:presentation.preimage`,
+  );
+  assertEqual(
+    sha256(Buffer.from(presentationPreimage)).toString("hex"),
+    vector.presentation.digest,
+    `${file}:presentation.digest`,
+  );
+  if (
+    vector.presentation.signerPublicKey !== vector.channel.config.clientPublicKey ||
+    !SIGNATURE64_PATTERN.test(vector.presentation.signature) ||
+    !schnorr.verify(
+      hexToBytes(vector.presentation.signature),
+      hexToBytes(vector.presentation.digest),
+      hexToBytes(vector.presentation.signerPublicKey),
+    )
+  ) {
+    throw new Error(`${file}: presentation signature does not verify`);
+  }
 
   assertValid(
     ajv,
@@ -1060,9 +1088,11 @@ function assertBatchInteropVector(ajv, file, vector, rootDir) {
 
   const commitment = vector.commitment.input;
   if (
-    BigInt(commitment.chargedCumulativeBefore) +
-      BigInt(commitment.chargedAmount) !==
-    BigInt(commitment.chargedCumulativeAfter)
+    BigInt(commitment.authorizedCumulativeBefore) +
+      BigInt(commitment.fixedCharge) !==
+      BigInt(commitment.authorizedCumulativeAfter) ||
+    BigInt(commitment.authorizedCumulativeAfter) !==
+      BigInt(commitment.voucher.authorizedCumulativeAmount)
   ) {
     throw new Error(`${file}: commitment cumulative accounting is invalid`);
   }
@@ -1118,13 +1148,23 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
   const accepted = vector.paymentRequirements.value;
   const commitment = vector.commitment.input;
 
-  assertEqual(vector.kind, "batch-interop-v2", `${file}: vector kind`);
+  assertEqual(vector.kind, "batch-interop-v3", `${file}: vector kind`);
   assertEqual(
     vector.scope?.transactionEvidenceIncluded,
     false,
     `${file}: non-transaction scope`,
   );
   assertCovenantId(lineage?.covenantId, `${file}: lineage covenant id`);
+  assertEqual(
+    config.templateId,
+    "kaspa-x402-escrow-v4",
+    `${file}: channel template id`,
+  );
+  assertEqual(
+    accepted.extra.binding,
+    "kaspa-escrow-v3",
+    `${file}: payment requirements binding`,
+  );
 
   assertEqual(
     accepted.network,
@@ -1188,11 +1228,43 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     stableStringify(commitment.voucher),
     stableStringify({
       covenantId: voucher.input.covenantId,
-      amount: voucher.input.amount,
+      authorizedCumulativeAmount:
+        voucher.input.authorizedCumulativeAmount,
       signature: voucher.signature,
     }),
     `${file}: commitment voucher mismatch`,
   );
+  assertEqual(
+    commitment.presentationDigest,
+    vector.presentation.digest,
+    `${file}: commitment presentation digest mismatch`,
+  );
+  for (const field of [
+    "requestFingerprint",
+    "acceptedRequirementsHash",
+    "securityContextHash",
+    "channelId",
+    "covenantId",
+    "voucherDigest",
+  ]) {
+    const expected =
+      field === "acceptedRequirementsHash"
+        ? vector.paymentRequirements.sha256
+        : field === "voucherDigest"
+          ? vector.voucher.digest
+          : field === "requestFingerprint"
+            ? commitment.requestFingerprint
+            : field === "channelId"
+              ? vector.channel.channelId
+              : field === "covenantId"
+                ? lineage.covenantId
+                : accepted.extra.securityContextHash;
+    assertEqual(
+      vector.presentation.input[field],
+      expected,
+      `${file}: presentation ${field} mismatch`,
+    );
+  }
   assertEqual(
     stableStringify(commitment.activeOutpoint),
     stableStringify(lineage.currentHead.outpoint),
@@ -1264,17 +1336,13 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     `${file}: successor script`,
   );
 
-  const chargedAmount = BigInt(commitment.chargedAmount);
+  const fixedCharge = BigInt(commitment.fixedCharge);
   assertEqual(
-    (BigInt(before.chargedCumulativeAmount) + chargedAmount).toString(),
-    afterRequest.chargedCumulativeAmount,
+    (BigInt(before.authorizedCumulativeAmount) + fixedCharge).toString(),
+    afterRequest.authorizedCumulativeAmount,
     `${file}: request charge transition`,
   );
-  for (const field of [
-    "fundingAmount",
-    "claimedCumulativeAmount",
-    "signedMaxClaimable",
-  ]) {
+  for (const field of ["fundingAmount", "claimedCumulativeAmount"]) {
     assertEqual(
       afterRequest[field],
       before[field],
@@ -1296,19 +1364,14 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
     `${file}: claim settled transition`,
   );
   assertEqual(
-    afterClaim.chargedCumulativeAmount,
-    afterRequest.chargedCumulativeAmount,
-    `${file}: claim actual-charge preservation`,
-  );
-  assertEqual(
-    afterClaim.signedMaxClaimable,
-    afterRequest.signedMaxClaimable,
-    `${file}: claim signed-ceiling preservation`,
+    afterClaim.authorizedCumulativeAmount,
+    afterRequest.authorizedCumulativeAmount,
+    `${file}: claim authorization preservation`,
   );
 
   const reserve = BigInt(vector.accounting.reserveAmount);
   if (
-    BigInt(afterRequest.signedMaxClaimable) -
+    BigInt(afterRequest.authorizedCumulativeAmount) -
       BigInt(afterRequest.claimedCumulativeAmount) +
       reserve >
     BigInt(afterRequest.fundingAmount)
@@ -1322,22 +1385,20 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
 function assertBatchAccountingState(file, name, state) {
   for (const field of [
     "fundingAmount",
-    "chargedCumulativeAmount",
+    "authorizedCumulativeAmount",
     "claimedCumulativeAmount",
-    "signedMaxClaimable",
   ]) {
     if (!isBatchAmountString(state[field])) {
       throw new Error(`${file}: ${name}.${field} must fit signed int64`);
     }
   }
   const value = BigInt(state.fundingAmount);
-  const actual = BigInt(state.chargedCumulativeAmount);
-  const settled = BigInt(state.claimedCumulativeAmount);
-  const signed = BigInt(state.signedMaxClaimable);
-  if (settled > actual || actual > signed) {
-    throw new Error(`${file}: ${name} violates S <= A <= T`);
+  const authorized = BigInt(state.authorizedCumulativeAmount);
+  const claimed = BigInt(state.claimedCumulativeAmount);
+  if (claimed > authorized) {
+    throw new Error(`${file}: ${name} violates claimed <= authorized`);
   }
-  if (actual - settled > value || signed - settled > value) {
+  if (authorized - claimed > value) {
     throw new Error(`${file}: ${name} exceeds current covenant value`);
   }
 }

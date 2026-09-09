@@ -44,6 +44,11 @@ export function createMockDirectModeEnvironment() {
         return voucher.signature === mockSignature(digest);
       },
     },
+    batchPresentationVerifier: {
+      verifyPresentation({ digest, signature }) {
+        return signature === mockSignature(digest);
+      },
+    },
     exactTransactionVerifier: {
       verifyExactPayment(request) {
         const transactionId = mockHash(
@@ -96,7 +101,7 @@ export function createMockDirectModeEnvironment() {
               Buffer.from(refundScriptPublicKey, "hex"),
             ),
             timeoutDaa: channel.channelConfig.refundTimeoutDaa,
-            settledTotal: claimedCumulativeAmount,
+            claimedCumulativeAmount,
           }),
         );
         const transaction = mockHash(
@@ -584,6 +589,10 @@ class MockSigner {
   }
 
   async signVoucher({ digest }) {
+    return mockSignature(digest);
+  }
+
+  async signBatchPresentation({ digest }) {
     return mockSignature(digest);
   }
 

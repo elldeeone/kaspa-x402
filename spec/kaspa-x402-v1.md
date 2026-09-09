@@ -6,7 +6,7 @@ This document defines common rules for x402 v2 payments on Kaspa. Active
 scheme-specific behavior is defined in sibling documents:
 
 - [Kaspa x402 Exact Binding v2](kaspa-exact-v2.md)
-- [Kaspa x402 Batch Settlement Binding v2](kaspa-batch-settlement-v2.md)
+- [Kaspa x402 Batch Settlement Binding v3](kaspa-batch-settlement-v3.md)
 
 ## x402 Relationship
 
@@ -38,7 +38,7 @@ gates in `docs/mainnet-readiness.md`.
 | Scheme | Use when | Settlement |
 | ------ | -------- | ---------- |
 | `exact` | The price is known before the request. Example: buy a file or one fixed-price API result. | One immediate native KAS transfer using default `standard-native` or optional `additive`. |
-| `batch-settlement` | The client expects repeated or variable-cost requests against the same service. Example: API metering or MCP tool usage. | Per-request commitments accumulate and value is redeemed later. |
+| `batch-settlement` | The client expects repeated fixed-price invocations against the same service. Example: API or MCP calls with prices known before authorization. | Request-bound fixed charges accumulate and value is redeemed later. |
 
 The active schemes are separate. `batch-settlement` can represent
 one request, but it does not have the same x402 contract as `exact`.
@@ -84,7 +84,9 @@ All x402 amount fields are decimal strings in atomic sompi units:
 }
 ```
 
-This includes top-level `amount`, voucher amounts, funding amounts, charged amounts, claim amounts, and refund amounts unless a field explicitly says otherwise.
+This includes top-level `amount`, cumulative voucher authorizations, funding
+amounts, fixed charged amounts, claim amounts, and refund amounts unless a
+field explicitly says otherwise.
 
 Amount and DAA-height strings are canonical unsigned 64-bit decimal strings. They must be `"0"` or a non-zero digit followed by digits, with no leading zeroes, and their numeric value must not exceed `18446744073709551615`.
 
@@ -146,7 +148,7 @@ because each voucher does not create a new on-chain output.
 | Scheme | `extra.binding` |
 | ------ | --------------- |
 | `exact` | `kaspa-exact-v2` |
-| `batch-settlement` | `kaspa-escrow-v2` |
+| `batch-settlement` | `kaspa-escrow-v3` |
 
 Unknown `extra` fields may be preserved by transports, but verifiers must ignore unknown fields unless the selected binding explicitly marks them as critical.
 
@@ -184,12 +186,13 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "payTo": "kaspatest:...",
       "maxTimeoutSeconds": 60,
       "extra": {
-        "binding": "kaspa-escrow-v2",
-        "templateId": "kaspa-x402-escrow-v3",
+        "binding": "kaspa-escrow-v3",
+        "templateId": "kaspa-x402-escrow-v4",
         "serverPublicKey": "<32-byte x-only hex>",
         "minDepositSompi": "100000000",
         "claimReserveSompi": "2000000",
-        "refundTimeoutDaa": "123456789"
+        "refundTimeoutDaa": "123456789",
+        "securityContextHash": "<32-byte hash>"
       }
     }
   ]
@@ -245,21 +248,24 @@ For `batch-settlement`, a voucher-only success may have:
 ```json
 {
   "transaction": "<commitment id hex>",
-  "amount": "<actual charge>",
+  "amount": "<accepted fixed charge>",
   "extensions": {
     "kaspa": {
       "commitmentId": "<commitment id hex>",
-      "chargedAmount": "<actual charge>"
+      "chargedAmount": "<accepted fixed charge>"
     }
   }
 }
 ```
 
-For batch voucher-only settlement, `transaction` is the non-empty commitment id,
-top-level `amount` is the actual request charge, and extension metadata is
-carried in `extensions.kaspa`.
+For batch voucher-only settlement, `transaction` is the non-empty commitment
+id. Top-level `amount` and `extensions.kaspa.chargedAmount` both equal the
+selected `PaymentRequirements.amount`; batch v3 has no lower provider-local
+actual charge.
 
-For `deposit-voucher`, top-level `amount` is the actual resource charge. Escrow funding is not reported as top-level `amount`; it is reported in `extensions.kaspa.fundingAmount`.
+For `deposit-voucher`, top-level `amount` is the accepted fixed charge.
+Escrow funding is not reported as top-level `amount`; it is reported in
+`extensions.kaspa.fundingAmount`.
 
 ## Toccata Alignment
 

@@ -167,6 +167,7 @@ export async function runLiveProof(context) {
       network: context.network,
       fundingPrivateKey,
       fundingPrivateKeyHex,
+      providerPrivateKeyHex: serverChannelKey.privateKey,
       fundingAddress,
       fundingPublicKey,
       schnorr,
@@ -193,6 +194,15 @@ export async function runLiveProof(context) {
       verifyVoucher({ digest, voucher, clientPublicKey }) {
         return schnorr.verify(
           hexToBytes(voucher.signature, { expectedLength: 64 }),
+          hexToBytes(digest, { expectedLength: 32 }),
+          hexToBytes(clientPublicKey, { expectedLength: 32 }),
+        );
+      },
+    };
+    const batchPresentationVerifier = {
+      verifyPresentation({ digest, signature, clientPublicKey }) {
+        return schnorr.verify(
+          hexToBytes(signature, { expectedLength: 64 }),
           hexToBytes(digest, { expectedLength: 32 }),
           hexToBytes(clientPublicKey, { expectedLength: 32 }),
         );
@@ -239,6 +249,7 @@ export async function runLiveProof(context) {
       chainProvider: chain,
       addressCodec,
       voucherVerifier,
+      batchPresentationVerifier,
       exactTransactionVerifier,
       exactSettlementReconciler,
       acceptedFinality: "accepted",
@@ -331,7 +342,7 @@ export async function runLiveProof(context) {
         const digest = voucherDigest({
           network: channel.config.network,
           covenantId: channel.covenantId,
-          amount: voucher.amount,
+          authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
         });
         return schnorr.verify(
           hexToBytes(voucher.signature, { expectedLength: 64 }),
@@ -1922,7 +1933,6 @@ async function runBatch(input) {
       amount: BATCH_DEPOSIT_AMOUNT,
       scheme: "batch-settlement",
       channel: secondClaim.channel,
-      voucherState: oldVoucher,
     }),
     {
       url: topUpResource.url,
@@ -2239,12 +2249,12 @@ function batchReportHead(channel) {
 function voucherProof(network, voucher) {
   return {
     covenantId: voucher.covenantId,
-    amount: voucher.amount,
+    authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     signature: voucher.signature,
     digest: voucherDigest({
       network,
       covenantId: voucher.covenantId,
-      amount: voucher.amount,
+      authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     }),
   };
 }
@@ -2417,6 +2427,7 @@ async function buildPreparedTopUp(input) {
     rpc,
     sdk,
     fundingPrivateKeyHex,
+    providerPrivateKeyHex,
     fundingAddress,
     schnorr,
     spentOutpoints,
@@ -2456,11 +2467,12 @@ async function buildPreparedTopUp(input) {
     activeScriptPublicKey: channel.activeScriptPublicKey,
     activeRedeemScript,
     covenantId: channel.covenantId,
-    settledTotal: channel.claimedCumulativeAmount,
+    claimedCumulativeAmount: channel.claimedCumulativeAmount,
     successorAmount: request.targetFundingAmount,
     successorScriptPublicKey: channel.activeScriptPublicKey,
     successorRedeemScript: activeRedeemScript,
     clientSignature: "00".repeat(65),
+    providerSignature: "00".repeat(65),
     fundingInputs: [
       {
         previousOutpoint: funding.outpoint,
@@ -2493,6 +2505,11 @@ async function buildPreparedTopUp(input) {
     unsigned.sighashes[0].digest,
     channel.clientPrivateKey,
   );
+  const providerSignature = signTransactionSchnorr(
+    schnorr,
+    unsigned.sighashes[0].digest,
+    providerPrivateKeyHex,
+  );
   const fundingSignature = signRawSchnorr(
     schnorr,
     unsigned.sighashes[1].digest,
@@ -2501,6 +2518,7 @@ async function buildPreparedTopUp(input) {
   const artifact = buildBatchTopUpTxV1Artifact({
     ...base,
     clientSignature,
+    providerSignature,
     fundingInputs: [{ ...base.fundingInputs[0], signature: fundingSignature }],
     mass: unsigned.transaction.mass,
   });
@@ -2563,6 +2581,7 @@ function makeFundingProvider(input) {
     network,
     fundingPrivateKey,
     fundingPrivateKeyHex,
+    providerPrivateKeyHex,
     fundingAddress,
     fundingPublicKey,
     knownUtxos,
@@ -2618,6 +2637,7 @@ function makeFundingProvider(input) {
         sdk,
         networkId,
         fundingPrivateKeyHex,
+        providerPrivateKeyHex,
         fundingAddress,
         schnorr,
         spentOutpoints,
@@ -3158,6 +3178,19 @@ function makeSigner({
         ),
       );
     },
+    async signBatchPresentation({ digest, channel }) {
+      if (!channel.clientPrivateKey) {
+        throw new Error(
+          "channel private key is required for presentation signing",
+        );
+      }
+      return bytesToHex(
+        schnorr.sign(
+          hexToBytes(digest, { expectedLength: 32 }),
+          hexToBytes(channel.clientPrivateKey, { expectedLength: 32 }),
+        ),
+      );
+    },
     async signRefund({ digest, channel }) {
       if (!channel.clientPrivateKey)
         throw new Error("channel private key is required for refund signing");
@@ -3226,8 +3259,8 @@ async function buildPreparedClaim(input) {
     activeScriptPublicKey: channel.activeScriptPublicKey,
     activeRedeemScript: buildEscrowRedeemScript(activeParams),
     covenantId: channel.covenantId,
-    settledTotal: channel.claimedCumulativeAmount,
-    totalAuthorized: channel.signedMaxClaimable,
+    claimedCumulativeAmount: channel.claimedCumulativeAmount,
+    authorizedCumulativeAmount: channel.signedMaxClaimable,
     claimAmount,
     successorScriptPublicKey,
     successorRedeemScript: buildEscrowRedeemScript(successorParams),
@@ -3401,8 +3434,8 @@ async function rawClaim({
     activeScriptPublicKey: channel.activeScriptPublicKey,
     activeRedeemScript: buildEscrowRedeemScript(activeParams),
     covenantId: channel.covenantId,
-    settledTotal: channel.claimedCumulativeAmount,
-    totalAuthorized: voucher.amount,
+    claimedCumulativeAmount: channel.claimedCumulativeAmount,
+    authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     claimAmount: claimAmount.toString(),
     successorScriptPublicKey: serializedScriptPublicKey(
       escrowScriptPublicKey(successorParams),
@@ -3830,7 +3863,7 @@ function escrowParams(channel, addressCodec) {
 function escrowParamsFromChannelConfig(
   channelConfig,
   addressCodec,
-  settledTotal,
+  claimedCumulativeAmount,
 ) {
   const payoutScriptPublicKey = addressCodec.scriptPublicKeyForAddress(
     channelConfig.payTo,
@@ -3847,7 +3880,7 @@ function escrowParamsFromChannelConfig(
     payoutScriptPublicKeyHash: sha256Hex(hexToBytes(payoutScriptPublicKey)),
     refundScriptPublicKeyHash: sha256Hex(hexToBytes(refundScriptPublicKey)),
     timeoutDaa: channelConfig.refundTimeoutDaa,
-    settledTotal,
+    claimedCumulativeAmount,
   };
 }
 
@@ -4065,7 +4098,7 @@ function loadPersistedBatchArtifacts({
       fs.readFileSync(path.join(directory, name), "utf8"),
     );
     if (
-      artifact.format !== "kaspa-x402-tx-v1-reference-v2" ||
+      artifact.format !== "kaspa-x402-tx-v1-reference-v3" ||
       !/^[0-9a-f]{64}$/.test(artifact.transactionId ?? "")
     ) {
       throw new Error(`invalid Alpha.11 persisted batch artifact ${name}`);
