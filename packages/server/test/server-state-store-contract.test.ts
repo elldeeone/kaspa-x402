@@ -173,9 +173,9 @@ describe("durable crash checkpoints", () => {
     await expect(store.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
       status: "applied",
     });
-    await expect(store.loadExactSettlementAttempt(TX)).resolves.not.toHaveProperty(
-      "handlerResult",
-    );
+    await expect(
+      store.loadExactSettlementAttempt(TX),
+    ).resolves.not.toHaveProperty("handlerResult");
     await expect(
       store.loadPaymentIdentifierReservation(claim.id),
     ).resolves.toMatchObject({ status: "completed" });
@@ -281,7 +281,9 @@ describe("memory durable-state limits", () => {
               candidate as BatchSettlementAttemptRecord,
             );
 
-      await expect(claimCandidate()).rejects.toThrow("per-payer limit exceeded");
+      await expect(claimCandidate()).rejects.toThrow(
+        "per-payer limit exceeded",
+      );
       await expect(
         store.loadPaymentIdentifierReservation(releasedClaim.id),
       ).resolves.toEqual(reservationBefore);
@@ -354,13 +356,11 @@ describe("memory durable-state limits", () => {
       const requestFingerprint = (10_000 + index)
         .toString(16)
         .padStart(64, "0");
-      const payloadHash = (20_000 + index)
-        .toString(16)
-        .padStart(64, "0");
-      const commitmentId = (30_000 + index)
-        .toString(16)
-        .padStart(64, "0");
-      const nextCharge = (BigInt(current.chargedCumulativeAmount) + 1n).toString();
+      const payloadHash = (20_000 + index).toString(16).padStart(64, "0");
+      const commitmentId = (30_000 + index).toString(16).padStart(64, "0");
+      const nextCharge = (
+        BigInt(current.chargedCumulativeAmount) + 1n
+      ).toString();
       const attempt = batchSettlementAttempt(current, {
         attemptId,
         requestFingerprint,
@@ -368,10 +368,7 @@ describe("memory durable-state limits", () => {
         maximumCharge: "1",
       });
       await store.claimBatchSettlement(attempt);
-      await store.beginBatchHandler(
-        attemptId,
-        "2026-07-07T00:00:01.000Z",
-      );
+      await store.beginBatchHandler(attemptId, "2026-07-07T00:00:01.000Z");
       await store.recordBatchHandlerResult(
         attemptId,
         { chargedAmount: "1" },
@@ -418,8 +415,9 @@ describe("memory durable-state limits", () => {
       records: 2_000,
       openRecords: 0,
     });
-    await expect(store.loadBatchSettlementAttempt("1".padStart(64, "0")))
-      .resolves.toMatchObject({ status: "applied" });
+    await expect(
+      store.loadBatchSettlementAttempt("1".padStart(64, "0")),
+    ).resolves.toMatchObject({ status: "applied" });
     await expect(
       store.claimBatchSettlement(
         batchSettlementAttempt(current, {
@@ -732,6 +730,12 @@ function defineStoreContract(factory: StoreFactory): void {
       claimedCumulativeAmount: "100",
       lineage,
     };
+    await expect(
+      store.applyCovenantLineage(first, advanced, ATTEMPT),
+    ).rejects.toThrow("lease was not found");
+    await store.claimChannelOperation(
+      channelOperation(first, "recovery", ATTEMPT),
+    );
 
     for (const invalid of [
       { ...advanced, chargedCumulativeAmount: "1" },
@@ -743,21 +747,28 @@ function defineStoreContract(factory: StoreFactory): void {
       { ...advanced, version: "2" },
     ]) {
       await expect(
-        store.applyCovenantLineage(first, invalid),
+        store.applyCovenantLineage(first, invalid, ATTEMPT),
       ).rejects.toThrow();
       await expect(store.loadChannel(first.channelId)).resolves.toEqual(first);
     }
 
-    await store.applyCovenantLineage(first, advanced);
+    await store.applyCovenantLineage(first, advanced, ATTEMPT);
     if (store instanceof DurableMockServerChannelStore) {
       store = await store.restart();
     }
     await expect(store.loadChannel(first.channelId)).resolves.toEqual(advanced);
+    await expect(
+      store.loadChannelOperation(first.channelId),
+    ).resolves.toBeUndefined();
 
     const rolledBack = { ...first, version: "2" };
-    await expect(store.applyCovenantLineage(advanced, rolledBack)).rejects.toThrow(
-      "journal is not append-only",
+    const rollbackLease = OTHER_TX;
+    await store.claimChannelOperation(
+      channelOperation(advanced, "recovery", rollbackLease),
     );
+    await expect(
+      store.applyCovenantLineage(advanced, rolledBack, rollbackLease),
+    ).rejects.toThrow("journal is not append-only");
     await expect(store.loadChannel(first.channelId)).resolves.toEqual(advanced);
   });
 
@@ -1003,9 +1014,9 @@ function defineStoreContract(factory: StoreFactory): void {
       status: "applied",
       handlerStartedAt: "2026-07-07T00:00:04.000Z",
     });
-    await expect(store.loadExactSettlementAttempt(TX)).resolves.not.toHaveProperty(
-      "handlerResult",
-    );
+    await expect(
+      store.loadExactSettlementAttempt(TX),
+    ).resolves.not.toHaveProperty("handlerResult");
 
     if (store instanceof DurableMockServerChannelStore) {
       store = await store.restart();
@@ -1387,7 +1398,10 @@ function defineStoreContract(factory: StoreFactory): void {
       store.saveClaimAttempt({
         ...pending,
         transactionId: OTHER_TX,
-        continuationOutpoint: { ...pending.continuationOutpoint!, txid: OTHER_TX },
+        continuationOutpoint: {
+          ...pending.continuationOutpoint!,
+          txid: OTHER_TX,
+        },
       }),
     ).rejects.toThrow("immutable artifact");
     await expect(
@@ -1441,27 +1455,21 @@ function defineStoreContract(factory: StoreFactory): void {
       }),
     ).rejects.toThrow("same-state update");
     await expect(
-      store.applyClaimAttempt(
-        claimSuccessor(claimableChannel(), accepted),
-        {
-          ...accepted,
-          transactionId: OTHER_TX,
-          continuationOutpoint: {
-            ...accepted.continuationOutpoint!,
-            txid: OTHER_TX,
-          },
+      store.applyClaimAttempt(claimSuccessor(claimableChannel(), accepted), {
+        ...accepted,
+        transactionId: OTHER_TX,
+        continuationOutpoint: {
+          ...accepted.continuationOutpoint!,
+          txid: OTHER_TX,
         },
-      ),
+      }),
     ).rejects.toThrow("persisted accepted attempt");
     await expect(
-      store.applyClaimAttempt(
-        claimSuccessor(claimableChannel(), accepted),
-        {
-          ...accepted,
-          chargedCumulativeAmount: "1",
-          signedMaxClaimable: "1",
-        },
-      ),
+      store.applyClaimAttempt(claimSuccessor(claimableChannel(), accepted), {
+        ...accepted,
+        chargedCumulativeAmount: "1",
+        signedMaxClaimable: "1",
+      }),
     ).rejects.toThrow("persisted accepted attempt");
     await expect(store.loadOpenClaimAttempt(CHANNEL_ID)).resolves.toEqual(
       accepted,
@@ -1574,6 +1582,7 @@ type DurableMockOperation =
       type: "applyCovenantLineage";
       expected: ServerChannelRecord;
       channel: ServerChannelRecord;
+      leaseId: string;
     }
   | { type: "claimChannelOperation"; record: ChannelOperationLeaseRecord }
   | {
@@ -1688,9 +1697,11 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
   async applyCovenantLineage(
     expected: ServerChannelRecord,
     channel: ServerChannelRecord,
+    leaseId: string,
   ): Promise<void> {
-    await this.#write({ type: "applyCovenantLineage", expected, channel }, () =>
-      super.applyCovenantLineage(expected, channel),
+    await this.#write(
+      { type: "applyCovenantLineage", expected, channel, leaseId },
+      () => super.applyCovenantLineage(expected, channel, leaseId),
     );
   }
 
@@ -1945,6 +1956,7 @@ class DurableMockServerChannelStore extends MemoryServerChannelStore {
         await super.applyCovenantLineage(
           operation.expected,
           operation.channel,
+          operation.leaseId,
         );
         return;
       case "claimChannelOperation":
@@ -2091,28 +2103,32 @@ function channel(
     ServerChannelRecord,
     "lineage"
   > & { lineage?: ServerChannelRecord["lineage"] };
-  const lineage = overrides.lineage ?? createCovenantLineageState({
-    format: "kaspa-x402-covenant-launch-v1",
-    network: merged.channelConfig.network,
-    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
-    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
-    bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
-    constructorSlots: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots),
-    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
-    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
-    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
-    genesis: {
-      derivation: "kip20-covenant-id-v1",
-      covenantId: merged.covenantId,
-      authorizingInput: merged.genesisEvidence.authorizingInput,
-      transactionId: merged.activeOutpoint.txid,
-      outpoint: merged.activeOutpoint,
-      scriptPublicKey: merged.activeScriptPublicKey,
-      value: merged.fundingAmount,
-      claimedCumulativeAmount: merged.claimedCumulativeAmount,
-      acceptance: acceptedEvidence(merged.activeOutpoint.txid),
-    },
-  });
+  const lineage =
+    overrides.lineage ??
+    createCovenantLineageState({
+      format: "kaspa-x402-covenant-launch-v1",
+      network: merged.channelConfig.network,
+      compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
+      source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
+      bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+      constructorSlots: structuredClone(
+        ESCROW_V4_LAUNCH_IDENTITY.constructorSlots,
+      ),
+      abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
+      selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
+      identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+      genesis: {
+        derivation: "kip20-covenant-id-v1",
+        covenantId: merged.covenantId,
+        authorizingInput: merged.genesisEvidence.authorizingInput,
+        transactionId: merged.activeOutpoint.txid,
+        outpoint: merged.activeOutpoint,
+        scriptPublicKey: merged.activeScriptPublicKey,
+        value: merged.fundingAmount,
+        claimedCumulativeAmount: merged.claimedCumulativeAmount,
+        acceptance: acceptedEvidence(merged.activeOutpoint.txid),
+      },
+    });
   return { ...merged, lineage };
 }
 
@@ -2417,10 +2433,7 @@ async function stageExactAttemptWithIdentifier(
     "accepted",
     "2026-07-07T00:00:01.000Z",
   );
-  await store.beginExactHandler(
-    transactionId,
-    "2026-07-07T00:00:02.000Z",
-  );
+  await store.beginExactHandler(transactionId, "2026-07-07T00:00:02.000Z");
   await store.recordExactHandlerResult(
     transactionId,
     { chargedAmount: "20000000" },

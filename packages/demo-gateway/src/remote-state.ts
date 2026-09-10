@@ -58,7 +58,12 @@ export class RemoteGatewayState implements GatewayStateClient {
     expected: ServerChannelRecord,
     reason?: string,
   ): Promise<void> {
-    return this.#call("retireChannel", { channelId, leaseId, expected, reason });
+    return this.#call("retireChannel", {
+      channelId,
+      leaseId,
+      expected,
+      reason,
+    });
   }
 
   listChannels(): Promise<ServerChannelRecord[]> {
@@ -68,8 +73,9 @@ export class RemoteGatewayState implements GatewayStateClient {
   applyCovenantLineage(
     expected: ServerChannelRecord,
     channel: ServerChannelRecord,
+    leaseId: string,
   ): Promise<void> {
-    return this.#call("applyCovenantLineage", { expected, channel });
+    return this.#call("applyCovenantLineage", { expected, channel, leaseId });
   }
 
   claimChannelOperation(

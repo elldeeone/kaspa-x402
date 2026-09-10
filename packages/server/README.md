@@ -27,6 +27,9 @@ The current implementation covers framework-neutral HTTP gating and MCP paid too
   server `audience` in the tool-call fingerprint, reads
   `_meta["x402/payment"]`, and attaches `_meta["x402/payment-response"]`
   without exposing protected content on settlement failure;
+- requires batch MCP tools to configure `mcpErrorChargeSompi` explicitly; the
+  value must equal the fixed accepted amount, is bound into payer-approved
+  terms, and is the only non-zero charge permitted for an `isError` result;
 - exposes direct verifier and settlement helpers used by optional self-hosted facilitator endpoints;
 - validates custom per-request amounts when `PaidRequest.paymentAmount` is supplied;
 - persists A/S/T/V lane state, enforces advertised reserve R, accepts same-ID

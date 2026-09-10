@@ -255,10 +255,7 @@ export async function runLiveProof(context) {
       acceptedFinality: "accepted",
       topUpVerifier: {
         verifyTopUp(request) {
-          return verifyPersistedBatchTopUp(
-            batchTopUpsByOutpoint,
-            request,
-          );
+          return verifyPersistedBatchTopUp(batchTopUpsByOutpoint, request);
         },
       },
     };
@@ -318,6 +315,29 @@ export async function runLiveProof(context) {
       store: clientStore,
       addressCodec,
       refundAddress: fundingAddress,
+      fundingPolicy: {
+        requiredSource: "hot-wallet",
+        batchPayment: {
+          maximumBatchChargeSompi: (
+            BigInt(BATCH_DEPOSIT_AMOUNT) * 2n
+          ).toString(),
+          maximumInitialDepositSompi: BATCH_DEPOSIT_AMOUNT,
+          maximumTopUpSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 2n).toString(),
+          maximumCumulativeAuthorizationSompi: (
+            BigInt(BATCH_DEPOSIT_AMOUNT) * 10n
+          ).toString(),
+          maximumTotalExposureSompi: (
+            BigInt(BATCH_DEPOSIT_AMOUNT) * 12n
+          ).toString(),
+          minimumRefundLeadDaa: "1",
+          maximumRefundHorizonDaa: (timeoutDelta + 1n).toString(),
+          allowedOrigins: ["https://live.kaspa-x402.local"],
+          allowedResources: ["https://live.kaspa-x402.local/batch/first"],
+          allowedPayTo: [serverPayoutAddress],
+          allowedServerPublicKeys: [serverChannelKey.publicKey],
+          allowedFundingSources: ["hot-wallet"],
+        },
+      },
       refundBuilder: {
         async buildRefundTransaction(request) {
           return buildPreparedRefund({
@@ -1966,7 +1986,8 @@ async function runBatch(input) {
   const topUpArtifact = batchArtifactsByTxid.get(
     topUpProof.successorOutpoint.txid.toLowerCase(),
   );
-  if (!topUpArtifact) throw new Error("batch top-up artifact was not persisted");
+  if (!topUpArtifact)
+    throw new Error("batch top-up artifact was not persisted");
   const topUpTransitionHead = batchReportHead(topUpPayment.channel);
   const topUpResponse = await server.handlePaidRequest(
     requestWithPayment(topUpPayment.paymentPayload, {
@@ -1991,7 +2012,8 @@ async function runBatch(input) {
   const topUpSettlementExtra = requireSettlementExtension(topUpSettlement);
   await client.applySettlement(topUpPayment, topUpSettlement);
   const toppedUpChannel = await serverStore.loadChannel(claimable.channelId);
-  if (!toppedUpChannel) throw new Error("admitted batch top-up state is missing");
+  if (!toppedUpChannel)
+    throw new Error("admitted batch top-up state is missing");
   const restartReload = await verifyBatchRecoveryReload({
     dataDir,
     sdk,
@@ -2077,10 +2099,7 @@ async function runBatch(input) {
     first.channel.config.network,
     first.paymentPayload.payload.voucher,
   );
-  const latestVoucher = voucherProof(
-    second.channel.config.network,
-    oldVoucher,
-  );
+  const latestVoucher = voucherProof(second.channel.config.network, oldVoucher);
   const claimHeadBefore = batchReportHead(claimable);
   const claimHeadAfter = batchReportHead(claim.channel);
   const secondClaimHeadAfter = batchReportHead(secondClaim.channel);
@@ -2119,16 +2138,14 @@ async function runBatch(input) {
         outpoint: first.channel.activeOutpoint,
         scriptPublicKey: first.channel.activeScriptPublicKey,
         fundingAmount: first.channel.fundingAmount,
-        fundingInputTotalSompi:
-          genesisRecord.artifact.transaction.inputs
-            .reduce((total, input) => total + BigInt(input.utxo.amount), 0n)
-            .toString(),
+        fundingInputTotalSompi: genesisRecord.artifact.transaction.inputs
+          .reduce((total, input) => total + BigInt(input.utxo.amount), 0n)
+          .toString(),
         feeSompi: genesisRecord.artifact.fee.amount,
         initialClaimedCumulativeAmount: "0",
-        inputComputeBudgets:
-          genesisRecord.artifact.transaction.inputs.map(
-            ({ computeBudget }) => computeBudget,
-          ),
+        inputComputeBudgets: genesisRecord.artifact.transaction.inputs.map(
+          ({ computeBudget }) => computeBudget,
+        ),
       },
     },
     voucherOnly: {
@@ -2300,8 +2317,7 @@ function batchComputeProfile(operation) {
   if (
     !Number.isSafeInteger(scriptUnitsEstimate) ||
     scriptUnitsEstimate < 0 ||
-    vector.expected?.compute?.scriptUnitAllowance !==
-      scriptUnitAllowanceValue
+    vector.expected?.compute?.scriptUnitAllowance !== scriptUnitAllowanceValue
   ) {
     throw new Error(`invalid Alpha.11 ${operation} compute evidence`);
   }
@@ -2341,7 +2357,9 @@ async function buildPreparedGenesis(input) {
   );
   const escrowAmount = BigInt(funding.amount) - fee;
   if (escrowAmount < requestedMinimum) {
-    throw new Error("selected batch genesis input is below the requested minimum plus fee");
+    throw new Error(
+      "selected batch genesis input is below the requested minimum plus fee",
+    );
   }
   const fundingScriptPublicKey = funding.scriptPublicKey;
   const params = escrowParamsFromChannelConfig(
@@ -2623,6 +2641,9 @@ function makeFundingProvider(input) {
   return {
     networkId: network,
     sourceKind: "hot-wallet",
+    async authorizeBatchPayment({ intentDigest }) {
+      return { intentDigest };
+    },
     async getPublicIdentity() {
       return { address: fundingAddress, publicKey: fundingPublicKey };
     },
@@ -2851,10 +2872,7 @@ function makeChainProvider({
       }
       if (record?.kind === "batch-artifact") {
         if (!record.submitted) {
-          if (
-            record.operation === "genesis" ||
-            record.operation === "top-up"
-          ) {
+          if (record.operation === "genesis" || record.operation === "top-up") {
             const fundingAttempt =
               await batchRecovery.clientStore?.loadFundingTransitionAttempt(
                 record.channelId,
@@ -2885,17 +2903,20 @@ function makeChainProvider({
                 "batch claim was not durably reserved before broadcast",
               );
             }
-            batchRecovery.preBroadcastSnapshotFile =
-              persistBatchRecoveryRecord(dataDir, "claim-before-broadcast", {
+            batchRecovery.preBroadcastSnapshotFile = persistBatchRecoveryRecord(
+              dataDir,
+              "claim-before-broadcast",
+              {
                 format: "kaspa-x402-alpha11-claim-before-broadcast-v1",
                 capturedAt: new Date().toISOString(),
-                clientChannels:
-                  await batchRecovery.clientStore.loadChannels({}),
-                serverChannels:
-                  await batchRecovery.serverStore.listChannels(),
+                clientChannels: await batchRecovery.clientStore.loadChannels(
+                  {},
+                ),
+                serverChannels: await batchRecovery.serverStore.listChannels(),
                 attempt: openAttempt,
                 artifact: record.artifact,
-              });
+              },
+            );
           }
           if (
             record.operation === "refund" &&
@@ -2920,8 +2941,9 @@ function makeChainProvider({
               persistBatchRecoveryRecord(dataDir, "refund-before-broadcast", {
                 format: "kaspa-x402-alpha11-refund-before-broadcast-v1",
                 capturedAt: new Date().toISOString(),
-                clientChannels:
-                  await batchRecovery.clientStore.loadChannels({}),
+                clientChannels: await batchRecovery.clientStore.loadChannels(
+                  {},
+                ),
                 attempt: refundAttempt,
                 artifact: record.artifact,
               });
@@ -3285,11 +3307,7 @@ function makeSigner({
     async signRefund({ digest, channel }) {
       if (!channel.clientPrivateKey)
         throw new Error("channel private key is required for refund signing");
-      return signTransactionSchnorr(
-        schnorr,
-        digest,
-        channel.clientPrivateKey,
-      );
+      return signTransactionSchnorr(schnorr, digest, channel.clientPrivateKey);
     },
   };
 }
@@ -3472,12 +3490,15 @@ async function attemptBatchReplay(input) {
       getAddressUtxos(rpc, currentAddress),
     ]);
     const spentOutpointAbsent = !spentCandidates.some(
-      (utxo) => outpointKey(utxo.outpoint) === outpointKey(channel.activeOutpoint),
+      (utxo) =>
+        outpointKey(utxo.outpoint) === outpointKey(channel.activeOutpoint),
     );
     const currentOutpointPresent = currentCandidates.some(
       (utxo) =>
-        outpointKey(utxo.outpoint) === outpointKey(currentChannel.activeOutpoint) &&
-        utxo.covenantId?.toLowerCase() === currentChannel.covenantId.toLowerCase(),
+        outpointKey(utxo.outpoint) ===
+          outpointKey(currentChannel.activeOutpoint) &&
+        utxo.covenantId?.toLowerCase() ===
+          currentChannel.covenantId.toLowerCase(),
     );
     if (!spentOutpointAbsent || !currentOutpointPresent) {
       throw new Error(
@@ -3571,7 +3592,9 @@ async function buildPreparedRefund(input) {
   } = input;
   const inputAmount = BigInt(channel.fundingAmount);
   if (BigInt(refundAmount) !== inputAmount) {
-    throw new Error("batch refund request does not match the current head value");
+    throw new Error(
+      "batch refund request does not match the current head value",
+    );
   }
   const params = escrowParams(channel, addressCodec);
   const channelConfig = channel.channelConfig ?? channel.config;
@@ -3805,10 +3828,13 @@ async function refreshKnownUtxo(rpc, knownUtxos, outpoint) {
   }
   if (
     current.amount !== known.amount ||
-    current.scriptPublicKey.toLowerCase() !== known.scriptPublicKey.toLowerCase() ||
+    current.scriptPublicKey.toLowerCase() !==
+      known.scriptPublicKey.toLowerCase() ||
     current.covenantId?.toLowerCase() !== known.covenantId?.toLowerCase()
   ) {
-    throw new Error("authoritative current-head readback conflicts with persisted state");
+    throw new Error(
+      "authoritative current-head readback conflicts with persisted state",
+    );
   }
   rememberUtxo(knownUtxos, current);
   return current;
@@ -4303,9 +4329,7 @@ function loadPersistedBatchArtifacts({
       ).length;
       const totalOutputCount = artifact.transaction.outputs.length;
       if (authorizedOutputCount !== 1 || totalOutputCount !== 1) {
-        throw new Error(
-          `invalid Alpha.11 singleton genesis artifact ${name}`,
-        );
+        throw new Error(`invalid Alpha.11 singleton genesis artifact ${name}`);
       }
       const evidence = {
         covenantId: artifact.covenantId,
@@ -4341,18 +4365,15 @@ function loadPersistedBatchArtifacts({
             output.covenant?.covenantId === artifact.continuation.covenantId,
         ).length,
       };
-      batchTopUpsByOutpoint.set(
-        outpointKey(artifact.continuation.outpoint),
-        {
-          artifact,
-          evidence,
-          address: scriptAddressFromSerialized(
-            sdk,
-            artifact.continuation.scriptPublicKey,
-            networkId,
-          ),
-        },
-      );
+      batchTopUpsByOutpoint.set(outpointKey(artifact.continuation.outpoint), {
+        artifact,
+        evidence,
+        address: scriptAddressFromSerialized(
+          sdk,
+          artifact.continuation.scriptPublicKey,
+          networkId,
+        ),
+      });
     }
     loaded += 1;
   }
@@ -4422,10 +4443,7 @@ export function runExactPaymentAttemptPersistenceProof() {
       flag: "wx",
     });
     const spentOutpoints = new Set();
-    const attempts = loadPersistedExactPaymentAttempts(
-      dataDir,
-      spentOutpoints,
-    );
+    const attempts = loadPersistedExactPaymentAttempts(dataDir, spentOutpoints);
     const loaded = attempts.get(attemptId);
     if (
       !overwriteRejected ||
@@ -4522,10 +4540,7 @@ async function verifyBatchRecoveryReload({
   const preBroadcast = JSON.parse(
     fs.readFileSync(batchRecovery.preBroadcastSnapshotFile, "utf8"),
   );
-  if (
-    preBroadcast.format !==
-    "kaspa-x402-alpha11-claim-before-broadcast-v1"
-  ) {
+  if (preBroadcast.format !== "kaspa-x402-alpha11-claim-before-broadcast-v1") {
     throw new Error("pre-broadcast claim snapshot format is invalid");
   }
   const preBroadcastClientStore = new MemoryChannelStore(
@@ -4539,9 +4554,8 @@ async function verifyBatchRecoveryReload({
     await preBroadcastClientStore.loadChannels({});
   const preBroadcastServerChannel =
     await preBroadcastServerStore.loadChannel(expectedChannelId);
-  const claimAttempt = await preBroadcastServerStore.loadOpenClaimAttempt(
-    expectedChannelId,
-  );
+  const claimAttempt =
+    await preBroadcastServerStore.loadOpenClaimAttempt(expectedChannelId);
   if (
     !preBroadcastClientChannel ||
     !preBroadcastServerChannel ||
@@ -4583,10 +4597,10 @@ async function verifyBatchRecoveryReload({
     reloaded.serverChannels,
   );
   const [clientChannel] = await reloadedClientStore.loadChannels({});
-  const serverChannel = await reloadedServerStore.loadChannel(expectedChannelId);
-  const acceptedOpenAttempt = await reloadedServerStore.loadOpenClaimAttempt(
-    expectedChannelId,
-  );
+  const serverChannel =
+    await reloadedServerStore.loadChannel(expectedChannelId);
+  const acceptedOpenAttempt =
+    await reloadedServerStore.loadOpenClaimAttempt(expectedChannelId);
   if (
     !clientChannel ||
     !serverChannel ||
@@ -4603,7 +4617,9 @@ async function verifyBatchRecoveryReload({
       serverChannel.claimedCumulativeAmount ||
     clientChannel.signedMaxClaimable !== serverChannel.signedMaxClaimable
   ) {
-    throw new Error("batch channel or claim-attempt state failed restart reload");
+    throw new Error(
+      "batch channel or claim-attempt state failed restart reload",
+    );
   }
   const artifacts = new Map();
   const genesis = new Map();
@@ -4667,19 +4683,15 @@ async function verifyBatchRefundRecoveryReload({
     throw new Error("pre-broadcast refund snapshot was not persisted");
   }
   const snapshot = JSON.parse(fs.readFileSync(file, "utf8"));
-  if (
-    snapshot.format !==
-    "kaspa-x402-alpha11-refund-before-broadcast-v1"
-  ) {
+  if (snapshot.format !== "kaspa-x402-alpha11-refund-before-broadcast-v1") {
     throw new Error("pre-broadcast refund snapshot format is invalid");
   }
   const reloadedStore = new MemoryChannelStore(snapshot.clientChannels, [
     snapshot.attempt,
   ]);
   const [reloadedChannel] = await reloadedStore.loadChannels({});
-  const reloadedAttempt = await reloadedStore.loadRefundAttempt(
-    expectedChannelId,
-  );
+  const reloadedAttempt =
+    await reloadedStore.loadRefundAttempt(expectedChannelId);
   const [currentChannel] = await clientStore.loadChannels({});
   const currentAttempt = await clientStore.loadRefundAttempt(expectedChannelId);
   if (
@@ -4717,13 +4729,11 @@ async function verifyBatchRefundRecoveryReload({
     },
   );
   const appliedSnapshot = JSON.parse(fs.readFileSync(persisted, "utf8"));
-  const appliedStore = new MemoryChannelStore(
-    appliedSnapshot.clientChannels,
-    [appliedSnapshot.attempt],
-  );
-  const appliedAttempt = await appliedStore.loadRefundAttempt(
-    expectedChannelId,
-  );
+  const appliedStore = new MemoryChannelStore(appliedSnapshot.clientChannels, [
+    appliedSnapshot.attempt,
+  ]);
+  const appliedAttempt =
+    await appliedStore.loadRefundAttempt(expectedChannelId);
   if (!appliedAttempt || appliedAttempt.status !== "applied") {
     throw new Error("applied refund attempt failed restart reload");
   }

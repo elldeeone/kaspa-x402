@@ -18,10 +18,14 @@ async function callTool(params) {
       },
       amount: "250000",
       scheme: "batch-settlement",
+      mcpErrorChargeSompi: "250000",
     },
     params,
     async ({ params: paidParams }) => {
-      const symbol = typeof paidParams.arguments?.symbol === "string" ? paidParams.arguments.symbol : "KAS";
+      const symbol =
+        typeof paidParams.arguments?.symbol === "string"
+          ? paidParams.arguments.symbol
+          : "KAS";
       return {
         chargedAmount: "250000",
         result: {

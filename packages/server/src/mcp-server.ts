@@ -35,6 +35,8 @@ export interface PaidMcpToolOptions {
   scheme?: "exact" | "batch-settlement";
   /** Host-derived normalized claims, never raw credentials. */
   trustedSecurityContext?: TrustedSecurityContext;
+  /** Required for batch tools; explicitly authorizes the fixed charge on isError. */
+  mcpErrorChargeSompi?: SompiString;
 }
 
 export interface PaidMcpToolHandlerContext extends HandlerContext {
@@ -46,7 +48,9 @@ export interface PaidMcpToolHandlerResult {
   chargedAmount?: SompiString;
 }
 
-export type PaidMcpToolHandler = (context: PaidMcpToolHandlerContext) => Promise<PaidMcpToolHandlerResult> | PaidMcpToolHandlerResult;
+export type PaidMcpToolHandler = (
+  context: PaidMcpToolHandlerContext,
+) => Promise<PaidMcpToolHandlerResult> | PaidMcpToolHandlerResult;
 
 export async function handlePaidMcpToolCall(
   server: DirectModeServer,
@@ -68,6 +72,24 @@ export async function handlePaidMcpToolCall(
   if (params.name !== options.name) {
     return mcpErrorResult(`MCP tool name mismatch: expected ${options.name}`);
   }
+  if (options.scheme !== "exact" && options.mcpErrorChargeSompi === undefined) {
+    return mcpErrorResult(
+      "batch MCP tools require an explicit payer-approved error charge",
+    );
+  }
+  if (options.scheme !== "exact") {
+    try {
+      server.buildPaymentRequired({
+        resource,
+        amount: options.amount,
+        scheme: "batch-settlement",
+        trustedSecurityContext: options.trustedSecurityContext,
+        mcpErrorChargeSompi: options.mcpErrorChargeSompi,
+      });
+    } catch {
+      return mcpErrorResult("invalid batch MCP error-charge policy");
+    }
+  }
 
   let paymentPayload: PaymentPayload | undefined;
   try {
@@ -85,6 +107,7 @@ export async function handlePaidMcpToolCall(
         paymentAmount: options.amount,
         paymentScheme: options.scheme,
         trustedSecurityContext: options.trustedSecurityContext,
+        mcpErrorChargeSompi: options.mcpErrorChargeSompi,
       },
       async () => ({ body: mcpErrorResult("unreachable") }),
     );
@@ -122,7 +145,13 @@ export async function handlePaidMcpToolCall(
       paymentScheme: options.scheme,
       requestHash,
       trustedSecurityContext: options.trustedSecurityContext,
-      headers: paymentPayload ? { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(paymentPayload) } : undefined,
+      mcpErrorChargeSompi: options.mcpErrorChargeSompi,
+      headers: paymentPayload
+        ? {
+            [PAYMENT_SIGNATURE_HEADER]:
+              encodePaymentSignatureHeader(paymentPayload),
+          }
+        : undefined,
     },
     async (context) => {
       const result = await handler({
@@ -139,26 +168,45 @@ export async function handlePaidMcpToolCall(
   return serverResponseToMcpResult(response, fallbackPaymentRequired);
 }
 
-function serverResponseToMcpResult(response: ServerResponse, fallbackPaymentRequired?: PaymentRequired): McpToolResult {
+function serverResponseToMcpResult(
+  response: ServerResponse,
+  fallbackPaymentRequired?: PaymentRequired,
+): McpToolResult {
   const paymentResponseHeader = response.headers[PAYMENT_RESPONSE_HEADER];
-  const settlement = paymentResponseHeader ? decodePaymentResponseHeader(paymentResponseHeader) : undefined;
+  const settlement = paymentResponseHeader
+    ? decodePaymentResponseHeader(paymentResponseHeader)
+    : undefined;
   if (settlement && !settlement.success) {
     const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
-    const challenge = paymentRequiredHeader ? decodePaymentRequiredHeader(paymentRequiredHeader) : fallbackPaymentRequired;
+    const challenge = paymentRequiredHeader
+      ? decodePaymentRequiredHeader(paymentRequiredHeader)
+      : fallbackPaymentRequired;
     if (challenge) return mcpSettlementFailureResult(challenge, settlement);
-    return withMcpPaymentResponse(mcpErrorResult(settlement.errorReason ?? "Settlement failed"), settlement);
+    return withMcpPaymentResponse(
+      mcpErrorResult(settlement.errorReason ?? "Settlement failed"),
+      settlement,
+    );
   }
 
   const paymentRequiredHeader = response.headers[PAYMENT_REQUIRED_HEADER];
   if (paymentRequiredHeader) {
-    return mcpPaymentRequiredResult(decodePaymentRequiredHeader(paymentRequiredHeader));
+    return mcpPaymentRequiredResult(
+      decodePaymentRequiredHeader(paymentRequiredHeader),
+    );
   }
 
   if (response.status >= 400) {
-    return settlement ? withMcpPaymentResponse(mcpErrorResult(errorMessageFromBody(response.body)), settlement) : mcpErrorResult(errorMessageFromBody(response.body));
+    return settlement
+      ? withMcpPaymentResponse(
+          mcpErrorResult(errorMessageFromBody(response.body)),
+          settlement,
+        )
+      : mcpErrorResult(errorMessageFromBody(response.body));
   }
 
-  const result = isMcpToolResult(response.body) ? response.body : mcpTextResult(response.body);
+  const result = isMcpToolResult(response.body)
+    ? response.body
+    : mcpTextResult(response.body);
   return settlement ? withMcpPaymentResponse(result, settlement) : result;
 }
 
@@ -193,7 +241,13 @@ function errorMessageFromBody(body: unknown): string {
 }
 
 function isMcpToolResult(value: unknown): value is McpToolResult {
-  return isRecord(value) && ("content" in value || "structuredContent" in value || "isError" in value || "_meta" in value);
+  return (
+    isRecord(value) &&
+    ("content" in value ||
+      "structuredContent" in value ||
+      "isError" in value ||
+      "_meta" in value)
+  );
 }
 
 function isRecord(value: unknown): value is Record<string, unknown> {

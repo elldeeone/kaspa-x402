@@ -252,7 +252,10 @@ export class GatewayLedger implements ServerStateStore {
         !sameChannelSnapshot(channel, lease.expected)
       )
         throw new Error("channel state changed before retirement");
-      if (channel.status === "refunded" || channel.lineage.currentHead === null) {
+      if (
+        channel.status === "refunded" ||
+        channel.lineage.currentHead === null
+      ) {
         throw new Error("terminal refunded channel cannot be retired");
       }
       const retired = {
@@ -276,7 +279,9 @@ export class GatewayLedger implements ServerStateStore {
       );
       if (existing) {
         if (!channelOperationLeasesMatch(existing, lease))
-          throw new Error("channel already has a conflicting durable operation");
+          throw new Error(
+            "channel already has a conflicting durable operation",
+          );
         return { lease: clone(existing), created: false };
       }
       const current = await txn.get<ServerChannelRecord>(
@@ -306,7 +311,9 @@ export class GatewayLedger implements ServerStateStore {
   ): Promise<void> {
     assertIsoDate(observedAt, "channel operation abandonment time");
     await this.#storage.transaction(async (txn) => {
-      const channelId = await txn.get<string>(channelOperationLeaseKey(leaseId));
+      const channelId = await txn.get<string>(
+        channelOperationLeaseKey(leaseId),
+      );
       if (!channelId) return;
       const lease = await requireChannelOperation(txn, channelId, leaseId);
       if (lease.status !== "reserved")
@@ -333,6 +340,7 @@ export class GatewayLedger implements ServerStateStore {
   async applyCovenantLineage(
     expected: ServerChannelRecord,
     channel: ServerChannelRecord,
+    leaseId: string,
   ): Promise<void> {
     await this.#storage.transaction(async (txn) => {
       const current = await txn.get<ServerChannelRecord>(
@@ -341,15 +349,28 @@ export class GatewayLedger implements ServerStateStore {
       if (!sameChannelSnapshot(current, expected)) {
         throw new Error("channel state changed before covenant lineage apply");
       }
+      const lease = await requireChannelOperation(
+        txn,
+        expected.channelId,
+        leaseId,
+      );
       if (
-        (await txn.get(channelOperationKey(expected.channelId))) ||
+        (lease.kind !== "refund" && lease.kind !== "recovery") ||
+        !sameChannelSnapshot(lease.expected, expected)
+      )
+        throw new Error(
+          "covenant lineage apply does not own the channel snapshot",
+        );
+      if (
         (await txn.get(openBatchAttemptKey(expected.channelId))) ||
         (await txn.get(openClaimKey(expected.channelId)))
-      ) {
-        throw new Error("channel has an open operation during covenant lineage apply");
-      }
+      )
+        throw new Error(
+          "channel has an open attempt during covenant lineage apply",
+        );
       assertServerCovenantLineageExtension(expected, channel);
       await putChannel(txn, channel);
+      await deleteChannelOperation(txn, lease);
     });
   }
 
@@ -421,21 +442,16 @@ export class GatewayLedger implements ServerStateStore {
         txn,
         attempt.paymentIdentifier,
       );
-      await admitDurableBudget(
-        txn,
-        this.#limits,
-        this.#now(),
-        {
-          key: `batch:${attempt.attemptId}`,
-          kind: "batch",
-          attemptId: attempt.attemptId,
-          payerId: attempt.payerId,
-          bytes: durableOpenRecordBytes(attempt),
-          ...(attempt.paymentIdentifier
-            ? { paymentIdentifier: attempt.paymentIdentifier.id }
-            : {}),
-        },
-      );
+      await admitDurableBudget(txn, this.#limits, this.#now(), {
+        key: `batch:${attempt.attemptId}`,
+        kind: "batch",
+        attemptId: attempt.attemptId,
+        payerId: attempt.payerId,
+        bytes: durableOpenRecordBytes(attempt),
+        ...(attempt.paymentIdentifier
+          ? { paymentIdentifier: attempt.paymentIdentifier.id }
+          : {}),
+      });
       if (transition) await putChannel(txn, transition.next);
       await reservePaymentIdentifier(
         txn,
@@ -592,10 +608,9 @@ export class GatewayLedger implements ServerStateStore {
           txn,
           `batch:${attempt.attemptId}`,
           durableByteLength({
-            paymentIdentifierReservation:
-              await txn.get(
-                paymentIdentifierReservationKey(attempt.paymentIdentifier.id),
-              ),
+            paymentIdentifierReservation: await txn.get(
+              paymentIdentifierReservationKey(attempt.paymentIdentifier.id),
+            ),
           }),
           this.#now(),
           undefined,
@@ -743,21 +758,16 @@ export class GatewayLedger implements ServerStateStore {
         txn,
         attempt.paymentIdentifier,
       );
-      await admitDurableBudget(
-        txn,
-        this.#limits,
-        this.#now(),
-        {
-          key: `exact:${attempt.transactionId}`,
-          kind: "exact",
-          attemptId: attempt.transactionId,
-          payerId: attempt.payerId,
-          bytes: durableOpenRecordBytes(attempt),
-          ...(attempt.paymentIdentifier
-            ? { paymentIdentifier: attempt.paymentIdentifier.id }
-            : {}),
-        },
-      );
+      await admitDurableBudget(txn, this.#limits, this.#now(), {
+        key: `exact:${attempt.transactionId}`,
+        kind: "exact",
+        attemptId: attempt.transactionId,
+        payerId: attempt.payerId,
+        bytes: durableOpenRecordBytes(attempt),
+        ...(attempt.paymentIdentifier
+          ? { paymentIdentifier: attempt.paymentIdentifier.id }
+          : {}),
+      });
       if (attempt.profile === "additive") {
         if (!attempt.head)
           throw new Error("additive exact settlement requires a head claim");
@@ -961,10 +971,9 @@ export class GatewayLedger implements ServerStateStore {
           txn,
           `exact:${attempt.transactionId}`,
           durableByteLength({
-            paymentIdentifierReservation:
-              await txn.get(
-                paymentIdentifierReservationKey(attempt.paymentIdentifier.id),
-              ),
+            paymentIdentifierReservation: await txn.get(
+              paymentIdentifierReservationKey(attempt.paymentIdentifier.id),
+            ),
           }),
           this.#now(),
           undefined,
@@ -1326,9 +1335,7 @@ export class GatewayLedger implements ServerStateStore {
     return this.#storage.transaction(async (txn) => {
       const stored = await txn.get<RateWindowRecord>(key);
       const current =
-        stored && stored.resetAt >= resetAt
-          ? stored
-          : { resetAt, counts: {} };
+        stored && stored.resetAt >= resetAt ? stored : { resetAt, counts: {} };
       const previous = current.counts[scopeHash];
       if (
         previous === undefined &&
@@ -1418,18 +1425,16 @@ export class DurableGatewayLockManager implements ChannelLockManager {
       await new Promise((resolve) => setTimeout(resolve, 50));
     }
     let renewalInFlight: Promise<void> = Promise.resolve();
-    const renewal = setInterval(() => {
-      renewalInFlight = renewalInFlight
-        .then(() =>
-          this.#state.acquireLock(
-            channelId,
-            token,
-            Date.now(),
-            this.#ttlMs,
-          ),
-        )
-        .then(() => undefined);
-    }, Math.max(50, Math.floor(this.#ttlMs / 3)));
+    const renewal = setInterval(
+      () => {
+        renewalInFlight = renewalInFlight
+          .then(() =>
+            this.#state.acquireLock(channelId, token, Date.now(), this.#ttlMs),
+          )
+          .then(() => undefined);
+      },
+      Math.max(50, Math.floor(this.#ttlMs / 3)),
+    );
     try {
       return await fn();
     } finally {
@@ -1495,8 +1500,13 @@ export async function dispatchGatewayState(
       const payload = readPayload<{
         expected: ServerChannelRecord;
         channel: ServerChannelRecord;
+        leaseId: string;
       }>(request);
-      return ledger.applyCovenantLineage(payload.expected, payload.channel);
+      return ledger.applyCovenantLineage(
+        payload.expected,
+        payload.channel,
+        payload.leaseId,
+      );
     }
     case "listChannels":
       return ledger.listChannels();
@@ -1911,9 +1921,7 @@ async function releasePaymentIdentifierReservation(
 async function assertCompletedPaymentIdentifier(
   txn: GatewayTransaction,
   attempt:
-    | BatchSettlementAttemptRecord
-    | ExactSettlementAttemptRecord
-    | undefined,
+    BatchSettlementAttemptRecord | ExactSettlementAttemptRecord | undefined,
   completed: PaymentIdentifierRecord | undefined,
 ): Promise<void> {
   const claim = attempt?.paymentIdentifier;
@@ -1959,7 +1967,11 @@ function assertPaymentIdentifierReservationClaim(
   )
     throw new Error("payment identifier reservation is invalid");
   if (claim.paymentKind === "batch-settlement") {
-    if (!claim.channelId || claim.transactionId || claim.paymentOutputIndex !== undefined)
+    if (
+      !claim.channelId ||
+      claim.transactionId ||
+      claim.paymentOutputIndex !== undefined
+    )
       throw new Error("batch payment identifier ownership is invalid");
   } else if (claim.paymentKind === "exact") {
     if (
@@ -2005,10 +2017,7 @@ async function putChannel(
   const registeredChannelId = await txn.get<string>(
     covenantChannelKey(covenantId),
   );
-  if (
-    registeredChannelId &&
-    registeredChannelId.toLowerCase() !== channelId
-  ) {
+  if (registeredChannelId && registeredChannelId.toLowerCase() !== channelId) {
     throw new Error(
       "covenant lineage is already registered to another channel",
     );
@@ -2025,7 +2034,9 @@ function normalizeChannelOperationLease(
     !isLowerHash32(input.channelId) ||
     !isNonzeroLowerHash32(input.covenantId)
   )
-    throw new Error("channel operation identifiers must be canonical lowercase");
+    throw new Error(
+      "channel operation identifiers must be canonical lowercase",
+    );
   if (input.status !== "reserved")
     throw new Error("new channel operation must be reserved");
   if (
@@ -2115,9 +2126,15 @@ function assertSettlementTransition(
     next.activeScriptPublicKey.toLowerCase() !==
       previous.activeScriptPublicKey.toLowerCase() ||
     parseBatchLaneAmount(next.chargedCumulativeAmount, "next charged amount") <
-      parseBatchLaneAmount(previous.chargedCumulativeAmount, "previous charged amount") ||
+      parseBatchLaneAmount(
+        previous.chargedCumulativeAmount,
+        "previous charged amount",
+      ) ||
     parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
-      parseBatchLaneAmount(previous.signedMaxClaimable, "previous signed ceiling") ||
+      parseBatchLaneAmount(
+        previous.signedMaxClaimable,
+        "previous signed ceiling",
+      ) ||
     next.lastCommitmentId !== commitment.commitmentId ||
     next.version !== incrementVersion(previous.version) ||
     !sameCovenantLineage(previous.lineage, next.lineage)
@@ -2413,9 +2430,11 @@ async function admitDurableBudget(
   record: DurableBudgetRecord,
 ): Promise<void> {
   if (await txn.get(durableBudgetRecordKey(record.key))) return;
-  const meta =
-    (await txn.get<DurableBudgetMeta>(durableBudgetMetaKey())) ??
-    { records: 0, bytes: 0, payerCounts: {} };
+  const meta = (await txn.get<DurableBudgetMeta>(durableBudgetMetaKey())) ?? {
+    records: 0,
+    bytes: 0,
+    payerCounts: {},
+  };
   const payerKey = sha256Hex(record.payerId);
   const payerRecords = meta.payerCounts[payerKey] ?? 0;
   if (meta.records >= limits.maxRecords)
@@ -2504,7 +2523,11 @@ async function pruneTerminalDurableBudgets(
     const record = await txn.get<DurableBudgetRecord>(
       durableBudgetRecordKey(key),
     );
-    if (!record || record.terminalAt === undefined || record.terminalAt > cutoff) {
+    if (
+      !record ||
+      record.terminalAt === undefined ||
+      record.terminalAt > cutoff
+    ) {
       await txn.delete(terminalKey);
       continue;
     }

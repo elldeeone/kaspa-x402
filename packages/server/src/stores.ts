@@ -210,8 +210,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const lease = this.#requireChannelOperation(channelId, leaseId);
     if (lease.kind !== "retirement")
       throw new Error("channel operation lease is not a retirement");
-    if (!sameChannelSnapshot(channel, expected) ||
-        !sameChannelSnapshot(channel, lease.expected))
+    if (
+      !sameChannelSnapshot(channel, expected) ||
+      !sameChannelSnapshot(channel, lease.expected)
+    )
       throw new Error("channel state changed before retirement");
     if (channel.status === "refunded" || channel.lineage.currentHead === null) {
       throw new Error("terminal refunded channel cannot be retired");
@@ -234,20 +236,31 @@ export class MemoryServerChannelStore implements ServerStateStore {
   async applyCovenantLineage(
     expected: ServerChannelRecord,
     channel: ServerChannelRecord,
+    leaseId: Hash32Hex,
   ): Promise<void> {
     const current = this.#channels.get(expected.channelId);
     if (!sameChannelSnapshot(current, expected)) {
       throw new Error("channel state changed before covenant lineage apply");
     }
+    const lease = this.#requireChannelOperation(expected.channelId, leaseId);
     if (
-      this.#channelOperations.has(expected.channelId) ||
+      (lease.kind !== "refund" && lease.kind !== "recovery") ||
+      !sameChannelSnapshot(lease.expected, expected)
+    )
+      throw new Error(
+        "covenant lineage apply does not own the channel snapshot",
+      );
+    if (
       this.#openBatchAttemptByChannel.has(expected.channelId) ||
       this.#openClaimAttemptByChannel.has(expected.channelId)
-    ) {
-      throw new Error("channel has an open operation during covenant lineage apply");
-    }
+    )
+      throw new Error(
+        "channel has an open attempt during covenant lineage apply",
+      );
     assertServerCovenantLineageExtension(expected, channel);
     this.#setChannel(channel);
+    this.#channelOperations.delete(expected.channelId);
+    this.#channelByLeaseId.delete(leaseId);
   }
 
   async claimChannelOperation(
@@ -260,7 +273,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
         throw new Error("channel already has a conflicting durable operation");
       return { lease: clone(existing), created: false };
     }
-    if (!sameChannelSnapshot(this.#channels.get(lease.channelId), lease.expected))
+    if (
+      !sameChannelSnapshot(this.#channels.get(lease.channelId), lease.expected)
+    )
       throw new Error("channel state changed before operation claim");
     this.#channelOperations.set(lease.channelId, clone(lease));
     this.#channelByLeaseId.set(lease.leaseId, lease.channelId);
@@ -288,7 +303,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       this.#openBatchAttemptByChannel.get(lease.channelId) === lease.leaseId ||
       this.#openClaimAttemptByChannel.get(lease.channelId) !== undefined
     ) {
-      throw new Error("attempt-owned channel operation must use its safe abandon path");
+      throw new Error(
+        "attempt-owned channel operation must use its safe abandon path",
+      );
     }
     this.#channelOperations.delete(lease.channelId);
     this.#channelByLeaseId.delete(lease.leaseId);
@@ -447,7 +464,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     } else if (!matchesExpectedChannel(current, attempt.expected)) {
       throw new Error("channel state changed before batch settlement claim");
     }
-    const openAttemptId = this.#openBatchAttemptByChannel.get(attempt.channelId);
+    const openAttemptId = this.#openBatchAttemptByChannel.get(
+      attempt.channelId,
+    );
     if (openAttemptId)
       throw new Error("channel already has a pending batch settlement");
     if (this.#channelOperations.has(attempt.channelId))
@@ -463,12 +482,12 @@ export class MemoryServerChannelStore implements ServerStateStore {
       attempt.paymentIdentifier,
     );
     if (transition) this.#setChannel(transition.next);
-    this.#reservePaymentIdentifier(attempt.paymentIdentifier, attempt.createdAt);
-    this.#batchAttempts.set(attempt.attemptId, clone(attempt));
-    this.#openBatchAttemptByChannel.set(
-      attempt.channelId,
-      attempt.attemptId,
+    this.#reservePaymentIdentifier(
+      attempt.paymentIdentifier,
+      attempt.createdAt,
     );
+    this.#batchAttempts.set(attempt.attemptId, clone(attempt));
+    this.#openBatchAttemptByChannel.set(attempt.channelId, attempt.attemptId);
     this.#channelOperations.set(attempt.channelId, {
       leaseId: attempt.attemptId,
       channelId: attempt.channelId,
@@ -553,7 +572,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       attempt.handlerResult ||
       attempt.recoveryReason
     ) {
-      throw new Error("uncertain or completed batch settlement cannot be abandoned");
+      throw new Error(
+        "uncertain or completed batch settlement cannot be abandoned",
+      );
     }
     this.#requireChannelOperation(attempt.channelId, attempt.attemptId);
     this.#releasePaymentIdentifierReservation(
@@ -569,8 +590,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       this.#terminalizeBudgetRecord(
         `batch:${attempt.attemptId}`,
         durableByteLength({
-          paymentIdentifierReservation:
-            this.#paymentIdentifierReservations.get(attempt.paymentIdentifier.id),
+          paymentIdentifierReservation: this.#paymentIdentifierReservations.get(
+            attempt.paymentIdentifier.id,
+          ),
         }),
         undefined,
         attempt.paymentIdentifier.id,
@@ -633,7 +655,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     );
     if (record.paymentIdentifier) {
       if (!attempt)
-        throw new Error("payment identifier completion requires its reserved attempt");
+        throw new Error(
+          "payment identifier completion requires its reserved attempt",
+        );
       this.#assertCompletedPaymentIdentifier(attempt, record.paymentIdentifier);
     }
     let appliedAttempt: ExactSettlementAttemptRecord | undefined;
@@ -769,7 +793,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
       attempt.paymentIdentifier,
     );
     if (claimedHead) this.#exactHeads.set(claimedHead.headId, claimedHead);
-    this.#reservePaymentIdentifier(attempt.paymentIdentifier, attempt.createdAt);
+    this.#reservePaymentIdentifier(
+      attempt.paymentIdentifier,
+      attempt.createdAt,
+    );
     this.#exactAttempts.set(attempt.transactionId, clone(attempt));
     return { attempt: clone(attempt), created: true };
   }
@@ -931,8 +958,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       this.#terminalizeBudgetRecord(
         `exact:${attempt.transactionId}`,
         durableByteLength({
-          paymentIdentifierReservation:
-            this.#paymentIdentifierReservations.get(attempt.paymentIdentifier.id),
+          paymentIdentifierReservation: this.#paymentIdentifierReservations.get(
+            attempt.paymentIdentifier.id,
+          ),
         }),
         undefined,
         attempt.paymentIdentifier.id,
@@ -1098,7 +1126,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
         !(allowPending && existing.status === "pending")) ||
       existing.recoveryReason !== undefined
     )
-      throw new Error("uncertain or completed payment identifier cannot be released");
+      throw new Error(
+        "uncertain or completed payment identifier cannot be released",
+      );
     this.#paymentIdentifierReservations.set(claim.id, {
       ...existing,
       status: "safely-released",
@@ -1109,9 +1139,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
 
   #assertCompletedPaymentIdentifier(
     attempt:
-      | BatchSettlementAttemptRecord
-      | ExactSettlementAttemptRecord
-      | undefined,
+      BatchSettlementAttemptRecord | ExactSettlementAttemptRecord | undefined,
     completed: PaymentIdentifierRecord | undefined,
   ): void {
     const claim = attempt?.paymentIdentifier;
@@ -1127,7 +1155,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       claim.transactionId !== completed.transactionId ||
       claim.paymentOutputIndex !== completed.paymentOutputIndex
     ) {
-      throw new Error("payment identifier completion does not match reservation");
+      throw new Error(
+        "payment identifier completion does not match reservation",
+      );
     }
     const reservation = this.#paymentIdentifierReservations.get(claim.id);
     if (
@@ -1178,12 +1208,21 @@ export class MemoryServerChannelStore implements ServerStateStore {
       !sameOutpoint(next.activeOutpoint, previous.activeOutpoint) ||
       next.activeScriptPublicKey.toLowerCase() !==
         previous.activeScriptPublicKey.toLowerCase() ||
-      parseBatchLaneAmount(next.chargedCumulativeAmount, "next charged amount") <
-        parseBatchLaneAmount(previous.chargedCumulativeAmount, "previous charged amount") ||
+      parseBatchLaneAmount(
+        next.chargedCumulativeAmount,
+        "next charged amount",
+      ) <
+        parseBatchLaneAmount(
+          previous.chargedCumulativeAmount,
+          "previous charged amount",
+        ) ||
       parseBatchLaneAmount(next.signedMaxClaimable, "next signed ceiling") <
-        parseBatchLaneAmount(previous.signedMaxClaimable, "previous signed ceiling") ||
-      next.lastCommitmentId !== commitment.commitmentId
-      || next.version !== incrementVersion(previous.version) ||
+        parseBatchLaneAmount(
+          previous.signedMaxClaimable,
+          "previous signed ceiling",
+        ) ||
+      next.lastCommitmentId !== commitment.commitmentId ||
+      next.version !== incrementVersion(previous.version) ||
       !sameCovenantLineage(previous.lineage, next.lineage)
     ) {
       throw new Error("settlement would roll back or replace channel state");
@@ -1212,7 +1251,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
       next.activeScriptPublicKey.toLowerCase() !==
         attempt.continuationScriptPublicKey?.toLowerCase()
     )
-      throw new Error("claim transition is not the reserved monotonic successor");
+      throw new Error(
+        "claim transition is not the reserved monotonic successor",
+      );
     batchLaneAccounting(next);
     assertServerCovenantJournalExtension(previous, next);
   }
@@ -1228,7 +1269,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
   async saveClaimAttempt(record: ClaimAttemptRecord): Promise<void> {
     const existing = this.#claimAttempts.get(record.attemptId);
     const attempt = normalizeClaimAttempt(record, existing);
-    const openAttemptId = this.#openClaimAttemptByChannel.get(attempt.channelId);
+    const openAttemptId = this.#openClaimAttemptByChannel.get(
+      attempt.channelId,
+    );
     if (openAttemptId && openAttemptId !== attempt.attemptId) {
       throw new Error("claim attempt is already pending");
     }
@@ -1377,7 +1420,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const current = this.#budgetRecords.get(key);
     if (!current) throw new Error("durable budget reservation is missing");
     if (bytes > current.bytes)
-      throw new Error("durable terminal bundle exceeded its reserved byte quota");
+      throw new Error(
+        "durable terminal bundle exceeded its reserved byte quota",
+      );
     const terminalAt = this.#now();
     this.#budgetBytes += bytes - current.bytes;
     this.#budgetRecords.set(key, {
@@ -1396,7 +1441,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const current = this.#budgetRecords.get(key);
     if (!current) throw new Error("durable budget reservation is missing");
     if (bytes > current.bytes)
-      throw new Error("durable terminal bundle exceeded its reserved byte quota");
+      throw new Error(
+        "durable terminal bundle exceeded its reserved byte quota",
+      );
   }
 
   #deleteBudgetRecord(key: string): void {
@@ -1430,7 +1477,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
             reservation?.status === "safely-released" &&
             reservation.ownerId === record.attemptId
           ) {
-            this.#paymentIdentifierReservations.delete(record.paymentIdentifier);
+            this.#paymentIdentifierReservations.delete(
+              record.paymentIdentifier,
+            );
           }
         }
         this.#deleteBudgetRecord(key);
@@ -1622,7 +1671,9 @@ function normalizeChannelOperationLease(
     !isLowerHash32(input.channelId) ||
     !isNonzeroLowerHash32(input.covenantId)
   )
-    throw new Error("channel operation identifiers must be canonical lowercase");
+    throw new Error(
+      "channel operation identifiers must be canonical lowercase",
+    );
   if (input.status !== "reserved")
     throw new Error("new channel operation must be reserved");
   if (
@@ -1676,7 +1727,11 @@ function assertPaymentIdentifierReservationClaim(
   )
     throw new Error("payment identifier reservation is invalid");
   if (claim.paymentKind === "batch-settlement") {
-    if (!claim.channelId || claim.transactionId || claim.paymentOutputIndex !== undefined)
+    if (
+      !claim.channelId ||
+      claim.transactionId ||
+      claim.paymentOutputIndex !== undefined
+    )
       throw new Error("batch payment identifier ownership is invalid");
   } else if (claim.paymentKind === "exact") {
     if (
@@ -1906,7 +1961,9 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
       throw new Error("broadcast claim attempt requires observed finality");
     }
     if (attempt.finality === "broadcast" && attempt.acceptance !== undefined) {
-      throw new Error("broadcast-only claim attempt cannot have acceptance evidence");
+      throw new Error(
+        "broadcast-only claim attempt cannot have acceptance evidence",
+      );
     }
     if (
       (attempt.finality === "accepted" || attempt.finality === "confirmed") &&
@@ -1922,10 +1979,8 @@ function assertClaimAttemptShape(attempt: ClaimAttemptRecord): void {
       attempt.finality !== "confirmed" ||
       !attempt.acceptance ||
       attempt.acceptance.transactionId !== attempt.transactionId ||
-      decideChainEvidence(
-        attempt.acceptance,
-        attempt.requiredConfirmations,
-      ).status !== "confirmed"
+      decideChainEvidence(attempt.acceptance, attempt.requiredConfirmations)
+        .status !== "confirmed"
     ) {
       throw new Error("accepted claim attempt lacks confirmed chain evidence");
     }

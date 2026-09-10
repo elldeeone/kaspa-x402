@@ -1,4 +1,6 @@
 import type {
+  BatchPaymentAuthorizationIntent,
+  BatchPaymentAuthorizationPolicy,
   BatchPresentationAuthorization,
   BatchPaymentRequirements,
   ByteHex,
@@ -169,6 +171,18 @@ export interface ExactTransactionPaymentResult {
   fundingSource?: FundingSourceKind;
 }
 
+export interface BatchPaymentAuthorizationRequest {
+  /** Complete immutable payer intent after local policy validation. */
+  intent: Readonly<BatchPaymentAuthorizationIntent>;
+  /** Canonical SHA-256 digest that the approval must bind. */
+  intentDigest: Hash32Hex;
+}
+
+export interface BatchPaymentAuthorizationApproval {
+  /** Must exactly match the requested canonical intent digest. */
+  intentDigest: Hash32Hex;
+}
+
 export type ExactPaymentResult = ExactTransactionPaymentResult;
 
 export interface FeeEstimateRequest {
@@ -205,6 +219,10 @@ export interface FundingProvider {
   readonly networkId: NetworkId;
   readonly sourceKind: FundingSourceKind;
   getPublicIdentity(): Promise<PublicIdentity>;
+  /** Explicit payer boundary invoked before any batch key, funding, or signing work. */
+  authorizeBatchPayment?(
+    request: BatchPaymentAuthorizationRequest,
+  ): Promise<BatchPaymentAuthorizationApproval>;
   prepareEscrowDeposit(
     request: EscrowDepositRequest,
   ): Promise<PreparedEscrowDeposit>;
@@ -248,6 +266,8 @@ export interface FundingPolicy {
   allowedExactProfiles?: readonly ExactProfile[];
   allowedPayTo?: readonly string[];
   maximumExactAmountSompi?: SompiString;
+  /** Complete mandatory policy for unattended batch authorization. */
+  batchPayment?: BatchPaymentAuthorizationPolicy;
 }
 
 export interface ChannelKey {
@@ -333,9 +353,7 @@ export interface GenesisChannelIntent {
 }
 
 export type FundingTransitionAttemptStatus =
-  | "pending"
-  | "broadcast"
-  | "applied";
+  "pending" | "broadcast" | "applied";
 
 interface FundingTransitionAttemptBase {
   channelId: Hash32Hex;
@@ -350,22 +368,19 @@ interface FundingTransitionAttemptBase {
 }
 
 /** Genesis is reserved before a channel or covenant head exists. */
-export interface GenesisFundingTransitionAttempt
-  extends FundingTransitionAttemptBase {
+export interface GenesisFundingTransitionAttempt extends FundingTransitionAttemptBase {
   kind: "genesis";
   intent: GenesisChannelIntent;
 }
 
 /** Top-up owns the exact persisted lane head until it is reconciled. */
-export interface TopUpFundingTransitionAttempt
-  extends FundingTransitionAttemptBase {
+export interface TopUpFundingTransitionAttempt extends FundingTransitionAttemptBase {
   kind: "top-up";
   expectedChannel: DirectModeChannel;
 }
 
 export type FundingTransitionAttemptRecord =
-  | GenesisFundingTransitionAttempt
-  | TopUpFundingTransitionAttempt;
+  GenesisFundingTransitionAttempt | TopUpFundingTransitionAttempt;
 
 export type FundingTransitionAttemptApplyRequest =
   | {
@@ -649,8 +664,10 @@ export interface RefundResult {
   accepted: boolean;
 }
 
-export type RefundReconciliation =
-  { transactionId: Hash32Hex; evidence: TrustedTransactionEvidence };
+export type RefundReconciliation = {
+  transactionId: Hash32Hex;
+  evidence: TrustedTransactionEvidence;
+};
 
 /** Trusted chain lookup for one already-persisted refund transaction. */
 export interface RefundReconciler {
@@ -665,8 +682,10 @@ export interface RefundReconcileResult {
   accepted: boolean;
 }
 
-export type FundingTransitionReconciliation =
-  { transactionId: Hash32Hex; evidence: TrustedTransactionEvidence };
+export type FundingTransitionReconciliation = {
+  transactionId: Hash32Hex;
+  evidence: TrustedTransactionEvidence;
+};
 
 /** Trusted chain lookup for one already-persisted genesis or top-up artifact. */
 export interface FundingTransitionReconciler {

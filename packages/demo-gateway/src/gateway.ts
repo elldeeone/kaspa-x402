@@ -533,9 +533,10 @@ class AddressRecordingStore implements ServerStateStore {
   async applyCovenantLineage(
     expected: Parameters<ServerStateStore["applyCovenantLineage"]>[0],
     channel: Parameters<ServerStateStore["applyCovenantLineage"]>[1],
+    leaseId: Parameters<ServerStateStore["applyCovenantLineage"]>[2],
   ) {
     this.#recordChannel(channel);
-    return this.#inner.applyCovenantLineage(expected, channel);
+    return this.#inner.applyCovenantLineage(expected, channel, leaseId);
   }
 
   retireChannel(
@@ -557,11 +558,7 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.loadChannelOperation(channelId);
   }
 
-  abandonChannelOperation(
-    leaseId: string,
-    reason: string,
-    observedAt: string,
-  ) {
+  abandonChannelOperation(leaseId: string, reason: string, observedAt: string) {
     return this.#inner.abandonChannelOperation(leaseId, reason, observedAt);
   }
 
@@ -588,11 +585,7 @@ class AddressRecordingStore implements ServerStateStore {
     result: Parameters<ServerStateStore["recordBatchHandlerResult"]>[1],
     completedAt: string,
   ) {
-    return this.#inner.recordBatchHandlerResult(
-      attemptId,
-      result,
-      completedAt,
-    );
+    return this.#inner.recordBatchHandlerResult(attemptId, result, completedAt);
   }
 
   markBatchHandlerRecoveryRequired(
@@ -777,9 +770,7 @@ class AddressRecordingStore implements ServerStateStore {
   }
 }
 
-function healthResponse(
-  config: GatewayConfig,
-): Response {
+function healthResponse(config: GatewayConfig): Response {
   return json(
     {
       ok: true,
@@ -1316,8 +1307,7 @@ function profileMetric(profile: Profile): string {
 }
 
 function rateScope(request: Request, profile: Profile): string {
-  const ip =
-    request.headers.get("cf-connecting-ip")?.trim() || "unknown";
+  const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return `${ip}:${profile}`;
 }
 

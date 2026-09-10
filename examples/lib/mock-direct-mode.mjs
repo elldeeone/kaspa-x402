@@ -161,6 +161,28 @@ export function createMockDirectModeEnvironment() {
     signer: new MockSigner(),
     store: clientStore,
     addressCodec,
+    fundingPolicy: {
+      batchPayment: {
+        maximumBatchChargeSompi: "4000000",
+        maximumInitialDepositSompi: "4000000",
+        maximumTopUpSompi: "4000000",
+        maximumCumulativeAuthorizationSompi: "4000000",
+        maximumTotalExposureSompi: "8000000",
+        minimumRefundLeadDaa: "1",
+        maximumRefundHorizonDaa: "1000",
+        allowedOrigins: [
+          "https://api.example.test",
+          "https://mcp.example.test",
+        ],
+        allowedResources: [
+          "https://api.example.test/metered",
+          "mcp://tool/quote",
+        ],
+        allowedPayTo: [PAYOUT_ADDRESS],
+        allowedServerPublicKeys: [SERVER_PUBLIC_KEY],
+        allowedFundingSources: ["hot-wallet"],
+      },
+    },
     fetch: createMockPaidFetch(server),
     refundBuilder: {
       async buildRefundTransaction({ channel, refundAmount, signDigest }) {
@@ -321,6 +343,10 @@ class MockFundingProvider {
       address: REFUND_ADDRESS,
       publicKey: CLIENT_PUBLIC_KEY,
     };
+  }
+
+  async authorizeBatchPayment({ intentDigest }) {
+    return { intentDigest };
   }
 
   async prepareEscrowDeposit(request) {
@@ -815,7 +841,9 @@ function acceptedChainEvidence(transactionId) {
     transactionId: transactionId.toLowerCase(),
     acceptingBlockHash: mockHash(`accepting-block:${transactionId}`),
     acceptingBlockBlueScore: (
-      checkpointBlueScore - BigInt(TESTNET_10_CONFIRMATION_THRESHOLD) + 1n
+      checkpointBlueScore -
+      BigInt(TESTNET_10_CONFIRMATION_THRESHOLD) +
+      1n
     ).toString(),
     confirmationCount: TESTNET_10_CONFIRMATION_THRESHOLD,
     checkpoint: {

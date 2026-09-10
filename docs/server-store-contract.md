@@ -118,6 +118,12 @@ wrong covenant/template bindings, and inconsistent state or value transitions
 are rejected. A removed terminal refund restores only a refund-capable or
 suspicious lane; it must never reactivate charging.
 
+Applying an authoritative lineage change must first reserve a `recovery` or
+`refund` channel-operation lease against the complete current snapshot.
+`applyCovenantLineage` validates that lease and atomically installs the derived
+head and consumes the lease. A payment, claim, top-up, retirement, or second
+reconciler cannot mutate the same snapshot while that write is pending.
+
 ## Batch Accounting And Commit
 
 At voucher acceptance, one transaction must verify and persist

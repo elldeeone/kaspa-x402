@@ -377,6 +377,7 @@ export interface ServerChannelStore {
   applyCovenantLineage(
     expected: ServerChannelRecord,
     channel: ServerChannelRecord,
+    leaseId: Hash32Hex,
   ): Promise<void>;
 }
 
@@ -393,9 +394,7 @@ export type ChannelOperationKind =
   | "retirement";
 
 export type ChannelOperationLeaseStatus =
-  | "reserved"
-  | "pending"
-  | "recovery-required";
+  "reserved" | "pending" | "recovery-required";
 
 /** One durable owner for every side-effecting operation on a channel lineage. */
 export interface ChannelOperationLeaseRecord {
@@ -454,8 +453,7 @@ export interface PaymentIdentifierReservationClaim {
   paymentOutputIndex?: number;
 }
 
-export interface PaymentIdentifierReservationRecord
-  extends PaymentIdentifierReservationClaim {
+export interface PaymentIdentifierReservationRecord extends PaymentIdentifierReservationClaim {
   status: PaymentIdentifierReservationStatus;
   createdAt: string;
   updatedAt: string;
@@ -599,9 +597,7 @@ export interface SettlementCommit {
 }
 
 export type BatchSettlementAttemptStatus =
-  | "pending"
-  | "applied"
-  | "safely-released";
+  "pending" | "applied" | "safely-released";
 
 /** Durable evidence written before protected batch work can begin. */
 export interface BatchSettlementAttemptRecord {
@@ -935,6 +931,8 @@ export interface BuildPaymentRequiredOptions {
   channel?: ServerChannelRecord;
   exactHead?: ExactHeadChallenge;
   error?: string;
+  /** Explicit fixed charge for an MCP isError result; must equal amount. */
+  mcpErrorChargeSompi?: SompiString;
 }
 
 export interface DirectPaymentVerificationOptions {
@@ -966,6 +964,8 @@ export interface PaidRequest {
   requestHash?: Hash32Hex;
   /** Host-derived normalized claims. Never pass raw cookies or bearer tokens. */
   trustedSecurityContext?: TrustedSecurityContext;
+  /** Trusted transport policy for MCP error charging. */
+  mcpErrorChargeSompi?: SompiString;
 }
 
 export type HeaderSource =

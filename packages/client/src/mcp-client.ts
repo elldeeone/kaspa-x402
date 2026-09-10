@@ -11,10 +11,7 @@ import {
   type TrustedSecurityContext,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
-import {
-  DirectModeClient,
-  PendingExactPaymentError,
-} from "./direct-client.js";
+import { DirectModeClient, PendingExactPaymentError } from "./direct-client.js";
 import type { ApplySettlementResult, CreatePaymentResult } from "./types.js";
 
 export type McpToolCaller = (
@@ -86,6 +83,19 @@ export async function paidMcpToolCall(
     );
     const settlementResponse = readMcpPaymentResponse(retryResult);
     if (settlementResponse) {
+      if (
+        retryResult.isError &&
+        payment.accepted.scheme === "batch-settlement" &&
+        settlementResponse.success &&
+        (payment.accepted.extra.mcpErrorChargeSompi !==
+          payment.accepted.amount ||
+          settlementResponse.amount !== payment.accepted.amount)
+      ) {
+        throw new KaspaX402Error(
+          "invalid_kaspa_settlement_response",
+          "unexpected MCP error result carried a non-approved batch charge",
+        );
+      }
       const settlement = await client.applySettlement(
         payment,
         settlementResponse,

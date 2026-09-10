@@ -33,8 +33,19 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
   journal, deriving the live head locally from verified lineage.
 
 The client exposes and selects `batch-settlement` only when its funding
-provider implements authoritative `discoverCovenantLineage` recovery. A REST
-UTXO reader without selected-chain lineage proof is exact-only.
+provider implements authoritative `discoverCovenantLineage` recovery and
+`authorizeBatchPayment`, and `FundingPolicy.batchPayment` supplies every
+payer-owned cap. The authorization callback receives the complete immutable
+open, voucher-increase, or top-up intent and must return its exact digest.
+Missing policy, missing approval, a changed digest, or a cap violation fails
+before identity creation, key generation, transaction preparation, signing, or
+broadcast. A REST UTXO reader without selected-chain lineage proof is
+exact-only.
+
+For paid MCP calls, an advertised non-zero `mcpErrorChargeSompi` is included in
+that payer intent. An `isError` result carrying a successful batch settlement
+is accepted only when the settlement amount equals the explicitly approved
+fixed error charge; otherwise the channel is quarantined.
 
 Mainnet funding fails closed unless `allowMainnet: true` is set. The default
 offer selector accepts only `kaspa:testnet-10`; operators that opt into mainnet
