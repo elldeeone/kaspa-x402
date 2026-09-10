@@ -78,7 +78,7 @@ export const SCHEMA_FILES = [
 export const SPEC_FILES = [
   "spec/kaspa-x402-v1.md",
   "spec/kaspa-exact-v2.md",
-  "spec/kaspa-batch-settlement-v2.md",
+  "spec/kaspa-batch-settlement-v3.md",
   "spec/http-profile.md",
   "spec/mcp-profile.md",
   "spec/facilitator-profile.md",
@@ -86,8 +86,8 @@ export const SPEC_FILES = [
 ];
 
 export const CONTRACT_FILES = [
-  "contracts/kaspa-x402-escrow-v3.sil",
-  "contracts/fixtures/kaspa-x402-escrow-v3.json",
+  "contracts/kaspa-x402-escrow-v4.sil",
+  "contracts/fixtures/kaspa-x402-escrow-v4.json",
 ];
 
 export const RELEASE_DOC_FILES = [
@@ -122,7 +122,12 @@ export const ACTIVE_REDIRECTS = [
   },
   {
     from: "/spec/transaction-v1-plan/",
-    to: "/spec/kaspa-batch-settlement-v2/",
+    to: "/spec/kaspa-batch-settlement-v3/",
+    status: 302,
+  },
+  {
+    from: "/spec/kaspa-batch-settlement-v2/",
+    to: "/spec/kaspa-batch-settlement-v3/",
     status: 302,
   },
   { from: "/docs/public-proposal/", to: "/", status: 302 },
@@ -146,7 +151,7 @@ export const ARTIFACT_NOTES = {
   "schemas/kaspa-payment-payload.schema.json":
     "Kaspa payload body: exact transfer, escrow deposit, and voucher shapes.",
   "schemas/kaspa-batch-extra.schema.json":
-    "Escrow parameters for `batch-settlement` offers (`kaspa-escrow-v2`).",
+    "Escrow parameters for `batch-settlement` offers (`kaspa-escrow-v3`).",
   "schemas/payment-identifier.schema.json":
     "Payment identifier binding a payment to transaction id and outpoint material.",
   "schemas/channel-state.schema.json":
@@ -155,7 +160,7 @@ export const ARTIFACT_NOTES = {
     "Core binding: common rules for x402 v2 payments on Kaspa — networks, asset, amounts, envelopes.",
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
-  "spec/kaspa-batch-settlement-v2.md":
+  "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
     "HTTP transport: `PAYMENT-REQUIRED`, `PAYMENT-SIGNATURE`, and `PAYMENT-RESPONSE` flow.",
@@ -165,9 +170,9 @@ export const ARTIFACT_NOTES = {
     "Optional self-hosted facilitator: `/supported`, `/verify`, `/settle` compatibility surface.",
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
-  "contracts/kaspa-x402-escrow-v3.sil":
+  "contracts/kaspa-x402-escrow-v4.sil":
     "Normative SilverScript source for the Alpha.11 stateful batch escrow covenant.",
-  "contracts/fixtures/kaspa-x402-escrow-v3.json":
+  "contracts/fixtures/kaspa-x402-escrow-v4.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "spec/live-covenant-proof-harness.md":
     "Opt-in Testnet-10 proof for singleton genesis, repeated claims, top-up, refund, and restart recovery.",

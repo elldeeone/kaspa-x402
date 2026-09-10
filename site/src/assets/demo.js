@@ -341,8 +341,8 @@ function batchExtra() {
   if (!/^[0-9a-f]{64}$/.test(serverPublicKey))
     throw new Error("Server public key must be 64 hex characters.");
   return {
-    binding: "kaspa-escrow-v2",
-    templateId: "kaspa-x402-escrow-v3",
+    binding: "kaspa-escrow-v3",
+    templateId: "kaspa-x402-escrow-v4",
     serverPublicKey,
     minDepositSompi: canonicalBatchAmount(
       ui.minDeposit.value,
@@ -356,6 +356,7 @@ function batchExtra() {
       ui.refundDaa.value,
       "refund timeout DAA",
     ),
+    securityContextHash: "6".repeat(64),
     assetKind: "native",
     assetDecimals: 8,
   };
@@ -431,7 +432,7 @@ function buildBatchPaymentRetry(accepted) {
   const clientPublicKey = currentXOnlyPublicKey();
   const voucher = {
     covenantId: lane.current.covenantId,
-    amount: lane.current.signedMaxClaimable,
+    authorizedCumulativeAmount: lane.current.signedMaxClaimable,
     signature: lane.voucherSignature,
   };
   const paymentPayload = {
@@ -444,6 +445,20 @@ function buildBatchPaymentRetry(accepted) {
       fundingOutpoint: lane.current.activeOutpoint,
       activeScriptPublicKey: lane.current.activeScriptPublicKey,
       voucher,
+      presentation: {
+        version: "kaspa-x402-batch-presentation-v1",
+        requestFingerprint: "1".repeat(64),
+        acceptedRequirementsHash: "2".repeat(64),
+        securityContextHash: accepted.extra.securityContextHash,
+        channelId: lane.current.channelId,
+        covenantId: lane.current.covenantId,
+        voucherDigest: "3".repeat(64),
+        paymentIdentifier: null,
+        nonce: "4".repeat(64),
+        expiresAt: "2099-01-01T00:00:00.000Z",
+        digest: "5".repeat(64),
+        signature: "6".repeat(128),
+      },
     },
   };
   const commitmentId = "9".repeat(64);
@@ -572,8 +587,13 @@ function batchLanePreview(accepted) {
     signedMaxClaimable: signedMaxClaimable.toString(),
   };
   const afterSuccessfulWork = {
-    ...current,
-    chargedCumulativeAmount: chargedAfterWork.toString(),
+    channelId,
+    covenantId,
+    activeOutpoint,
+    activeScriptPublicKey,
+    fundingAmount: fundingAmount.toString(),
+    authorizedCumulativeAmount: chargedAfterWork.toString(),
+    claimedCumulativeAmount: claimedCumulativeAmount.toString(),
   };
   return {
     current,
@@ -583,7 +603,7 @@ function batchLanePreview(accepted) {
       symbols: {
         A: "chargedCumulativeAmount",
         S: "claimedCumulativeAmount",
-        T: "signedMaxClaimable / voucher.amount",
+        T: "signedMaxClaimable / voucher.authorizedCumulativeAmount",
         V: "fundingAmount",
         R: "advertised successor reserve",
       },
@@ -819,8 +839,8 @@ function isNonZeroHash32(value) {
 
 function isBatchExtra(extra) {
   if (!extra || typeof extra !== "object") return false;
-  if (extra.binding !== "kaspa-escrow-v2") return false;
-  if (extra.templateId !== "kaspa-x402-escrow-v3") return false;
+  if (extra.binding !== "kaspa-escrow-v3") return false;
+  if (extra.templateId !== "kaspa-x402-escrow-v4") return false;
   if (
     typeof extra.serverPublicKey !== "string" ||
     !/^[0-9a-fA-F]{64}$/.test(extra.serverPublicKey)
@@ -829,7 +849,8 @@ function isBatchExtra(extra) {
   if (
     !isBatchAmount(extra.minDepositSompi) ||
     !isBatchAmount(extra.claimReserveSompi) ||
-    !isDaaScore(extra.refundTimeoutDaa)
+    !isDaaScore(extra.refundTimeoutDaa) ||
+    !isHash32(extra.securityContextHash)
   )
     return false;
   if (extra.claimPolicy !== undefined) {
@@ -855,7 +876,10 @@ function isBatchExtra(extra) {
   if (extra.channelState && extra.voucherState) {
     if (extra.channelState.covenantId !== extra.voucherState.covenantId)
       return false;
-    if (extra.channelState.signedMaxClaimable !== extra.voucherState.amount)
+    if (
+      BigInt(extra.channelState.authorizedCumulativeAmount) >
+      BigInt(extra.voucherState.authorizedCumulativeAmount)
+    )
       return false;
   }
   if (extra.assetKind !== undefined && extra.assetKind !== "native")
@@ -873,16 +897,14 @@ function isBatchLaneState(value) {
   if (!isSerializedScriptPublicKey(value.activeScriptPublicKey)) return false;
   if (
     !isBatchAmount(value.fundingAmount) ||
-    !isBatchAmount(value.chargedCumulativeAmount) ||
-    !isBatchAmount(value.claimedCumulativeAmount) ||
-    !isBatchAmount(value.signedMaxClaimable)
+    !isBatchAmount(value.authorizedCumulativeAmount) ||
+    !isBatchAmount(value.claimedCumulativeAmount)
   )
     return false;
   const V = BigInt(value.fundingAmount);
-  const A = BigInt(value.chargedCumulativeAmount);
+  const A = BigInt(value.authorizedCumulativeAmount);
   const S = BigInt(value.claimedCumulativeAmount);
-  const T = BigInt(value.signedMaxClaimable);
-  return S <= A && A <= T && T - S <= V;
+  return S <= A && A - S <= V;
 }
 
 function isBatchVoucher(value) {
@@ -890,7 +912,7 @@ function isBatchVoucher(value) {
     value &&
       typeof value === "object" &&
       isNonZeroHash32(value.covenantId) &&
-      isBatchAmount(value.amount) &&
+      isBatchAmount(value.authorizedCumulativeAmount) &&
       typeof value.signature === "string" &&
       /^[0-9a-fA-F]{128}$/.test(value.signature),
   );

@@ -142,8 +142,8 @@ function assertBrowserResult(value) {
   assert(value.signatureBytes > 0, "missing PAYMENT-SIGNATURE header");
   assert(value.batchRequiredBytes > 0, "missing batch PAYMENT-REQUIRED header");
   assert(value.batchSignatureBytes > 0, "missing batch PAYMENT-SIGNATURE header");
-  assert(value.batchBinding === "kaspa-escrow-v2", `unexpected batch binding: ${value.batchBinding}`);
-  assert(value.batchTemplateId === "kaspa-x402-escrow-v3", `unexpected batch template: ${value.batchTemplateId}`);
+  assert(value.batchBinding === "kaspa-escrow-v3", `unexpected batch binding: ${value.batchBinding}`);
+  assert(value.batchTemplateId === "kaspa-x402-escrow-v4", `unexpected batch template: ${value.batchTemplateId}`);
   assert(value.batchCovenantId === "7".repeat(64), "batch voucher did not bind the stable covenant id");
   assert(value.batchVoucherAmount === "30000000", `unexpected batch voucher T: ${value.batchVoucherAmount}`);
   assert(value.batchCurrentTxid === "8".repeat(64), "batch payload did not carry the current outpoint");
@@ -303,7 +303,7 @@ function demoExerciseExpression() {
     batchBinding: batch.accepts[0].extra.binding,
     batchTemplateId: batch.accepts[0].extra.templateId,
     batchCovenantId: batchPayment.payload.voucher.covenantId,
-    batchVoucherAmount: batchPayment.payload.voucher.amount,
+    batchVoucherAmount: batchPayment.payload.voucher.authorizedCumulativeAmount,
     batchCurrentTxid: batchPayment.payload.fundingOutpoint.txid,
     batchBefore: lanePreview.beforeRequest,
     batchAfterWork: lanePreview.afterSuccessfulWork,

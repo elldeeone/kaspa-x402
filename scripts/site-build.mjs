@@ -147,8 +147,8 @@ function writeHomePage() {
   "asset": "KAS",
   "amount": "<max per-request sompi>",
   "extra": {
-    "binding": "kaspa-escrow-v2",
-    "templateId": "kaspa-x402-escrow-v3"
+    "binding": "kaspa-escrow-v3",
+    "templateId": "kaspa-x402-escrow-v4"
   }
 }`;
   writeHtml(
@@ -181,21 +181,21 @@ function writeHomePage() {
     <p>The claims below are engineering rationale, each specified or backed by testnet evidence. None of them is a mainnet claim.</p>
     <ul>
       <li><strong>Settlement latency close to request latency.</strong> Paying per HTTP request only works when payment confirmation is not the slow path. Kaspa's block cadence makes one-shot native payments practical at request time; the <a href="/docs/live-testnet-report/">live testnet report</a> records executed end-to-end flows.</li>
-      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). KIP-9 storage mass depends on the complete transaction shape; Kaspa does not define a universal 0.1 KAS consensus dust floor. The reference runtime applies a conservative 10,000,000 sompi output policy. <a href="/spec/kaspa-batch-settlement-v2/">Batch-settlement</a> vouchers can price individual requests below that application policy.</li>
+      <li><strong>Small per-request prices.</strong> Amounts are decimal strings in sompi (1 KAS = 100,000,000 sompi). KIP-9 storage mass depends on the complete transaction shape; Kaspa does not define a universal 0.1 KAS consensus dust floor. The reference runtime applies a conservative 10,000,000 sompi output policy. <a href="/spec/kaspa-batch-settlement-v3/">Batch-settlement</a> vouchers can price individual requests below that application policy.</li>
       <li><strong>Direct verification, no facilitator lock-in.</strong> Kaspa is UTXO-native, so a server can verify and settle against a node it trusts: payment identity is bound to transaction ids, outpoints, and script-public-key material rather than to a hosted intermediary. A <a href="/spec/facilitator-profile/">self-hosted facilitator profile</a> exists for x402 <code>/supported</code>, <code>/verify</code>, <code>/settle</code> compatibility, but it is optional.</li>
-      <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v2/">batch settlement</a> creates one singleton KIP-20 genesis, signs lifetime cumulative ceilings off-chain, supports repeated partial claims and same-lineage top-ups, and ends with a timed refund. The stable covenant ID and A/S/T accounting survive successor rotation and runtime restart.</li>
+      <li><strong>Escrow channels for repeated requests.</strong> For clients making many small or variable-cost calls, <a href="/spec/kaspa-batch-settlement-v3/">batch settlement</a> creates one singleton KIP-20 genesis, signs lifetime cumulative ceilings off-chain, supports repeated partial claims and same-lineage top-ups, and ends with a timed refund. The stable covenant ID and A/S/T accounting survive successor rotation and runtime restart.</li>
     </ul>
 
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
-    <p><code>batch-settlement</code> — repeated or variable-cost requests against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v2/">kaspa-batch-settlement-v2</a>.</p>
+    <p><code>batch-settlement</code> — repeated or variable-cost requests against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
 
     <h2>Start here</h2>
     <ul>
-      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v2/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v3/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
       <li><strong>Testing:</strong> use the <a href="/docs/testnet-gateway/">hosted gateway reference</a> and the <a href="/demo/">browser demo</a>.</li>
       <li><strong>Reviewing:</strong> start with the <a href="/docs/security-threat-model/">threat model</a>, <a href="/docs/live-testnet-report/">live testnet report</a>, and <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>

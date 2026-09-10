@@ -509,7 +509,7 @@ function checkContent() {
   assertContains(home, "Payment schemes", "homepage scheme heading");
   assertContains(
     home,
-    "kaspa-batch-settlement-v2",
+    "kaspa-batch-settlement-v3",
     "homepage active batch specification",
   );
   assertNotContains(
@@ -524,7 +524,7 @@ function checkContent() {
   );
   assertContains(
     path.join(outDir, "assets/demo.js"),
-    'binding: "kaspa-escrow-v2"',
+    'binding: "kaspa-escrow-v3"',
     "browser demo uses active escrow binding",
   );
   for (const stale of [

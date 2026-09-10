@@ -38,6 +38,7 @@
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
     "validate:schemas": "node scripts/validate-schemas.mjs",
     "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
+    "validate:reorg-consensus": "node scripts/validate-reorg-consensus.mjs",
     "proof:offline": "node scripts/proof-offline.mjs",
     "proof:mainnet:offline": "node scripts/proof-mainnet-shapes.mjs",
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
