@@ -69,7 +69,23 @@ describe("gateway config", () => {
       claimReserveSompi: "10000000",
       refundTimeoutDaaDelta: "36000",
       minimumRefundLeadDaa: "1000",
+      globalConcurrency: 64,
     });
+  });
+
+  it("bounds deployment-wide concurrency configuration", () => {
+    expect(
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      }),
+    ).toMatchObject({ globalConcurrency: 1 });
+    expect(() =>
+      readGatewayConfig({
+        ...BASE_ENV,
+        KASPA_X402_GLOBAL_CONCURRENCY: "257",
+      }),
+    ).toThrow("KASPA_X402_GLOBAL_CONCURRENCY is outside range 1-256");
   });
 
   it("requires the batch deposit to cover one route charge plus the advertised claim reserve", () => {

@@ -79,6 +79,20 @@ type RateWindowRecord = {
   counts: Record<string, number>;
 };
 
+type PublicAdmissionRecord = {
+  expiresAt: number;
+};
+
+type PublicAdmissionState = {
+  leases: Record<string, PublicAdmissionRecord>;
+};
+
+export interface GatewayPublicAdmissionResult {
+  allowed: boolean;
+  active: number;
+  retryAt?: number;
+}
+
 export interface GatewayDurableStateLimits {
   maxRecords: number;
   maxBytes: number;
@@ -112,6 +126,8 @@ type DurableBudgetRecord = {
 };
 
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
+const MAX_PUBLIC_ADMISSION_LEASES = 256;
+const MAX_PUBLIC_ADMISSION_TTL_MS = 10 * 60 * 1_000;
 const MAX_DURABLE_HANDLER_RESULT_BYTES = 256 * 1024;
 const MAX_DURABLE_RESPONSE_BYTES =
   MAX_DURABLE_HANDLER_RESULT_BYTES +
@@ -1321,6 +1337,57 @@ export class GatewayLedger implements ServerStateStore {
     });
   }
 
+  async acquirePublicAdmission(
+    token: string,
+    nowMs: number,
+    limit: number,
+    ttlMs: number,
+  ): Promise<GatewayPublicAdmissionResult> {
+    assertPublicAdmissionInput(token, nowMs, limit, ttlMs);
+    return this.#storage.transaction(async (txn) => {
+      const key = publicAdmissionKey();
+      const stored = await txn.get<PublicAdmissionState>(key);
+      const leases = readPublicAdmissionLeases(stored);
+      for (const [leaseToken, lease] of Object.entries(leases)) {
+        if (lease.expiresAt <= nowMs) delete leases[leaseToken];
+      }
+
+      const existing = leases[token];
+      if (existing) {
+        existing.expiresAt = nowMs + ttlMs;
+        await txn.put(key, { leases });
+        return { allowed: true, active: Object.keys(leases).length };
+      }
+
+      const active = Object.keys(leases).length;
+      if (active >= limit) {
+        return {
+          allowed: false,
+          active,
+          retryAt: Math.min(
+            ...Object.values(leases).map((lease) => lease.expiresAt),
+          ),
+        };
+      }
+
+      leases[token] = { expiresAt: nowMs + ttlMs };
+      await txn.put(key, { leases });
+      return { allowed: true, active: active + 1 };
+    });
+  }
+
+  async releasePublicAdmission(token: string): Promise<void> {
+    assertPublicAdmissionToken(token);
+    await this.#storage.transaction(async (txn) => {
+      const key = publicAdmissionKey();
+      const stored = await txn.get<PublicAdmissionState>(key);
+      const leases = readPublicAdmissionLeases(stored);
+      if (!leases[token]) return;
+      delete leases[token];
+      await txn.put(key, { leases });
+    });
+  }
+
   async checkRateLimit(
     scope: string,
     nowMs: number,
@@ -1454,6 +1521,13 @@ export type GatewayStateClient = ServerStateStore & {
     ttlMs: number,
   ): Promise<boolean>;
   releaseLock(key: string, token: string): Promise<void>;
+  acquirePublicAdmission(
+    token: string,
+    nowMs: number,
+    limit: number,
+    ttlMs: number,
+  ): Promise<GatewayPublicAdmissionResult>;
+  releasePublicAdmission(token: string): Promise<void>;
   checkRateLimit(
     scope: string,
     nowMs: number,
@@ -2407,6 +2481,10 @@ function rateWindowKey(): string {
   return "rate-window:active";
 }
 
+function publicAdmissionKey(): string {
+  return "public-admission:v1";
+}
+
 function canaryReportKey(): string {
   return "canary:latest";
 }
@@ -2634,6 +2712,68 @@ function assertDurableStateLimits(limits: GatewayDurableStateLimits): void {
     if (!Number.isSafeInteger(value) || value <= 0)
       throw new Error(`durable state ${label} must be a positive safe integer`);
   }
+}
+
+function assertPublicAdmissionInput(
+  token: string,
+  nowMs: number,
+  limit: number,
+  ttlMs: number,
+): void {
+  assertPublicAdmissionToken(token);
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0)
+    throw new Error("public admission time must be a non-negative safe integer");
+  if (
+    !Number.isSafeInteger(limit) ||
+    limit < 1 ||
+    limit > MAX_PUBLIC_ADMISSION_LEASES
+  )
+    throw new Error("public admission limit must be between 1 and 256");
+  if (
+    !Number.isSafeInteger(ttlMs) ||
+    ttlMs < 1 ||
+    ttlMs > MAX_PUBLIC_ADMISSION_TTL_MS
+  )
+    throw new Error("public admission TTL must be between 1 and 600000 ms");
+  if (!Number.isSafeInteger(nowMs + ttlMs))
+    throw new Error("public admission expiry must be a safe integer");
+}
+
+function assertPublicAdmissionToken(token: string): void {
+  if (
+    !/^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i.test(
+      token,
+    )
+  )
+    throw new Error("public admission token must be a UUID");
+}
+
+function readPublicAdmissionLeases(
+  state: PublicAdmissionState | undefined,
+): Record<string, PublicAdmissionRecord> {
+  if (state === undefined) return {};
+  if (
+    !state ||
+    typeof state !== "object" ||
+    !state.leases ||
+    typeof state.leases !== "object"
+  )
+    throw new Error("public admission state is invalid");
+  const entries = Object.entries(state.leases);
+  if (entries.length > MAX_PUBLIC_ADMISSION_LEASES)
+    throw new Error("public admission state exceeds its lease limit");
+  const leases: Record<string, PublicAdmissionRecord> = {};
+  for (const [token, lease] of entries) {
+    assertPublicAdmissionToken(token);
+    if (
+      !lease ||
+      !Number.isSafeInteger(lease.expiresAt) ||
+      lease.expiresAt < 0
+    )
+      throw new Error("public admission lease is invalid");
+    leases[token] = { expiresAt: lease.expiresAt };
+  }
+  return leases;
 }
 
 function cloneOrUndefined<T>(value: T | undefined): T | undefined {

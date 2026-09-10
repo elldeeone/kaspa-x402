@@ -3,7 +3,11 @@ import net from "node:net";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { decodePaymentRequiredHeader } from "../packages/core/dist/index.js";
+import {
+  decodePaymentRequiredHeader,
+  ESCROW_BINDING_ID,
+  ESCROW_TEMPLATE_ID,
+} from "../packages/core/dist/index.js";
 import { readBoundedResponseText } from "./read-bounded-response.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -109,11 +113,11 @@ async function smokeGateway(baseUrl) {
     "batch offer did not advertise batch-settlement",
   );
   assert(
-    batchRequired.accepts[0]?.extra?.binding === "kaspa-escrow-v2",
+    batchRequired.accepts[0]?.extra?.binding === ESCROW_BINDING_ID,
     "batch offer did not advertise the Alpha.11 escrow binding",
   );
   assert(
-    batchRequired.accepts[0]?.extra?.templateId === "kaspa-x402-escrow-v3",
+    batchRequired.accepts[0]?.extra?.templateId === ESCROW_TEMPLATE_ID,
     "batch offer did not advertise the KIP-20 escrow template",
   );
   assert(
@@ -138,8 +142,8 @@ async function smokeGateway(baseUrl) {
     (kind) => kind.scheme === "batch-settlement",
   );
   assert(
-    supportedBatch?.extra?.binding === "kaspa-escrow-v2" &&
-      supportedBatch?.extra?.templateId === "kaspa-x402-escrow-v3",
+    supportedBatch?.extra?.binding === ESCROW_BINDING_ID &&
+      supportedBatch?.extra?.templateId === ESCROW_TEMPLATE_ID,
     "supported endpoint did not expose the Alpha.11 KIP-20 batch kind",
   );
 

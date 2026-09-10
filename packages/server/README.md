@@ -43,7 +43,8 @@ Public entry points enforce a configurable caller quota plus global,
 per-caller, per-channel, and per-adapter concurrency limits. Inject one shared
 `publicBoundaryController` across server instances when those limits must span
 one process or isolate; the default controller is instance-local. Multi-isolate
-deployments must add host-level distributed admission. Adapter and protected-
+deployments must add host-level distributed admission, as the reference gateway
+does with renewable Durable Object leases. Adapter and protected-
 handler calls use the configured `adapterTimeoutMs` deadline. Durable store and
 lock operations retain admission permits while pending because releasing them
 after an ambiguous timeout could violate settlement ordering; hosts should add

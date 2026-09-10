@@ -36,6 +36,7 @@ export interface GatewayConfig {
   maxTimeoutSeconds: number;
   claimFeeSompi: SompiString;
   rateLimitPerMinute: number;
+  globalConcurrency: number;
   corsOrigin: string;
   siteBaseUrl: string;
   releaseVersion: string;
@@ -159,6 +160,12 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_RATE_LIMIT_PER_MINUTE",
       1,
       600,
+    ),
+    globalConcurrency: uint(
+      env.KASPA_X402_GLOBAL_CONCURRENCY ?? "64",
+      "KASPA_X402_GLOBAL_CONCURRENCY",
+      1,
+      256,
     ),
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(

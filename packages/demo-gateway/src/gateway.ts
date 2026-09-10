@@ -55,8 +55,9 @@ type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
-// Shared by server instances in this Worker isolate. Deployment-wide admission
-// remains the responsibility of the hosting layer.
+const GATEWAY_PUBLIC_ADMISSION_TTL_MS = 5 * 60 * 1_000;
+// Fast per-isolate and fine-grained backstop. The outer GatewayState lease
+// enforces the configured request cap across the deployment.
 const gatewayPublicBoundary = new MemoryPublicBoundaryController();
 
 export async function handleGatewayRequest(
@@ -156,93 +157,204 @@ export async function handleGatewayRequest(
     );
   }
 
-  let gateway: { server: DirectModeServer };
+  let admission: GatewayPublicAdmission;
   try {
-    gateway = await createGateway(config, state);
+    admission = await acquireGatewayPublicAdmission(
+      state,
+      config.globalConcurrency,
+    );
   } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "gateway_public_admission_failed",
+        error: errorMessage(error),
+      }),
+    );
     return json(
-      { ok: false, error: errorMessage(error) },
+      { ok: false, error: "admission_unavailable" },
       { status: 503, headers: corsHeaders(config) },
     );
   }
-  const resource = resourceFor(url, profile);
-  const unsupported = await gatewayUnsupportedPaymentResponse(
-    request,
-    gateway.server,
-    resource,
-    profile,
-    config,
-  );
-  if (unsupported) {
-    context.waitUntil(state.incrementMetric("unsupported_payment_retries"));
-    return withCors(unsupported, config);
+  if (!admission.allowed) {
+    return json(
+      {
+        ok: false,
+        error: "global_concurrency_exceeded",
+        retryAt: new Date(admission.retryAt).toISOString(),
+      },
+      {
+        status: 503,
+        headers: {
+          ...corsHeaders(config),
+          "retry-after": String(
+            Math.max(1, Math.ceil((admission.retryAt - Date.now()) / 1_000)),
+          ),
+        },
+      },
+    );
   }
 
-  context.waitUntil(
-    state.incrementMetric(`requests_${profileMetric(profile)}`),
-  );
-  let result = await gateway.server.handlePaidRequest(
-    {
-      method: request.method,
-      url: url.toString(),
-      headers: request.headers,
+  try {
+    let gateway: { server: DirectModeServer };
+    try {
+      gateway = await createGateway(config, state);
+    } catch (error) {
+      return json(
+        { ok: false, error: errorMessage(error) },
+        { status: 503, headers: corsHeaders(config) },
+      );
+    }
+    const resource = resourceFor(url, profile);
+    const unsupported = await gatewayUnsupportedPaymentResponse(
+      request,
+      gateway.server,
       resource,
-      paymentAmount: amountFor(config, profile),
-      paymentScheme: profile,
-    },
-    async ({ payment, requestFingerprint, paymentIdentifier }) => ({
-      status: 200,
-      headers: { "content-type": "application/json; charset=utf-8" },
-      body: {
-        ok: true,
-        network: config.network,
-        profile,
-        resource: resource.url,
-        requestFingerprint,
-        paymentIdentifier,
-        payment:
-          payment.scheme === "exact"
-            ? {
-                scheme: payment.scheme,
-                transactionId: payment.transactionId,
-                paymentOutputIndex: payment.paymentOutputIndex,
-                finality: payment.finality,
-              }
-            : {
-                scheme: payment.scheme,
-                channelId: payment.channel.channelId,
-                openedChannel: payment.openedChannel,
-                chargedCumulativeAmount:
-                  payment.channel.chargedCumulativeAmount,
-              },
-      },
-      chargedAmount: payment.accepted.amount,
-    }),
-  );
+      profile,
+      config,
+    );
+    if (unsupported) {
+      context.waitUntil(state.incrementMetric("unsupported_payment_retries"));
+      return withCors(unsupported, config);
+    }
 
-  if (
-    profile === "exact" &&
-    config.exactProfile === "additive" &&
-    result.status === 503 &&
-    (result.body as { error?: unknown } | undefined)?.error ===
-      "invalid_payload" &&
-    !(await hostedExactAvailable(config, state))
-  ) {
-    result = {
-      status: 503,
-      headers: {},
-      body: { ok: false, error: "exact_unavailable" },
+    context.waitUntil(
+      state.incrementMetric(`requests_${profileMetric(profile)}`),
+    );
+    let result = await gateway.server.handlePaidRequest(
+      {
+        method: request.method,
+        url: url.toString(),
+        headers: request.headers,
+        resource,
+        paymentAmount: amountFor(config, profile),
+        paymentScheme: profile,
+      },
+      async ({ payment, requestFingerprint, paymentIdentifier }) => ({
+        status: 200,
+        headers: { "content-type": "application/json; charset=utf-8" },
+        body: {
+          ok: true,
+          network: config.network,
+          profile,
+          resource: resource.url,
+          requestFingerprint,
+          paymentIdentifier,
+          payment:
+            payment.scheme === "exact"
+              ? {
+                  scheme: payment.scheme,
+                  transactionId: payment.transactionId,
+                  paymentOutputIndex: payment.paymentOutputIndex,
+                  finality: payment.finality,
+                }
+              : {
+                  scheme: payment.scheme,
+                  channelId: payment.channel.channelId,
+                  openedChannel: payment.openedChannel,
+                  chargedCumulativeAmount:
+                    payment.channel.chargedCumulativeAmount,
+                },
+        },
+        chargedAmount: payment.accepted.amount,
+      }),
+    );
+
+    if (
+      profile === "exact" &&
+      config.exactProfile === "additive" &&
+      result.status === 503 &&
+      (result.body as { error?: unknown } | undefined)?.error ===
+        "invalid_payload" &&
+      !(await hostedExactAvailable(config, state))
+    ) {
+      result = {
+        status: 503,
+        headers: {},
+        body: { ok: false, error: "exact_unavailable" },
+      };
+    }
+
+    if (result.status === 402)
+      context.waitUntil(
+        state.incrementMetric(`offers_${profileMetric(profile)}`),
+      );
+    else if (result.status >= 200 && result.status < 300)
+      context.waitUntil(
+        state.incrementMetric(`paid_${profileMetric(profile)}`),
+      );
+    else context.waitUntil(state.incrementMetric("errors_total"));
+    return serverResponse(result, config, request.method === "HEAD");
+  } finally {
+    await admission.release();
+  }
+}
+
+type GatewayPublicAdmission =
+  | { allowed: false; retryAt: number }
+  | { allowed: true; release(): Promise<void> };
+
+async function acquireGatewayPublicAdmission(
+  state: GatewayStateClient,
+  limit: number,
+): Promise<GatewayPublicAdmission> {
+  const token = crypto.randomUUID();
+  const acquired = await state.acquirePublicAdmission(
+    token,
+    Date.now(),
+    limit,
+    GATEWAY_PUBLIC_ADMISSION_TTL_MS,
+  );
+  if (!acquired.allowed) {
+    return {
+      allowed: false,
+      retryAt: acquired.retryAt ?? Date.now() + 1_000,
     };
   }
 
-  if (result.status === 402)
-    context.waitUntil(
-      state.incrementMetric(`offers_${profileMetric(profile)}`),
-    );
-  else if (result.status >= 200 && result.status < 300)
-    context.waitUntil(state.incrementMetric(`paid_${profileMetric(profile)}`));
-  else context.waitUntil(state.incrementMetric("errors_total"));
-  return serverResponse(result, config, request.method === "HEAD");
+  let released = false;
+  let renewalInFlight: Promise<void> = Promise.resolve();
+  const renewal = setInterval(() => {
+    if (released) return;
+    renewalInFlight = renewalInFlight
+      .then(async () => {
+        const result = await state.acquirePublicAdmission(
+          token,
+          Date.now(),
+          limit,
+          GATEWAY_PUBLIC_ADMISSION_TTL_MS,
+        );
+        if (!result.allowed)
+          throw new Error("public admission lease renewal was rejected");
+      })
+      .catch((error: unknown) => {
+        console.error(
+          JSON.stringify({
+            event: "gateway_public_admission_renewal_failed",
+            error: errorMessage(error),
+          }),
+        );
+      });
+  }, Math.floor(GATEWAY_PUBLIC_ADMISSION_TTL_MS / 3));
+
+  return {
+    allowed: true,
+    async release(): Promise<void> {
+      if (released) return;
+      released = true;
+      clearInterval(renewal);
+      await renewalInFlight;
+      try {
+        await state.releasePublicAdmission(token);
+      } catch (error) {
+        console.error(
+          JSON.stringify({
+            event: "gateway_public_admission_release_failed",
+            error: errorMessage(error),
+          }),
+        );
+      }
+    },
+  };
 }
 
 export async function runGatewayCanary(

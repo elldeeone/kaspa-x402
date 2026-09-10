@@ -1203,6 +1203,53 @@ describe("gateway durable ledger", () => {
     expect(JSON.stringify([...windows.values()])).not.toContain("ip:exact");
   });
 
+  it("enforces, renews, releases, and expires deployment-wide admission", async () => {
+    const ledger = new GatewayLedger(new FakeStorage());
+    const first = "00000000-0000-4000-8000-000000000001";
+    const second = "00000000-0000-4000-8000-000000000002";
+
+    await expect(
+      ledger.acquirePublicAdmission(first, 1_000, 1, 1_000),
+    ).resolves.toEqual({ allowed: true, active: 1 });
+    await expect(
+      ledger.acquirePublicAdmission(first, 1_500, 1, 1_000),
+    ).resolves.toEqual({ allowed: true, active: 1 });
+    await expect(
+      ledger.acquirePublicAdmission(second, 1_600, 1, 1_000),
+    ).resolves.toEqual({ allowed: false, active: 1, retryAt: 2_500 });
+
+    await ledger.releasePublicAdmission(first);
+    await expect(
+      ledger.acquirePublicAdmission(second, 1_700, 1, 1_000),
+    ).resolves.toEqual({ allowed: true, active: 1 });
+    await expect(
+      ledger.acquirePublicAdmission(first, 2_700, 1, 1_000),
+    ).resolves.toEqual({ allowed: true, active: 1 });
+  });
+
+  it("admits only one concurrent caller across shared ledger clients", async () => {
+    const storage = new FakeStorage();
+    const firstLedger = new GatewayLedger(storage);
+    const secondLedger = new GatewayLedger(storage);
+    const results = await Promise.all([
+      firstLedger.acquirePublicAdmission(
+        "00000000-0000-4000-8000-000000000001",
+        1_000,
+        1,
+        1_000,
+      ),
+      secondLedger.acquirePublicAdmission(
+        "00000000-0000-4000-8000-000000000002",
+        1_000,
+        1,
+        1_000,
+      ),
+    ]);
+
+    expect(results.filter((result) => result.allowed)).toHaveLength(1);
+    expect(results.filter((result) => !result.allowed)).toHaveLength(1);
+  });
+
   it("fails closed when a rate window reaches its bounded scope capacity", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     for (let index = 0; index < 1_024; index += 1) {

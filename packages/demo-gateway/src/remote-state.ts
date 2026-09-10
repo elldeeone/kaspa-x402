@@ -23,6 +23,7 @@ import type {
 import type {
   GatewayCanaryReport,
   ExactHeadStats,
+  GatewayPublicAdmissionResult,
   GatewayStateClient,
   GatewayStateMethod,
   GatewayStateRequest,
@@ -35,7 +36,7 @@ export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-alpha.11";
 export class RemoteGatewayState implements GatewayStateClient {
   readonly coordinationScope = "deployment-wide" as const;
   readonly coordinationDomain = GATEWAY_COORDINATION_DOMAIN;
-  readonly #stub: DurableObjectStub;
+  readonly #stub: ReturnType<GatewayStateNamespace["get"]>;
 
   constructor(
     namespace: GatewayStateNamespace,
@@ -343,6 +344,19 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   releaseLock(key: string, token: string): Promise<void> {
     return this.#call("releaseLock", { key, token });
+  }
+
+  acquirePublicAdmission(
+    token: string,
+    nowMs: number,
+    limit: number,
+    ttlMs: number,
+  ): Promise<GatewayPublicAdmissionResult> {
+    return this.#stub.acquirePublicAdmission(token, nowMs, limit, ttlMs);
+  }
+
+  releasePublicAdmission(token: string): Promise<void> {
+    return this.#stub.releasePublicAdmission(token);
   }
 
   checkRateLimit(

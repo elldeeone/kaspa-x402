@@ -35,6 +35,7 @@ Important non-secret variables:
 | `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised Alpha.11 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.   |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
+| `KASPA_X402_GLOBAL_CONCURRENCY`              | Deployment-wide cap for in-flight protected requests. Enforced by renewable leases in the gateway Durable Object; default `64`, maximum `256`.                 |
 | `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
 | `KASPA_X402_RELEASE_VERSION`                 | Immutable alpha release snapshot checked by the scheduled canary.                                                                                              |
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
