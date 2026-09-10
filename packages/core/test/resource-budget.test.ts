@@ -6,8 +6,11 @@ import {
   assertDecodedByteBudget,
   assertEncodedHeaderBudget,
   assertJsonResourceBudget,
+  assertMcpPaymentResponseCapacity,
+  decodeBoundedJsonBytes,
   bindRequestHashToTrustedContext,
   canonicalTrustedSecurityContext,
+  decodeMcpToolCallParams,
   exactTransactionReplayIdentityHash,
   mcpToolCallFingerprint,
   paymentIdentifierExtension,
@@ -20,6 +23,24 @@ import {
 } from "../src/index.js";
 
 describe("versioned resource budget", () => {
+  it("reserves one MCP metadata property for the settlement response", () => {
+    expect(() =>
+      assertMcpPaymentResponseCapacity({
+        _meta: wideObject(BUDGET.maxExtensionProperties - 1),
+      }),
+    ).not.toThrow();
+    expect(() =>
+      assertMcpPaymentResponseCapacity({
+        _meta: wideObject(BUDGET.maxExtensionProperties),
+      }),
+    ).toThrow("must reserve one property");
+    expect(() =>
+      assertMcpPaymentResponseCapacity({
+        _meta: { "x402/payment-response": null },
+      }),
+    ).toThrow("is reserved");
+  });
+
   it("accepts the encoded header maximum and rejects maximum plus one", () => {
     const maximum = "A".repeat(BUDGET.maxEncodedHeaderBytes);
     expect(assertEncodedHeaderBudget(maximum).decodedBytes).toBe(
@@ -41,6 +62,20 @@ describe("versioned resource budget", () => {
       assertDecodedByteBudget(
         "a".repeat(BUDGET.maxDecodedHeaderBytes + 1),
         "decoded test",
+      ),
+    ).toThrow("decoded limit");
+  });
+
+  it("bounds and structurally validates raw JSON before callers use it", () => {
+    expect(decodeBoundedJsonBytes('{"ok":true}', "raw test")).toEqual({
+      ok: true,
+    });
+    expect(() =>
+      decodeBoundedJsonBytes(
+        new TextEncoder().encode(
+          `"${"a".repeat(BUDGET.maxDecodedHeaderBytes)}"`,
+        ),
+        "raw test",
       ),
     ).toThrow("decoded limit");
   });
@@ -161,6 +196,17 @@ describe("versioned resource budget", () => {
 });
 
 describe("trusted context and MCP admission", () => {
+  it("decodes bounded raw MCP parameters before fingerprinting", () => {
+    expect(
+      decodeMcpToolCallParams('{"name":"read","arguments":{"id":1}}'),
+    ).toEqual({ name: "read", arguments: { id: 1 } });
+    expect(() =>
+      decodeMcpToolCallParams(
+        `{"name":"read","arguments":"${"a".repeat(BUDGET.maxDecodedHeaderBytes)}"}`,
+      ),
+    ).toThrow("decoded limit");
+  });
+
   const accepted = {
     scheme: "exact",
     network: "kaspa:testnet-10",

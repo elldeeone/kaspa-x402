@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from "vitest";
 
 import {
+  KASPA_X402_RESOURCE_BUDGET,
   X402_VERSION,
   type AcceptedTransactionEvidence,
   batchPaymentRequirementsHash,
@@ -46,6 +47,7 @@ import {
 import {
   DirectModeFacilitator,
   handleFacilitatorRequest,
+  readFacilitatorRequestBody,
 } from "../src/index.js";
 
 const SERVER_KEY = "11".repeat(32);
@@ -83,6 +85,51 @@ function acceptedChainEvidence(
 }
 
 describe("direct-mode facilitator", () => {
+  it("accepts the facilitator byte maximum and rejects maximum plus one", async () => {
+    const maximum = KASPA_X402_RESOURCE_BUDGET.maxDecodedHeaderBytes;
+    const json = '{"ok":true}';
+    await expect(
+      readFacilitatorRequestBody(
+        new Request("https://facilitator.example.test/verify", {
+          method: "POST",
+          body: `${json}${" ".repeat(maximum - json.length)}`,
+        }),
+      ),
+    ).resolves.toEqual({ ok: true });
+    await expect(
+      readFacilitatorRequestBody(
+        new Request("https://facilitator.example.test/verify", {
+          method: "POST",
+          body: `${json}${" ".repeat(maximum - json.length + 1)}`,
+        }),
+      ),
+    ).rejects.toThrow("decoded limit");
+  });
+
+  it("rejects over-budget raw facilitator input before verifier or chain work", async () => {
+    let verifierCalls = 0;
+    const { facilitator, chain } = makeFacilitator({
+      exactTransactionVerifier: {
+        verifyExactPayment() {
+          verifierCalls += 1;
+          throw new Error("unreachable");
+        },
+      },
+    });
+
+    const response = await handleFacilitatorRequest(facilitator, {
+      method: "POST",
+      path: "/verify",
+      body: "x".repeat(
+        KASPA_X402_RESOURCE_BUDGET.maxDecodedHeaderBytes + 1,
+      ),
+    });
+
+    expect(response.status).toBe(400);
+    expect(verifierCalls).toBe(0);
+    expect(chain.readCount).toBe(0);
+  });
+
   it("returns supported x402 kinds without hardcoded signer identity", async () => {
     const { facilitator } = makeFacilitator();
 
@@ -447,6 +494,12 @@ describe("direct-mode facilitator", () => {
     await expect(
       facilitator.settle(request, trustedSecurityContext),
     ).resolves.toMatchObject({ success: true, transaction: EXACT_TX_ID });
+    await expect(
+      facilitator.settle(request, {
+        ...trustedSecurityContext,
+        principal: "user:beta",
+      }),
+    ).resolves.toMatchObject({ success: false });
   });
 
   it("settles batch deposit vouchers at the payer-approved fixed charge", async () => {
@@ -518,6 +571,12 @@ describe("direct-mode facilitator", () => {
     await expect(
       facilitator.settle(request, trustedSecurityContext),
     ).resolves.toMatchObject({ success: true });
+    await expect(
+      facilitator.settle(request, {
+        ...trustedSecurityContext,
+        principal: "user:beta",
+      }),
+    ).resolves.toMatchObject({ success: false });
   });
 
   it("rejects malformed facilitator requests at the HTTP adapter boundary", async () => {
@@ -1453,20 +1512,24 @@ class FakeAddressCodec implements AddressCodec {
 class FakeChainProvider implements ServerChainProvider {
   readonly utxos = new Map<string, ChainUtxo>();
   daa = "0";
+  readCount = 0;
 
   setUtxo(utxo: ChainUtxo): void {
     this.utxos.set(outpointKey(utxo.outpoint), structuredClone(utxo));
   }
 
   async getUtxo(outpoint: FundingOutpoint, _network: NetworkId) {
+    this.readCount += 1;
     return this.utxos.get(outpointKey(outpoint)) ?? null;
   }
 
   async getVirtualDaaScore() {
+    this.readCount += 1;
     return this.daa;
   }
 
   async verifyCovenantGenesis(request: CovenantGenesisVerificationRequest) {
+    this.readCount += 1;
     return {
       covenantId: request.utxo.covenantId!,
       authorizingInput: { txid: "46".repeat(32), index: 0 },
@@ -1482,6 +1545,7 @@ class FakeChainProvider implements ServerChainProvider {
   async discoverCovenantLineage(
     request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
   ) {
+    this.readCount += 1;
     return {
       fromCheckpoint: request.lineage.checkpoint,
       checkpoint: request.lineage.checkpoint,

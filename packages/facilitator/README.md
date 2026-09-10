@@ -15,6 +15,8 @@ Implemented:
 - `DirectModeFacilitator.verify()` for read-only payment validation;
 - `DirectModeFacilitator.settle()` for direct-mode settlement through the same replay, idempotency, and atomic commit path as paid HTTP/MCP requests;
 - `handleFacilitatorRequest()` for framework-neutral `GET /supported`, `POST /verify`, and `POST /settle` routing;
+- `readFacilitatorRequestBody()` for streaming fetch bodies under the shared
+  raw-byte and structural limits before JSON materialization;
 - optional claim/refund action hooks for operator-specific settlement flows.
 
 Every exact `/verify` or `/settle` request must include the resource server's

@@ -270,6 +270,30 @@ export function assertDecodedByteBudget(
     );
 }
 
+/** Decode transport JSON only after applying the shared raw-byte budget. */
+export function decodeBoundedJsonBytes(
+  value: string | Uint8Array,
+  label = "request body",
+): unknown {
+  assertDecodedByteBudget(value, label);
+  try {
+    const text =
+      typeof value === "string"
+        ? value
+        : new TextDecoder("utf-8", { fatal: true }).decode(value);
+    const decoded: unknown = JSON.parse(text);
+    assertJsonResourceBudget(decoded, { label });
+    return decoded;
+  } catch (error) {
+    if (error instanceof KaspaX402Error) throw error;
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `${label} must contain UTF-8 JSON`,
+      error,
+    );
+  }
+}
+
 export function utf8ByteLength(value: string): number {
   let bytes = 0;
   for (let index = 0; index < value.length; index += 1) {

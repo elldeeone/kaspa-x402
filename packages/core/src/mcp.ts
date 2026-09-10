@@ -9,6 +9,7 @@ import {
   KASPA_X402_RESOURCE_BUDGET,
   assertDecodedByteBudget,
   assertJsonResourceBudget,
+  decodeBoundedJsonBytes,
   utf8ByteLength,
 } from "./resource-budget.js";
 import {
@@ -69,6 +70,20 @@ export interface McpToolCallFingerprintInput {
 
 export interface McpToolPaymentFingerprintInput extends McpToolCallFingerprintInput {
   paymentPayload: PaymentPayload;
+}
+
+/** Decode raw MCP tool-call parameters under the shared transport budget. */
+export function decodeMcpToolCallParams(
+  value: string | Uint8Array,
+): McpToolCallParams {
+  const decoded = decodeBoundedJsonBytes(value, "MCP tool call parameters");
+  if (!isRecord(decoded) || typeof decoded.name !== "string") {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "MCP tool call parameters must contain a tool name",
+    );
+  }
+  return decoded as McpToolCallParams;
 }
 
 export function mcpToolResource(
@@ -183,7 +198,7 @@ export function readMcpPaymentRequired(result: McpToolResult): PaymentRequiredEn
   assertDecodedByteBudget(text, "MCP payment text fallback");
   let parsed: unknown;
   try {
-    parsed = JSON.parse(text);
+    parsed = decodeBoundedJsonBytes(text, "MCP payment text fallback");
   } catch {
     return undefined;
   }
@@ -220,14 +235,39 @@ export function readMcpPaymentResponse(result: McpToolResult): SettlementRespons
   return validation.value;
 }
 
+/** Ensure a paid tool result leaves room for server-owned settlement metadata. */
+export function assertMcpPaymentResponseCapacity(result: McpToolResult): void {
+  assertJsonResourceBudget(result, { label: "MCP tool result" });
+  if (!result._meta) return;
+  if (Object.hasOwn(result._meta, MCP_PAYMENT_RESPONSE_META_KEY)) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `MCP tool result _meta key ${MCP_PAYMENT_RESPONSE_META_KEY} is reserved`,
+    );
+  }
+  if (
+    Object.keys(result._meta).length >=
+    KASPA_X402_RESOURCE_BUDGET.maxExtensionProperties
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "MCP tool result _meta must reserve one property for payment response metadata",
+    );
+  }
+}
+
 export function withMcpPaymentResponse(result: McpToolResult, settlement: SettlementResponse): McpToolResult {
-  return {
+  assertJsonResourceBudget(result, { label: "MCP tool result" });
+  assertJsonResourceBudget(settlement, { label: "MCP settlement response" });
+  const combined = {
     ...result,
     _meta: {
       ...(result._meta ?? {}),
       [MCP_PAYMENT_RESPONSE_META_KEY]: settlement,
     },
   };
+  assertJsonResourceBudget(combined, { label: "MCP payment response result" });
+  return combined;
 }
 
 function readPaymentRequiredCandidate(value: unknown): PaymentRequiredEnvelope | undefined {

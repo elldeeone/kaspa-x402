@@ -24,6 +24,7 @@ export interface PaidMcpToolCallOptions {
   paymentIdentifier?: string;
   /** Optional assertion of the attempt ID derived from paymentIdentifier. */
   paymentAttemptId?: Hash32Hex;
+  /** Optional assertion; it must equal the canonical MCP tool-call fingerprint. */
   requestHash?: Hash32Hex;
   origin?: string;
   /** Host-derived normalized claims, never raw credentials. */
@@ -35,6 +36,11 @@ export interface PaidMcpToolCallResult {
   result: McpToolResult;
   payment?: CreatePaymentResult;
   settlement?: ApplySettlementResult;
+  /** Explicit payer-visible terms when an MCP error result was charged. */
+  errorCharge?: {
+    approvedAmount: ApplySettlementResult["chargedAmount"];
+    settledAmount: ApplySettlementResult["chargedAmount"];
+  };
 }
 
 export async function paidMcpToolCall(
@@ -54,21 +60,30 @@ export async function paidMcpToolCall(
     );
   }
   const firstResult = await callTool(params);
+  assertJsonResourceBudget(firstResult, { label: "MCP tool result" });
   const paymentRequired = readMcpPaymentRequired(firstResult);
   if (!paymentRequired) return { result: firstResult };
 
   const header = encodePaymentRequiredEnvelopeHeader(paymentRequired);
   const parsed = client.selectPaymentRequirement(header);
-  const requestHash =
-    options.requestHash ??
-    mcpToolCallFingerprint({
-      audience: options.audience,
-      toolName: params.name,
-      arguments: params.arguments,
-      accepted: parsed.accepted,
-      resource: paymentRequired.resource,
-      trustedSecurityContext: options.trustedSecurityContext,
-    });
+  const canonicalRequestHash = mcpToolCallFingerprint({
+    audience: options.audience,
+    toolName: params.name,
+    arguments: params.arguments,
+    accepted: parsed.accepted,
+    resource: paymentRequired.resource,
+    trustedSecurityContext: options.trustedSecurityContext,
+  });
+  if (
+    options.requestHash !== undefined &&
+    options.requestHash.toLowerCase() !== canonicalRequestHash
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_binding",
+      "MCP requestHash does not match the canonical tool-call fingerprint",
+    );
+  }
+  const requestHash = canonicalRequestHash;
   const payment = await client.createPayment(header, {
     url: paymentRequired.resource.url,
     origin: options.origin ?? options.audience,
@@ -81,6 +96,7 @@ export async function paidMcpToolCall(
     const retryResult = await callTool(
       withMcpPaymentPayload(params, payment.paymentPayload),
     );
+    assertJsonResourceBudget(retryResult, { label: "MCP tool result" });
     const settlementResponse = readMcpPaymentResponse(retryResult);
     if (settlementResponse) {
       if (
@@ -104,6 +120,14 @@ export async function paidMcpToolCall(
         result: retryResult,
         payment,
         settlement,
+        ...(retryResult.isError && settlementResponse.success
+          ? {
+              errorCharge: {
+                approvedAmount: payment.accepted.amount,
+                settledAmount: settlement.chargedAmount,
+              },
+            }
+          : {}),
       };
     }
 

@@ -1,4 +1,7 @@
 import {
+  KASPA_X402_RESOURCE_BUDGET,
+  assertJsonResourceBudget,
+  decodeBoundedJsonBytes,
   isFacilitatorRequest,
   isKaspaX402Network,
   assertMainnetAllowed,
@@ -42,6 +45,7 @@ export type FacilitatorActionSettler = (
 export interface FacilitatorHttpRequest {
   method: string;
   path: string;
+  /** Parsed JSON or bounded raw UTF-8 JSON bytes. */
   body?: unknown;
   /** Host-derived normalized claims, never a value read from body. */
   trustedSecurityContext?: TrustedSecurityContext;
@@ -112,11 +116,22 @@ export class DirectModeFacilitator {
       const actionSettler = this.#actionSettler(mode);
       if (!actionSettler) return invalidSettlement("unsupported_kaspa_facilitator_action", network);
       try {
-        return await actionSettler(input, {
-          facilitator: this,
-          server: this.#config.server,
-          ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
-        });
+        const payload = input.paymentPayload.payload;
+        const channelKey =
+          isRecord(payload) && typeof payload.channelId === "string"
+            ? payload.channelId
+            : undefined;
+        return await this.#config.server.runPublicAdapter(
+          `facilitator-${mode}-settler`,
+          trustedSecurityContext,
+          channelKey,
+          () =>
+            actionSettler(input, {
+              facilitator: this,
+              server: this.#config.server,
+              ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+            }),
+        );
       } catch (error) {
         return invalidSettlement(errorCode(error), network);
       }
@@ -172,26 +187,84 @@ export async function handleFacilitatorRequest(
     return jsonResponse(200, facilitator.supported());
   }
   if (method === "POST" && path === "/verify") {
-    if (!isFacilitatorRequest(request.body)) {
+    const input = facilitatorBody(request.body);
+    if (!isFacilitatorRequest(input)) {
       return jsonResponse(400, invalidVerify("invalid_kaspa_x402_payload"));
     }
     const body = await facilitator.verify(
-      request.body,
+      input,
       request.trustedSecurityContext,
     );
     return jsonResponse(200, body);
   }
   if (method === "POST" && path === "/settle") {
-    if (!isFacilitatorRequest(request.body)) {
+    const input = facilitatorBody(request.body);
+    if (!isFacilitatorRequest(input)) {
       return jsonResponse(400, invalidSettlement("invalid_kaspa_x402_payload"));
     }
     const body = await facilitator.settle(
-      request.body,
+      input,
       request.trustedSecurityContext,
     );
     return jsonResponse(200, body);
   }
   return jsonResponse(404, { error: "not_found" });
+}
+
+/** Read an embedding Request without materializing more than the shared limit. */
+export async function readFacilitatorRequestBody(request: {
+  body: ReadableStream<Uint8Array> | null;
+  headers: { get(name: string): string | null };
+}): Promise<unknown> {
+  const maximum = KASPA_X402_RESOURCE_BUDGET.maxDecodedHeaderBytes;
+  const declared = request.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/.test(declared) || Number(declared) > maximum)
+  )
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      `facilitator request body exceeds decoded limit ${maximum} bytes`,
+    );
+  if (!request.body)
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "facilitator request body is required",
+    );
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    bytes += chunk.value.byteLength;
+    if (bytes > maximum) {
+      await reader.cancel();
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        `facilitator request body exceeds decoded limit ${maximum} bytes`,
+      );
+    }
+    chunks.push(chunk.value);
+  }
+  const raw = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return decodeBoundedJsonBytes(raw, "facilitator request body");
+}
+
+function facilitatorBody(body: unknown): unknown {
+  try {
+    if (typeof body === "string" || body instanceof Uint8Array)
+      return decodeBoundedJsonBytes(body, "facilitator request body");
+    assertJsonResourceBudget(body, { label: "facilitator request body" });
+    return body;
+  } catch {
+    return undefined;
+  }
 }
 
 function executableKinds(kinds: SupportedKind[], config: FacilitatorConfig): SupportedKind[] {

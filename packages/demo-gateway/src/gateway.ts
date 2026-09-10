@@ -1,4 +1,7 @@
 import {
+  KASPA_X402_RESOURCE_BUDGET,
+  assertJsonResourceBudget,
+  decodeBoundedJsonBytes,
   decodePaymentRequiredHeader,
   decodeBoundedJsonHeader,
   decodePaymentSignatureHeader,
@@ -14,6 +17,7 @@ import {
 } from "@kaspa-x402/core";
 import {
   DirectModeServer,
+  MemoryPublicBoundaryController,
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
@@ -51,6 +55,9 @@ type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
+// Shared by server instances in this Worker isolate. Deployment-wide admission
+// remains the responsibility of the hosting layer.
+const gatewayPublicBoundary = new MemoryPublicBoundaryController();
 
 export async function handleGatewayRequest(
   request: Request,
@@ -494,6 +501,7 @@ async function createGateway(
     acceptedFinality: "accepted",
     confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     requirePaymentIdentifier: false,
+    publicBoundaryController: gatewayPublicBoundary,
   });
   return { server };
 }
@@ -959,9 +967,9 @@ async function supportedKindCheck(
     );
     if (response.status !== 200)
       throw new Error(`expected 200, got ${response.status}`);
-    const body = (await response.json()) as {
+    const body = await readJsonWithLimit<{
       kinds?: Array<{ scheme?: unknown }>;
-    };
+    }>(response, MAX_CANARY_JSON_BYTES, "supported-kind canary");
     if (!body.kinds?.some((kind) => kind.scheme === profile))
       throw new Error(`${profile} support not advertised`);
     return {
@@ -990,7 +998,11 @@ async function unsupportedSchemeCheck(
     );
     if (response.status !== 402)
       throw new Error(`expected 402, got ${response.status}`);
-    const body = (await response.json()) as { error?: unknown };
+    const body = await readJsonWithLimit<{ error?: unknown }>(
+      response,
+      MAX_CANARY_JSON_BYTES,
+      "unsupported-scheme canary",
+    );
     if (body.error !== "unsupported_scheme")
       throw new Error(`unexpected error ${String(body.error)}`);
     return {
@@ -1103,35 +1115,72 @@ async function readJsonWithLimit<T>(
   label: string,
 ): Promise<T> {
   const length = response.headers.get("content-length");
-  if (length && Number(length) > maxBytes)
+  if (
+    length !== null &&
+    (!/^\d+$/.test(length) || Number(length) > maxBytes)
+  )
     throw new Error(`${label} response too large`);
   const reader = response.body?.getReader();
   if (!reader) throw new Error(`${label} response body is missing`);
-  const decoder = new TextDecoder();
+  const chunks: Uint8Array[] = [];
   let bytes = 0;
-  let text = "";
   for (;;) {
     const chunk = await reader.read();
-    if (chunk.done) {
-      text += decoder.decode();
-      break;
-    }
+    if (chunk.done) break;
     bytes += chunk.value.byteLength;
-    if (bytes > maxBytes) throw new Error(`${label} response too large`);
-    text += decoder.decode(chunk.value, { stream: true });
+    if (bytes > maxBytes) {
+      await reader.cancel();
+      throw new Error(`${label} response too large`);
+    }
+    chunks.push(chunk.value);
   }
-  return JSON.parse(text) as T;
+  const raw = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  return decodeBoundedJsonBytes(raw, `${label} response body`) as T;
 }
 
-async function readRequestJsonWithLimit<T>(
+export async function readRequestJsonWithLimit<T>(
   request: Request,
   maxBytes: number,
   label: string,
 ): Promise<T> {
-  const text = await request.text();
-  if (new TextEncoder().encode(text).byteLength > maxBytes)
+  const maximum = Math.min(
+    maxBytes,
+    KASPA_X402_RESOURCE_BUDGET.maxDecodedHeaderBytes,
+  );
+  const declared = request.headers.get("content-length");
+  if (
+    declared !== null &&
+    (!/^\d+$/.test(declared) || Number(declared) > maximum)
+  )
     throw new Error(`${label} request body too large`);
-  return JSON.parse(text) as T;
+  if (!request.body) throw new Error(`${label} request body is required`);
+  const reader = request.body.getReader();
+  const chunks: Uint8Array[] = [];
+  let bytes = 0;
+  while (true) {
+    const chunk = await reader.read();
+    if (chunk.done) break;
+    bytes += chunk.value.byteLength;
+    if (bytes > maximum) {
+      await reader.cancel();
+      throw new Error(`${label} request body too large`);
+    }
+    chunks.push(chunk.value);
+  }
+  const raw = new Uint8Array(bytes);
+  let offset = 0;
+  for (const chunk of chunks) {
+    raw.set(chunk, offset);
+    offset += chunk.byteLength;
+  }
+  const decoded = decodeBoundedJsonBytes(raw, `${label} request body`);
+  assertJsonResourceBudget(decoded, { label: `${label} request body` });
+  return decoded as T;
 }
 
 function exactHeadRegistrations(

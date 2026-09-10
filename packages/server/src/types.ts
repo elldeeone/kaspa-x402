@@ -32,6 +32,10 @@ import type {
   VoucherPayload,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
+import type {
+  PublicBoundaryController,
+  PublicBoundaryPolicy,
+} from "./public-boundary.js";
 
 export const PAYMENT_REQUIRED_HEADER = "PAYMENT-REQUIRED";
 export const PAYMENT_SIGNATURE_HEADER = "PAYMENT-SIGNATURE";
@@ -917,6 +921,10 @@ export interface DirectModeServerConfig {
   /** Deployment policy; the Testnet-10 launch profile is 30. */
   confirmationThreshold: number;
   topUpVerifier?: TopUpVerifier;
+  /** Public admission, concurrency, and adapter timeout policy. */
+  publicBoundaryPolicy?: Partial<PublicBoundaryPolicy>;
+  /** Controller shared by server instances in one process or isolate. */
+  publicBoundaryController?: PublicBoundaryController;
 }
 
 export interface BuildPaymentRequiredOptions {

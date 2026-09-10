@@ -46,6 +46,8 @@ For paid MCP calls, an advertised non-zero `mcpErrorChargeSompi` is included in
 that payer intent. An `isError` result carrying a successful batch settlement
 is accepted only when the settlement amount equals the explicitly approved
 fixed error charge; otherwise the channel is quarantined.
+Successful charged errors also expose `errorCharge.approvedAmount` and
+`errorCharge.settledAmount` on the `paidMcpToolCall()` result.
 
 Mainnet funding fails closed unless `allowMainnet: true` is set. The default
 offer selector accepts only `kaspa:testnet-10`; operators that opt into mainnet

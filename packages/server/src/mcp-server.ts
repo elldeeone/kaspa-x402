@@ -1,4 +1,5 @@
 import {
+  assertMcpPaymentResponseCapacity,
   assertJsonResourceBudget,
   decodePaymentRequiredHeader,
   decodePaymentResponseHeader,
@@ -58,17 +59,26 @@ export async function handlePaidMcpToolCall(
   params: McpToolCallParams,
   handler: PaidMcpToolHandler,
 ): Promise<McpToolResult> {
+  let resource: ResourceInfo;
   try {
-    assertJsonResourceBudget(params, { label: "MCP tool call parameters" });
+    assertJsonResourceBudget(
+      {
+        params,
+        audience: options.audience,
+        name: options.name,
+        resource: options.resource ?? null,
+      },
+      { label: "MCP tool call" },
+    );
     if (options.trustedSecurityContext) {
       assertJsonResourceBudget(options.trustedSecurityContext, {
         label: "MCP trusted security context",
       });
     }
+    resource = options.resource ?? mcpToolResource({ name: options.name });
   } catch {
     return mcpErrorResult("invalid_payload");
   }
-  const resource = options.resource ?? mcpToolResource({ name: options.name });
   if (params.name !== options.name) {
     return mcpErrorResult(`MCP tool name mismatch: expected ${options.name}`);
   }
@@ -111,7 +121,7 @@ export async function handlePaidMcpToolCall(
       },
       async () => ({ body: mcpErrorResult("unreachable") }),
     );
-    return serverResponseToMcpResult(response);
+    return controlledServerResponseToMcpResult(response);
   }
   const fallbackPaymentRequired: PaymentRequired | undefined = paymentPayload
     ? {
@@ -121,16 +131,21 @@ export async function handlePaidMcpToolCall(
       }
     : undefined;
 
-  const requestHash = paymentPayload
-    ? mcpToolCallFingerprint({
-        audience: options.audience,
-        toolName: options.name,
-        arguments: params.arguments,
-        accepted: paymentPayload.accepted,
-        resource,
-        trustedSecurityContext: options.trustedSecurityContext,
-      })
-    : undefined;
+  let requestHash: ReturnType<typeof mcpToolCallFingerprint> | undefined;
+  try {
+    requestHash = paymentPayload
+      ? mcpToolCallFingerprint({
+          audience: options.audience,
+          toolName: options.name,
+          arguments: params.arguments,
+          accepted: paymentPayload.accepted,
+          resource,
+          trustedSecurityContext: options.trustedSecurityContext,
+        })
+      : undefined;
+  } catch {
+    return mcpErrorResult("invalid_payload");
+  }
 
   const response = await server.handlePaidRequest(
     {
@@ -158,6 +173,8 @@ export async function handlePaidMcpToolCall(
         ...context,
         params,
       });
+      assertJsonResourceBudget(result, { label: "MCP tool result" });
+      assertMcpPaymentResponseCapacity(result.result);
       return {
         body: result.result,
         chargedAmount: result.chargedAmount,
@@ -165,13 +182,41 @@ export async function handlePaidMcpToolCall(
     },
   );
 
-  return serverResponseToMcpResult(response, fallbackPaymentRequired);
+  return controlledServerResponseToMcpResult(
+    response,
+    fallbackPaymentRequired,
+  );
+}
+
+function controlledServerResponseToMcpResult(
+  response: ServerResponse,
+  fallbackPaymentRequired?: PaymentRequired,
+): McpToolResult {
+  try {
+    return serverResponseToMcpResult(response, fallbackPaymentRequired);
+  } catch {
+    const paymentResponseHeader = response.headers[PAYMENT_RESPONSE_HEADER];
+    if (paymentResponseHeader) {
+      try {
+        return withMcpPaymentResponse(
+          mcpErrorResult("invalid_payload"),
+          decodePaymentResponseHeader(paymentResponseHeader),
+        );
+      } catch {
+        // The header itself was invalid, so no trustworthy settlement exists.
+      }
+    }
+    return mcpErrorResult("invalid_payload");
+  }
 }
 
 function serverResponseToMcpResult(
   response: ServerResponse,
   fallbackPaymentRequired?: PaymentRequired,
 ): McpToolResult {
+  assertJsonResourceBudget(response.body ?? null, {
+    label: "MCP server response body",
+  });
   const paymentResponseHeader = response.headers[PAYMENT_RESPONSE_HEADER];
   const settlement = paymentResponseHeader
     ? decodePaymentResponseHeader(paymentResponseHeader)

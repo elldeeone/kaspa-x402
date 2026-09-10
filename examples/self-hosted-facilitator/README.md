@@ -8,7 +8,11 @@ node examples/self-hosted-facilitator/index.mjs
 ```
 
 ```ts
-import { DirectModeFacilitator, handleFacilitatorRequest } from "@kaspa-x402/facilitator";
+import {
+  DirectModeFacilitator,
+  handleFacilitatorRequest,
+  readFacilitatorRequestBody,
+} from "@kaspa-x402/facilitator";
 
 const facilitator = new DirectModeFacilitator({
   server: directModeServer,
@@ -18,7 +22,14 @@ const facilitator = new DirectModeFacilitator({
 
 export async function handleRequest(request: Request): Promise<Response> {
   const url = new URL(request.url);
-  const body = request.method === "GET" ? undefined : await request.json();
+  let body: unknown;
+  try {
+    body = request.method === "GET"
+      ? undefined
+      : await readFacilitatorRequestBody(request);
+  } catch {
+    return Response.json({ error: "invalid_payload" }, { status: 400 });
+  }
   const result = await handleFacilitatorRequest(facilitator, {
     method: request.method,
     path: url.pathname,

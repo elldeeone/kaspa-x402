@@ -1,8 +1,10 @@
 import {
   X402_VERSION,
   KASPA_LOCK_TIME_THRESHOLD,
+  KASPA_X402_RESOURCE_BUDGET,
   applyBatchClaimAccounting,
   applyCovenantSelectedChainUpdate,
+  assertEncodedHeaderBudget,
   assertCovenantLineageConfirmed,
   assertMainnetAllowed,
   assertBatchVoucherReserve,
@@ -41,6 +43,7 @@ import {
   normalizePaymentRequirementsHex,
   trustedSecurityContextHash,
   toX402ErrorReason,
+  utf8ByteLength,
   validatePaymentPayload,
   validatePaymentRequired,
   validatePaymentRetry,
@@ -63,6 +66,7 @@ import {
   type SettlementResponse,
   type SompiString,
   type SupportedKind,
+  type TrustedSecurityContext,
   type TrustedTransactionEvidence,
   type Voucher,
   type VoucherPayload,
@@ -79,6 +83,12 @@ import {
 import { activeChargedAmount, MemoryChannelLockManager } from "./stores.js";
 import { sameCovenantLineage } from "./channel-lineage.js";
 import { exactSettlementAttemptsMatch } from "./exact-heads.js";
+import {
+  MemoryPublicBoundaryController,
+  PublicBoundaryError,
+  type PublicBoundaryController,
+  type PublicBoundaryPermit,
+} from "./public-boundary.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -149,6 +159,7 @@ const lockByStoreCoordinationDomain = new Map<string, ChannelLockManager>();
 
 export class DirectModeServer {
   readonly #config: ResolvedServerConfig;
+  readonly #publicBoundary: PublicBoundaryController;
 
   constructor(config: DirectModeServerConfig) {
     this.#config = {
@@ -185,6 +196,16 @@ export class DirectModeServer {
       this.#config.store,
       this.#config.lockManager,
     );
+    this.#publicBoundary =
+      config.publicBoundaryController ??
+      new MemoryPublicBoundaryController(config.publicBoundaryPolicy);
+  }
+
+  async #runAdapter<T>(
+    adapter: string,
+    operation: () => Promise<T> | T,
+  ): Promise<T> {
+    return this.#publicBoundary.runAdapter(adapter, operation);
   }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
@@ -224,6 +245,8 @@ export class DirectModeServer {
     try {
       paymentRequired = await this.#buildRuntimePaymentRequired(options);
     } catch (error) {
+      if (error instanceof PublicBoundaryError)
+        return publicBoundaryResponse(error);
       return {
         status: 503,
         headers: {},
@@ -361,7 +384,67 @@ export class DirectModeServer {
     return kinds;
   }
 
+  /** Share admission and adapter limits with embedding-specific public actions. */
+  async runPublicAdapter<T>(
+    adapter: string,
+    trustedSecurityContext: TrustedSecurityContext | undefined,
+    channelKey: string | undefined,
+    operation: () => Promise<T> | T,
+  ): Promise<T> {
+    const requestPermit = this.#publicBoundary.enterRequest(
+      trustedSecurityContext,
+    );
+    let channelPermit: PublicBoundaryPermit | undefined;
+    let released = false;
+    const release = () => {
+      if (released) return;
+      released = true;
+      channelPermit?.release();
+      requestPermit.release();
+    };
+    let operationStarted = false;
+    try {
+      if (channelKey)
+        channelPermit = this.#publicBoundary.enterChannel(channelKey);
+      return await this.#runAdapter(adapter, () => {
+        operationStarted = true;
+        const pending = Promise.resolve().then(operation);
+        void pending.then(release, release);
+        return pending;
+      });
+    } finally {
+      // Admission failures never start the operation, so no pending work owns
+      // these permits. Timed-out operations retain them until they settle.
+      if (!operationStarted) release();
+    }
+  }
+
   async verifyPayment(
+    options: DirectPaymentVerificationOptions,
+  ): Promise<DirectPaymentVerification> {
+    let requestPermit: PublicBoundaryPermit;
+    try {
+      requestPermit = this.#publicBoundary.enterRequest(
+        options.trustedSecurityContext,
+      );
+    } catch (error) {
+      throw boundaryError(error);
+    }
+    let channelPermit: PublicBoundaryPermit | undefined;
+    try {
+      const payment = validatedPaymentPayload(options.paymentPayload);
+      const key = safePaymentLockKey(payment);
+      if (key) channelPermit = this.#publicBoundary.enterChannel(key);
+      return await this.#verifyPaymentDirect(options);
+    } catch (error) {
+      throw boundaryError(error);
+    } finally {
+      channelPermit?.release();
+      requestPermit.release();
+    }
+  }
+
+  async #verifyPaymentDirect(
     options: DirectPaymentVerificationOptions,
   ): Promise<DirectPaymentVerification> {
     const resource = options.resource ?? facilitatorResource();
@@ -460,6 +543,33 @@ export class DirectModeServer {
     request: PaidRequest,
     handler: ProtectedHandler,
   ): Promise<ServerResponse> {
+    let permit: PublicBoundaryPermit;
+    try {
+      permit = this.#publicBoundary.enterRequest(request.trustedSecurityContext);
+    } catch (error) {
+      return error instanceof PublicBoundaryError
+        ? publicBoundaryResponse(error)
+        : {
+            status: 400,
+            headers: {},
+            body: { error: "invalid_payload" },
+          };
+    }
+    try {
+      return await this.#handlePaidRequest(request, handler);
+    } catch (error) {
+      if (error instanceof PublicBoundaryError)
+        return publicBoundaryResponse(error);
+      throw error;
+    } finally {
+      permit.release();
+    }
+  }
+
+  async #handlePaidRequest(
+    request: PaidRequest,
+    handler: ProtectedHandler,
+  ): Promise<ServerResponse> {
     const resource = request.resource ?? { url: request.url };
     try {
       assertJsonResourceBudget(
@@ -491,13 +601,31 @@ export class DirectModeServer {
     const paymentAmount = request.paymentAmount;
     const requiredOptions = paymentRequirementRouteOptions(request);
     const requestedScheme = verificationRequestedScheme(request);
-    const paymentHeader = readHeader(request.headers, PAYMENT_SIGNATURE_HEADER);
+    let paymentHeader: string | undefined;
+    try {
+      paymentHeader = readHeader(request.headers, PAYMENT_SIGNATURE_HEADER);
+    } catch {
+      return {
+        status: 400,
+        headers: {},
+        body: { error: "invalid_payload" },
+      };
+    }
     if (!paymentHeader) {
       return this.#paymentRequiredResponse({
         resource,
         amount: paymentAmount,
         ...requiredOptions,
       });
+    }
+    try {
+      assertEncodedHeaderBudget(paymentHeader, PAYMENT_SIGNATURE_HEADER);
+    } catch {
+      return {
+        status: 400,
+        headers: {},
+        body: { error: "invalid_payload" },
+      };
     }
 
     let paymentPayload: PaymentPayload;
@@ -578,6 +706,8 @@ export class DirectModeServer {
             request.mcpErrorChargeSompi,
           );
         } catch (error) {
+          if (error instanceof PublicBoundaryError)
+            return publicBoundaryResponse(error);
           return this.#correctiveResponse(
             resource,
             paymentPayload,
@@ -701,12 +831,16 @@ export class DirectModeServer {
               recoveredExactHandlerResult ?? recoveredBatchHandlerResult!;
           } else {
             try {
-              handlerResult = await handler({
-                request,
-                payment: verified,
-                requestFingerprint: fingerprint,
-                paymentIdentifier,
-              });
+              handlerResult = await this.#runAdapter(
+                "protected-handler",
+                () =>
+                  handler({
+                    request,
+                    payment: verified,
+                    requestFingerprint: fingerprint,
+                    paymentIdentifier,
+                  }),
+              );
             } catch {
               if (verified.scheme === "exact") {
                 await this.#config.store.markExactHandlerRecoveryRequired(
@@ -865,9 +999,19 @@ export class DirectModeServer {
           : lockManager.runExclusive(verifiedLockKey, runVerified);
       });
 
-    return paymentIdentifier
-      ? lockManager.runExclusive(idempotencyLockKey(paymentIdentifier), run)
-      : run();
+    let channelPermit: PublicBoundaryPermit;
+    try {
+      channelPermit = this.#publicBoundary.enterChannel(paymentLockKey);
+    } catch (error) {
+      return publicBoundaryResponse(error);
+    }
+    try {
+      return await (paymentIdentifier
+        ? lockManager.runExclusive(idempotencyLockKey(paymentIdentifier), run)
+        : run());
+    } finally {
+      channelPermit.release();
+    }
   }
 
   async reconcileExactSettlement(
@@ -888,10 +1032,9 @@ export class DirectModeServer {
         "exact settlement reconciler is required",
       );
     }
-    const result =
-      await this.#config.exactSettlementReconciler.reconcileExactSettlement(
-        attempt,
-      );
+    const result = await this.#runAdapter("exact-settlement-reconciler", () =>
+      this.#config.exactSettlementReconciler!.reconcileExactSettlement(attempt),
+    );
     if (
       result.transactionId.toLowerCase() !== attempt.transactionId.toLowerCase()
     ) {
@@ -1089,9 +1232,11 @@ export class DirectModeServer {
       );
     }
 
-    const result = await this.#config.exactHeadReconciler.reconcileExactHead(
-      head,
-      candidateTransactionIds,
+    const result = await this.#runAdapter("exact-head-reconciler", () =>
+      this.#config.exactHeadReconciler!.reconcileExactHead(
+        head,
+        candidateTransactionIds,
+      ),
     );
     const observedAt = new Date().toISOString();
     if (result.status === "unknown") {
@@ -1232,8 +1377,9 @@ export class DirectModeServer {
     }
     const activeAmount = activeChargedAmount(channel);
     const claimAmount = requestedClaimAmount ?? formatSompiString(activeAmount);
-    const estimatedFee =
-      await this.#config.chainProvider.estimateClaimFee(channel);
+    const estimatedFee = await this.#runAdapter("chain-provider", () =>
+      this.#config.chainProvider.estimateClaimFee(channel),
+    );
     const claim = parseSompiString(claimAmount);
     const fee = parseSompiString(estimatedFee);
     let reason: string | undefined;
@@ -1306,10 +1452,12 @@ export class DirectModeServer {
       });
       let claim;
       try {
-        claim = await this.#config.claimBuilder.buildClaimTransaction({
-          channel: preview.channel,
-          claimAmount: preview.claimAmount,
-        });
+        claim = await this.#runAdapter("claim-builder", () =>
+          this.#config.claimBuilder!.buildClaimTransaction({
+            channel: preview.channel,
+            claimAmount: preview.claimAmount,
+          }),
+        );
       } catch (error) {
         if (operationClaim.created) {
           await this.#config.store.abandonChannelOperation(
@@ -1427,8 +1575,8 @@ export class DirectModeServer {
         }
         throw error;
       }
-      const broadcast = await this.#config.chainProvider.sendTransaction(
-        claim.transaction,
+      const broadcast = await this.#runAdapter("chain-provider", () =>
+        this.#config.chainProvider.sendTransaction(claim.transaction),
       );
       if (
         !/^[0-9a-fA-F]{64}$/.test(broadcast.transactionId) ||
@@ -1545,8 +1693,9 @@ export class DirectModeServer {
           "trusted claim reconciler is required before abandonment",
         );
       }
-      const reconciliation =
-        await this.#config.claimReconciler.reconcileClaim(attempt);
+      const reconciliation = await this.#runAdapter("claim-reconciler", () =>
+        this.#config.claimReconciler!.reconcileClaim(attempt),
+      );
       if (
         !/^[0-9a-f]{64}$/.test(reconciliation.transactionId) ||
         reconciliation.transactionId !== attempt.transactionId
@@ -1870,8 +2019,8 @@ export class DirectModeServer {
       this.#config.acceptedFinality,
       accepted.extra.finality,
     );
-    const verification =
-      await this.#config.exactTransactionVerifier.verifyExactPayment({
+    const verification = await this.#runAdapter("exact-transaction-verifier", () =>
+      this.#config.exactTransactionVerifier!.verifyExactPayment({
         network: accepted.network,
         profile,
         transaction: payload.transaction,
@@ -1885,7 +2034,8 @@ export class DirectModeServer {
         paymentRequirementsHash,
         authorization: payload.authorization,
         ...(head ? { head } : {}),
-      });
+      }),
+    );
     if (!/^[0-9a-fA-F]{64}$/.test(verification.transactionId)) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
@@ -2114,7 +2264,6 @@ export class DirectModeServer {
     requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     validateChannelTerms(this.#config, accepted, payload.channelConfig);
-    await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
     if (channelId(payload.channelConfig) !== payload.channelId) {
       throw new KaspaX402Error(
         "invalid_kaspa_channel_id",
@@ -2128,6 +2277,37 @@ export class DirectModeServer {
         "existing channel is not active",
       );
     }
+    if (
+      existing &&
+      payload.voucher.covenantId.toLowerCase() !==
+        existing.covenantId.toLowerCase()
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "voucher covenant id does not match the existing channel lineage",
+      );
+    }
+    if (existing)
+      this.#assertVoucherAmountAndBinding(
+        existing,
+        accepted,
+        payload.voucher,
+      );
+    await this.#verifyVoucherProof(
+      payload.channelId,
+      payload.channelConfig.clientPublicKey,
+      payload.channelConfig.network,
+      payload.voucher,
+    );
+    await this.#verifyBatchPresentationProof(
+      payload.channelId,
+      payload.channelConfig.clientPublicKey,
+      accepted,
+      paymentPayload,
+      requestFingerprint,
+      payload.voucher,
+    );
+    await this.#assertRefundWindow(payload.channelConfig.refundTimeoutDaa);
     if (existing) {
       await this.#rejectOpenClaimAttempt(existing.channelId);
       existing = await this.#reconcileChannelSnapshot(existing);
@@ -2175,10 +2355,12 @@ export class DirectModeServer {
     );
     let genesisEvidence = existing?.genesisEvidence;
     if (!existing) {
-      const genesis = await this.#config.chainProvider.verifyCovenantGenesis({
-        utxo,
-        payment: paymentPayload,
-      });
+      const genesis = await this.#runAdapter("chain-provider", () =>
+        this.#config.chainProvider.verifyCovenantGenesis({
+          utxo,
+          payment: paymentPayload,
+        }),
+      );
       if (
         !genesis ||
         genesis.totalOutputCount !== 1 ||
@@ -2264,12 +2446,14 @@ export class DirectModeServer {
           "top-up transition verifier is required",
         );
       }
-      const transition = await this.#config.topUpVerifier.verifyTopUp({
-        previous: existing,
-        next: initial,
-        utxo,
-        payment: paymentPayload,
-      });
+      const transition = await this.#runAdapter("top-up-verifier", () =>
+        this.#config.topUpVerifier!.verifyTopUp({
+          previous: existing,
+          next: initial,
+          utxo,
+          payment: paymentPayload,
+        }),
+      );
       if (
         !transition ||
         parseBatchLaneAmount(
@@ -2347,18 +2531,7 @@ export class DirectModeServer {
       });
     }
 
-    await this.#verifyVoucherAmountAndSignature(
-      initial,
-      accepted,
-      payload.voucher,
-    );
-    await this.#verifyBatchPresentation(
-      initial,
-      accepted,
-      paymentPayload,
-      requestFingerprint,
-      payload.voucher,
-    );
+    this.#assertVoucherAmountAndBinding(initial, accepted, payload.voucher);
     return {
       scheme: "batch-settlement",
       paymentRequired,
@@ -2379,6 +2552,46 @@ export class DirectModeServer {
     requestFingerprint: Hash32Hex,
   ): Promise<VerifiedPayment> {
     const loaded = await this.#requireChannel(payload.channelId);
+    validateChannelTerms(this.#config, accepted, loaded.channelConfig);
+    if (loaded.status !== "active") {
+      throw new KaspaX402Error(
+        "invalid_kaspa_channel_id",
+        "channel is not active",
+      );
+    }
+    if (payload.clientPublicKey !== loaded.channelConfig.clientPublicKey) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_public_key",
+        "client public key does not match channel",
+      );
+    }
+    if (
+      !sameActiveOutpoint(
+        loaded,
+        payload.fundingOutpoint,
+        payload.activeScriptPublicKey,
+      )
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_outpoint",
+        "payment outpoint does not match active channel",
+      );
+    }
+    this.#assertVoucherAmountAndBinding(loaded, accepted, payload.voucher);
+    await this.#verifyVoucherProof(
+      loaded.channelId,
+      loaded.channelConfig.clientPublicKey,
+      loaded.channelConfig.network,
+      payload.voucher,
+    );
+    await this.#verifyBatchPresentationProof(
+      loaded.channelId,
+      loaded.channelConfig.clientPublicKey,
+      accepted,
+      paymentPayload,
+      requestFingerprint,
+      payload.voucher,
+    );
     await this.#rejectOpenClaimAttempt(loaded.channelId);
     const channel = await this.#reconcileChannelSnapshot(loaded);
     validateChannelTerms(this.#config, accepted, channel.channelConfig);
@@ -2413,18 +2626,7 @@ export class DirectModeServer {
       channel.fundingAmount,
       channel.covenantId,
     );
-    await this.#verifyVoucherAmountAndSignature(
-      channel,
-      accepted,
-      payload.voucher,
-    );
-    await this.#verifyBatchPresentation(
-      channel,
-      accepted,
-      paymentPayload,
-      requestFingerprint,
-      payload.voucher,
-    );
+    this.#assertVoucherAmountAndBinding(channel, accepted, payload.voucher);
     return {
       scheme: "batch-settlement",
       paymentRequired,
@@ -2437,11 +2639,11 @@ export class DirectModeServer {
     };
   }
 
-  async #verifyVoucherAmountAndSignature(
+  #assertVoucherAmountAndBinding(
     channel: ServerChannelRecord,
     accepted: BatchPaymentRequirements,
     voucher: Voucher,
-  ): Promise<void> {
+  ): void {
     validateChannelPreVoucherAccounting(channel);
     if (voucher.covenantId.toLowerCase() !== channel.covenantId.toLowerCase()) {
       throw new KaspaX402Error(
@@ -2466,18 +2668,28 @@ export class DirectModeServer {
     };
     validateChannelAccounting(authorized);
     assertBatchVoucherReserve(authorized, accepted.extra.claimReserveSompi);
+  }
+
+  async #verifyVoucherProof(
+    channelId: Hash32Hex,
+    clientPublicKey: string,
+    network: ChannelConfig["network"],
+    voucher: Voucher,
+  ): Promise<void> {
     const input = {
-      network: channel.channelConfig.network,
-      covenantId: channel.covenantId,
+      network,
+      covenantId: voucher.covenantId,
       authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     };
-    const verified = await this.#config.voucherVerifier.verifyVoucher({
-      channelId: channel.channelId,
-      clientPublicKey: channel.channelConfig.clientPublicKey,
-      digest: voucherDigest(input),
-      preimage: voucherPreimageHex(input),
-      voucher,
-    });
+    const verified = await this.#runAdapter("voucher-verifier", () =>
+      this.#config.voucherVerifier.verifyVoucher({
+        channelId,
+        clientPublicKey,
+        digest: voucherDigest(input),
+        preimage: voucherPreimageHex(input),
+        voucher,
+      }),
+    );
     if (!verified)
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
@@ -2485,8 +2697,9 @@ export class DirectModeServer {
       );
   }
 
-  async #verifyBatchPresentation(
-    channel: ServerChannelRecord,
+  async #verifyBatchPresentationProof(
+    channelId: Hash32Hex,
+    clientPublicKey: string,
     accepted: BatchPaymentRequirements,
     paymentPayload: PaymentPayload,
     requestFingerprint: Hash32Hex,
@@ -2501,8 +2714,8 @@ export class DirectModeServer {
     }
     const presentation = payload.presentation;
     const expectedVoucherDigest = voucherDigest({
-      network: channel.channelConfig.network,
-      covenantId: channel.covenantId,
+      network: accepted.network,
+      covenantId: voucher.covenantId,
       authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     });
     const expectedPaymentIdentifier =
@@ -2515,10 +2728,9 @@ export class DirectModeServer {
         batchPaymentRequirementsHash(accepted) ||
       presentation.securityContextHash.toLowerCase() !==
         accepted.extra.securityContextHash.toLowerCase() ||
-      presentation.channelId.toLowerCase() !==
-        channel.channelId.toLowerCase() ||
+      presentation.channelId.toLowerCase() !== channelId.toLowerCase() ||
       presentation.covenantId.toLowerCase() !==
-        channel.covenantId.toLowerCase() ||
+        voucher.covenantId.toLowerCase() ||
       presentation.voucherDigest.toLowerCase() !== expectedVoucherDigest ||
       presentation.paymentIdentifier !== expectedPaymentIdentifier
     ) {
@@ -2549,14 +2761,15 @@ export class DirectModeServer {
       }
     };
     assertLive();
-    const verified =
-      await this.#config.batchPresentationVerifier.verifyPresentation({
-        channelId: channel.channelId,
-        clientPublicKey: channel.channelConfig.clientPublicKey,
+    const verified = await this.#runAdapter("batch-presentation-verifier", () =>
+      this.#config.batchPresentationVerifier.verifyPresentation({
+        channelId,
+        clientPublicKey,
         digest: expectedDigest,
         signature: presentation.signature,
         presentation,
-      });
+      }),
+    );
     if (!verified) {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
@@ -2569,7 +2782,9 @@ export class DirectModeServer {
   async #assertRefundWindow(timeoutDaa: SompiString): Promise<void> {
     const timeout = parseSompiString(timeoutDaa);
     const current = parseSompiString(
-      await this.#config.chainProvider.getVirtualDaaScore(),
+      await this.#runAdapter("chain-provider", () =>
+        this.#config.chainProvider.getVirtualDaaScore(),
+      ),
     );
     const lead = parseSompiString(this.#config.minimumRefundLeadDaa);
     if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
@@ -2613,9 +2828,8 @@ export class DirectModeServer {
     covenantId?: Hash32Hex,
     requiredConfirmations = this.#config.confirmationThreshold,
   ): Promise<ChainUtxo & { covenantId: Hash32Hex }> {
-    const utxo = await this.#config.chainProvider.getUtxo(
-      outpoint,
-      this.#config.network,
+    const utxo = await this.#runAdapter("chain-provider", () =>
+      this.#config.chainProvider.getUtxo(outpoint, this.#config.network),
     );
     if (!utxo)
       throw new KaspaX402Error(
@@ -3048,10 +3262,17 @@ export class DirectModeServer {
         "expired exact recovery cannot construct or rebroadcast a transaction",
       );
     }
+    if (!verified.transaction) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "exact settlement is missing the verified transaction artifact",
+      );
+    }
+    const transaction = verified.transaction;
     let broadcast: TransactionBroadcast;
     try {
-      broadcast = await this.#config.chainProvider.sendTransaction(
-        verified.transaction,
+      broadcast = await this.#runAdapter("chain-provider", () =>
+        this.#config.chainProvider.sendTransaction(transaction),
       );
     } catch {
       throw new KaspaX402Error(
@@ -3422,6 +3643,30 @@ export class DirectModeServer {
       paymentPayload.accepted.scheme === "exact"
         ? paymentPayload.accepted.scheme
         : requestedScheme;
+    if (
+      error instanceof KaspaX402Error &&
+      [
+        "invalid_kaspa_signature",
+        "invalid_kaspa_x402_amount",
+      ].includes(error.code) &&
+      paymentPayload.accepted.scheme === "batch-settlement"
+    ) {
+      const paymentRequired: PaymentRequired = {
+        x402Version: X402_VERSION,
+        resource,
+        accepts: [paymentPayload.accepted],
+        error: errorReason,
+        ...requiredPaymentIdentifierExtensions(this.#config),
+      };
+      return {
+        status: 402,
+        headers: {
+          [PAYMENT_REQUIRED_HEADER]:
+            encodePaymentRequiredHeader(paymentRequired),
+        },
+        body: { error: errorReason },
+      };
+    }
     const paymentRequired = await this.#paymentRequiredResponse({
       resource,
       amount: paymentAmount,
@@ -3447,13 +3692,15 @@ export class DirectModeServer {
   async #reconcileChannelSnapshot(
     channel: ServerChannelRecord,
   ): Promise<ServerChannelRecord> {
-    const update = await this.#config.chainProvider.discoverCovenantLineage({
-      network: channel.channelConfig.network,
-      covenantId: channel.covenantId,
-      templateId: channel.channelConfig.templateId,
-      lineage: channel.lineage,
-      minConfirmationCount: this.#config.confirmationThreshold,
-    });
+    const update = await this.#runAdapter("chain-provider", () =>
+      this.#config.chainProvider.discoverCovenantLineage({
+        network: channel.channelConfig.network,
+        covenantId: channel.covenantId,
+        templateId: channel.channelConfig.templateId,
+        lineage: channel.lineage,
+        minConfirmationCount: this.#config.confirmationThreshold,
+      }),
+    );
     let lineage: CovenantLineageState;
     try {
       lineage = applyCovenantSelectedChainUpdate(channel.lineage, update);
@@ -4633,10 +4880,36 @@ function readHeader(
   if (!headers) return undefined;
   if ("get" in headers && typeof headers.get === "function")
     return headers.get(name) ?? headers.get(name.toLowerCase()) ?? undefined;
-  const found = Object.entries(headers).find(
-    ([key]) => key.toLowerCase() === name.toLowerCase(),
-  );
-  return found?.[1];
+  const record = headers as Record<string, string>;
+  let visited = 0;
+  let found: string | undefined;
+  for (const key in record) {
+    if (!Object.hasOwn(record, key)) continue;
+    visited += 1;
+    if (
+      visited > KASPA_X402_RESOURCE_BUDGET.maxObjectProperties ||
+      utf8ByteLength(key) > KASPA_X402_RESOURCE_BUDGET.maxStringBytes
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "HTTP headers exceed the structural limit",
+      );
+    }
+    if (key.toLowerCase() !== name.toLowerCase()) continue;
+    const descriptor = Object.getOwnPropertyDescriptor(record, key);
+    if (
+      !descriptor ||
+      !("value" in descriptor) ||
+      typeof descriptor.value !== "string"
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "HTTP header must be a plain string value",
+      );
+    }
+    found = descriptor.value;
+  }
+  return found;
 }
 
 function readPaymentIdentifier(
@@ -5095,4 +5368,24 @@ function isExactFinality(
 
 function isRecord(value: unknown): value is Record<string, unknown> {
   return value !== null && typeof value === "object" && !Array.isArray(value);
+}
+
+function publicBoundaryResponse(error: unknown): ServerResponse {
+  if (!(error instanceof PublicBoundaryError)) throw error;
+  return {
+    status: error.status,
+    headers: { "retry-after": "1" },
+    body: { error: error.reason },
+  };
+}
+
+function boundaryError(error: unknown): Error {
+  if (error instanceof PublicBoundaryError) {
+    return new KaspaX402Error(
+      "invalid_kaspa_transaction",
+      error.reason,
+      { status: error.status },
+    );
+  }
+  return error instanceof Error ? error : new Error(String(error));
 }

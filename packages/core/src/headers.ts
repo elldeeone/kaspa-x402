@@ -1,8 +1,8 @@
 import { KaspaX402Error } from "./errors.js";
 import {
-  assertDecodedByteBudget,
   assertEncodedHeaderBudget,
   assertJsonResourceBudget,
+  decodeBoundedJsonBytes,
 } from "./resource-budget.js";
 import { stableStringify } from "./stable-json.js";
 import type { PaymentPayload, PaymentRequired, PaymentRequiredEnvelope, SettlementResponse } from "./types.js";
@@ -70,12 +70,10 @@ export function decodeBoundedJsonHeader(value: string): unknown {
   let decoded: unknown;
   try {
     const bytes = Buffer.from(value, "base64");
-    assertDecodedByteBudget(bytes, "header");
-    decoded = JSON.parse(bytes.toString("utf8"));
+    decoded = decodeBoundedJsonBytes(bytes, "decoded header");
   } catch (error) {
     if (error instanceof KaspaX402Error) throw error;
     throw new KaspaX402Error("invalid_kaspa_x402_payload", "header must contain base64-encoded JSON", error);
   }
-  assertJsonResourceBudget(decoded, { label: "decoded header" });
   return decoded;
 }

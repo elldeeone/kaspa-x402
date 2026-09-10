@@ -5,7 +5,11 @@ import {
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
-import { handleGatewayRequest, runGatewayCanary } from "../src/gateway.js";
+import {
+  handleGatewayRequest,
+  readRequestJsonWithLimit,
+  runGatewayCanary,
+} from "../src/gateway.js";
 import { addressForScriptPublicKey } from "../src/kaspa-native.js";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -554,6 +558,32 @@ describe("gateway canary", () => {
     await expect(requestJson(env, "/exact")).resolves.toMatchObject({
       status: 402,
     });
+  });
+});
+
+describe("gateway request transport budget", () => {
+  it("accepts the byte maximum and rejects maximum plus one while streaming", async () => {
+    await expect(
+      readRequestJsonWithLimit(
+        new Request("https://demo.kaspa-x402.org/admin", {
+          method: "POST",
+          body: '{"x":""}',
+        }),
+        8,
+        "test",
+      ),
+    ).resolves.toEqual({ x: "" });
+
+    await expect(
+      readRequestJsonWithLimit(
+        new Request("https://demo.kaspa-x402.org/admin", {
+          method: "POST",
+          body: '{"x":"a"}',
+        }),
+        8,
+        "test",
+      ),
+    ).rejects.toThrow("request body too large");
   });
 });
 

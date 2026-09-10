@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MCP_PAYMENT_META_KEY,
   MCP_PAYMENT_RESPONSE_META_KEY,
+  KASPA_X402_RESOURCE_BUDGET,
   X402_VERSION,
   bindRequestHashToTrustedContext,
   encodePaymentRequiredEnvelopeHeader,
@@ -2793,6 +2794,48 @@ describe("direct-mode client", () => {
     expect(provider.exactPayments[0]?.requestHash).toBe(expectedRequestHash);
   });
 
+  it("rejects a non-canonical MCP requestHash before payment creation", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+    const required = makeExactRequired({ amount: "100" });
+
+    await expect(
+      paidMcpToolCall(
+        client,
+        async () => mcpPaymentRequiredResult(required),
+        { name: "download", arguments: { id: "canonical" } },
+        { audience: MCP_AUDIENCE, requestHash: "ff".repeat(32) },
+      ),
+    ).rejects.toThrow("canonical tool-call fingerprint");
+    expect(provider.exactPayments).toHaveLength(0);
+    expect(provider.batchAuthorizations).toHaveLength(0);
+  });
+
+  it("rejects an over-budget MCP result before wallet or signer work", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider, store: new MemoryChannelStore() });
+
+    await expect(
+      paidMcpToolCall(
+        client,
+        async () => ({
+          content: [
+            {
+              type: "text",
+              text: "x".repeat(
+                KASPA_X402_RESOURCE_BUDGET.maxStringBytes + 1,
+              ),
+            },
+          ],
+        }),
+        { name: "download", arguments: { id: "oversized" } },
+        { audience: MCP_AUDIENCE },
+      ),
+    ).rejects.toThrow("string limit");
+    expect(provider.exactPayments).toHaveLength(0);
+    expect(provider.batchAuthorizations).toHaveLength(0);
+  });
+
   it.each(["missing", "malformed", "transport"] as const)(
     "keeps an exact MCP payment pending after a %s response failure",
     async (failure) => {
@@ -2892,6 +2935,10 @@ describe("direct-mode client", () => {
 
     expect(result.result.isError).toBe(true);
     expect(result.settlement?.chargedAmount).toBe("100");
+    expect(result.errorCharge).toEqual({
+      approvedAmount: "100",
+      settledAmount: "100",
+    });
     expect(provider.batchAuthorizations).toHaveLength(1);
     expect(provider.batchAuthorizations[0]?.mcpErrorChargeSompi).toBe("100");
   });

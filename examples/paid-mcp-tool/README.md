@@ -10,6 +10,7 @@ node examples/paid-mcp-tool/index.mjs
 Server-side tool wrapper:
 
 ```ts
+import { decodeMcpToolCallParams } from "@kaspa-x402/core";
 import { handlePaidMcpToolCall } from "@kaspa-x402/server";
 
 function quoteArgs(value: unknown): { symbol: string } {
@@ -24,6 +25,8 @@ function quoteArgs(value: unknown): { symbol: string } {
   throw new Error("symbol is required");
 }
 
+// Use this decoder when the embedding exposes raw JSON bytes.
+const params = decodeMcpToolCallParams(rawParams);
 const result = await handlePaidMcpToolCall(
   directModeServer,
   {

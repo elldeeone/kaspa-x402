@@ -3,6 +3,7 @@ import { describe, expect, it, vi } from "vitest";
 import {
   MCP_PAYMENT_META_KEY,
   MCP_PAYMENT_RESPONSE_META_KEY,
+  KASPA_X402_RESOURCE_BUDGET,
   X402_VERSION,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
@@ -200,6 +201,36 @@ describe("direct-mode server", () => {
 
     expect(response.status).toBe(200);
     expect(response.body).toBe("context-bound");
+  });
+
+  it("never returns a batch cached response across trusted principals", async () => {
+    const setup = makeServer();
+    const principalA = { principal: "batch-user-a", tenant: "merchant" };
+    const principalB = { principal: "batch-user-b", tenant: "merchant" };
+    const accepted = setup.server.buildPaymentRequired({
+      resource: RESOURCE,
+      trustedSecurityContext: principalA,
+    }).accepts[0] as BatchPaymentRequirements;
+    const payment = makeDepositPayment(setup, { accepted });
+    const requestA = requestWithPayment(payment.payload, {
+      trustedSecurityContext: principalA,
+    });
+    const first = await setup.server.handlePaidRequest(requestA, async () => ({
+      body: "principal A batch secret",
+      chargedAmount: "100",
+    }));
+    let executed = false;
+    const crossPrincipal = await setup.server.handlePaidRequest(
+      { ...requestA, trustedSecurityContext: principalB },
+      async () => {
+        executed = true;
+        return { body: "wrong", chargedAmount: "100" };
+      },
+    );
+
+    expect(first.status).toBe(200);
+    expect(crossPrincipal.body).not.toBe("principal A batch secret");
+    expect(executed).toBe(false);
   });
 
   it("uses custom per-request amounts on unpaid requests", async () => {
@@ -528,6 +559,39 @@ describe("direct-mode server", () => {
     expect(required?.accepts[0]?.scheme).toBe("exact");
     expect(required?.accepts[0]?.amount).toBe("75");
     expect(executed).toBe(false);
+  });
+
+  it("rejects over-budget MCP parameters before handler or chain work", async () => {
+    const setup = makeServer();
+    let executed = false;
+
+    const result = await handlePaidMcpToolCall(
+      setup.server,
+      {
+        audience: MCP_AUDIENCE,
+        name: "download",
+        resource: { url: "mcp://tool/download" },
+        amount: "100",
+        scheme: "exact",
+      },
+      {
+        name: "download",
+        arguments: "x".repeat(
+          KASPA_X402_RESOURCE_BUDGET.maxStringBytes + 1,
+        ),
+      },
+      async () => {
+        executed = true;
+        return { result: { content: [] } };
+      },
+    );
+
+    expect(result.isError).toBe(true);
+    expect(result.content?.[0]?.text).toBe("invalid_payload");
+    expect(executed).toBe(false);
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
   });
 
   it("requires explicit batch MCP error-charge terms before issuing a challenge", async () => {
@@ -982,6 +1046,74 @@ describe("direct-mode server", () => {
 
     expect(first.content?.[0]?.text).toBe("paid");
     expect(second.content?.[0]?.text).toBe("paid");
+    expect(executions).toBe(1);
+  });
+
+  it("never returns an MCP cached result across trusted principals", async () => {
+    const setup = makeServer({ amount: "100" });
+    const principalA = { principal: "mcp-user-a" };
+    const principalB = { principal: "mcp-user-b" };
+    const resource = { url: "mcp://tool/download" };
+    const required = setup.server.buildPaymentRequired({
+      resource,
+      amount: "100",
+      scheme: "exact",
+      trustedSecurityContext: principalA,
+    });
+    const requestHash = mcpToolCallFingerprint({
+      audience: MCP_AUDIENCE,
+      toolName: "download",
+      arguments: { id: "context-bound" },
+      accepted: required.accepts[0] as ExactPaymentRequirements,
+      resource,
+      trustedSecurityContext: principalA,
+    });
+    const payment = makeExactPayment(setup, {
+      requestHash: bindRequestHashToTrustedContext(requestHash, principalA),
+    });
+    const params = {
+      name: "download",
+      arguments: { id: "context-bound" },
+      _meta: { [MCP_PAYMENT_META_KEY]: payment },
+    };
+    let executions = 0;
+
+    const first = await handlePaidMcpToolCall(
+      setup.server,
+      {
+        audience: MCP_AUDIENCE,
+        name: "download",
+        resource,
+        amount: "100",
+        scheme: "exact",
+        trustedSecurityContext: principalA,
+      },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "secret-a" }] } };
+      },
+    );
+    const crossPrincipal = await handlePaidMcpToolCall(
+      setup.server,
+      {
+        audience: MCP_AUDIENCE,
+        name: "download",
+        resource,
+        amount: "100",
+        scheme: "exact",
+        trustedSecurityContext: principalB,
+      },
+      params,
+      async () => {
+        executions += 1;
+        return { result: { content: [{ type: "text", text: "wrong" }] } };
+      },
+    );
+
+    expect(first.content?.[0]?.text).toBe("secret-a");
+    expect(crossPrincipal.isError).toBe(true);
+    expect(crossPrincipal.content?.[0]?.text).not.toContain("secret-a");
     expect(executions).toBe(1);
   });
 
@@ -3544,6 +3676,7 @@ describe("direct-mode server", () => {
       voucherAmount: "150",
     });
     let executed = false;
+    setup.chain.resetReadCounts();
 
     const response = await setup.server.handlePaidRequest(
       requestWithPayment(underpaid),
@@ -3555,6 +3688,9 @@ describe("direct-mode server", () => {
 
     expect(response.status).toBe(402);
     expect(executed).toBe(false);
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
     const corrective = decodePaymentRequiredHeader(
       response.headers[PAYMENT_REQUIRED_HEADER],
     );
@@ -3583,6 +3719,36 @@ describe("direct-mode server", () => {
     await expect(
       setup.store.loadChannel(payment.channelId),
     ).resolves.toBeUndefined();
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(0);
+  });
+
+  it("rejects bad existing-channel voucher signatures before chain reads", async () => {
+    const setup = makeServer();
+    const deposit = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(
+      requestWithPayment(deposit.payload),
+      async () => ({ chargedAmount: "100" }),
+    );
+    const channel = await requireChannel(setup.store, deposit.channelId);
+    const payment = makeVoucherPayment(setup, channel);
+    if (payment.payload.type !== "voucher")
+      throw new Error("expected voucher payment");
+    payment.payload.voucher.signature = "ff".repeat(64);
+    setup.chain.resetReadCounts();
+
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment),
+      async () => ({ chargedAmount: "100" }),
+    );
+
+    expect(response.status).toBe(402);
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(0);
   });
 
   it("rejects a captured batch presentation replayed against a different request", async () => {
@@ -3659,6 +3825,10 @@ describe("direct-mode server", () => {
     await expect(
       setup.store.loadChannel(payment.channelId),
     ).resolves.toBeUndefined();
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(0);
   });
 
   it("rejects payments for the wrong funding outpoint", async () => {
@@ -4508,6 +4678,173 @@ describe("direct-mode server", () => {
 
     expect(response.status).toBe(402);
     expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeTruthy();
+  });
+
+  it("rejects an over-budget payment header before challenge or protected work", async () => {
+    const setup = makeServer();
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      {
+        method: "GET",
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        paymentScheme: "batch-settlement",
+        headers: {
+          [PAYMENT_SIGNATURE_HEADER]: "A".repeat(
+            KASPA_X402_RESOURCE_BUDGET.maxEncodedHeaderBytes + 4,
+          ),
+        },
+      },
+      async () => {
+        executed = true;
+        return { body: "secret" };
+      },
+    );
+
+    expect(response.status).toBe(400);
+    expect(executed).toBe(false);
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+    expect(setup.chain.lineageDiscoveryCount).toBe(0);
+    expect(setup.chain.genesisVerificationCount).toBe(0);
+  });
+
+  it("scans the full bounded header record before accepting payment", async () => {
+    const setup = makeServer();
+    const headers: Record<string, string> = {
+      [PAYMENT_SIGNATURE_HEADER]: "AAAA",
+    };
+    for (
+      let index = 0;
+      index < KASPA_X402_RESOURCE_BUDGET.maxObjectProperties;
+      index += 1
+    ) {
+      headers[`x-padding-${index}`] = "ok";
+    }
+
+    const response = await setup.server.handlePaidRequest(
+      {
+        method: "GET",
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        paymentScheme: "batch-settlement",
+        headers,
+      },
+      async () => ({ body: "unreachable" }),
+    );
+
+    expect(response.status).toBe(400);
+    expect(setup.chain.daaLookupCount).toBe(0);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+  });
+
+  it("returns a controlled quota response per authenticated caller", async () => {
+    const setup = makeServer({
+      publicBoundaryPolicy: {
+        callerQuota: 1,
+        callerQuotaWindowMs: 60_000,
+      },
+    });
+    const request = {
+      method: "GET",
+      url: RESOURCE.url,
+      resource: RESOURCE,
+      paymentScheme: "exact" as const,
+      trustedSecurityContext: { principal: "payer-a" },
+    };
+
+    const first = await setup.server.handlePaidRequest(request, async () => ({
+      body: "unreachable",
+    }));
+    const second = await setup.server.handlePaidRequest(request, async () => ({
+      body: "unreachable",
+    }));
+    const other = await setup.server.handlePaidRequest(
+      {
+        ...request,
+        trustedSecurityContext: { principal: "payer-b" },
+      },
+      async () => ({ body: "unreachable" }),
+    );
+
+    expect(first.status).toBe(402);
+    expect(second).toMatchObject({
+      status: 429,
+      body: { error: "caller_quota_exceeded" },
+    });
+    expect(other.status).toBe(402);
+  });
+
+  it("returns a controlled timeout without reaching protected work", async () => {
+    const setup = makeServer({
+      publicBoundaryPolicy: { adapterTimeoutMs: 10 },
+    });
+    setup.chain.getVirtualDaaScore = async () => new Promise<string>(() => {});
+    let executed = false;
+
+    const response = await setup.server.handlePaidRequest(
+      {
+        method: "GET",
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        paymentScheme: "batch-settlement",
+      },
+      async () => {
+        executed = true;
+        return { body: "secret" };
+      },
+    );
+
+    expect(response).toMatchObject({
+      status: 504,
+      body: { error: "adapter_timeout" },
+    });
+    expect(executed).toBe(false);
+    expect(setup.chain.utxoLookupCount).toBe(0);
+  });
+
+  it("retains public action permits until timed-out work actually settles", async () => {
+    const setup = makeServer({
+      publicBoundaryPolicy: {
+        adapterTimeoutMs: 10,
+        maxGlobalConcurrency: 1,
+        maxCallerConcurrency: 1,
+      },
+    });
+    let finish!: () => void;
+
+    const timedOut = setup.server.runPublicAdapter(
+      "facilitator-claim-settler",
+      { principal: "payer-a" },
+      "channel-a",
+      () =>
+        new Promise<void>((resolve) => {
+          finish = resolve;
+        }),
+    );
+    await expect(timedOut).rejects.toMatchObject({
+      reason: "adapter_timeout",
+    });
+    await expect(
+      setup.server.runPublicAdapter(
+        "facilitator-refund-settler",
+        { principal: "payer-b" },
+        "channel-b",
+        async () => "blocked",
+      ),
+    ).rejects.toMatchObject({ reason: "global_concurrency_exceeded" });
+
+    finish();
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await expect(
+      setup.server.runPublicAdapter(
+        "facilitator-refund-settler",
+        { principal: "payer-b" },
+        "channel-b",
+        async () => "released",
+      ),
+    ).resolves.toBe("released");
   });
 
   it("previews claimable channels and rejects uneconomical claims", async () => {
@@ -6538,6 +6875,9 @@ class FakeChainProvider implements ServerChainProvider {
   sendFailure?: Error;
   genesisAvailable = true;
   genesisVerificationCount = 0;
+  daaLookupCount = 0;
+  utxoLookupCount = 0;
+  lineageDiscoveryCount = 0;
   genesisTotalOutputCount = 1;
   lineageDiscovery?: (
     request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
@@ -6567,10 +6907,12 @@ class FakeChainProvider implements ServerChainProvider {
   }
 
   async getUtxo(outpoint: FundingOutpoint): Promise<ChainUtxo | null> {
+    this.utxoLookupCount += 1;
     return this.utxos.get(outpointKey(outpoint)) ?? null;
   }
 
   async getVirtualDaaScore(): Promise<string> {
+    this.daaLookupCount += 1;
     return this.daa;
   }
 
@@ -6595,6 +6937,7 @@ class FakeChainProvider implements ServerChainProvider {
   async discoverCovenantLineage(
     request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
   ) {
+    this.lineageDiscoveryCount += 1;
     if (this.lineageDiscovery) return this.lineageDiscovery(request);
     return {
       fromCheckpoint: request.lineage.checkpoint,
@@ -6628,6 +6971,13 @@ class FakeChainProvider implements ServerChainProvider {
         ? this.sendEvidenceOverride
         : defaultEvidence) as never,
     };
+  }
+
+  resetReadCounts(): void {
+    this.daaLookupCount = 0;
+    this.utxoLookupCount = 0;
+    this.lineageDiscoveryCount = 0;
+    this.genesisVerificationCount = 0;
   }
 }
 
