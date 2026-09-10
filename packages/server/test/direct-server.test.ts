@@ -3571,6 +3571,7 @@ describe("direct-mode server", () => {
 
   it("accepts a deposit-voucher top-up into a new active outpoint", async () => {
     const setup = makeServer({
+      minDepositSompi: "100",
       topUpVerifier: {
         async verifyTopUp({ previous, next }) {
           if (
@@ -3591,7 +3592,7 @@ describe("direct-mode server", () => {
         },
       },
     });
-    const deposit = makeDepositPayment(setup);
+    const deposit = makeDepositPayment(setup, { fundingAmount: "150" });
     await setup.server.handlePaidRequest(
       requestWithPayment(deposit.payload),
       async () => ({ chargedAmount: "100" }),

@@ -2287,7 +2287,14 @@ export class DirectModeServer {
         "voucher covenant id does not match the existing channel lineage",
       );
     }
-    if (existing)
+    if (
+      existing &&
+      sameActiveOutpoint(
+        existing,
+        payload.fundingOutpoint,
+        payload.activeScriptPublicKey,
+      )
+    )
       this.#assertVoucherAmountAndBinding(
         existing,
         accepted,

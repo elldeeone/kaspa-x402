@@ -296,6 +296,14 @@ describe("direct-mode client", () => {
       voucherBearingPayload(topped.paymentPayload).voucher
         .authorizedCumulativeAmount,
     ).toBe("1050");
+    await expect(
+      client.applySettlement(topped, makeSettlement(topped.channel!, "950")),
+    ).resolves.toMatchObject({
+      channel: {
+        chargedCumulativeAmount: "1050",
+        requiresDepositVoucher: false,
+      },
+    });
   });
 
   it("reopens a removed confirmed top-up as blocking recovery", async () => {

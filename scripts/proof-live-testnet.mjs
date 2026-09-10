@@ -1395,9 +1395,9 @@ function validateLiveProofResult(result, flows) {
     "must persist accepted terminal state in the client store",
   );
   require(
-    refund?.serverState === "retired",
+    refund?.serverState === "refunded",
     "batch.refund.serverState",
-    "must retire the terminal lineage in the server store",
+    "must persist the terminal refunded lineage in the server store",
   );
   const refundRecovery = refund?.recovery;
   require(
