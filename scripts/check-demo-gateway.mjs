@@ -29,6 +29,10 @@ const child = spawn(
     "dev",
     "--config",
     "wrangler.jsonc",
+    "--local-upstream",
+    `127.0.0.1:${port}`,
+    "--var",
+    `KASPA_X402_GATEWAY_BASE_URL:${base}`,
     "--ip",
     "127.0.0.1",
     "--port",
@@ -110,6 +114,14 @@ async function smokeGateway(baseUrl) {
   assert(
     exactRequired.accepts[0]?.maxTimeoutSeconds === 300,
     "exact offer timeout is too short for funded Testnet settlement",
+  );
+  assert(
+    exactRequired.resource.url === `${baseUrl}/exact`,
+    "exact offer resource does not match the local request URL",
+  );
+  assert(
+    batchRequired.resource.url === `${baseUrl}/batch`,
+    "batch offer resource does not match the local request URL",
   );
   assert(batch.status === 402, `expected batch 402, got ${batch.status}`);
   assert(

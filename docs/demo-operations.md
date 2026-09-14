@@ -97,6 +97,33 @@ availability gate, verifies the unpaid batch offer, rejects a foreign payment
 scheme, and checks the health and canary routes. A deployed paid check still
 requires an isolated funded testnet wallet.
 
+## Batch Collection And Refunds
+
+A successful voucher response records an authorized cumulative charge, not an
+on-chain merchant payout. Batch receipt `transaction` fields identify commitments;
+claims and refunds have separate on-chain transaction ids. The demo Worker's
+scheduled canary does not collect vouchers or hold a merchant signing key.
+
+A merchant integration must persist vouchers and current channel lineage, run
+`previewClaim`, and configure a `claimBuilder` for `executeClaim` to build and
+sign the collection transaction. The
+claim must exceed its estimated fee and satisfy transaction/output policies.
+With the demo's 500-sompi price and 10,000-sompi configured claim fee, two calls
+(1,000 sompi) are not economical to claim. That configured fee is not a guarantee
+of the actual network fee; estimate against the actual transaction.
+
+Schedule collection with enough time for confirmation and recovery before the
+absolute refund DAA. The server's minimum refund lead limits new payments; it
+does not schedule collection. After timeout, the buyer must submit and confirm
+a refund. The merchant claim branch has no matching expiry, so claim and refund
+can compete until a spend is accepted. An accepted refund returns the remaining
+escrow less its fee, including charges the merchant has not collected.
+
+Batch v3 charges a fixed price per accepted call, not a later measured token
+count. Payment does not prove useful delivery; handlers with non-repeatable side
+effects need their own durable idempotency/outbox handling. Top-ups require both
+buyer and provider authorization.
+
 ## Exact Profiles And Additive Heads
 
 Hosted exact is enabled only when

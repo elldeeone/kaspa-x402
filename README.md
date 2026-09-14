@@ -94,6 +94,12 @@ lifetime of the channel.
 The provider can make a partial claim up to the latest signed ceiling. A top-up
 keeps the settled lifetime total. The buyer keeps the timed refund path.
 
+Voucher acceptance records a charge; the merchant receives funds only after an
+on-chain claim. Claims must cover their fee and meet output policies. Operators
+must collect before the refund window: timeout makes a refund eligible, but does
+not automatically execute it or expire a merchant claim. See
+[batch collection operations](docs/demo-operations.md#batch-collection-and-refunds).
+
 #### Runtime state
 
 The runtime stores the current outpoint and these values:

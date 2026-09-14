@@ -5,6 +5,17 @@ const OPERATIONAL_URL_PATTERN =
   /\b[A-Za-z][A-Za-z0-9+.-]*:\/\/[^\s"'<>]+/gu;
 const ENCODED_OPERATIONAL_URL_PATTERN =
   /\b[A-Za-z][A-Za-z0-9+.-]*%3A(?:%2F){2}[^\s"'<>]+/giu;
+// Public Kaspa RPC path segments are protocol labels, not credentials.
+// This exception applies only to derived path segments; explicit secrets and
+// URL credentials/query values are always scrubbed.
+const PUBLIC_RPC_PATH_SEGMENTS = new Set([
+  "kaspa",
+  "testnet-10",
+  "mainnet",
+  "wrpc",
+  "borsh",
+  "json",
+]);
 const TRAILING_PUNCTUATION = new Set([
   ")",
   "]",
@@ -92,7 +103,11 @@ function secretRepresentations(secrets) {
         url.hostname,
         url.pathname,
         url.hash.slice(1),
-        ...url.pathname.split("/").filter(Boolean),
+        ...url.pathname.split("/").filter(
+          (segment) =>
+            segment &&
+            !PUBLIC_RPC_PATH_SEGMENTS.has(decodeURIComponentSafely(segment)),
+        ),
         ...url.searchParams.values(),
       ]) {
         addSecretVariants(values, decodeURIComponentSafely(component));

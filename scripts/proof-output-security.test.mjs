@@ -177,3 +177,29 @@ test("plain non-URL diagnostics remain unchanged", () => {
     "transaction accepted at DAA 123",
   );
 });
+
+test("preserves public protocol labels while scrubbing endpoint secrets", () => {
+  const labels = "kaspa:testnet-10 | kaspa-sdk-safe-json-v2.0.0";
+  const endpoint = "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/borsh";
+  assert.equal(sanitizeProofOutputText(labels, { secrets: [endpoint] }), labels);
+  assert.equal(
+    sanitizeProofOutputText(endpoint, { secrets: [endpoint] }),
+    "<redacted>",
+  );
+  assert.equal(
+    sanitizeProofOutputText("kaspa", { secrets: ["kaspa"] }),
+    "<redacted>",
+  );
+  assert.equal(
+    sanitizeProofOutputText("kaspa", {
+      secrets: ["wss://rpc.example/wrpc?token=kaspa"],
+    }),
+    "<redacted>",
+  );
+  assert.equal(
+    sanitizeProofOutputText("secret-path", {
+      secrets: ["wss://rpc.example/kaspa/secret-path/wrpc"],
+    }),
+    "<redacted>",
+  );
+});

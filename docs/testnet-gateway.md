@@ -43,6 +43,25 @@ Additive-head administration is operator-only:
 
 These routes require a bearer token stored as a Worker secret.
 
+## Local Worker
+
+From the repository root, start an unpaid local integration target:
+
+```sh
+npx wrangler dev --local --config packages/demo-gateway/wrangler.jsonc \
+  --ip 127.0.0.1 --port 8433 --local-upstream 127.0.0.1:8433 \
+  --var KASPA_X402_GATEWAY_BASE_URL:http://127.0.0.1:8433 \
+  --var KASPA_X402_GATEWAY_ENABLED:true
+```
+
+Both `/exact` and `/batch` must advertise resources under
+`http://127.0.0.1:8433`. Wrangler otherwise inherits the production route host;
+setting `KASPA_X402_GATEWAY_BASE_URL` alone does not change the request origin.
+`npm run check:demo-gateway` checks both resource URLs. Keep the funded client's
+origin and resource pins strict and point them at this same local origin.
+Funded tests still require the isolated wallet and environment described in
+[Live Testnet Proof](live-testnet-proof.md).
+
 ## Current Deployment Evidence
 
 The current gateway deployment is Worker version
