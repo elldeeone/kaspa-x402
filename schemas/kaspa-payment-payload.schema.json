@@ -18,9 +18,12 @@
       "type": "string"
     },
     "profile": {
-      "enum": ["standard-native", "additive"]
+      "enum": ["standard-native", "additive", "hash-chain-additive"]
     },
     "challengeId": {
+      "$ref": "#/$defs/hash32"
+    },
+    "grantId": {
       "$ref": "#/$defs/hash32"
     },
     "transaction": {
@@ -225,6 +228,16 @@
     }
   },
   "allOf": [
+    {
+      "if": {
+        "properties": {
+          "type": { "const": "exact-transaction" },
+          "profile": { "const": "hash-chain-additive" }
+        },
+        "required": ["type", "profile"]
+      },
+      "then": { "required": ["grantId", "challengeId"] }
+    },
     {
       "if": {
         "properties": {

@@ -32,6 +32,7 @@ import type {
   VoucherPayload,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
+import type { HashChainGrantIssuer, HashChainObservedHead } from "./hash-chain-grants.js";
 import type {
   PublicBoundaryController,
   PublicBoundaryPolicy,
@@ -171,6 +172,23 @@ export interface ExactHeadChallenge {
   expiresAt: string;
 }
 
+export interface HashChainHeadChallenge {
+  headId: Hash32Hex;
+  headVersion: SompiString;
+  covenantId: Hash32Hex;
+  expectedHeadOutpoint: FundingOutpoint;
+  headAmount: SompiString;
+  headScriptPublicKey: ByteHex;
+  headRedeemScript: ByteHex;
+  currentGuard: Hash32Hex;
+  nextGuard: Hash32Hex;
+  oneTimePublicKey: PublicKeyHex;
+  grantId: Hash32Hex;
+  challengeId: Hash32Hex;
+  challengeIssuedAt: string;
+  challengeExpiresAt: string;
+}
+
 export type ExactHeadStatus =
   "available" | "claimed" | "unavailable" | "retired";
 
@@ -293,6 +311,7 @@ export interface ExactTransactionVerificationRequest {
   paymentRequirementsHash: Hash32Hex;
   authorization: ExactRequestAuthorization;
   head?: ExactHeadChallenge;
+  hashChainHead?: HashChainHeadChallenge;
 }
 
 export interface ExactTransactionVerification {
@@ -906,6 +925,16 @@ export interface DirectModeServerConfig {
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
+  /** Node-only private issuer; the root server bundle only uses its structural interface. */
+  hashChainIssuer?: Pick<HashChainGrantIssuer,
+    "getCurrent" | "getChallenge" | "getDeliveryRecord" | "getAcceptedPayment" |
+    "issueChallenge" | "claimGrant" | "recordAcceptedPayment" | "holdForReorg">;
+  hashChainHeadId?: Hash32Hex;
+  hashChainGrantClaimUrl?: string;
+  /** Authoritative fresh selected-chain read for cached response and reorg recovery. */
+  hashChainIsSelected?: (transactionId: Hash32Hex) => Promise<boolean>;
+  /** Fresh virtual-UTXO check before offering or delivering a one-time grant. */
+  hashChainCurrentHeadIsUnspent?: (head: HashChainObservedHead, address: string) => Promise<boolean>;
   /** Reconciles only the selected additive head before advertising it. */
   reconcileExactHeadOnOffer?: boolean;
   /** Exact wire profile offered by this server. Defaults to standard-native. */
@@ -938,6 +967,9 @@ export interface BuildPaymentRequiredOptions {
   schemes?: readonly ("exact" | "batch-settlement")[];
   channel?: ServerChannelRecord;
   exactHead?: ExactHeadChallenge;
+  hashChainAccepted?: ExactPaymentRequirements;
+  /** Pre-offer request fingerprint, excluding accepted requirements. */
+  requestHash?: Hash32Hex;
   error?: string;
   /** Explicit fixed charge for an MCP isError result; must equal amount. */
   mcpErrorChargeSompi?: SompiString;
@@ -1027,6 +1059,7 @@ export interface VerifiedExactPayment {
   transaction?: PreparedTransaction;
   transactionEncoding?: ExactTransactionEncoding;
   head?: ExactHeadChallenge;
+  hashChainHead?: HashChainHeadChallenge;
   continuation?: ExactHeadContinuation;
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";

@@ -49,6 +49,44 @@ function accepted(before: HashChainObservedHead, after: HashChainObservedHead): 
 }
 
 describe("durable hash-chain grants", () => {
+  it("atomically records one exact payment and refuses a competing use of its grant", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-grants-"));
+    const file = path.join(folder, "grants.sqlite");
+    const key = randomBytes(32);
+    let issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
+    try {
+      const chain = generateHashChainBorrowGrants(2);
+      const first = observed("11".repeat(32), chain.initialGuard);
+      issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
+      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60);
+      const claim = signedClaim(challenge);
+      issuer.claimGrant(HEAD_ID, claim);
+      const successor = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "120000000");
+      const payment = {
+        transactionId: successor.outpoint.txid, grantId: challenge.grantId,
+        challengeId: challenge.challengeId, requestHash: REQUEST,
+        payerPublicKey: claim.payerPublicKey, requirementsHash: "a1".repeat(32),
+        paymentIdentifier: "one-request", amount: "20000000", finality: "accepted" as const,
+      };
+      expect(() => issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), { ...payment, amount: "1" }))
+        .toThrow("assigned exact grant");
+      expect(issuer.getAcceptedPayment(successor.outpoint.txid)).toBeUndefined();
+      expect(issuer.getCurrent(HEAD_ID).head).toEqual(first);
+      expect(issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), payment)).toMatchObject({
+        headVersion: 1, head: successor, phase: "ready",
+      });
+      issuer.close();
+      issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
+      expect(issuer.getAcceptedPayment(successor.outpoint.txid)).toEqual(payment);
+      expect(issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), payment).headVersion).toBe(1);
+      expect(() => issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), {
+        ...payment, paymentIdentifier: "competing-request",
+      })).toThrow("another payment");
+    } finally {
+      issuer.close(); rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
   it("commits encrypted single-payer delivery before return and recovers identical retries", async () => {
     const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-grants-"));
     const file = path.join(folder, "grants.sqlite");

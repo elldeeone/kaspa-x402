@@ -4175,7 +4175,7 @@ function authorizationVersionEvidence(fundingVersionByTxid, txid) {
   };
 }
 
-async function liveChainCheckpoint(rpc) {
+export async function liveChainCheckpoint(rpc) {
   const rawInfo = await rpc.getBlockDagInfo();
   const info = rawInfo.blockDagInfo ?? rawInfo;
   const blockHash = String(info.sink).toLowerCase();
@@ -4314,7 +4314,7 @@ function liveAcceptanceEvidence({
   };
 }
 
-async function waitForAcceptedTransactionEvidence({
+export async function waitForAcceptedTransactionEvidence({
   rpc,
   transactionId,
   fromCheckpoint,
@@ -4576,7 +4576,7 @@ async function waitForAddressOutpoint(input) {
   );
 }
 
-async function getAddressUtxos(rpc, address) {
+export async function getAddressUtxos(rpc, address) {
   const { entries } = await rpc.getUtxosByAddresses([address]);
   return entries.map((entry) => {
     const raw = entry.entry ?? entry;
@@ -4891,7 +4891,7 @@ function isDefinitiveTransactionRejection(message, transactionId) {
   ).test(message);
 }
 
-function referenceTransactionToSdk(sdk, reference) {
+export function referenceTransactionToSdk(sdk, reference) {
   const shape = {
     version: reference.version,
     inputs: reference.inputs.map((input) => ({
@@ -5632,7 +5632,7 @@ function optionalNonzeroCovenantId(value) {
   return { covenantId };
 }
 
-function loadFundingPrivateKey(specifier) {
+export function loadFundingPrivateKey(specifier) {
   if (!specifier) throw new Error("KASPA_X402_FUNDING_WALLET is required");
   if (specifier.startsWith("wallet-key:")) {
     return fs

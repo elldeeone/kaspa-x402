@@ -1,6 +1,6 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **draft for implementation; not an advertised or released payment profile**.
+Status: **implemented candidate on Testnet-10; not a published release profile**.
 
 This document specifies a native-KAS x402 v2 `exact` mechanism derived from
 KCC20's `hash-chain/v1` borrowed-receive authorization. It is a separate,
@@ -143,6 +143,11 @@ The challenge MUST bind one normalized resource request at issuance, and
 `challengeExpiresAt` MUST be after `challengeIssuedAt` and no later than
 `challengeIssuedAt + maxTimeoutSeconds`. The issuer MUST persist both times
 and the request hash with the offered requirements.
+For this profile, `requestHash` is SHA-256 of canonical
+`{method, url, body}` after binding the host-trusted security context. It
+excludes `PaymentRequirements`: those requirements contain the challenge that
+cannot exist until the request hash has been calculated. The separate payer
+authorization binds the complete `PaymentRequirements` hash.
 `headId` is the merchant's stable application identifier, while `covenantId`
 is the independently verified KIP-20 identity. `headVersion` increases for
 every accepted borrow or owner rotation. The outpoint, amount, script,
@@ -377,6 +382,10 @@ that the transaction is in accepted chain state, not merely the mempool.
 `confirmed` may be offered only with a documented stronger policy. On node
 disagreement, absent historical input evidence, uncertain acceptance or a
 reorg, settlement and grant issuance fail closed and retain recovery state.
+The current reference server offers `accepted` only. Its selected-chain REST
+adapter cannot establish the stronger `confirmed` policy. The issuer checks
+the current head in the virtual UTXO set both before advertising a challenge
+and again before delivering the private grant.
 
 Successful x402 response uses the standard transaction ID, network, payer
 and exact `amount`; `extensions.kaspa` adds this binding/profile, grant ID,

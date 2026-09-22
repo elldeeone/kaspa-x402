@@ -38,6 +38,7 @@ export function canonicalPaymentReplayProjection(
         payloadType: payload.type,
         profile: payload.profile ?? null,
         challengeId: payload.challengeId ?? null,
+        grantId: payload.grantId ?? null,
         transactionIdentityHash: exactTransactionReplayIdentityHash(
           payload.transaction,
         ),
@@ -136,6 +137,9 @@ export function normalizePaymentPayloadHex(
           ...(payload.challengeId
             ? { challengeId: payload.challengeId.toLowerCase() }
             : {}),
+          ...(payload.grantId
+            ? { grantId: payload.grantId.toLowerCase() }
+            : {}),
           requestHash: payload.requestHash.toLowerCase(),
           authorization: {
             ...payload.authorization,
@@ -216,6 +220,11 @@ export function normalizePaymentRequirementsHex(
           ? { payToScriptPublicKey: extra.payToScriptPublicKey.toLowerCase() }
           : {}),
         ...(extra.headId ? { headId: extra.headId.toLowerCase() } : {}),
+        ...(extra.covenantId ? { covenantId: extra.covenantId.toLowerCase() } : {}),
+        ...(extra.currentGuard ? { currentGuard: extra.currentGuard.toLowerCase() } : {}),
+        ...(extra.nextGuard ? { nextGuard: extra.nextGuard.toLowerCase() } : {}),
+        ...(extra.oneTimePublicKey ? { oneTimePublicKey: extra.oneTimePublicKey.toLowerCase() } : {}),
+        ...(extra.grantId ? { grantId: extra.grantId.toLowerCase() } : {}),
         ...(extra.expectedHeadOutpoint
           ? {
               expectedHeadOutpoint: normalizeOutpoint(

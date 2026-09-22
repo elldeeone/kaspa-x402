@@ -60,6 +60,7 @@ const artifact = {
 const extra = {
   binding: "kaspa-exact-v2",
   profile: "additive",
+  paymentFlow: "upfront",
   finality: "accepted",
   transactionEncoding,
   payToScriptPublicKey: headInput.utxo.scriptPublicKey,

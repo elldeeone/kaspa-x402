@@ -62,14 +62,32 @@ export interface HashChainGrantDeliveryRecord {
   headId: string;
   headVersion: number;
   headOutpoint: HashChainOutpoint;
+  headAmount: string;
+  headGuard: string;
+  headScriptPublicKey: string;
+  covenantId: string;
+  ownerPublicKey: string;
   grantId: string;
   nextGuard: string;
   oneTimePublicKey: string;
   challengeId: string;
+  challengeIssuedAt: string;
+  challengeExpiresAt: string;
   requestHash: string;
   payerPublicKey: string;
   expiresAt: string;
   deliveryCommittedAt: string;
+}
+export interface HashChainAcceptedPayment {
+  transactionId: string;
+  grantId: string;
+  challengeId: string;
+  requestHash: string;
+  payerPublicKey: string;
+  requirementsHash: string;
+  paymentIdentifier: string;
+  amount: string;
+  finality: "accepted" | "confirmed";
 }
 export interface HashChainAcceptedTransition {
   /** This must come from a trusted selected-chain observer, never a payer hint. */
@@ -166,6 +184,7 @@ export class HashChainGrantIssuer {
       db.exec("PRAGMA journal_mode=DELETE; PRAGMA synchronous=FULL; PRAGMA busy_timeout=5000; PRAGMA secure_delete=ON;");
       db.exec("CREATE TABLE IF NOT EXISTS hash_chain_grants (head_id TEXT PRIMARY KEY, sealed BLOB NOT NULL)");
       db.exec("CREATE TABLE IF NOT EXISTS hash_chain_deliveries (head_id TEXT NOT NULL, grant_id TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(head_id, grant_id))");
+      db.exec("CREATE TABLE IF NOT EXISTS hash_chain_payments (transaction_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL UNIQUE, sealed BLOB NOT NULL)");
       db.exec("CREATE TABLE IF NOT EXISTS hash_chain_seen_keys (key_fingerprint TEXT PRIMARY KEY, head_id TEXT NOT NULL)");
       db.exec("CREATE TABLE IF NOT EXISTS hash_chain_meta (id INTEGER PRIMARY KEY CHECK(id = 1), sealed BLOB NOT NULL)");
       db.exec("BEGIN IMMEDIATE");
@@ -251,6 +270,18 @@ export class HashChainGrantIssuer {
     return row ? JSON.parse(unseal(this.key, `${id}:${grant}`, Buffer.from(row.sealed)).toString("utf8")) as HashChainGrantDeliveryRecord : undefined;
   }
 
+  getChallenge(headId: string, challengeId: string): HashChainGrantChallenge | undefined {
+    const state = this.read(hex32(headId, "headId"));
+    return state.challenges.find((item) => item.challengeId === hex32(challengeId, "challengeId"));
+  }
+
+  getAcceptedPayment(transactionId: string): HashChainAcceptedPayment | undefined {
+    const txid = hex32(transactionId, "transactionId");
+    const row = this.db.prepare("SELECT sealed FROM hash_chain_payments WHERE transaction_id = ?")
+      .get(txid) as { sealed: Uint8Array } | undefined;
+    return row ? JSON.parse(unseal(this.key, `payment:${txid}`, Buffer.from(row.sealed)).toString("utf8")) as HashChainAcceptedPayment : undefined;
+  }
+
   issueChallenge(headId: string, requestHash: string, lifetimeSeconds: number): HashChainGrantChallenge {
     const id = hex32(headId, "headId");
     const request = hex32(requestHash, "requestHash");
@@ -307,8 +338,13 @@ export class HashChainGrantIssuer {
         state.challenges = [challenge];
         const record: HashChainGrantDeliveryRecord = {
           headId: state.headId, headVersion: state.version, headOutpoint: state.head.outpoint,
+          headAmount: state.head.amount, headGuard: state.head.guard,
+          headScriptPublicKey: state.head.scriptPublicKey, covenantId: state.head.covenantId,
+          ownerPublicKey: state.ownerPublicKey,
           grantId: grant.grantId, nextGuard: grant.revealedGuard, oneTimePublicKey: grant.oneTimePublicKey,
-          challengeId: normalized.challengeId, requestHash: normalized.requestHash,
+          challengeId: normalized.challengeId, challengeIssuedAt: challenge.issuedAt,
+          challengeExpiresAt: challenge.expiresAt,
+          requestHash: normalized.requestHash,
           payerPublicKey: normalized.payerPublicKey, expiresAt: normalized.expiresAt,
           deliveryCommittedAt: state.assignment.deliveryCommittedAt,
         };
@@ -339,6 +375,39 @@ export class HashChainGrantIssuer {
 
   recordAcceptedBorrow(headId: string, transition: HashChainAcceptedTransition): HashChainPublicGrant {
     return this.advance(headId, transition, "borrow");
+  }
+
+  /** Atomically consume a delivered link and record one x402 payment before protected work. */
+  recordAcceptedPayment(
+    headId: string,
+    transition: HashChainAcceptedTransition,
+    payment: HashChainAcceptedPayment,
+  ): HashChainPublicGrant {
+    const id = hex32(headId, "headId");
+    const normalized: HashChainAcceptedPayment = {
+      transactionId: hex32(payment.transactionId, "transactionId"),
+      grantId: hex32(payment.grantId, "grantId"),
+      challengeId: hex32(payment.challengeId, "challengeId"),
+      requestHash: hex32(payment.requestHash, "requestHash"),
+      payerPublicKey: hex32(payment.payerPublicKey, "payerPublicKey"),
+      requirementsHash: hex32(payment.requirementsHash, "requirementsHash"),
+      paymentIdentifier: payment.paymentIdentifier,
+      amount: canonicalAmount(payment.amount),
+      finality: payment.finality,
+    };
+    if (!normalized.paymentIdentifier || normalized.paymentIdentifier.length > 256 ||
+      (normalized.finality !== "accepted" && normalized.finality !== "confirmed") ||
+      normalized.transactionId !== transition.successor.outpoint.txid ||
+      normalized.finality !== transition.finality) throw new Error("accepted payment evidence is inconsistent");
+    const existing = this.getAcceptedPayment(normalized.transactionId);
+    if (existing) {
+      if (stableStringify({ ...existing, finality: "accepted" }) !==
+        stableStringify({ ...normalized, finality: "accepted" })) {
+        throw new Error("transaction already belongs to another payment");
+      }
+      return this.getCurrent(id);
+    }
+    return this.advance(id, transition, "borrow", undefined, normalized);
   }
 
   recordAcceptedRotation(
@@ -405,6 +474,7 @@ export class HashChainGrantIssuer {
   private advance(
     headId: string, transition: HashChainAcceptedTransition, kind: "borrow" | "rotate",
     replacement?: readonly HashChainBorrowGrant[],
+    payment?: HashChainAcceptedPayment,
   ): HashChainPublicGrant {
     const id = hex32(headId, "headId");
     if (transition.finality !== "accepted" && transition.finality !== "confirmed") throw new Error("transition lacks trusted accepted finality");
@@ -424,6 +494,21 @@ export class HashChainGrantIssuer {
       if (kind === "borrow") {
         if (!grant || after.guard !== grant.revealedGuard || BigInt(after.amount) <= BigInt(before.amount)) {
           throw new Error("accepted borrow is not the current positive head transition");
+        }
+        if (payment) {
+          const assigned = state.assignment;
+          const delivery = this.getDeliveryRecord(id, payment.grantId);
+          if (!assigned || !delivery || grant.grantId !== payment.grantId ||
+            assigned.challengeId !== payment.challengeId || assigned.requestHash !== payment.requestHash ||
+            assigned.payerPublicKey !== payment.payerPublicKey || delivery.headVersion !== state.version ||
+            !sameOutpoint(delivery.headOutpoint, before.outpoint) ||
+            delivery.headAmount !== before.amount || delivery.headGuard !== before.guard ||
+            BigInt(after.amount) !== BigInt(before.amount) + BigInt(payment.amount)) {
+            throw new Error("accepted payment does not consume the assigned exact grant");
+          }
+          this.db.prepare("INSERT INTO hash_chain_payments(transaction_id, grant_id, sealed) VALUES(?, ?, ?)")
+            .run(payment.transactionId, payment.grantId,
+              seal(this.key, `payment:${payment.transactionId}`, Buffer.from(JSON.stringify(payment))));
         }
       } else {
         if (after.guard === before.guard || BigInt(after.amount) < BigInt(before.amount)) {

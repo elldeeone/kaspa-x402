@@ -8,10 +8,10 @@ export type SignatureHex = string;
 export type ByteHex = string;
 
 export type PaymentScheme = "exact" | "batch-settlement";
-export type KaspaBinding = "kaspa-exact-v2" | "kaspa-escrow-v3";
+export type KaspaBinding = "kaspa-exact-v2" | "kaspa-hash-chain-exact-v1" | "kaspa-escrow-v3";
 export type ExactTransactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
-export type ExactProfile = "standard-native" | "additive";
+export type ExactProfile = "standard-native" | "additive" | "hash-chain-additive";
 
 export interface ExactRequestAuthorization extends JsonRecord {
   version: "kaspa-x402-exact-request-authorization-v1";
@@ -43,11 +43,14 @@ export interface BasePaymentRequirements<
 }
 
 export interface ExactRequirementsExtra extends JsonRecord {
-  binding: "kaspa-exact-v2";
+  binding: "kaspa-exact-v2" | "kaspa-hash-chain-exact-v1";
   profile: ExactProfile;
+  /** Client submits a signed proof; settlement precedes protected work. */
+  paymentFlow?: "upfront";
   finality?: "mempool" | "accepted" | "confirmed";
   payToScriptPublicKey?: ByteHex;
-  templateId?: ExactAdditiveTemplateId;
+  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v1";
+  assetTransferMethod?: "kaspa-v1-hash-chain-proof";
   transactionEncoding?: ExactTransactionEncoding;
   headId?: Hash32Hex;
   headVersion?: SompiString;
@@ -55,6 +58,13 @@ export interface ExactRequirementsExtra extends JsonRecord {
   headAmount?: SompiString;
   headScriptPublicKey?: ByteHex;
   headRedeemScript?: ByteHex;
+  covenantId?: Hash32Hex;
+  currentGuard?: Hash32Hex;
+  nextGuard?: Hash32Hex;
+  oneTimePublicKey?: PublicKeyHex;
+  grantId?: Hash32Hex;
+  grantClaimUrl?: string;
+  challengeIssuedAt?: string;
   challengeId?: Hash32Hex;
   challengeExpiresAt?: string;
   additiveThresholdSompi?: SompiString;
@@ -227,6 +237,7 @@ export interface ExactTransactionPayload extends JsonRecord {
   type: "exact-transaction";
   profile?: ExactProfile;
   challengeId?: Hash32Hex;
+  grantId?: Hash32Hex;
   payerAddress?: string;
   transaction: string;
   transactionEncoding: ExactTransactionEncoding;
@@ -294,10 +305,11 @@ export interface SettlementResponseExtra extends JsonRecord {
   requestHash?: Hash32Hex;
   transactionEncoding?: ExactTransactionEncoding;
   exactProfile?: ExactProfile;
-  templateId?: ExactAdditiveTemplateId;
+  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v1";
   headId?: Hash32Hex;
   headVersion?: SompiString;
   headOutpoint?: FundingOutpoint;
+  grantId?: Hash32Hex;
   channelState?: ChannelState;
   channelId?: Hash32Hex;
   covenantId?: Hash32Hex;

@@ -40,12 +40,14 @@ The `exact` scheme makes one native KAS transfer for a fixed price.
   "amount": "<sompi>",
   "extra": {
     "binding": "kaspa-exact-v2",
-    "profile": "standard-native"
+    "profile": "standard-native",
+    "paymentFlow": "upfront"
   }
 }
 ```
 
-The scheme has two profiles.
+The RC1 scheme has two released profiles. Both advertise x402 v2's
+`paymentFlow: "upfront"` because the payment settles before protected work.
 
 #### `standard-native`
 
@@ -59,6 +61,19 @@ creates its successor.
 The successor value increases by the advertised `amount`. This increase is the
 only payment to the merchant. An unpaid offer does not reserve or retire a
 KIP-10 head.
+
+#### `hash-chain-additive` (candidate)
+
+This optional native-KAS profile applies KCC20 `hash-chain/v1`'s one-use
+borrow authorization to a KIP-20 covenant head. A payer privately claims the
+current grant, signs both the head and funding inputs, broadcasts the complete
+transaction, and presents it as an upfront x402 proof. The server checks the
+exact quoted increase and selected-chain successor before serving the request.
+An abandoned grant requires an accepted owner rotation; expiry alone does not
+revoke its on-chain key. See the [binding](spec/kaspa-hash-chain-exact-v1.md),
+[conformance vector](vectors/x402-http/hash-chain-exact.json), and
+[funded Testnet-10 evidence](docs/hash-chain-live-proof.md). This candidate is
+not part of the published RC1 packages or hosted gateway configuration.
 
 ### `batch-settlement`
 

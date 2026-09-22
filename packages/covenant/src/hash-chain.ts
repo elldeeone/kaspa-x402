@@ -3,6 +3,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
   HASH_CHAIN_HEAD_V1_COMPILED_BASE,
   HASH_CHAIN_HEAD_V1_LAYOUT,
+  HASH_CHAIN_HEAD_V1_SELECTORS,
   HASH_CHAIN_HEAD_V1_SAMPLE_OWNER,
   HASH_CHAIN_HEAD_V1_SAMPLE_GUARD,
 } from "./generated/hash-chain-head-v1.js";
@@ -28,6 +29,11 @@ export function hashChainBorrowGuard(revealedGuard: string, oneTimePublicKey: st
   input.set(link);
   input.set(key, 32);
   return Buffer.from(blake3(input)).toString("hex");
+}
+
+/** Derives the x-only public key before a delivered grant is handed to a signer. */
+export function hashChainOneTimePublicKey(privateKey: string): string {
+  return Buffer.from(schnorr.getPublicKey(fixedBytes(privateKey, "oneTimePrivateKey"))).toString("hex");
 }
 
 /**
@@ -95,6 +101,67 @@ export function buildHashChainHeadRedeemScript(params: HashChainHeadParams): str
 
 export function hashChainHeadScriptPublicKey(params: HashChainHeadParams): string {
   return serializedScriptPublicKey(payToScriptHashScript(buildHashChainHeadRedeemScript(params)));
+}
+
+/** Rejects scripts with any byte outside the pinned owner and guard slots changed. */
+export function parseHashChainHeadRedeemScript(redeemScript: string): HashChainHeadParams {
+  if (!/^(?:[0-9a-fA-F]{2})+$/.test(redeemScript)) throw new Error("invalid hash-chain redeem script hex");
+  const script = Buffer.from(redeemScript, "hex");
+  const base = Buffer.from(HASH_CHAIN_HEAD_V1_COMPILED_BASE, "hex");
+  if (script.length !== base.length) throw new Error("hash-chain redeem script has the wrong length");
+  const owner = script.subarray(HASH_CHAIN_HEAD_V1_LAYOUT.ownerOffsets[0]!, HASH_CHAIN_HEAD_V1_LAYOUT.ownerOffsets[0]! + 32).toString("hex");
+  const guard = script.subarray(HASH_CHAIN_HEAD_V1_LAYOUT.guardOffset, HASH_CHAIN_HEAD_V1_LAYOUT.guardOffset + 32).toString("hex");
+  if (buildHashChainHeadRedeemScript({ ownerPublicKey: owner, guard }) !== redeemScript.toLowerCase()) {
+    throw new Error("hash-chain redeem script does not match the pinned artifact");
+  }
+  return { ownerPublicKey: owner, guard };
+}
+
+/** Canonical SilverScript borrow witness with a 64-byte SIGHASH_ALL signature. */
+export function buildHashChainBorrowSignatureScript(input: {
+  revealedGuard: string;
+  oneTimePublicKey: string;
+  signature: string;
+  redeemScript: string;
+}): string {
+  parseHashChainHeadRedeemScript(input.redeemScript);
+  const signature = Buffer.from(input.signature, "hex");
+  if (!/^[0-9a-fA-F]{128}$/.test(input.signature) || signature.length !== 64) {
+    throw new Error("borrow signature must be 64-byte Schnorr hex");
+  }
+  return Buffer.concat([
+    pushData(fixedBytes(input.revealedGuard, "revealedGuard")),
+    pushData(fixedBytes(input.oneTimePublicKey, "oneTimePublicKey")),
+    pushData(Buffer.concat([signature, Buffer.from([1])])),
+    pushData(Buffer.from(HASH_CHAIN_HEAD_V1_SELECTORS.borrow, "hex")),
+    pushData(Buffer.from(input.redeemScript, "hex")),
+  ]).toString("hex");
+}
+
+/** Owner-authorized same-ID guard rotation witness for an abandoned grant. */
+export function buildHashChainOwnerRotationSignatureScript(input: {
+  newGuard: string;
+  signature: string;
+  redeemScript: string;
+}): string {
+  parseHashChainHeadRedeemScript(input.redeemScript);
+  const signature = Buffer.from(input.signature, "hex");
+  if (!/^[0-9a-fA-F]{128}$/.test(input.signature) || signature.length !== 64) {
+    throw new Error("owner rotation signature must be 64-byte Schnorr hex");
+  }
+  return Buffer.concat([
+    pushData(fixedBytes(input.newGuard, "newGuard")),
+    pushData(Buffer.concat([signature, Buffer.from([1])])),
+    pushData(Buffer.from(HASH_CHAIN_HEAD_V1_SELECTORS.ownerRotate, "hex")),
+    pushData(Buffer.from(input.redeemScript, "hex")),
+  ]).toString("hex");
+}
+
+function pushData(data: Uint8Array): Buffer {
+  if (data.length <= 75) return Buffer.concat([Buffer.from([data.length]), Buffer.from(data)]);
+  if (data.length <= 255) return Buffer.concat([Buffer.from([0x4c, data.length]), Buffer.from(data)]);
+  if (data.length <= 65535) return Buffer.concat([Buffer.from([0x4d, data.length & 255, data.length >> 8]), Buffer.from(data)]);
+  throw new Error("borrow witness item is too large");
 }
 
 /** SilverScript's state-excluded template hash for an instantiated owner. */

@@ -946,7 +946,7 @@ function classifySettlementResponse(value: unknown): KaspaX402ErrorCode {
 }
 
 function isExpectedBindingForScheme(scheme: string, binding: unknown): boolean {
-  if (scheme === "exact") return binding === "kaspa-exact-v2";
+  if (scheme === "exact") return binding === "kaspa-exact-v2" || binding === "kaspa-hash-chain-exact-v1";
   return scheme === "batch-settlement" && binding === "kaspa-escrow-v3";
 }
 

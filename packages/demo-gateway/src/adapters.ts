@@ -27,6 +27,9 @@ import type {
   ExactTransactionVerification,
   ExactTransactionVerificationRequest,
   ExactTransactionVerifier,
+  HashChainChainView,
+  HashChainSelectedTransaction,
+  HashChainTrustedOrigin,
   ServerChainProvider,
   TopUpVerificationRequest,
   TopUpVerificationResult,
@@ -1312,6 +1315,52 @@ function pnnEndpointLabel(endpoint: string): string {
     return `${parsed.protocol}//${parsed.host}`;
   } catch {
     return "pnn endpoint";
+  }
+}
+
+/** Selected-chain REST adapter for the independently verifiable hash-chain proof. */
+export class KaspaRestHashChainView implements HashChainChainView {
+  constructor(private readonly client: KaspaRestClient) {}
+
+  async getAcceptedOrigin(outpoint: FundingOutpoint): Promise<HashChainTrustedOrigin | null> {
+    const transaction = await this.#selectedTransaction(outpoint.txid);
+    if (!transaction || !Array.isArray(transaction.outputs)) return null;
+    const output = transaction.outputs.find((item) => item.index === outpoint.index) ?? transaction.outputs[outpoint.index];
+    if (!output || output.amount === undefined || typeof output.script_public_key !== "string") return null;
+    return {
+      amount: String(output.amount),
+      scriptPublicKey: normalizeRestScript(output.script_public_key),
+      covenantId: restOutputCovenant(output)?.covenantId ?? null,
+    };
+  }
+
+  async getSelectedTransaction(transactionId: string): Promise<HashChainSelectedTransaction | null> {
+    const transaction = await this.#selectedTransaction(transactionId);
+    if (!transaction || !Array.isArray(transaction.inputs) || !Array.isArray(transaction.outputs)) return null;
+    const first = transaction.inputs[0];
+    const output = transaction.outputs.find((item) => item.index === 0) ?? transaction.outputs[0];
+    const covenant = output ? restOutputCovenant(output) : undefined;
+    if (!first || !output || !covenant || covenant.authorizingInput !== 0 ||
+      typeof first.previous_outpoint_hash !== "string" ||
+      !Number.isInteger(Number(first.previous_outpoint_index)) ||
+      output.amount === undefined || typeof output.script_public_key !== "string") return null;
+    return {
+      transactionId: transactionId.toLowerCase(), finality: "accepted",
+      spentHead: { txid: first.previous_outpoint_hash.toLowerCase(), index: Number(first.previous_outpoint_index) },
+      successor: {
+        amount: String(output.amount), scriptPublicKey: normalizeRestScript(output.script_public_key),
+        covenantId: covenant.covenantId, authorizingInput: 0,
+      },
+    };
+  }
+
+  async #selectedTransaction(transactionId: string): Promise<RestTransaction | null> {
+    const transaction = await this.client.getTransaction(transactionId);
+    if (!transaction?.is_accepted) return null;
+    // An accepted transaction can become nonselected after a reorg. Reuse the
+    // adapter's checkpoint and accepting-block check before granting access.
+    await this.client.acceptedTransactionEvidence(transactionId);
+    return transaction;
   }
 }
 
