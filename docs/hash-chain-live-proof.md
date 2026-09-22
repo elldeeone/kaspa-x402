@@ -1,12 +1,11 @@
 # Native-KAS hash-chain Testnet-10 proof
 
-Status: candidate validation, 2026-09-22. This is a funded Testnet-10 run of
+Status: candidate validation, 2026-09-22. These are funded Testnet-10 runs of
 the unreleased `hash-chain-additive` x402 profile, not mainnet evidence or a
-release designation. The local detailed report is ignored by Git at
-`.kaspa-x402-live/hash-chain-proof-20260922-final/report.json`; signing keys and
-the encrypted grant database remain in that private directory.
-This run predates the subsequent reorg, grant-readback and fee fixes. A fresh
-funded run against the final candidate is still required for release evidence.
+release designation. The latest run used committed runtime code `bd62fee`.
+Its detailed report is ignored by Git at
+`.kaspa-x402-live/hash-chain-proof-20260922-bd62fee-retry1/report.json`;
+signing keys and the encrypted grant database remain in that private directory.
 
 ## Reproduce
 
@@ -29,9 +28,37 @@ HTTP 200 with `PAYMENT-RESPONSE.success = true` and each transaction to be
 selected on chain before reporting success. It records the full response and
 head lineage locally. It does not reuse an output directory.
 
-## Observed run
+## Post-review run on `bd62fee`
 
-The final run started at 09:12:40 UTC and completed at 09:13:28 UTC. Its KIP-20
+The run started at 13:08:11 UTC and completed at 13:08:58 UTC. Its KIP-20
+covenant ID was
+`d1d1550880711277ec26d8a30fba9d4de2ad61aedcdc298784bf6726d746dec3`
+through genesis, both payer borrows and owner rotation.
+
+| Step | Accepted transaction | Head amount after step | x402 response |
+| --- | --- | ---: | --- |
+| Genesis | `81ea9ed5392ab9b07664e0503f68b56686cc7b4ac360f032b62baad799d687b2` | 99,000,000 sompi | — |
+| Payer 1 | `d4678e9cce02726975ce2e32013fd365286994da232e4de585e46c191cd70f37` | 119,000,000 sompi | HTTP 200; `success=true`; response header SHA-256 `60cab1aa7b472d397f2d606e5fdafbbf78ccc4ceb2f0cca29da7654a3610b369` |
+| Payer 2 | `f0960f40aef3bf06fa64d9a2aaa0cd7f0e8fa8cc900141b54b9c7fc2caed5b9d` | 139,000,000 sompi | HTTP 200; `success=true`; response header SHA-256 `ce5b8cdd26d91dfa048c2f7cea03d28d138fe1dceb1fbbb4689ca9bd4ed85fc0` |
+| Owner rotation after abandoned grant | `f239fcf90c8ad172a06c63371da3e9882d10ce11df46b21ec107cba833aef237` | 139,000,000 sompi | Head version 2 → 3; ready with a new guard |
+
+Both payments increased the same head by the quoted 20,000,000 sompi. The
+private report records selected-chain readback, the accepting blocks, both
+x402 settlement responses and hashes of seven built modules and the proof
+script. Those hashes match the rebuilt files from `bd62fee`. A fresh readback
+after the run still found all four transactions selected. Genesis had 30
+selected-chain confirmations; the payment and rotation evidence establishes
+`accepted` finality, not 30 confirmations. The proof used one public Testnet-10
+RPC node and one REST API, with no independent full-node corroboration or
+hosted-gateway deployment.
+
+The first attempt against a different RPC endpoint timed out with a funding
+shard still unspent. The successful retry used that shard and a new private
+output directory. The first attempt is not counted as a payment proof.
+
+## Earlier run (before the grant-readback fix)
+
+The earlier run started at 09:12:40 UTC and completed at 09:13:28 UTC. Its KIP-20
 covenant ID was
 `435c3dbe5ae699e42ceb1dfcef4a572f855801bf43d5ce378112cdc11ca32aee`
 from genesis through both borrows and owner rotation.
