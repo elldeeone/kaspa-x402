@@ -2105,6 +2105,7 @@ name = "kaspa-x402-tx-v1-consensus-check"
 version = "0.0.0"
 dependencies = [
  "anyhow",
+ "blake3",
  "hex",
  "kaspa-addresses",
  "kaspa-consensus",

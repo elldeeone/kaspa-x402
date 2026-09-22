@@ -82,8 +82,9 @@ new guard, independently reconstructed and compared with output 0. The head
 principal MUST remain in that successor. KIP-20 identity does not locate the
 live outpoint; the merchant must persist and reconcile it.
 
-The owner has two separate paths to be specified and proven with the pinned
-contract artifact:
+The pinned [SilverScript contract](../contracts/kaspa-x402-hash-chain-head-v1.sil)
+has two separate owner paths, both covered by the
+[local consensus vector](../vectors/hash-chain/consensus-v1.json):
 
 - `ownerRotate`: owner SIGHASH_ALL authorization, one same-ID successor with a
   newly committed guard and head value at least the old head value. The owner

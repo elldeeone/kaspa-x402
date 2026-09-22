@@ -1,0 +1,93 @@
+pragma silverscript ^0.1.0;
+
+// Native-KAS additive head with one borrower authorization per hash-chain link.
+// The merchant owns the head and releases a single current link and one-time
+// signing key to a payer. The payer signs both the head and funding inputs.
+// The covenant enforces a positive increase; x402 verifies the exact price.
+// KIP-20 keeps the head identity stable as the guard changes after each use.
+contract KaspaX402HashChainHeadV1(pubkey owner, byte[32] initialGuard) {
+    byte[32] guard = initialGuard;
+    byte[32] constant ZERO_COVENANT_ID = byte[32](0x0000000000000000000000000000000000000000000000000000000000000000);
+
+    entry borrow(
+        byte[32] revealedGuard,
+        pubkey oneTimeKey,
+        sig borrowSignature
+    ) {
+        require(blake3(byte[](revealedGuard) + byte[](oneTimeKey)) == guard);
+        require(tx.version == 1);
+        require(OpTxLockTime() == 0);
+        require(tx.inputs.length >= 2);
+        require(tx.outputs.length > 0);
+        require(tx.outputs.length <= 2);
+        require(this.activeInputIndex == 0);
+        require(OpTxInputSeq(0) == byte[8](0x0000000000000000));
+
+        require(byte[1](borrowSignature.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(borrowSignature, oneTimeKey));
+
+        byte[32] covenantId = OpInputCovenantId(0);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 1);
+        require(OpAuthOutputCount(0) == 1);
+        require(OpAuthOutputIdx(0, 0) == 0);
+        require(OpOutputCovenantId(0) == covenantId);
+        require(tx.outputs[0].value > tx.inputs[0].value);
+        if (tx.outputs.length == 2) {
+            require(OpOutputCovenantId(1) == ZERO_COVENANT_ID);
+            require(tx.outputs[1].value > 0);
+        }
+
+        validateOutputState(0, State { guard: revealedGuard });
+    }
+
+    // Rotation competes with a released borrower spend. A timeout alone does
+    // not revoke a disclosed key; only the accepted owner spend does.
+    entry ownerRotate(byte[32] newGuard, sig ownerSignature) {
+        require(newGuard != guard);
+        require(tx.version == 1);
+        require(OpTxLockTime() == 0);
+        require(tx.inputs.length >= 2);
+        require(tx.outputs.length > 0);
+        require(tx.outputs.length <= 2);
+        require(this.activeInputIndex == 0);
+        require(OpTxInputSeq(0) == byte[8](0x0000000000000000));
+
+        require(byte[1](ownerSignature.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(ownerSignature, owner));
+
+        byte[32] covenantId = OpInputCovenantId(0);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 1);
+        require(OpAuthOutputCount(0) == 1);
+        require(OpAuthOutputIdx(0, 0) == 0);
+        require(OpOutputCovenantId(0) == covenantId);
+        require(tx.outputs[0].value >= tx.inputs[0].value);
+        if (tx.outputs.length == 2) {
+            require(OpOutputCovenantId(1) == ZERO_COVENANT_ID);
+            require(tx.outputs[1].value > 0);
+        }
+
+        validateOutputState(0, State { guard: newGuard });
+    }
+
+    // Owner termination removes the same-ID head. A later replacement needs
+    // a fresh genesis covenant ID and a fresh offer.
+    entry ownerSweep(sig ownerSignature) {
+        require(tx.version == 1);
+        require(OpTxLockTime() == 0);
+        require(this.activeInputIndex == 0);
+        require(tx.inputs.length == 1);
+        require(tx.outputs.length == 1);
+        require(OpTxInputSeq(0) == byte[8](0x0000000000000000));
+        require(byte[1](ownerSignature.slice(64, 65)) == byte[1](0x01));
+        require(checkSig(ownerSignature, owner));
+        byte[32] covenantId = OpInputCovenantId(0);
+        require(OpCovInputCount(covenantId) == 1);
+        require(OpCovOutputCount(covenantId) == 0);
+        require(OpAuthOutputCount(0) == 0);
+        require(OpOutputCovenantId(0) == ZERO_COVENANT_ID);
+        require(tx.outputs[0].value > 0);
+        require(tx.outputs[0].value <= tx.inputs[0].value);
+    }
+}

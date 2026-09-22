@@ -69,3 +69,38 @@ After cached responses expire, immutable replay tombstones remain authoritative
 but no longer consume active-attempt record, byte, or per-payer admission
 capacity. Production stores must keep those tombstones in a scalable, monitored
 index; replay history must not permanently prevent admission of new payments.
+
+## Native-KAS hash-chain grant issuer (local implementation)
+
+`@kaspa-x402/server/hash-chain-grants` is a separate Node-only entry point
+(Node 22.13 or newer, where `node:sqlite` is available without a flag). It is
+not exposed by the Worker-compatible package root
+and is not yet wired into the x402 HTTP handler. Create it with a private
+SQLite file, a caller-managed 32-byte encryption key, and a synchronous payer
+eligibility/rate-limit callback. Store the encryption key separately from the
+database and back it up; losing it loses outstanding grants. See the
+[Node SQLite documentation](https://nodejs.org/download/release/v22.13.1/docs/api/sqlite.html)
+for runtime support.
+
+The issuer accepts Testnet-10 heads only. It reserves each one-time public key
+across the store, including unreleased links, so a key cannot be assigned again
+on another head or after rotation. If an accepted rotation names an invalid or
+reused replacement chain, the issuer records the new head as `needsRotation`
+and does not release that chain.
+Opening a database created by an earlier local prototype backfills known keys
+and quarantines its live heads until owner rotation.
+
+The issuer checks each one-time private key and reverse hash link before
+installation. It commits one payer's signed claim and an encrypted delivery
+record before returning the key; identical live retries recover the same key.
+The delivery record remains available after the head advances for later
+settlement checks. Call `recordAcceptedBorrow` and `recordAcceptedRotation`
+only with independently verified selected-chain evidence. A small positive
+borrow advances the head, while an abandoned key remains live on-chain until
+an owner rotation is accepted. A reorg places issuance on hold; an unknown
+restored head remains on hold for operator investigation. An accepted owner
+sweep retires the head and stops further issuance.
+
+The [binding draft](../../spec/kaspa-hash-chain-exact-v1.md) defines the
+private grant claim and x402 settlement rules. The payer wallet, HTTP
+delivery, trusted-chain adapter, and settlement verifier are later steps.

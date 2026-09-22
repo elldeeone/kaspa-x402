@@ -27,6 +27,7 @@
     "test:self": "vitest run"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "@noble/hashes": "^2.2.0",
     "blakejs": "^1.2.1"
   }

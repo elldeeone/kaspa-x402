@@ -40,6 +40,8 @@ use serde::Deserialize;
 use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
 
+mod hash_chain;
+
 const EXPECTED_SOURCE_COMMIT: &str = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
 const STORAGE_MASS_PARAMETER: u64 = 1_000_000_000_000;
 const POST_TOCCATA_DAA_SCORE: u64 = 600_000_000;
@@ -202,6 +204,7 @@ fn main() -> Result<()> {
     let exact_interop = validate_exact_interop_vector(repo_root, &exact_profiles)?;
     let kip10 = validate_kip10_exact_template(&exact_profiles)?;
     let batch_interop = validate_batch_interop_vector(repo_root)?;
+    let hash_chain = hash_chain::validate_hash_chain(repo_root)?;
 
     println!(
         "{}",
@@ -219,6 +222,7 @@ fn main() -> Result<()> {
             "exactProfiles": exact_profiles,
             "exactInterop": exact_interop,
             "batchInterop": batch_interop,
+            "hashChain": hash_chain,
         }))?
     );
 
