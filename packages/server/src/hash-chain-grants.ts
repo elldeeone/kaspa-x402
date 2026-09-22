@@ -479,7 +479,12 @@ export class HashChainGrantIssuer {
     const id = hex32(headId, "headId");
     if (transition.finality !== "accepted" && transition.finality !== "confirmed") throw new Error("transition lacks trusted accepted finality");
     return this.mutate(id, (state) => {
-      if (!state || state.phase === "hold" || state.phase === "retired") throw new Error("head must be live and reconciled before advancement");
+      // A payer may have spent an assigned head before grant readback puts it on
+      // hold. Only that assignment's trusted exact-payment proof may resolve it.
+      if (!state || state.phase === "retired" ||
+        (state.phase === "hold" && (kind !== "borrow" || !payment || state.phaseBeforeHold !== "assigned"))) {
+        throw new Error("head must be live and reconciled before advancement");
+      }
       const before = state.head;
       const predecessor = normalizeOutpoint(transition.predecessor);
       if (!sameOutpoint(predecessor, before.outpoint)) throw new Error("transition does not spend the current head");
@@ -539,6 +544,7 @@ export class HashChainGrantIssuer {
       state.version++;
       state.challenges = [];
       state.assignment = undefined;
+      state.phaseBeforeHold = undefined;
       if (kind === "borrow") state.nextIndex++;
       else { state.grants = replacementMatches ? replacementGrants : []; state.nextIndex = 0; }
       state.phase = kind === "rotate" && !replacementSafe

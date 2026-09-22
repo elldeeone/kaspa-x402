@@ -911,7 +911,7 @@ export class DirectModeServer {
               );
               verified = await this.#settleExactIfNeeded(verified, claim);
               if (verified.profile === "hash-chain-additive") {
-                this.#recordAcceptedHashChainPayment(verified, fingerprint, paymentIdentifier);
+                await this.#recordAcceptedHashChainPayment(verified, fingerprint, paymentIdentifier);
               }
               const durableAttempt =
                 await this.#config.store.loadExactSettlementAttempt(
@@ -3463,17 +3463,22 @@ export class DirectModeServer {
     return attempt;
   }
 
-  #recordAcceptedHashChainPayment(
+  async #recordAcceptedHashChainPayment(
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
     paymentIdentifier: string | undefined,
-  ): void {
+  ): Promise<void> {
     const issuer = this.#config.hashChainIssuer;
     const head = verified.hashChainHead;
     const successor = verified.continuation;
     if (!issuer || !head || !successor || !paymentIdentifier ||
       (verified.finality !== "accepted" && verified.finality !== "confirmed")) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain settlement lacks accepted head and grant evidence");
+    }
+    // A grant readback may have held this assigned head after broadcast. Check
+    // selection again before the issuer resolves that hold with the payment.
+    if (!await this.#cachedHashChainPaymentSelected(verified.transactionId)) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "accepted hash-chain payment is no longer selected");
     }
     issuer.recordAcceptedPayment(head.headId, {
       finality: verified.finality,

@@ -74,8 +74,9 @@ index; replay history must not permanently prevent admission of new payments.
 
 `@kaspa-x402/server/hash-chain-grants` is a separate Node-only entry point
 (Node 22.13 or newer, where `node:sqlite` is available without a flag). It is
-not exposed by the Worker-compatible package root
-and is not yet wired into the x402 HTTP handler. Create it with a private
+not exposed by the Worker-compatible package root. Connect it to the candidate
+hash-chain x402 profile through `DirectModeServer`, and route the advertised
+grant claim URL to `handleHashChainGrantClaimHttp`. Create it with a private
 SQLite file, a caller-managed 32-byte encryption key, and a synchronous payer
 eligibility/rate-limit callback. Store the encryption key separately from the
 database and back it up; losing it loses outstanding grants. See the
@@ -97,10 +98,13 @@ The delivery record remains available after the head advances for later
 settlement checks. Call `recordAcceptedBorrow` and `recordAcceptedRotation`
 only with independently verified selected-chain evidence. A small positive
 borrow advances the head, while an abandoned key remains live on-chain until
-an owner rotation is accepted. A reorg places issuance on hold; an unknown
-restored head remains on hold for operator investigation. An accepted owner
-sweep retires the head and stops further issuance.
+an owner rotation is accepted. An absent current head pauses issuance; a fresh
+selected exact proof for the assigned grant can advance it from hold. A reorg
+or unknown restored head otherwise stays on hold for reconciliation. An
+accepted owner sweep retires the head and stops further issuance.
 
 The [binding draft](../../spec/kaspa-hash-chain-exact-v1.md) defines the
-private grant claim and x402 settlement rules. The payer wallet, HTTP
-delivery, trusted-chain adapter, and settlement verifier are later steps.
+private grant claim and x402 settlement rules. The candidate includes payer
+claim and signing helpers, the grant HTTP handler, a selected-chain REST
+adapter, and the transaction verifier. A [fresh funded Testnet-10 run](../../docs/hash-chain-live-proof.md)
+against the final candidate remains a release gate.

@@ -177,6 +177,9 @@ describe("native-KAS hash-chain x402 product path", () => {
         spentHead: { txid: HEAD_TX, index: 0 },
         successor: { amount: artifact.outputs[0].value, scriptPublicKey: nextScript,
           covenantId: COVENANT_ID, authorizingInput: 0 } };
+      headUnspent = false;
+      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("absent from the selected UTXO set");
+      expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       await server.verifyPayment({ paymentPayload: payment as never, paymentRequirements: accepted,
         resource: RESOURCE, requestHash });
       store.failAfterAccept = true;
@@ -191,7 +194,6 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(protectedCalls).toBe(0);
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       selected = selectedPayment;
-      issuer.reconcileObservedHead(HEAD_ID, issuer.getCurrent(HEAD_ID).head);
       const paid = await server.handlePaidRequest(paidRoute, async () => { protectedCalls++; return { body: "paid" }; });
       expect(paid.status).toBe(200);
       expect(protectedCalls).toBe(1);

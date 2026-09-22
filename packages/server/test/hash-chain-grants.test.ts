@@ -72,6 +72,15 @@ describe("durable hash-chain grants", () => {
         .toThrow("assigned exact grant");
       expect(issuer.getAcceptedPayment(successor.outpoint.txid)).toBeUndefined();
       expect(issuer.getCurrent(HEAD_ID).head).toEqual(first);
+      issuer.holdForReorg(HEAD_ID);
+      expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, successor)))
+        .toThrow("live and reconciled");
+      expect(() => issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), { ...payment, amount: "1" }))
+        .toThrow("assigned exact grant");
+      expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
+      issuer.close();
+      issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
+      expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       expect(issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), payment)).toMatchObject({
         headVersion: 1, head: successor, phase: "ready",
       });
