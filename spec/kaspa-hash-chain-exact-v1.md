@@ -241,6 +241,16 @@ underpaid transaction. A reorg that restores a previously issued guard puts
 the head into reconciliation hold; the issuer must not release another grant
 until the actual chain state and key exposure are resolved.
 
+The reference issuer persists the quoted amount with each delivered grant. If
+head readback puts an assigned grant on hold after an unmatched borrow, an
+operator supplies that transaction ID to `recoverSelectedUnmatchedBorrow`
+with a trusted selected-chain view. The issuer checks the spent outpoint,
+same-ID successor, revealed guard and positive increase against the durable
+quote before advancing. A spend with the exact quoted increase stays on the
+normal x402 settlement path; it cannot be reclassified as an unmatched borrow
+to bypass payment delivery. Quote-free assignments from older local stores
+remain unavailable for this automatic recovery and require investigation.
+
 ## Canonical payment transaction
 
 The payer signs and broadcasts a version-1 native Kaspa transaction:

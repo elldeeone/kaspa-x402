@@ -10,6 +10,7 @@ import {
   type HashChainBorrowGrant,
 } from "@kaspa-x402/covenant";
 import { stableStringify } from "@kaspa-x402/core";
+import type { HashChainChainView } from "./hash-chain-verifier.js";
 
 export interface HashChainOutpoint { txid: string; index: 0 }
 export interface HashChainObservedHead {
@@ -44,6 +45,7 @@ export interface HashChainGrantChallenge {
   grantId: string;
   challengeId: string;
   requestHash: string;
+  quotedAmount: string;
   issuedAt: string;
   expiresAt: string;
 }
@@ -74,6 +76,7 @@ export interface HashChainGrantDeliveryRecord {
   challengeIssuedAt: string;
   challengeExpiresAt: string;
   requestHash: string;
+  quotedAmount: string;
   payerPublicKey: string;
   expiresAt: string;
   deliveryCommittedAt: string;
@@ -109,6 +112,7 @@ interface StoredAssignment {
   grantId: string;
   challengeId: string;
   requestHash: string;
+  quotedAmount: string;
   payerPublicKey: string;
   expiresAt: string;
   deliveryCommittedAt: string;
@@ -190,7 +194,7 @@ export class HashChainGrantIssuer {
       db.exec("BEGIN IMMEDIATE");
       try {
         const schemaVersion = db.prepare("PRAGMA user_version").get() as { user_version: number };
-        if (schemaVersion.user_version !== 0 && schemaVersion.user_version !== 1) {
+        if (schemaVersion.user_version !== 0 && schemaVersion.user_version !== 1 && schemaVersion.user_version !== 2) {
           throw new Error("unsupported grant database schema version");
         }
         const row = db.prepare("SELECT sealed FROM hash_chain_meta WHERE id = 1").get() as { sealed: Uint8Array } | undefined;
@@ -214,6 +218,7 @@ export class HashChainGrantIssuer {
             .run(seal(key, "hash-chain-store-v1", Buffer.from("hash-chain-store-v1")));
         }
         if (schemaVersion.user_version === 0) migrateLegacyGrantKeys(db, key);
+        if (schemaVersion.user_version !== 2) migrateQuotedGrants(db, key);
         db.exec("COMMIT");
       } catch (error) {
         db.exec("ROLLBACK");
@@ -282,9 +287,10 @@ export class HashChainGrantIssuer {
     return row ? JSON.parse(unseal(this.key, `payment:${txid}`, Buffer.from(row.sealed)).toString("utf8")) as HashChainAcceptedPayment : undefined;
   }
 
-  issueChallenge(headId: string, requestHash: string, lifetimeSeconds: number): HashChainGrantChallenge {
+  issueChallenge(headId: string, requestHash: string, lifetimeSeconds: number, quotedAmount: string): HashChainGrantChallenge {
     const id = hex32(headId, "headId");
     const request = hex32(requestHash, "requestHash");
+    const amount = canonicalAmount(quotedAmount);
     if (!Number.isSafeInteger(lifetimeSeconds) || lifetimeSeconds < 1 || lifetimeSeconds > 300) {
       throw new Error("challenge lifetime must be 1 to 300 seconds");
     }
@@ -295,7 +301,7 @@ export class HashChainGrantIssuer {
       if (state.challenges.length >= 64) throw new Error("too many live challenges for head");
       const challenge: HashChainGrantChallenge = {
         headId: id, headVersion: state.version, grantId: state.grants[state.nextIndex]!.grantId,
-        challengeId: randomBytes(32).toString("hex"), requestHash: request,
+        challengeId: randomBytes(32).toString("hex"), requestHash: request, quotedAmount: amount,
         issuedAt: new Date(now).toISOString(), expiresAt: new Date(now + lifetimeSeconds * 1000).toISOString(),
       };
       state.challenges.push(challenge);
@@ -313,6 +319,7 @@ export class HashChainGrantIssuer {
       const now = this.now().getTime();
       if (!challenge || challenge.headVersion !== state.version || challenge.grantId !== grant.grantId
         || challenge.requestHash !== normalized.requestHash || normalized.grantId !== grant.grantId
+        || (!challenge.quotedAmount && !state.assignment)
         || Date.parse(challenge.expiresAt) < now || Date.parse(normalized.expiresAt) < now
         || Date.parse(normalized.expiresAt) > Date.parse(challenge.expiresAt)) {
         throw new Error("grant claim does not match a live challenge");
@@ -331,7 +338,8 @@ export class HashChainGrantIssuer {
         if (!this.canClaim(normalized, publicGrant(state))) throw new Error("payer is ineligible for grant");
         state.assignment = {
           grantId: normalized.grantId, challengeId: normalized.challengeId,
-          requestHash: normalized.requestHash, payerPublicKey: normalized.payerPublicKey,
+          requestHash: normalized.requestHash, quotedAmount: challenge.quotedAmount,
+          payerPublicKey: normalized.payerPublicKey,
           expiresAt: normalized.expiresAt, deliveryCommittedAt: this.now().toISOString(),
         };
         state.phase = "assigned";
@@ -344,7 +352,7 @@ export class HashChainGrantIssuer {
           grantId: grant.grantId, nextGuard: grant.revealedGuard, oneTimePublicKey: grant.oneTimePublicKey,
           challengeId: normalized.challengeId, challengeIssuedAt: challenge.issuedAt,
           challengeExpiresAt: challenge.expiresAt,
-          requestHash: normalized.requestHash,
+          requestHash: normalized.requestHash, quotedAmount: challenge.quotedAmount,
           payerPublicKey: normalized.payerPublicKey, expiresAt: normalized.expiresAt,
           deliveryCommittedAt: state.assignment.deliveryCommittedAt,
         };
@@ -375,6 +383,43 @@ export class HashChainGrantIssuer {
 
   recordAcceptedBorrow(headId: string, transition: HashChainAcceptedTransition): HashChainPublicGrant {
     return this.advance(headId, transition, "borrow");
+  }
+
+  /** Recover a held, unmatched spend only after an authoritative selected-chain readback. */
+  async recoverSelectedUnmatchedBorrow(
+    headId: string,
+    transactionId: string,
+    chain: Pick<HashChainChainView, "getSelectedTransaction">,
+  ): Promise<HashChainPublicGrant> {
+    const id = hex32(headId, "headId");
+    const txid = hex32(transactionId, "transactionId");
+    const current = this.getCurrent(id);
+    if (current.phase !== "hold" || !current.nextGuard) throw new Error("head is not awaiting an assigned borrow readback");
+    const selected = await chain.getSelectedTransaction(txid);
+    if (!selected || selected.transactionId !== txid ||
+      (selected.finality !== "accepted" && selected.finality !== "confirmed") ||
+      !sameOutpoint(selected.spentHead, current.head.outpoint) ||
+      selected.successor.authorizingInput !== 0 ||
+      selected.successor.covenantId !== current.head.covenantId ||
+      selected.successor.scriptPublicKey !== hashChainHeadScriptPublicKey({
+        ownerPublicKey: current.ownerPublicKey, guard: current.nextGuard,
+      })) {
+      throw new Error("transaction is not the selected successor of the held head");
+    }
+    const latest = this.getCurrent(id);
+    if (latest.headVersion !== current.headVersion || latest.phase !== "hold" ||
+      !sameHead(latest.head, current.head)) {
+      throw new Error("held head changed during selected-chain readback");
+    }
+    return this.recordAcceptedBorrow(id, {
+      finality: selected.finality,
+      predecessor: current.head.outpoint,
+      successor: {
+        outpoint: { txid, index: 0 }, amount: selected.successor.amount,
+        guard: current.nextGuard, scriptPublicKey: selected.successor.scriptPublicKey,
+        covenantId: selected.successor.covenantId,
+      },
+    });
   }
 
   /** Atomically consume a delivered link and record one x402 payment before protected work. */
@@ -479,10 +524,11 @@ export class HashChainGrantIssuer {
     const id = hex32(headId, "headId");
     if (transition.finality !== "accepted" && transition.finality !== "confirmed") throw new Error("transition lacks trusted accepted finality");
     return this.mutate(id, (state) => {
-      // A payer may have spent an assigned head before grant readback puts it on
-      // hold. Only that assignment's trusted exact-payment proof may resolve it.
+      // A payer may spend an assigned head before grant readback puts it on hold.
+      // A held exact payment needs its signed payment proof; an unmatched borrow
+      // needs the durable quote and trusted selected-chain transition below.
       if (!state || state.phase === "retired" ||
-        (state.phase === "hold" && (kind !== "borrow" || !payment || state.phaseBeforeHold !== "assigned"))) {
+        (state.phase === "hold" && (kind !== "borrow" || (payment && state.phaseBeforeHold !== "assigned")))) {
         throw new Error("head must be live and reconciled before advancement");
       }
       const before = state.head;
@@ -500,6 +546,17 @@ export class HashChainGrantIssuer {
         if (!grant || after.guard !== grant.revealedGuard || BigInt(after.amount) <= BigInt(before.amount)) {
           throw new Error("accepted borrow is not the current positive head transition");
         }
+        if (state.phase === "hold" && !payment) {
+          const assigned = state.assignment;
+          const delivery = assigned && this.getDeliveryRecord(id, assigned.grantId);
+          if ((state.phaseBeforeHold !== "assigned" && state.phaseBeforeHold !== "needsRotation") ||
+            !assigned?.quotedAmount || !delivery || delivery.quotedAmount !== assigned.quotedAmount ||
+            assigned.grantId !== grant.grantId || delivery.headVersion !== state.version ||
+            !sameOutpoint(delivery.headOutpoint, before.outpoint) ||
+            BigInt(after.amount) - BigInt(before.amount) === BigInt(assigned.quotedAmount)) {
+            throw new Error("held head requires a nonconforming assigned borrow");
+          }
+        }
         if (payment) {
           const assigned = state.assignment;
           const delivery = this.getDeliveryRecord(id, payment.grantId);
@@ -508,6 +565,8 @@ export class HashChainGrantIssuer {
             assigned.payerPublicKey !== payment.payerPublicKey || delivery.headVersion !== state.version ||
             !sameOutpoint(delivery.headOutpoint, before.outpoint) ||
             delivery.headAmount !== before.amount || delivery.headGuard !== before.guard ||
+            (assigned.quotedAmount && assigned.quotedAmount !== payment.amount) ||
+            (delivery.quotedAmount && delivery.quotedAmount !== payment.amount) ||
             BigInt(after.amount) !== BigInt(before.amount) + BigInt(payment.amount)) {
             throw new Error("accepted payment does not consume the assigned exact grant");
           }
@@ -537,7 +596,8 @@ export class HashChainGrantIssuer {
         }
         if (replacementMatches) replacementSafe = !this.rememberGrantKeys(id, replacementGrants);
       }
-      const wasQuarantined = state.phase === "needsRotation";
+      const wasQuarantined = state.phase === "needsRotation" ||
+        (state.phase === "hold" && state.phaseBeforeHold === "needsRotation");
       state.history.push({ head: before, grant, exposed: !!state.assignment });
       if (state.history.length > 128) state.history.shift();
       state.head = after;
@@ -658,7 +718,7 @@ function hex32(value: string, label: string): string {
   return value;
 }
 
-function sameOutpoint(a: HashChainOutpoint, b: HashChainOutpoint): boolean {
+function sameOutpoint(a: { txid: string; index: number }, b: { txid: string; index: number }): boolean {
   return a.txid === b.txid && a.index === b.index;
 }
 function sameHead(a: HashChainObservedHead, b: HashChainObservedHead): boolean {
@@ -700,6 +760,20 @@ function migrateLegacyGrantKeys(db: DatabaseSync, key: Buffer): void {
     insert.run(grantKeyFingerprint(key, hex32(record.oneTimePublicKey, "delivered one-time key")), row.head_id);
   }
   db.exec("PRAGMA user_version = 1");
+}
+
+/** Old undelivered challenges have no durable quote; preserve delivered exact-payment recovery. */
+function migrateQuotedGrants(db: DatabaseSync, key: Buffer): void {
+  const heads = db.prepare("SELECT head_id, sealed FROM hash_chain_grants").all() as { head_id: string; sealed: Uint8Array }[];
+  const update = db.prepare("UPDATE hash_chain_grants SET sealed = ? WHERE head_id = ?");
+  for (const row of heads) {
+    const state = JSON.parse(unseal(key, row.head_id, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
+    if (state.phase === "ready") {
+      state.challenges = [];
+      update.run(seal(key, row.head_id, Buffer.from(JSON.stringify(state))), row.head_id);
+    }
+  }
+  db.exec("PRAGMA user_version = 2");
 }
 
 function grantKeyFingerprint(key: Buffer, publicKey: string): string {

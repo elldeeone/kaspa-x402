@@ -304,17 +304,17 @@ export class DirectModeServer {
         throw new KaspaX402Error("invalid_kaspa_transaction", "current hash-chain grant is unavailable");
       }
       await this.#assertHashChainCurrentHead(headId, current);
-      const challenge = issuer.issueChallenge(headId, options.requestHash, this.#config.maxTimeoutSeconds);
+      const amount = options.amount ?? this.#config.amount;
+      if (parseSompiString(amount) <= 0n || BigInt(current.head.amount) + BigInt(amount) > 0xffff_ffff_ffff_ffffn) {
+        throw new KaspaX402Error("invalid_kaspa_x402_amount", "hash-chain successor value is invalid");
+      }
+      const challenge = issuer.issueChallenge(headId, options.requestHash, this.#config.maxTimeoutSeconds, amount);
       const nextScript = hashChainHeadScriptPublicKey({ ownerPublicKey: current.ownerPublicKey, guard: current.nextGuard });
       const payTo = this.#config.addressCodec.encodeScriptAddress({
         network: this.#config.network,
         scriptPublicKey: { version: 0, script: nextScript.slice(4) },
         serializedScriptPublicKey: nextScript,
       });
-      const amount = options.amount ?? this.#config.amount;
-      if (parseSompiString(amount) <= 0n || BigInt(current.head.amount) + BigInt(amount) > 0xffff_ffff_ffff_ffffn) {
-        throw new KaspaX402Error("invalid_kaspa_x402_amount", "hash-chain successor value is invalid");
-      }
       const accepted: ExactPaymentRequirements = {
         scheme: "exact", network: this.#config.network, amount, asset: "KAS", payTo,
         maxTimeoutSeconds: this.#config.maxTimeoutSeconds,
@@ -2387,6 +2387,7 @@ export class DirectModeServer {
       delivery.headAmount !== extra.headAmount || delivery.headGuard !== extra.currentGuard ||
       delivery.headScriptPublicKey !== extra.headScriptPublicKey ||
       delivery.covenantId !== extra.covenantId || delivery.nextGuard !== extra.nextGuard ||
+      (delivery.quotedAmount && delivery.quotedAmount !== accepted.amount) ||
       delivery.oneTimePublicKey !== extra.oneTimePublicKey ||
       delivery.challengeIssuedAt !== extra.challengeIssuedAt ||
       delivery.challengeExpiresAt !== extra.challengeExpiresAt) {
