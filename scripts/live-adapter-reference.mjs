@@ -4175,17 +4175,24 @@ function authorizationVersionEvidence(fundingVersionByTxid, txid) {
   };
 }
 
-export async function liveChainCheckpoint(rpc) {
-  const rawInfo = await rpc.getBlockDagInfo();
+export async function liveChainCheckpoint(rpc, { signal } = {}) {
+  signal?.throwIfAborted();
+  const rawInfo = signal
+    ? await awaitWithSignal(rpc.getBlockDagInfo(), signal)
+    : await rpc.getBlockDagInfo();
   const info = rawInfo.blockDagInfo ?? rawInfo;
   const blockHash = String(info.sink).toLowerCase();
   if (!/^[0-9a-f]{64}$/.test(blockHash)) {
     throw new Error("node returned an invalid selected-chain sink");
   }
-  const rawBlock = await rpc.getBlock({
+  signal?.throwIfAborted();
+  const blockRequest = rpc.getBlock({
     hash: blockHash,
     includeTransactions: false,
   });
+  const rawBlock = signal
+    ? await awaitWithSignal(blockRequest, signal)
+    : await blockRequest;
   const block = rawBlock.block ?? rawBlock;
   const header = block.header;
   if (!header || String(header.hash).toLowerCase() !== blockHash) {
@@ -4204,7 +4211,9 @@ async function liveSelectedChainFromCheckpoint(
   minConfirmationCount,
   stopHash,
   stopBlueScore,
+  signal,
 ) {
+  signal?.throwIfAborted();
   const normalizedStartHash = startHash.toLowerCase();
   const normalizedStopHash = stopHash.toLowerCase();
   if (normalizedStartHash === normalizedStopHash) {
@@ -4216,11 +4225,16 @@ async function liveSelectedChainFromCheckpoint(
   const removedSeen = new Set();
   const addedSeen = new Set();
   for (let page = 0; page < MAX_SELECTED_CHAIN_PAGES; page += 1) {
-    const raw = await rpc.getVirtualChainFromBlockV2({
+    signal?.throwIfAborted();
+    const pageRequest = rpc.getVirtualChainFromBlockV2({
       startHash: cursor,
       dataVerbosityLevel: "Full",
       minConfirmationCount,
     });
+    const raw = signal
+      ? await awaitWithSignal(pageRequest, signal)
+      : await pageRequest;
+    signal?.throwIfAborted();
     const response = raw.virtualChainFromBlockV2Response ?? raw;
     const removed = response.removedChainBlockHashes ?? [];
     const added = response.addedChainBlockHashes ?? [];
@@ -4319,55 +4333,84 @@ export async function waitForAcceptedTransactionEvidence({
   transactionId,
   fromCheckpoint,
   minConfirmationCount,
+  signal,
+  timeoutMs = DEFAULT_CONFIRMATION_TIMEOUT_MS,
 }) {
+  if (!Number.isSafeInteger(timeoutMs) || timeoutMs <= 0 || timeoutMs > DEFAULT_CONFIRMATION_TIMEOUT_MS) {
+    throw new Error("accepted-transaction timeout must be within the live proof bound");
+  }
   const normalizedTransactionId = transactionId.toLowerCase();
   const started = Date.now();
-  while (Date.now() - started < DEFAULT_CONFIRMATION_TIMEOUT_MS) {
-    const checkpoint = await liveChainCheckpoint(rpc);
-    const selected = await liveSelectedChainFromCheckpoint(
-      rpc,
-      fromCheckpoint.blockHash,
-      minConfirmationCount,
-      checkpoint.blockHash,
-      checkpoint.blueScore,
-    );
-    for (const block of selected.addedChainBlocks) {
-      if (
-        block.transactions.some(
-          (transaction) =>
-            liveAcceptedTransactionId(transaction) === normalizedTransactionId,
-        )
-      ) {
+  const deadlineSignal = AbortSignal.timeout(timeoutMs);
+  const activeSignal = signal
+    ? AbortSignal.any([signal, deadlineSignal])
+    : deadlineSignal;
+  try {
+    while (Date.now() - started < timeoutMs) {
+      activeSignal.throwIfAborted();
+      const checkpoint = await liveChainCheckpoint(rpc, { signal: activeSignal });
+      const selected = await liveSelectedChainFromCheckpoint(
+        rpc,
+        fromCheckpoint.blockHash,
+        minConfirmationCount,
+        checkpoint.blockHash,
+        checkpoint.blueScore,
+        activeSignal,
+      );
+      for (const block of selected.addedChainBlocks) {
         if (
-          BigInt(block.header.blueScore) > BigInt(checkpoint.blueScore) ||
-          block.blockHash === checkpoint.blockHash ||
-          !(await liveCheckpointRemainsSelected(rpc, checkpoint))
+          block.transactions.some(
+            (transaction) =>
+              liveAcceptedTransactionId(transaction) === normalizedTransactionId,
+          )
         ) {
-          break;
+          if (
+            BigInt(block.header.blueScore) > BigInt(checkpoint.blueScore) ||
+            block.blockHash === checkpoint.blockHash ||
+            !(await liveCheckpointRemainsSelected(rpc, checkpoint, activeSignal))
+          ) {
+            break;
+          }
+          return liveAcceptanceEvidence({
+            transactionId: normalizedTransactionId,
+            block,
+            minConfirmationCount,
+            checkpoint,
+          });
         }
-        return liveAcceptanceEvidence({
-          transactionId: normalizedTransactionId,
-          block,
-          minConfirmationCount,
-          checkpoint,
-        });
       }
+      await awaitWithSignal(sleep(500), activeSignal);
     }
-    await sleep(500);
+  } catch (error) {
+    if (!deadlineSignal.aborted || signal?.aborted) throw error;
   }
   throw new Error(
     `timed out waiting for ${minConfirmationCount}-deep selected-chain evidence for ${normalizedTransactionId}`,
   );
 }
 
-async function liveCheckpointRemainsSelected(rpc, checkpoint) {
-  const current = await liveChainCheckpoint(rpc);
+export async function selectedChainEvidenceRemainsCanonical({ rpc, evidence, signal }) {
+  if (!evidence?.checkpoint || !/^[0-9a-f]{64}$/.test(String(evidence.checkpoint.blockHash)) ||
+    !/^[0-9]+$/.test(String(evidence.checkpoint.blueScore))) {
+    throw new Error("selected-chain evidence checkpoint is invalid");
+  }
+  const timeoutSignal = AbortSignal.timeout(15_000);
+  const activeSignal = signal
+    ? AbortSignal.any([signal, timeoutSignal])
+    : timeoutSignal;
+  return liveCheckpointRemainsSelected(rpc, evidence.checkpoint, activeSignal);
+}
+
+async function liveCheckpointRemainsSelected(rpc, checkpoint, signal) {
+  signal?.throwIfAborted();
+  const current = await liveChainCheckpoint(rpc, { signal });
   const continuity = await liveSelectedChainFromCheckpoint(
     rpc,
     checkpoint.blockHash,
     1,
     current.blockHash,
     current.blueScore,
+    signal,
   );
   return continuity.removedChainBlockHashes.length === 0;
 }
@@ -5733,4 +5776,22 @@ function positiveBigInt(value, label) {
 
 function sleep(ms) {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function awaitWithSignal(promise, signal) {
+  signal.throwIfAborted();
+  return new Promise((resolve, reject) => {
+    const aborted = () => reject(signal.reason ?? new Error("operation aborted"));
+    signal.addEventListener("abort", aborted, { once: true });
+    Promise.resolve(promise).then(
+      (value) => {
+        signal.removeEventListener("abort", aborted);
+        resolve(value);
+      },
+      (error) => {
+        signal.removeEventListener("abort", aborted);
+        reject(error);
+      },
+    );
+  });
 }
