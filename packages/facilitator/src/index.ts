@@ -35,6 +35,7 @@ export interface FacilitatorActionContext {
   facilitator: DirectModeFacilitator;
   server: DirectModeServer;
   trustedSecurityContext?: TrustedSecurityContext;
+  signal: AbortSignal;
 }
 
 export type FacilitatorActionSettler = (
@@ -49,6 +50,8 @@ export interface FacilitatorHttpRequest {
   body?: unknown;
   /** Host-derived normalized claims, never a value read from body. */
   trustedSecurityContext?: TrustedSecurityContext;
+  /** Caller cancellation propagated into verification and chain observers. */
+  signal?: AbortSignal;
 }
 
 export interface FacilitatorHttpResponse {
@@ -78,6 +81,7 @@ export class DirectModeFacilitator {
   async verify(
     input: unknown,
     trustedSecurityContext?: TrustedSecurityContext,
+    signal?: AbortSignal,
   ): Promise<VerifyResponse> {
     if (!isFacilitatorRequest(input)) {
       return invalidVerify("invalid_kaspa_x402_payload");
@@ -86,7 +90,7 @@ export class DirectModeFacilitator {
     if (unsupportedReason) return invalidVerify(unsupportedReason);
     try {
       const verification = await this.#config.server.verifyPayment(
-        facilitatorServerOptions(input, trustedSecurityContext),
+        facilitatorServerOptions(input, trustedSecurityContext, signal),
       );
       return {
         isValid: true,
@@ -101,6 +105,7 @@ export class DirectModeFacilitator {
   async settle(
     input: unknown,
     trustedSecurityContext?: TrustedSecurityContext,
+    signal?: AbortSignal,
   ): Promise<SettleResponse> {
     if (!isFacilitatorRequest(input)) {
       return invalidSettlement("invalid_kaspa_x402_payload");
@@ -125,12 +130,14 @@ export class DirectModeFacilitator {
           `facilitator-${mode}-settler`,
           trustedSecurityContext,
           channelKey,
-          () =>
+          (adapterSignal) =>
             actionSettler(input, {
               facilitator: this,
               server: this.#config.server,
+              signal: adapterSignal,
               ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
             }),
+          signal,
         );
       } catch (error) {
         return invalidSettlement(errorCode(error), network);
@@ -138,7 +145,7 @@ export class DirectModeFacilitator {
     }
     try {
       return await this.#config.server.settlePayment(
-        facilitatorServerOptions(input, trustedSecurityContext),
+        facilitatorServerOptions(input, trustedSecurityContext, signal),
       );
     } catch (error) {
       return invalidSettlement(errorCode(error), network);
@@ -166,6 +173,7 @@ export class DirectModeFacilitator {
 function facilitatorServerOptions(
   input: FacilitatorRequest,
   trustedSecurityContext?: TrustedSecurityContext,
+  signal?: AbortSignal,
 ) {
   return {
     paymentPayload: input.paymentPayload,
@@ -173,6 +181,7 @@ function facilitatorServerOptions(
     ...(input.resource ? { resource: input.resource } : {}),
     ...(input.requestHash ? { requestHash: input.requestHash } : {}),
     ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+    ...(signal ? { signal } : {}),
   };
 }
 
@@ -194,6 +203,7 @@ export async function handleFacilitatorRequest(
     const body = await facilitator.verify(
       input,
       request.trustedSecurityContext,
+      request.signal,
     );
     return jsonResponse(200, body);
   }
@@ -205,6 +215,7 @@ export async function handleFacilitatorRequest(
     const body = await facilitator.settle(
       input,
       request.trustedSecurityContext,
+      request.signal,
     );
     return jsonResponse(200, body);
   }

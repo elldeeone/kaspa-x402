@@ -1,6 +1,7 @@
 export * from "./channel-store.js";
 export * from "./direct-client.js";
 export * from "./hash-chain-grant-http.js";
+export * from "./hash-chain-grant-url.js";
 export * from "./hash-chain-signer.js";
 export * from "./mcp-client.js";
 export * from "./payment-required.js";

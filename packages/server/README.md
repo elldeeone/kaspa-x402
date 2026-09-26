@@ -77,8 +77,10 @@ index; replay history must not permanently prevent admission of new payments.
 not exposed by the Worker-compatible package root. Connect it to the candidate
 hash-chain x402 profile through `DirectModeServer`, and route the advertised
 grant claim URL to `handleHashChainGrantClaimHttp`. Create it with a private
-SQLite file, a caller-managed 32-byte encryption key, and a synchronous payer
-eligibility/rate-limit callback. Store the encryption key separately from the
+SQLite file, a caller-managed 32-byte encryption key, and a synchronous,
+pure/idempotent payer eligibility callback. Apply rate limits through challenge
+admission and the shared public boundary, not side effects in `canClaim`. Store
+the encryption key separately from the
 database and back it up; losing it loses outstanding grants. See the
 [Node SQLite documentation](https://nodejs.org/download/release/v22.13.1/docs/api/sqlite.html)
 for runtime support.
@@ -94,6 +96,19 @@ and quarantines its live heads until owner rotation.
 The issuer checks each one-time private key and reverse hash link before
 installation. It commits one payer's signed claim and an encrypted delivery
 record before returning the key; identical live retries recover the same key.
+Hash-chain offers require a host-derived trusted security context. Challenge
+allocation deduplicates identical retries and durably caps each principal and
+tenant admission bucket before the shared head cap; hybrid routes fall back to
+batch settlement when hash-chain admission or capacity is unavailable.
+The claim route enters a shared anonymous or host-authenticated permit before
+reading or parsing the body, then charges the stored challenge's authenticated
+admission bucket before signature, eligibility, or chain work. Its body reader,
+concurrency quota, timeout, and caller cancellation are bounded. It validates
+the exact current head through `hashChainGetCurrentUtxo` before atomically
+committing an assignment; observer failure or cancellation leaves the grant
+unassigned and retryable. The issuer has no unchecked claim helper: direct
+issuer integrations must use `claimGrantAfterCurrentHeadObservation` and
+supply the authoritative exact-outpoint observer.
 The delivery record remains available after the head advances for later
 settlement checks. Call `recordAcceptedBorrow` and `recordAcceptedRotation`
 only with independently verified selected-chain evidence. A small positive
@@ -102,6 +117,17 @@ an owner rotation is accepted. An absent current head pauses issuance; a fresh
 selected exact proof for the assigned grant can advance it from hold. A reorg
 or unknown restored head otherwise stays on hold for reconciliation. An
 accepted owner sweep retires the head and stops further issuance.
+
+The server locally authenticates and durably pins the first candidate
+transaction to its assigned `(head version, grant, challenge, request, payer)`
+before invoking even a custom verifier adapter, so the adapter cannot skip the
+pin. Matching retries remain valid after the issuer has durably advanced the
+head. Verification permits at most eight inputs, reads their accepted origins
+in one cancellable batch, and caches shared accepting-block checks only for
+that verification. Alternate candidate transactions fail before origin I/O.
+The reference REST view is not authoritative for a current head: deployments
+must provide the exact-outpoint `hashChainGetCurrentUtxo` adapter and return
+`null` unless the snapshot is complete and untruncated.
 
 The [binding draft](../../spec/kaspa-hash-chain-exact-v1.md) defines the
 private grant claim and x402 settlement rules. The candidate includes payer

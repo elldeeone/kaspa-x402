@@ -34,6 +34,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     method: request.method,
     path: url.pathname,
     body,
+    signal: request.signal,
   });
 
   return Response.json(result.body, {

@@ -84,13 +84,19 @@ import {
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
-import type { HashChainGrantClaim, HashChainGrantDelivery, HashChainPublicGrant } from "./hash-chain-grants.js";
+import type {
+  HashChainGrantClaim,
+  HashChainGrantDelivery,
+  HashChainPublicGrant,
+} from "./hash-chain-grants.js";
+import { authenticateHashChainPaymentLocally } from "./hash-chain-verifier.js";
 import { activeChargedAmount, MemoryChannelLockManager } from "./stores.js";
 import { sameCovenantLineage } from "./channel-lineage.js";
 import { exactSettlementAttemptsMatch } from "./exact-heads.js";
 import {
   MemoryPublicBoundaryController,
   PublicBoundaryError,
+  publicBoundaryCallerKey,
   type PublicBoundaryController,
   type PublicBoundaryPermit,
 } from "./public-boundary.js";
@@ -118,6 +124,7 @@ import {
   type ExactHeadRecord,
   type ExactSettlementAttemptRecord,
   type ExactSettlementClaimResult,
+  type ExactTransactionVerificationRequest,
   type HandlerContext,
   type PaidRequest,
   type PaymentIdentifierRecord,
@@ -189,9 +196,10 @@ export class DirectModeServer {
     if (this.#config.exactProfile === "hash-chain-additive" &&
       (this.#config.network !== "kaspa:testnet-10" || !this.#config.hashChainIssuer ||
         !this.#config.hashChainHeadId || !this.#config.hashChainGrantClaimUrl ||
+        !this.#config.admitHashChainChallenge ||
         !this.#config.exactTransactionVerifier || !this.#config.hashChainIsSelected ||
-        !this.#config.hashChainCurrentHeadIsUnspent)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact requires a Testnet-10 issuer, head, grant URL, verifier, and current selected-chain observers");
+        !this.#config.hashChainGetCurrentUtxo)) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact requires Testnet-10 challenge admission, issuer, head, grant URL, verifier, and current selected-chain observers");
     }
     if (this.#config.exactProfile === "hash-chain-additive" && this.#config.acceptedFinality !== "accepted") {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact currently supports accepted finality only");
@@ -215,13 +223,23 @@ export class DirectModeServer {
     this.#publicBoundary =
       config.publicBoundaryController ??
       new MemoryPublicBoundaryController(config.publicBoundaryPolicy);
+    if (
+      this.#config.exactProfile === "hash-chain-additive" &&
+      !this.#publicBoundary.enterRequestKey
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "hash-chain exact requires keyed public-boundary admission",
+      );
+    }
   }
 
   async #runAdapter<T>(
     adapter: string,
-    operation: () => Promise<T> | T,
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    parentSignal?: AbortSignal,
   ): Promise<T> {
-    return this.#publicBoundary.runAdapter(adapter, operation);
+    return this.#publicBoundary.runAdapter(adapter, operation, parentSignal);
   }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
@@ -261,10 +279,12 @@ export class DirectModeServer {
     options: BuildPaymentRequiredOptions,
     status = 402,
   ): Promise<ServerResponse> {
+    if (options.signal?.aborted) return requestAbortedResponse();
     let paymentRequired: PaymentRequired;
     try {
       paymentRequired = await this.#buildRuntimePaymentRequired(options);
     } catch (error) {
+      if (options.signal?.aborted) return requestAbortedResponse();
       if (error instanceof PublicBoundaryError)
         return publicBoundaryResponse(error);
       return {
@@ -278,6 +298,7 @@ export class DirectModeServer {
         },
       };
     }
+    if (options.signal?.aborted) return requestAbortedResponse();
     return {
       status,
       headers: {
@@ -297,18 +318,124 @@ export class DirectModeServer {
       if (!issuer || !headId || !claimUrl || !options.requestHash || this.#config.network !== "kaspa:testnet-10") {
         throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain issuer, head, grant URL and request hash are required");
       }
+      if (!options.trustedSecurityContext) {
+        if (schemes.includes("batch-settlement")) {
+          await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+          return makePaymentRequired(this.#config, { ...options, schemes: ["batch-settlement"] });
+        }
+        throw new KaspaX402Error(
+          "invalid_kaspa_x402_payload",
+          "hash-chain challenge issuance requires host-trusted admission context",
+        );
+      }
       assertHashChainClaimUrl(claimUrl, options.resource.url);
-      const current = issuer.getCurrent(headId);
-      if (current.phase !== "ready") {
-        if (schemes.includes("batch-settlement")) return makePaymentRequired(this.#config, { ...options, schemes: ["batch-settlement"] });
-        throw new KaspaX402Error("invalid_kaspa_transaction", "current hash-chain grant is unavailable");
-      }
-      await this.#assertHashChainCurrentHead(headId, current);
       const amount = options.amount ?? this.#config.amount;
-      if (parseSompiString(amount) <= 0n || BigInt(current.head.amount) + BigInt(amount) > 0xffff_ffff_ffff_ffffn) {
-        throw new KaspaX402Error("invalid_kaspa_x402_amount", "hash-chain successor value is invalid");
-      }
-      const challenge = issuer.issueChallenge(headId, options.requestHash, this.#config.maxTimeoutSeconds, amount);
+      const admissionKey = publicBoundaryCallerKey(
+        options.trustedSecurityContext,
+      );
+      const requestHash = options.requestHash;
+      const challengeLockKey = sha256Hex(stableStringify({
+        scope: "kaspa:x402:hash-chain-challenge-lock:v1",
+        headId,
+        requestHash,
+        amount,
+        admissionKey,
+      }));
+      const prepared = await this.#config.lockManager.runExclusive(
+        challengeLockKey,
+        async () => {
+          let challenge = issuer.getAdmittedChallenge(
+            headId,
+            requestHash,
+            amount,
+            admissionKey,
+          );
+          if (!challenge) {
+            const admitted = await this.#runAdapter(
+              "hash-chain-challenge-admission",
+              (signal) => this.#config.admitHashChainChallenge!({
+                trustedSecurityContext: options.trustedSecurityContext!,
+                resource: options.resource,
+                requestHash,
+                amount,
+              }, signal),
+              options.signal,
+            );
+            if (!admitted) {
+              if (schemes.includes("batch-settlement")) {
+                await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+                return {
+                  kind: "fallback",
+                  paymentRequired: makePaymentRequired(this.#config, {
+                    ...options,
+                    schemes: ["batch-settlement"],
+                  }),
+                } as const;
+              }
+              throw new KaspaX402Error(
+                "invalid_kaspa_transaction",
+                "hash-chain challenge admission was rejected",
+              );
+            }
+          }
+          const current = issuer.getCurrent(headId);
+          if (current.phase !== "ready") {
+            if (schemes.includes("batch-settlement")) {
+              return {
+                kind: "fallback",
+                paymentRequired: makePaymentRequired(this.#config, {
+                  ...options,
+                  schemes: ["batch-settlement"],
+                }),
+              } as const;
+            }
+            throw new KaspaX402Error(
+              "invalid_kaspa_transaction",
+              "current hash-chain grant is unavailable",
+            );
+          }
+          await this.#assertHashChainCurrentHead(
+            headId,
+            current,
+            options.signal,
+          );
+          if (parseSompiString(amount) <= 0n ||
+            BigInt(current.head.amount) + BigInt(amount) > 0xffff_ffff_ffff_ffffn) {
+            throw new KaspaX402Error(
+              "invalid_kaspa_x402_amount",
+              "hash-chain successor value is invalid",
+            );
+          }
+          if (!challenge) {
+            options.signal?.throwIfAborted();
+            try {
+              challenge = issuer.issueAdmittedChallenge(
+                headId,
+                requestHash,
+                this.#config.maxTimeoutSeconds,
+                amount,
+                admissionKey,
+              );
+            } catch (error) {
+              if (!hashChainChallengeCapacityScope(error)) throw error;
+              if (schemes.includes("batch-settlement")) {
+                await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+                return {
+                  kind: "fallback",
+                  paymentRequired: makePaymentRequired(this.#config, {
+                    ...options,
+                    schemes: ["batch-settlement"],
+                  }),
+                } as const;
+              }
+              throw error;
+            }
+          }
+          return { kind: "challenge", challenge, current } as const;
+        },
+      );
+      if (prepared.kind === "fallback") return prepared.paymentRequired;
+      const { challenge, current } = prepared;
       const nextScript = hashChainHeadScriptPublicKey({ ownerPublicKey: current.ownerPublicKey, guard: current.nextGuard });
       const payTo = this.#config.addressCodec.encodeScriptAddress({
         network: this.#config.network,
@@ -408,36 +535,91 @@ export class DirectModeServer {
   }
 
   /** Route POST grantClaimUrl here; callers must set Cache-Control: no-store. */
-  async claimHashChainGrant(claim: HashChainGrantClaim): Promise<HashChainGrantDelivery> {
+  async claimHashChainGrant(
+    claim: HashChainGrantClaim,
+    parentSignal?: AbortSignal,
+  ): Promise<HashChainGrantDelivery> {
     if (this.#config.exactProfile !== "hash-chain-additive" || !this.#config.hashChainIssuer || !this.#config.hashChainHeadId) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant issuance is not configured");
     }
     const headId = this.#config.hashChainHeadId;
-    await this.#assertHashChainCurrentHead(headId, this.#config.hashChainIssuer.getCurrent(headId));
-    return this.#config.hashChainIssuer.claimGrant(headId, claim);
+    parentSignal?.throwIfAborted();
+    const admissionKey = this.#config.hashChainIssuer.grantClaimAdmissionKey(
+      headId,
+      claim,
+    );
+    const requestPermit = this.#publicBoundary.enterRequestKey!(
+      admissionKey,
+    );
+    return this.#runAdmittedPublicAdapter(
+      "hash-chain-current-head",
+      requestPermit,
+      `hash-chain:${headId}`,
+      async (signal) => {
+        return this.#config.hashChainIssuer!.claimGrantAfterCurrentHeadObservation(
+          headId,
+          claim,
+          {
+            expectedAdmissionKey: admissionKey,
+            signal,
+            observe: async (current, observerSignal) => {
+              observerSignal?.throwIfAborted();
+              return this.#config.hashChainGetCurrentUtxo!(
+                current.head.outpoint,
+                observerSignal,
+              );
+            },
+          },
+        );
+      },
+      parentSignal,
+    );
   }
 
-  async #assertHashChainCurrentHead(headId: string, current: HashChainPublicGrant): Promise<void> {
+  async #assertHashChainCurrentHead(
+    headId: string,
+    current: HashChainPublicGrant,
+    parentSignal?: AbortSignal,
+  ): Promise<void> {
+    await this.#runAdapter(
+      "hash-chain-current-head",
+      (signal) => this.#validateHashChainCurrentHead(headId, current, signal),
+      parentSignal,
+    );
+  }
+
+  async #validateHashChainCurrentHead(
+    headId: string,
+    current: HashChainPublicGrant,
+    signal: AbortSignal,
+  ): Promise<void> {
     const issuer = this.#config.hashChainIssuer!;
-    const check = this.#config.hashChainCurrentHeadIsUnspent!;
+    const getCurrentUtxo = this.#config.hashChainGetCurrentUtxo!;
     if (current.phase !== "ready" && current.phase !== "assigned") {
       throw new KaspaX402Error("invalid_kaspa_transaction", "current hash-chain grant is unavailable");
     }
-    const address = this.#config.addressCodec.encodeScriptAddress({
-      network: this.#config.network,
-      scriptPublicKey: { version: 0, script: current.head.scriptPublicKey.slice(4) },
-      serializedScriptPublicKey: current.head.scriptPublicKey,
-    });
-    const unspent = await this.#runAdapter("hash-chain-current-head", () => check(current.head, address));
+    signal.throwIfAborted();
+    const observed = await getCurrentUtxo(current.head.outpoint, signal);
+    signal.throwIfAborted();
     const latest = issuer.getCurrent(headId);
     if (latest.headVersion !== current.headVersion ||
       latest.head.outpoint.txid !== current.head.outpoint.txid ||
       latest.head.outpoint.index !== current.head.outpoint.index) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain head changed during selected-chain read");
     }
-    if (!unspent) {
+    if (
+      !observed ||
+      observed.outpoint.txid.toLowerCase() !== current.head.outpoint.txid ||
+      observed.outpoint.index !== current.head.outpoint.index ||
+      observed.amount !== current.head.amount ||
+      observed.scriptPublicKey.toLowerCase() !== current.head.scriptPublicKey ||
+      observed.covenantId?.toLowerCase() !== current.head.covenantId
+    ) {
       issuer.holdForReorg(headId);
-      throw new KaspaX402Error("invalid_kaspa_transaction", "current hash-chain head is absent from the selected UTXO set");
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "current hash-chain head does not match the authoritative selected UTXO",
+      );
     }
   }
 
@@ -494,11 +676,28 @@ export class DirectModeServer {
     adapter: string,
     trustedSecurityContext: TrustedSecurityContext | undefined,
     channelKey: string | undefined,
-    operation: () => Promise<T> | T,
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    parentSignal?: AbortSignal,
   ): Promise<T> {
     const requestPermit = this.#publicBoundary.enterRequest(
       trustedSecurityContext,
     );
+    return this.#runAdmittedPublicAdapter(
+      adapter,
+      requestPermit,
+      channelKey,
+      operation,
+      parentSignal,
+    );
+  }
+
+  async #runAdmittedPublicAdapter<T>(
+    adapter: string,
+    requestPermit: PublicBoundaryPermit,
+    channelKey: string | undefined,
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    parentSignal?: AbortSignal,
+  ): Promise<T> {
     let channelPermit: PublicBoundaryPermit | undefined;
     let released = false;
     const release = () => {
@@ -511,12 +710,12 @@ export class DirectModeServer {
     try {
       if (channelKey)
         channelPermit = this.#publicBoundary.enterChannel(channelKey);
-      return await this.#runAdapter(adapter, () => {
+      return await this.#runAdapter(adapter, (signal) => {
         operationStarted = true;
-        const pending = Promise.resolve().then(operation);
+        const pending = Promise.resolve().then(() => operation(signal));
         void pending.then(release, release);
         return pending;
-      });
+      }, parentSignal);
     } finally {
       // Admission failures never start the operation, so no pending work owns
       // these permits. Timed-out operations retain them until they settle.
@@ -571,6 +770,7 @@ export class DirectModeServer {
       paymentRequired,
       paymentPayload,
       requestFingerprint,
+      options.signal,
     );
     if (payment.scheme === "exact") {
       const requiredFinality = strongerExactFinality(
@@ -631,6 +831,7 @@ export class DirectModeServer {
         paymentScheme: paymentPayload.accepted.scheme,
         requestHash,
         trustedSecurityContext: options.trustedSecurityContext,
+        signal: options.signal,
         headers: {
           [PAYMENT_SIGNATURE_HEADER]:
             encodePaymentSignatureHeader(paymentPayload),
@@ -675,6 +876,7 @@ export class DirectModeServer {
     request: PaidRequest,
     handler: ProtectedHandler,
   ): Promise<ServerResponse> {
+    if (request.signal?.aborted) return requestAbortedResponse();
     const resource = request.resource ?? { url: request.url };
     try {
       assertJsonResourceBudget(
@@ -791,6 +993,7 @@ export class DirectModeServer {
           fingerprint,
           safePaymentScopeIdHint(paymentPayload),
           paymentPayload,
+          request.signal,
         );
         if (cached) return cached;
         const batchReplay = await this.#checkBatchReplay(
@@ -809,10 +1012,12 @@ export class DirectModeServer {
             requestedScheme,
             request.trustedSecurityContext,
             request.mcpErrorChargeSompi,
+            request.signal,
           );
         } catch (error) {
           if (error instanceof PublicBoundaryError)
             return publicBoundaryResponse(error);
+          if (request.signal?.aborted) return requestAbortedResponse();
           return this.#correctiveResponse(
             resource,
             paymentPayload,
@@ -820,6 +1025,7 @@ export class DirectModeServer {
             paymentAmount,
             requestedScheme,
             request.trustedSecurityContext,
+            request.signal,
           );
         }
         const runVerified = async () => {
@@ -870,6 +1076,7 @@ export class DirectModeServer {
                     paymentAmount,
                     requestedScheme,
                     request.trustedSecurityContext,
+                    request.signal,
                   );
                 }
                 const handlerStarted =
@@ -887,7 +1094,11 @@ export class DirectModeServer {
             }
           }
           if (verified.scheme === "exact") {
-            const replay = await this.#checkExactReplay(verified, fingerprint);
+            const replay = await this.#checkExactReplay(
+              verified,
+              fingerprint,
+              request.signal,
+            );
             if (replay) return replay;
             try {
               if (!verified.recoveryOnly) {
@@ -901,6 +1112,7 @@ export class DirectModeServer {
                 paymentAmount,
                 requestedScheme,
                 request.trustedSecurityContext,
+                request.signal,
               );
             }
             try {
@@ -909,9 +1121,18 @@ export class DirectModeServer {
                 fingerprint,
                 paymentIdentifier,
               );
-              verified = await this.#settleExactIfNeeded(verified, claim);
+              verified = await this.#settleExactIfNeeded(
+                verified,
+                claim,
+                request.signal,
+              );
               if (verified.profile === "hash-chain-additive") {
-                await this.#recordAcceptedHashChainPayment(verified, fingerprint, paymentIdentifier);
+                await this.#recordAcceptedHashChainPayment(
+                  verified,
+                  fingerprint,
+                  paymentIdentifier,
+                  request.signal,
+                );
               }
               const durableAttempt =
                 await this.#config.store.loadExactSettlementAttempt(
@@ -952,6 +1173,7 @@ export class DirectModeServer {
                 paymentAmount,
                 requestedScheme,
                 request.trustedSecurityContext,
+                request.signal,
               );
             }
           }
@@ -964,9 +1186,9 @@ export class DirectModeServer {
               const execution = await this.#runAdapter<
                 | { status: "expired"; reason: string }
                 | { status: "completed"; result: ProtectedHandlerResult }
-              >(
-                "protected-handler",
-                () => {
+                >(
+                  "protected-handler",
+                (signal) => {
                   if (verified.scheme === "batch-settlement") {
                     const expiryError = batchPresentationExpiryError({
                       maxTimeoutSeconds: verified.accepted.maxTimeoutSeconds,
@@ -979,13 +1201,14 @@ export class DirectModeServer {
                   }
                   return Promise.resolve(
                     handler({
-                      request,
+                      request: { ...request, signal },
                       payment: verified,
                       requestFingerprint: fingerprint,
                       paymentIdentifier,
                     }),
                   ).then((result) => ({ status: "completed", result }));
                 },
+                request.signal,
               );
               if (execution.status === "expired") {
                 if (batchAttemptId) {
@@ -1081,6 +1304,7 @@ export class DirectModeServer {
               paymentAmount,
               requestedScheme,
               request.trustedSecurityContext,
+              request.signal,
             );
           }
 
@@ -2040,6 +2264,7 @@ export class DirectModeServer {
     requestedScheme?: "exact" | "batch-settlement",
     trustedSecurityContext?: PaidRequest["trustedSecurityContext"],
     mcpErrorChargeSompi?: SompiString,
+    signal?: AbortSignal,
   ): Promise<VerifiedPayment> {
     assertTrustedBatchContext(paymentPayload.accepted, trustedSecurityContext);
     const paymentRequired = await this.#expectedPaymentRequired(
@@ -2050,11 +2275,13 @@ export class DirectModeServer {
       trustedSecurityContext,
       mcpErrorChargeSompi,
       requestFingerprint,
+      signal,
     );
     return this.#verifyPaymentAgainstRequired(
       paymentRequired,
       paymentPayload,
       requestFingerprint,
+      signal,
     );
   }
 
@@ -2062,6 +2289,7 @@ export class DirectModeServer {
     paymentRequired: PaymentRequired,
     paymentPayload: PaymentPayload,
     requestFingerprint: Hash32Hex,
+    signal?: AbortSignal,
   ): Promise<VerifiedPayment> {
     const retry = validatePaymentRetry({ paymentRequired, paymentPayload });
     if (!retry.ok) throw retry.error;
@@ -2081,6 +2309,7 @@ export class DirectModeServer {
           payload: ExactTransactionPayload;
         },
         requestFingerprint,
+        signal,
       );
     }
 
@@ -2124,6 +2353,7 @@ export class DirectModeServer {
       payload: ExactTransactionPayload;
     },
     requestFingerprint: Hash32Hex,
+    parentSignal?: AbortSignal,
   ): Promise<VerifiedExactPayment> {
     const accepted = paymentPayload.accepted;
     const payload = paymentPayload.payload;
@@ -2180,23 +2410,44 @@ export class DirectModeServer {
       this.#config.acceptedFinality,
       accepted.extra.finality,
     );
-    const verification = await this.#runAdapter("exact-transaction-verifier", () =>
-      this.#config.exactTransactionVerifier!.verifyExactPayment({
-        network: accepted.network,
-        profile,
-        transaction: payload.transaction,
-        transactionEncoding: payload.transactionEncoding,
-        paymentOutputIndex: payload.paymentOutputIndex,
-        amount: accepted.amount,
-        payTo: accepted.payTo,
-        payToScriptPublicKey,
-        requiredFinality,
+    const verificationRequest: ExactTransactionVerificationRequest = {
+      network: accepted.network,
+      profile,
+      transaction: payload.transaction,
+      transactionEncoding: payload.transactionEncoding,
+      paymentOutputIndex: payload.paymentOutputIndex,
+      amount: accepted.amount,
+      payTo: accepted.payTo,
+      payToScriptPublicKey,
+      requiredFinality,
+      requestHash: requestFingerprint,
+      paymentRequirementsHash,
+      authorization: payload.authorization,
+      ...(head ? { head } : {}),
+      ...(hashChainHead ? { hashChainHead } : {}),
+    };
+    if (hashChainHead) verificationRequest.signal = parentSignal;
+    const locallyAuthenticatedHashChain = hashChainHead
+      ? authenticateHashChainPaymentLocally(verificationRequest)
+      : undefined;
+    if (hashChainHead && locallyAuthenticatedHashChain) {
+      this.#config.hashChainIssuer!.pinPaymentCandidate({
+        headId: hashChainHead.headId,
+        headVersion: hashChainHead.headVersion,
+        grantId: hashChainHead.grantId,
+        challengeId: hashChainHead.challengeId,
         requestHash: requestFingerprint,
-        paymentRequirementsHash,
-        authorization: payload.authorization,
-        ...(head ? { head } : {}),
-        ...(hashChainHead ? { hashChainHead } : {}),
-      }),
+        payerPublicKey: locallyAuthenticatedHashChain.payerPublicKey,
+        transactionId: locallyAuthenticatedHashChain.transactionId,
+      });
+    }
+    const verification = await this.#runAdapter("exact-transaction-verifier", (signal) => {
+      verificationRequest.signal = signal;
+      return this.#config.exactTransactionVerifier!.verifyExactPayment(
+        verificationRequest,
+      );
+    },
+      parentSignal,
     );
     if (!/^[0-9a-fA-F]{64}$/.test(verification.transactionId)) {
       throw new KaspaX402Error(
@@ -2210,6 +2461,18 @@ export class DirectModeServer {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         "exact verifier returned an invalid payer public key",
+      );
+    }
+    if (
+      locallyAuthenticatedHashChain &&
+      (verification.transactionId.toLowerCase() !==
+        locallyAuthenticatedHashChain.transactionId ||
+        verification.requestAuthorization.publicKey.toLowerCase() !==
+          locallyAuthenticatedHashChain.payerPublicKey)
+    ) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_transaction",
+        "hash-chain verifier disagrees with server-authenticated candidate identity",
       );
     }
     if (hashChainHead && this.#config.hashChainIssuer?.getDeliveryRecord(
@@ -3468,6 +3731,7 @@ export class DirectModeServer {
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
     paymentIdentifier: string | undefined,
+    signal?: AbortSignal,
   ): Promise<void> {
     const issuer = this.#config.hashChainIssuer;
     const head = verified.hashChainHead;
@@ -3478,7 +3742,7 @@ export class DirectModeServer {
     }
     // A grant readback may have held this assigned head after broadcast. Check
     // selection again before the issuer resolves that hold with the payment.
-    if (!await this.#cachedHashChainPaymentSelected(verified.transactionId)) {
+    if (!await this.#cachedHashChainPaymentSelected(verified.transactionId, signal)) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "accepted hash-chain payment is no longer selected");
     }
     issuer.recordAcceptedPayment(head.headId, {
@@ -3502,6 +3766,7 @@ export class DirectModeServer {
   async #settleExactIfNeeded(
     verified: VerifiedExactPayment,
     claim: ExactSettlementClaimResult,
+    signal?: AbortSignal,
   ): Promise<VerifiedExactPayment> {
     if (!verified.transaction) return verified;
     if (
@@ -3509,7 +3774,10 @@ export class DirectModeServer {
       claim.attempt.status === "applied"
     ) {
       if (verified.profile === "hash-chain-additive") {
-        const selected = await this.#cachedHashChainPaymentSelected(verified.transactionId);
+        const selected = await this.#cachedHashChainPaymentSelected(
+          verified.transactionId,
+          signal,
+        );
         if (!selected || (verified.observedFinality !== "accepted" && verified.observedFinality !== "confirmed")) {
           throw new KaspaX402Error("invalid_kaspa_transaction", "accepted hash-chain attempt is no longer selected");
         }
@@ -3788,6 +4056,7 @@ export class DirectModeServer {
     fingerprint: Hash32Hex,
     paymentScopeId: Hash32Hex | undefined,
     paymentPayload: PaymentPayload,
+    signal?: AbortSignal,
   ): Promise<ServerResponse | undefined> {
     if (!paymentIdentifier) return undefined;
     const record =
@@ -3805,7 +4074,7 @@ export class DirectModeServer {
     }
     if (paymentPayload.accepted.scheme === "exact" &&
       paymentPayload.accepted.extra.profile === "hash-chain-additive") {
-      if (!record.transactionId || !await this.#cachedHashChainPaymentSelected(record.transactionId)) {
+      if (!record.transactionId || !await this.#cachedHashChainPaymentSelected(record.transactionId, signal)) {
         return hashChainReorgResponse();
       }
     }
@@ -3815,6 +4084,7 @@ export class DirectModeServer {
   async #checkExactReplay(
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
+    signal?: AbortSignal,
   ): Promise<ServerResponse | undefined> {
     const record = await this.#config.store.loadExactPayment(
       verified.transactionId,
@@ -3825,7 +4095,7 @@ export class DirectModeServer {
       record.paymentOutputIndex === verified.paymentOutputIndex
     ) {
       if (verified.profile === "hash-chain-additive" &&
-        !await this.#cachedHashChainPaymentSelected(verified.transactionId)) {
+        !await this.#cachedHashChainPaymentSelected(verified.transactionId, signal)) {
         return hashChainReorgResponse();
       }
       return record.response;
@@ -3839,16 +4109,26 @@ export class DirectModeServer {
     };
   }
 
-  async #cachedHashChainPaymentSelected(transactionId: Hash32Hex): Promise<boolean> {
+  async #cachedHashChainPaymentSelected(
+    transactionId: Hash32Hex,
+    parentSignal?: AbortSignal,
+  ): Promise<boolean> {
     const check = this.#config.hashChainIsSelected;
     const issuer = this.#config.hashChainIssuer;
     const headId = this.#config.hashChainHeadId;
     if (!check || !issuer || !headId) return false;
     try {
-      if (await check(transactionId)) return true;
+      const selected = await this.#runAdapter(
+        "hash-chain-selected-check",
+        (signal) => check(transactionId, signal),
+        parentSignal,
+      );
+      parentSignal?.throwIfAborted();
+      if (selected) return true;
       issuer.holdForReorg(headId);
       return false;
-    } catch {
+    } catch (error) {
+      if (parentSignal?.aborted) throw parentSignal.reason ?? error;
       // An unavailable observer cannot authorize a cached protected response.
       return false;
     }
@@ -3930,7 +4210,9 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
     trustedSecurityContext?: PaidRequest["trustedSecurityContext"],
+    signal?: AbortSignal,
   ): Promise<ServerResponse> {
+    if (signal?.aborted) return requestAbortedResponse();
     if (
       verified.scheme === "exact" &&
       verified.paymentPayload.payload.type === "exact-transaction"
@@ -3947,19 +4229,17 @@ export class DirectModeServer {
           body: { error: "exact_settlement_recovery_required" },
         };
       }
-      const paymentRequired = await this.#buildRuntimePaymentRequired({
+      const paymentRequired = await this.#paymentRequiredResponse({
         resource,
         amount: paymentAmount,
         scheme: "exact",
         error: errorReason,
         ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+        ...(signal ? { signal } : {}),
       });
+      if (paymentRequired.status !== 402) return paymentRequired;
       return {
-        status: 402,
-        headers: {
-          [PAYMENT_REQUIRED_HEADER]:
-            encodePaymentRequiredHeader(paymentRequired),
-        },
+        ...paymentRequired,
         body: {
           error: errorReason,
         },
@@ -3972,6 +4252,7 @@ export class DirectModeServer {
       paymentAmount,
       requestedScheme,
       trustedSecurityContext,
+      signal,
     );
   }
 
@@ -3982,7 +4263,9 @@ export class DirectModeServer {
     paymentAmount?: SompiString,
     requestedScheme?: "exact" | "batch-settlement",
     trustedSecurityContext?: PaidRequest["trustedSecurityContext"],
+    signal?: AbortSignal,
   ): Promise<ServerResponse> {
+    if (signal?.aborted) return requestAbortedResponse();
     const errorReason =
       error instanceof KaspaX402Error
         ? toX402ErrorReason(error.code)
@@ -4026,6 +4309,7 @@ export class DirectModeServer {
         ? { requestHash: paymentPayload.payload.requestHash }
         : {}),
       ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+      ...(signal ? { signal } : {}),
     });
     return {
       ...paymentRequired,
@@ -4182,7 +4466,9 @@ export class DirectModeServer {
     trustedSecurityContext?: PaidRequest["trustedSecurityContext"],
     mcpErrorChargeSompi?: SompiString,
     requestFingerprint?: Hash32Hex,
+    signal?: AbortSignal,
   ): Promise<PaymentRequired> {
+    signal?.throwIfAborted();
     const payloadChannelId = safePaymentChannelId(paymentPayload);
     const accepted = paymentPayload.accepted;
     if (accepted.scheme === "exact") {
@@ -4200,6 +4486,7 @@ export class DirectModeServer {
         scheme: "exact",
         ...(requestFingerprint ? { requestHash: requestFingerprint } : {}),
         ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
+        ...(signal ? { signal } : {}),
       });
     }
     if (accepted.scheme !== "batch-settlement" || !payloadChannelId) {
@@ -4510,7 +4797,7 @@ function paymentRequirementRouteOptions(
   profile: import("@kaspa-x402/core").ExactProfile,
 ): Pick<
   BuildPaymentRequiredOptions,
-  "scheme" | "schemes" | "trustedSecurityContext" | "mcpErrorChargeSompi" | "requestHash"
+  "scheme" | "schemes" | "trustedSecurityContext" | "mcpErrorChargeSompi" | "requestHash" | "signal"
 > {
   const trustedSecurityContext = request.trustedSecurityContext;
   const mcpErrorChargeSompi = request.mcpErrorChargeSompi;
@@ -4521,12 +4808,14 @@ function paymentRequirementRouteOptions(
       ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
       ...(mcpErrorChargeSompi ? { mcpErrorChargeSompi } : {}),
       ...(requestHash ? { requestHash } : {}),
+      ...(request.signal ? { signal: request.signal } : {}),
     };
   return {
     scheme: request.paymentScheme,
     ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
     ...(mcpErrorChargeSompi ? { mcpErrorChargeSompi } : {}),
     ...(requestHash ? { requestHash } : {}),
+    ...(request.signal ? { signal: request.signal } : {}),
   };
 }
 
@@ -5221,6 +5510,20 @@ function safePaymentLockKey(
 ): Hash32Hex | undefined {
   const channelId = safePaymentChannelId(paymentPayload);
   if (channelId) return channelId;
+  if (
+    paymentPayload.accepted.scheme === "exact" &&
+    paymentPayload.accepted.extra.binding === "kaspa-hash-chain-exact-v1" &&
+    paymentPayload.accepted.extra.headId &&
+    paymentPayload.accepted.extra.grantId
+  ) {
+    return sha256Hex(
+      stableStringify({
+        scope: "kaspa:x402:hash-chain-grant-verification-lock:v1",
+        headId: paymentPayload.accepted.extra.headId.toLowerCase(),
+        grantId: paymentPayload.accepted.extra.grantId.toLowerCase(),
+      }),
+    );
+  }
   const payload = paymentPayload.payload;
   if (
     payload.type === "exact-transaction" &&
@@ -5328,6 +5631,17 @@ function hashChainRequestFingerprint(request: PaidRequest): Hash32Hex {
     })),
     request.trustedSecurityContext,
   );
+}
+
+function hashChainChallengeCapacityScope(
+  error: unknown,
+): "admission" | "head" | undefined {
+  if (!isRecord(error) || error.code !== "HASH_CHAIN_CHALLENGE_CAPACITY") {
+    return undefined;
+  }
+  return error.scope === "admission" || error.scope === "head"
+    ? error.scope
+    : undefined;
 }
 
 function assertHashChainClaimUrl(claimUrl: string, resourceUrl: string): void {
@@ -5795,6 +6109,14 @@ function publicBoundaryResponse(error: unknown): ServerResponse {
     status: error.status,
     headers: { "retry-after": "1" },
     body: { error: error.reason },
+  };
+}
+
+function requestAbortedResponse(): ServerResponse {
+  return {
+    status: 499,
+    headers: {},
+    body: { error: "request_aborted" },
   };
 }
 

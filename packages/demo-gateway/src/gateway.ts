@@ -230,6 +230,7 @@ export async function handleGatewayRequest(
         resource,
         paymentAmount: amountFor(config, profile),
         paymentScheme: profile,
+        signal: request.signal,
       },
       async ({ payment, requestFingerprint, paymentIdentifier }) => ({
         status: 200,
@@ -1359,6 +1360,7 @@ async function gatewayUnsupportedPaymentResponse(
     amount: amountFor(config, profile),
     scheme: profile,
     error: toX402ErrorReason("unsupported_scheme"),
+    signal: request.signal,
   });
   return serverResponse(
     { ...response, body: { error: toX402ErrorReason("unsupported_scheme") } },

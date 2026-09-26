@@ -3204,6 +3204,35 @@ describe("direct-mode server", () => {
     expect(commitment?.response.status).toBe(200);
   });
 
+  it("propagates caller cancellation into protected work", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    const controller = new AbortController();
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    let observed: AbortSignal | undefined;
+
+    const pending = setup.server.handlePaidRequest(
+      { ...requestWithPayment(payment.payload), signal: controller.signal },
+      async ({ request }) => {
+        observed = request.signal;
+        markEntered();
+        await new Promise<never>((_resolve, reject) => {
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(request.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+    );
+    await entered;
+    controller.abort(new Error("caller disconnected"));
+
+    await expect(pending).resolves.toMatchObject({ status: 500 });
+    expect(observed?.aborted).toBe(true);
+  });
+
   it("rejects a salted channel alias for an already registered covenant", async () => {
     const setup = makeServer();
     const first = makeDepositPayment(setup, { salt: "31".repeat(32) });

@@ -1,5 +1,9 @@
 import { sha256Hex, stableStringify } from "@kaspa-x402/core";
-import type { HashChainGrantClaimRequest, HashChainGrantDelivery } from "./types.js";
+import { assertHashChainGrantDestination } from "./hash-chain-grant-url.js";
+import type {
+  HashChainGrantClaimRequest,
+  HashChainGrantDelivery,
+} from "./types.js";
 
 /** Signs and claims exactly the advertised, request-bound grant. The caller retains the key. */
 export async function claimHashChainGrantViaHttp(
@@ -7,13 +11,13 @@ export async function claimHashChainGrantViaHttp(
   signDigest: (digest: string) => Promise<string> | string,
   fetcher: typeof fetch = fetch,
 ): Promise<HashChainGrantDelivery> {
-  const { head, network, requestHash, payerPublicKey } = request;
-  const url = new URL(head.grantClaimUrl);
-  const loopback = url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "[::1]";
-  if (url.username || url.password || url.hash ||
-    (url.protocol !== "https:" && !(loopback && url.protocol === "http:"))) {
-    throw new Error("grant claim URL must use HTTPS or loopback HTTP");
-  }
+  const { head, network, requestHash, payerPublicKey, resourceUrl } = request;
+  const claimUrl = head.grantClaimUrl;
+  assertHashChainGrantDestination(
+    claimUrl,
+    resourceUrl,
+    request.destinationPolicy,
+  );
   const claim = {
     grantId: head.grantId,
     challengeId: head.challengeId,
@@ -29,7 +33,7 @@ export async function claimHashChainGrantViaHttp(
   }));
   const signature = await signDigest(digest);
   if (!/^[0-9a-fA-F]{128}$/.test(signature)) throw new Error("grant payer signature must be 64-byte Schnorr hex");
-  const response = await fetcher(head.grantClaimUrl, {
+  const response = await fetcher(claimUrl, {
     method: "POST",
     headers: { "content-type": "application/json", "cache-control": "no-store" },
     body: JSON.stringify({ ...claim, signature: signature.toLowerCase() }),

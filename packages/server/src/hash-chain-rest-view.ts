@@ -1,5 +1,4 @@
 import type { FundingOutpoint } from "@kaspa-x402/core";
-import type { HashChainObservedHead } from "./hash-chain-grants.js";
 import type { HashChainChainView, HashChainSelectedTransaction, HashChainTrustedOrigin } from "./hash-chain-verifier.js";
 
 /** Bounded Testnet-10 REST readback; both the transaction and its accepting block must remain selected. */
@@ -11,22 +10,77 @@ export class HashChainRestView implements HashChainChainView {
     this.#baseUrl = parsed.href.replace(/\/+$/, "");
   }
 
-  async getAcceptedOrigin(outpoint: FundingOutpoint): Promise<HashChainTrustedOrigin | null> {
-    const tx = await this.#selectedTransaction(outpoint.txid);
-    if (!tx) return null;
-    const outputs = list(tx.outputs);
-    const output = outputs.find((item) => Number(record(item).index) === outpoint.index) ?? outputs[outpoint.index];
-    if (!output) return null;
-    const item = record(output);
-    return {
-      amount: decimal(item.amount),
-      scriptPublicKey: script(item.script_public_key),
-      covenantId: covenant(item)?.covenantId ?? null,
-    };
+  async getAcceptedOrigin(
+    outpoint: FundingOutpoint,
+    options?: { signal?: AbortSignal },
+  ): Promise<HashChainTrustedOrigin | null> {
+    return (await this.getAcceptedOrigins([outpoint], options))[0] ?? null;
   }
 
-  async getSelectedTransaction(transactionId: string): Promise<HashChainSelectedTransaction | null> {
-    const tx = await this.#selectedTransaction(transactionId);
+  async getAcceptedOrigins(
+    outpoints: readonly FundingOutpoint[],
+    options: { signal?: AbortSignal } = {},
+  ): Promise<readonly (HashChainTrustedOrigin | null)[]> {
+    if (outpoints.length === 0 || outpoints.length > 64) {
+      throw new Error("selected-chain REST origin batch must contain 1 to 64 outpoints");
+    }
+    options.signal?.throwIfAborted();
+    const transactionIds = [...new Set(outpoints.map((item) => hash(item.txid)))];
+    const response = await this.#json<unknown[]>(
+      "/transactions/search?resolve_previous_outpoints=no&acceptance=accepted&fields=transaction_id,is_accepted,accepting_block_hash,outputs",
+      {
+        method: "POST",
+        headers: { "content-type": "application/json" },
+        body: JSON.stringify({ transactionIds }),
+      },
+      options.signal,
+    );
+    if (!Array.isArray(response)) {
+      throw new Error("selected-chain REST transaction batch is invalid");
+    }
+    const transactions = new Map<string, Record<string, unknown>>();
+    for (const raw of response) {
+      const tx = record(raw);
+      const id = hash(tx.transaction_id);
+      if (!transactionIds.includes(id) || transactions.has(id)) {
+        throw new Error("selected-chain REST transaction batch is inconsistent");
+      }
+      transactions.set(id, tx);
+    }
+    const blockCache = new Map<string, Promise<Record<string, unknown> | null>>();
+    const selected = new Map<string, Record<string, unknown> | null>();
+    await Promise.all(transactionIds.map(async (id) => {
+      const tx = transactions.get(id);
+      selected.set(
+        id,
+        tx && await this.#isSelectedTransaction(tx, id, blockCache, options.signal)
+          ? tx
+          : null,
+      );
+    }));
+    options.signal?.throwIfAborted();
+    return outpoints.map((outpoint) => {
+      const tx = selected.get(hash(outpoint.txid));
+      if (!tx) return null;
+      const outputs = list(tx.outputs);
+      const output = outputs.find(
+        (item) => Number(record(item).index) === outpoint.index,
+      ) ?? outputs[outpoint.index];
+      if (!output) return null;
+      const item = record(output);
+      return {
+        amount: decimal(item.amount),
+        scriptPublicKey: script(item.script_public_key),
+        covenantId: covenant(item)?.covenantId ?? null,
+      };
+    });
+  }
+
+  async getSelectedTransaction(
+    transactionId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<HashChainSelectedTransaction | null> {
+    const tx = await this.#selectedTransaction(transactionId, options.signal);
     if (!tx) return null;
     const first = record(list(tx.inputs)[0]);
     const outputs = list(tx.outputs);
@@ -46,44 +100,74 @@ export class HashChainRestView implements HashChainChainView {
     };
   }
 
-  async isSelected(transactionId: string): Promise<boolean> {
-    return (await this.#selectedTransaction(transactionId)) !== null;
+  async isSelected(
+    transactionId: string,
+    options: { signal?: AbortSignal } = {},
+  ): Promise<boolean> {
+    return (await this.#selectedTransaction(transactionId, options.signal)) !== null;
   }
 
-  /** A virtual-UTXO read prevents release of a key for a reorged or already spent head. */
-  async isUnspentHead(head: HashChainObservedHead, address: string): Promise<boolean> {
-    const response = await this.#json<unknown[]>(`/addresses/${encodeURIComponent(address)}/utxos`);
-    if (!Array.isArray(response)) throw new Error("selected-chain REST UTXO list is invalid");
-    if (response.length > 512) throw new Error("selected-chain REST UTXO list is too large");
-    for (const raw of response) {
-      const utxo = record(raw);
-      const outpoint = record(utxo.outpoint);
-      if (hash(outpoint.transactionId) !== head.outpoint.txid || index(outpoint.index) !== head.outpoint.index) continue;
-      const entry = record(utxo.utxoEntry);
-      const scriptPublicKey = record(entry.scriptPublicKey);
-      return decimal(entry.amount) === head.amount &&
-        script(scriptPublicKey.scriptPublicKey) === head.scriptPublicKey &&
-        hash(entry.covenantId ?? entry.covenant_id) === head.covenantId;
-    }
-    return false;
-  }
-
-  async #selectedTransaction(transactionId: string): Promise<Record<string, unknown> | null> {
+  async #selectedTransaction(
+    transactionId: string,
+    signal?: AbortSignal,
+  ): Promise<Record<string, unknown> | null> {
     const id = hash(transactionId);
-    const tx = await this.#json(`/transactions/${id}?inputs=true&outputs=true&resolve_previous_outpoints=no`);
-    if (!tx || tx.is_accepted !== true || hash(tx.transaction_id) !== id) return null;
-    const acceptingBlock = hash(tx.accepting_block_hash);
-    const block = await this.#json(`/blocks/${acceptingBlock}?includeTransactions=false`);
-    if (!block) return null;
-    const verbose = record(block.verboseData);
-    if (verbose.isChainBlock !== true || hash(verbose.hash) !== acceptingBlock) return null;
-    return tx;
+    const tx = await this.#json(
+      `/transactions/${id}?inputs=true&outputs=true&resolve_previous_outpoints=no`,
+      {},
+      signal,
+    );
+    if (!tx) return null;
+    return await this.#isSelectedTransaction(tx, id, new Map(), signal)
+      ? tx
+      : null;
   }
 
-  async #json<T = Record<string, unknown>>(path: string): Promise<T | null> {
+  async #isSelectedTransaction(
+    tx: Record<string, unknown>,
+    transactionId: string,
+    blockCache: Map<string, Promise<Record<string, unknown> | null>>,
+    signal?: AbortSignal,
+  ): Promise<boolean> {
+    if (tx.is_accepted !== true || hash(tx.transaction_id) !== transactionId) {
+      return false;
+    }
+    const acceptingBlock = hash(tx.accepting_block_hash);
+    let block = blockCache.get(acceptingBlock);
+    if (!block) {
+      block = this.#json(
+        `/blocks/${acceptingBlock}?includeTransactions=false`,
+        {},
+        signal,
+      );
+      blockCache.set(acceptingBlock, block);
+    }
+    const selectedBlock = await block;
+    signal?.throwIfAborted();
+    if (!selectedBlock) return false;
+    const verbose = record(selectedBlock.verboseData);
+    return verbose.isChainBlock === true && hash(verbose.hash) === acceptingBlock;
+  }
+
+  async #json<T = Record<string, unknown>>(
+    path: string,
+    init: RequestInit = {},
+    signal?: AbortSignal,
+  ): Promise<T | null> {
+    signal?.throwIfAborted();
+    const requestSignal = signal
+      ? AbortSignal.any([signal, AbortSignal.timeout(8000)])
+      : AbortSignal.timeout(8000);
     const response = await this.fetcher(`${this.#baseUrl}${path}`, {
-      headers: { accept: "application/json", "cache-control": "no-cache" },
-      cache: "no-store", redirect: "error", signal: AbortSignal.timeout(8000),
+      ...init,
+      headers: {
+        accept: "application/json",
+        "cache-control": "no-cache",
+        ...(init.headers ?? {}),
+      },
+      cache: "no-store",
+      redirect: "error",
+      signal: requestSignal,
     });
     if (response.status === 404) return null;
     if (!response.ok) throw new Error(`selected-chain REST returned HTTP ${response.status}`);
@@ -93,15 +177,20 @@ export class HashChainRestView implements HashChainChainView {
     if (!reader) throw new Error("selected-chain REST response has no body");
     const chunks: Uint8Array[] = [];
     let size = 0;
-    for (;;) {
-      const { done, value } = await reader.read();
-      if (done) break;
-      size += value.byteLength;
-      if (size > 524288) {
-        await reader.cancel();
-        throw new Error("selected-chain REST response is too large");
+    try {
+      for (;;) {
+        signal?.throwIfAborted();
+        const { done, value } = await reader.read();
+        if (done) break;
+        size += value.byteLength;
+        if (size > 524288) {
+          throw new Error("selected-chain REST response is too large");
+        }
+        chunks.push(value);
       }
-      chunks.push(value);
+    } catch (error) {
+      await reader.cancel(error).catch(() => undefined);
+      throw error;
     }
     const bytes = new Uint8Array(size);
     let offset = 0;

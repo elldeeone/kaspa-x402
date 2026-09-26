@@ -12,6 +12,7 @@ import {
   type HashChainAcceptedTransition,
   type HashChainGrantClaim,
   type HashChainObservedHead,
+  type HashChainPublicGrant,
 } from "../src/hash-chain-grants.js";
 
 const OWNER = "56b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967";
@@ -20,6 +21,7 @@ const OTHER_SECRET = Buffer.alloc(32, 8);
 const HEAD_ID = "ab".repeat(32);
 const REQUEST = "cd".repeat(32);
 const COVENANT_ID = "de".repeat(32);
+const ADMISSION = "ef".repeat(32);
 
 function observed(txid: string, guard: string, amount = "100000000"): HashChainObservedHead {
   return {
@@ -48,7 +50,152 @@ function accepted(before: HashChainObservedHead, after: HashChainObservedHead): 
   return { finality: "accepted", predecessor: before.outpoint, successor: after };
 }
 
+function currentUtxo(current: HashChainPublicGrant) {
+  return {
+    outpoint: current.head.outpoint,
+    amount: current.head.amount,
+    scriptPublicKey: current.head.scriptPublicKey,
+    covenantId: current.head.covenantId,
+  };
+}
+
+async function claimGrant(
+  issuer: HashChainGrantIssuer,
+  headId: string,
+  claim: HashChainGrantClaim,
+) {
+  return issuer.claimGrantAfterCurrentHeadObservation(headId, claim, {
+    observe: async (current) => currentUtxo(current),
+  });
+}
+
 describe("durable hash-chain grants", () => {
+  it("deduplicates challenges and durably caps each authenticated admission key", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-grants-"));
+    const file = path.join(folder, "grants.sqlite");
+    const key = randomBytes(32);
+    let now = new Date("2026-09-22T12:00:00.000Z");
+    let issuer = await HashChainGrantIssuer.open({
+      databasePath: file,
+      encryptionKey: key,
+      canClaim: () => true,
+      now: () => now,
+    });
+    try {
+      const chain = generateHashChainBorrowGrants(1);
+      issuer.installHead({
+        headId: HEAD_ID,
+        network: "kaspa:testnet-10",
+        ownerPublicKey: OWNER,
+        head: observed("11".repeat(32), chain.initialGuard),
+        grants: chain.grants,
+      });
+      expect("issueChallenge" in issuer).toBe(false);
+      const first = issuer.issueAdmittedChallenge(HEAD_ID, "01".repeat(32), 60, "20000000", ADMISSION);
+      now = new Date("2026-09-22T12:00:01.000Z");
+      expect(issuer.issueAdmittedChallenge(HEAD_ID, "01".repeat(32), 60, "20000000", ADMISSION)).toEqual(first);
+      expect(first).not.toHaveProperty("admissionKey");
+      expect(issuer.getChallenge(HEAD_ID, first.challengeId)).not.toHaveProperty("admissionKey");
+      for (const byte of ["02", "03", "04"]) {
+        issuer.issueAdmittedChallenge(HEAD_ID, byte.repeat(32), 60, "20000000", ADMISSION);
+      }
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, "05".repeat(32), 60, "20000000", ADMISSION))
+        .toThrow("admission key");
+      expect(issuer.issueAdmittedChallenge(HEAD_ID, "05".repeat(32), 60, "20000000", "f0".repeat(32)))
+        .toMatchObject({ requestHash: "05".repeat(32) });
+
+      issuer.close();
+      issuer = await HashChainGrantIssuer.open({
+        databasePath: file,
+        encryptionKey: key,
+        canClaim: () => true,
+        now: () => now,
+      });
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, "06".repeat(32), 60, "20000000", ADMISSION))
+        .toThrow("admission key");
+    } finally {
+      issuer.close();
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
+  it("durably pins one authenticated payment candidate per assigned grant", async () => {
+    const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-grants-"));
+    const file = path.join(folder, "grants.sqlite");
+    const key = randomBytes(32);
+    let eligibilityChecks = 0;
+    let issuer = await HashChainGrantIssuer.open({
+      databasePath: file,
+      encryptionKey: key,
+      canClaim: () => {
+        eligibilityChecks++;
+        return true;
+      },
+    });
+    try {
+      const chain = generateHashChainBorrowGrants(1);
+      issuer.installHead({
+        headId: HEAD_ID,
+        network: "kaspa:testnet-10",
+        ownerPublicKey: OWNER,
+        head: observed("11".repeat(32), chain.initialGuard),
+        grants: chain.grants,
+      });
+      const challenge = issuer.issueAdmittedChallenge(
+        HEAD_ID,
+        REQUEST,
+        60,
+        "20000000",
+        ADMISSION,
+      );
+      const claim = signedClaim(challenge);
+      expect(issuer.grantClaimAdmissionKey(HEAD_ID, claim)).toBe(ADMISSION);
+      expect(issuer.grantClaimAdmissionKey(HEAD_ID, {} as HashChainGrantClaim))
+        .not.toBe(ADMISSION);
+      await claimGrant(issuer, HEAD_ID, claim);
+      await claimGrant(issuer, HEAD_ID, claim);
+      expect(eligibilityChecks).toBe(1);
+      const candidate = {
+        headId: HEAD_ID,
+        headVersion: challenge.headVersion.toString(),
+        grantId: challenge.grantId,
+        challengeId: challenge.challengeId,
+        requestHash: REQUEST,
+        payerPublicKey: claim.payerPublicKey,
+        transactionId: "22".repeat(32),
+      };
+      expect(() => issuer.pinPaymentCandidate(candidate)).not.toThrow();
+      expect(() => issuer.pinPaymentCandidate(candidate)).not.toThrow();
+      expect(() => issuer.pinPaymentCandidate({
+        ...candidate,
+        transactionId: "23".repeat(32),
+      })).toThrow("another payment candidate");
+      expect(() => issuer.pinPaymentCandidate({
+        ...candidate,
+        payerPublicKey: Buffer.from(schnorr.getPublicKey(OTHER_SECRET)).toString("hex"),
+      })).toThrow("does not match the assigned grant");
+      expect(() => issuer.pinPaymentCandidate({
+        ...candidate,
+        headVersion: (challenge.headVersion + 1).toString(),
+      })).toThrow("does not match the assigned grant");
+
+      issuer.close();
+      issuer = await HashChainGrantIssuer.open({
+        databasePath: file,
+        encryptionKey: key,
+        canClaim: () => true,
+      });
+      expect(() => issuer.pinPaymentCandidate(candidate)).not.toThrow();
+      expect(() => issuer.pinPaymentCandidate({
+        ...candidate,
+        transactionId: "24".repeat(32),
+      })).toThrow("another payment candidate");
+    } finally {
+      issuer.close();
+      rmSync(folder, { recursive: true, force: true });
+    }
+  });
+
   it("recovers an underpaid selected borrow after head readback puts the assigned grant on hold", async () => {
     const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-grants-"));
     const file = path.join(folder, "grants.sqlite");
@@ -58,8 +205,8 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(challenge));
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(challenge));
       const small = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "100000001");
       issuer.holdForReorg(HEAD_ID);
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
@@ -92,7 +239,7 @@ describe("durable hash-chain grants", () => {
       expect(issuer.getAcceptedPayment(small.outpoint.txid)).toBeUndefined();
       expect(issuer.getDeliveryRecord(HEAD_ID, challenge.grantId)?.quotedAmount).toBe("20000000");
       expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, small))).toThrow("current head");
-      expect(issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000").headVersion).toBe(1);
+      expect(issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION).headVersion).toBe(1);
       issuer.holdForReorg(HEAD_ID);
       expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(small,
         observed("55".repeat(32), chain.grants[1]!.revealedGuard, "100000002"))))
@@ -114,8 +261,8 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(challenge));
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(challenge));
       now = new Date("2026-09-22T12:01:01.000Z");
       issuer.markAbandoned(HEAD_ID);
       issuer.holdForReorg(HEAD_ID);
@@ -127,7 +274,7 @@ describe("durable hash-chain grants", () => {
             covenantId: small.covenantId, authorizingInput: 0 },
         }),
       })).toMatchObject({ headVersion: 1, phase: "needsRotation", head: small });
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
     } finally {
       issuer.close(); rmSync(folder, { recursive: true, force: true });
     }
@@ -142,9 +289,9 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
       const claim = signedClaim(challenge);
-      issuer.claimGrant(HEAD_ID, claim);
+      await claimGrant(issuer, HEAD_ID, claim);
       const successor = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "120000000");
       const payment = {
         transactionId: successor.outpoint.txid, grantId: challenge.grantId,
@@ -172,6 +319,20 @@ describe("durable hash-chain grants", () => {
       expect(issuer.recordAcceptedPayment(HEAD_ID, accepted(first, successor), payment)).toMatchObject({
         headVersion: 1, head: successor, phase: "ready",
       });
+      const acceptedCandidate = {
+        headId: HEAD_ID,
+        headVersion: challenge.headVersion.toString(),
+        grantId: challenge.grantId,
+        challengeId: challenge.challengeId,
+        requestHash: REQUEST,
+        payerPublicKey: claim.payerPublicKey,
+        transactionId: successor.outpoint.txid,
+      };
+      expect(() => issuer.pinPaymentCandidate(acceptedCandidate)).not.toThrow();
+      expect(() => issuer.pinPaymentCandidate({
+        ...acceptedCandidate,
+        transactionId: "44".repeat(32),
+      })).toThrow("does not match the assigned grant");
       issuer.close();
       issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
       expect(issuer.getAcceptedPayment(successor.outpoint.txid)).toEqual(payment);
@@ -195,9 +356,19 @@ describe("durable hash-chain grants", () => {
     const head = observed("11".repeat(32), chain.initialGuard);
     const issuer = await HashChainGrantIssuer.open(options);
     issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head, grants: chain.grants });
-    const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
+    const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
     const claim = signedClaim(challenge);
-    const delivered = issuer.claimGrant(HEAD_ID, claim);
+    expect("claimGrant" in issuer).toBe(false);
+    expect("authorizeGrantClaim" in issuer).toBe(false);
+    await expect(issuer.claimGrantAfterCurrentHeadObservation(
+      HEAD_ID,
+      claim,
+      { observe: async () => null },
+    )).rejects.toThrow("authoritative selected UTXO");
+    expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
+    expect(issuer.getDeliveryRecord(HEAD_ID, challenge.grantId)).toBeUndefined();
+    expect(issuer.reconcileObservedHead(HEAD_ID, head).phase).toBe("ready");
+    const delivered = await claimGrant(issuer, HEAD_ID, claim);
     expect(delivered.cacheControl).toBe("no-store");
     expect(delivered.oneTimePrivateKey).toBe(chain.grants[0]!.oneTimePrivateKey);
     expect(issuer.getDeliveryRecord(HEAD_ID, delivered.grantId)).toMatchObject({
@@ -215,18 +386,18 @@ describe("durable hash-chain grants", () => {
     const otherProcess = await HashChainGrantIssuer.open(options);
     try {
       eligible = false;
-      expect(recovered.claimGrant(HEAD_ID, claim)).toEqual(delivered);
+      await expect(claimGrant(recovered, HEAD_ID, claim)).resolves.toEqual(delivered);
       recovered.holdForReorg(HEAD_ID);
       expect(recovered.reconcileObservedHead(HEAD_ID, head).phase).toBe("assigned");
-      expect(recovered.claimGrant(HEAD_ID, claim)).toEqual(delivered);
+      await expect(claimGrant(recovered, HEAD_ID, claim)).resolves.toEqual(delivered);
       expect(recovered.getDeliveryRecord(HEAD_ID, delivered.grantId)).not.toHaveProperty("oneTimePrivateKey");
       const other = signedClaim({ ...challenge }, OTHER_SECRET);
-      expect(() => otherProcess.claimGrant(HEAD_ID, other)).toThrow("assigned to another payer");
-      expect(() => otherProcess.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      await expect(claimGrant(otherProcess, HEAD_ID, other)).rejects.toThrow("assigned to another payer");
+      expect(() => otherProcess.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       now = new Date("2026-09-22T12:01:01.000Z");
-      expect(() => recovered.claimGrant(HEAD_ID, claim)).toThrow("live challenge");
+      await expect(claimGrant(recovered, HEAD_ID, claim)).rejects.toThrow("live challenge");
       expect(recovered.markAbandoned(HEAD_ID).phase).toBe("needsRotation");
-      expect(() => otherProcess.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => otherProcess.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
     } finally {
       recovered.close(); otherProcess.close(); rmSync(folder, { recursive: true, force: true });
     }
@@ -241,8 +412,8 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(challenge));
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(challenge));
 
       const small = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "100000001");
       expect(issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, small))).toMatchObject({ headVersion: 1, phase: "ready", head: small });
@@ -250,8 +421,8 @@ describe("durable hash-chain grants", () => {
         headVersion: 0, headOutpoint: first.outpoint, requestHash: REQUEST,
       });
       expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, small))).toThrow("current head");
-      const secondChallenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(secondChallenge));
+      const secondChallenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(secondChallenge));
       now = new Date("2026-09-22T12:01:01.000Z");
       issuer.markAbandoned(HEAD_ID);
       const replacement = generateHashChainBorrowGrants(1);
@@ -261,7 +432,7 @@ describe("durable hash-chain grants", () => {
         headVersion: 2, phase: "ready", head: rotated,
       });
       expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(small, observed("44".repeat(32), chain.grants[1]!.revealedGuard)))).toThrow("current head");
-      expect(issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000").headVersion).toBe(2);
+      expect(issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION).headVersion).toBe(2);
       issuer.holdForReorg(HEAD_ID);
       expect(issuer.reconcileObservedHead(HEAD_ID, small).phase).toBe("needsRotation");
       const borrowerWins = observed("44".repeat(32), chain.grants[1]!.revealedGuard, "100000002");
@@ -272,7 +443,7 @@ describe("durable hash-chain grants", () => {
         finality: "accepted", predecessor: borrowerWins.outpoint,
         transactionId: "55".repeat(32), sameIdOutputCount: 0,
       }).phase).toBe("retired");
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       issuer.holdForReorg(HEAD_ID);
       expect(issuer.reconcileObservedHead(HEAD_ID, borrowerWins).phase).toBe("needsRotation");
     } finally {
@@ -287,18 +458,18 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(challenge));
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(challenge));
       const second = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "100000001");
       issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, second));
       issuer.holdForReorg(HEAD_ID);
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       expect(() => issuer.reconcileObservedHead(HEAD_ID, observed("99".repeat(32), first.guard))).toThrow("outside known lineage");
       expect(issuer.reconcileObservedHead(HEAD_ID, first).phase).toBe("needsRotation");
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       issuer.holdForReorg(HEAD_ID);
       expect(issuer.reconcileObservedHead(HEAD_ID, first).phase).toBe("needsRotation");
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
     } finally {
       issuer.close(); rmSync(folder, { recursive: true, force: true });
     }
@@ -328,9 +499,16 @@ describe("durable hash-chain grants", () => {
         headId: "ac".repeat(32), network: "kaspa:testnet-10", ownerPublicKey: OWNER,
         head: observed("12".repeat(32), chain.initialGuard), grants: chain.grants,
       })).toThrow("one-time key has already been used");
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      expect(() => issuer.claimGrant(HEAD_ID, { ...signedClaim(challenge), signature: "00".repeat(64) })).toThrow("invalid grant payer signature");
-      expect(() => issuer.claimGrant(HEAD_ID, signedClaim(challenge, OTHER_SECRET))).toThrow("ineligible");
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await expect(claimGrant(issuer, HEAD_ID, {
+        ...signedClaim(challenge),
+        signature: "00".repeat(64),
+      })).rejects.toThrow("invalid grant payer signature");
+      await expect(claimGrant(
+        issuer,
+        HEAD_ID,
+        signedClaim(challenge, OTHER_SECRET),
+      )).rejects.toThrow("ineligible");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("ready");
       expect(() => issuer.recordAcceptedBorrow(HEAD_ID, accepted(head, observed("22".repeat(32), chain.grants[0]!.revealedGuard, head.amount)))).toThrow("positive head transition");
     } finally {
@@ -347,15 +525,15 @@ describe("durable hash-chain grants", () => {
       const chain = generateHashChainBorrowGrants(2);
       const first = observed("11".repeat(32), chain.initialGuard);
       issuer.installHead({ headId: HEAD_ID, network: "kaspa:testnet-10", ownerPublicKey: OWNER, head: first, grants: chain.grants });
-      const challenge = issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000");
-      issuer.claimGrant(HEAD_ID, signedClaim(challenge));
+      const challenge = issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION);
+      await claimGrant(issuer, HEAD_ID, signedClaim(challenge));
       const second = observed("22".repeat(32), chain.grants[0]!.revealedGuard, "100000001");
       issuer.recordAcceptedBorrow(HEAD_ID, accepted(first, second));
       const reused = observed("33".repeat(32), chain.initialGuard, second.amount);
       expect(issuer.recordAcceptedRotation(HEAD_ID, accepted(second, reused), [chain.grants[0]!])).toMatchObject({
         headVersion: 2, phase: "needsRotation", head: reused,
       });
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       issuer.close();
       issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("needsRotation");
@@ -372,7 +550,7 @@ describe("durable hash-chain grants", () => {
       ]).phase).toBe("needsRotation");
       const consumed = observed("66".repeat(32), firstGuard, "100000002");
       expect(issuer.recordAcceptedBorrow(HEAD_ID, accepted(repeatedHead, consumed)).phase).toBe("needsRotation");
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       const fresh = generateHashChainBorrowGrants(1);
       const recovered = observed("77".repeat(32), fresh.initialGuard, consumed.amount);
       expect(issuer.recordAcceptedRotation(HEAD_ID, accepted(consumed, recovered), fresh.grants).phase).toBe("ready");
@@ -396,7 +574,7 @@ describe("durable hash-chain grants", () => {
       legacy.close();
       issuer = await HashChainGrantIssuer.open({ databasePath: file, encryptionKey: key, canClaim: () => true });
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("needsRotation");
-      expect(() => issuer.issueChallenge(HEAD_ID, REQUEST, 60, "20000000")).toThrow("unavailable");
+      expect(() => issuer.issueAdmittedChallenge(HEAD_ID, REQUEST, 60, "20000000", ADMISSION)).toThrow("unavailable");
       const revealedGuard = "ef".repeat(32);
       const rotated = observed("22".repeat(32), hashChainBorrowGuard(revealedGuard, chain.grants[0]!.oneTimePublicKey));
       expect(issuer.recordAcceptedRotation(HEAD_ID, accepted(head, rotated), [

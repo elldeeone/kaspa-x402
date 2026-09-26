@@ -15,6 +15,7 @@ import {
   channelId,
   decodePaymentResponseHeader,
   encodePaymentSignatureHeader,
+  exactAuthorizationExpiryError,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
   decideChainEvidence,
@@ -64,6 +65,7 @@ import {
   parsePaymentRequiredHeaderValue,
   type ParsePaymentRequiredOptions,
 } from "./payment-required.js";
+import { assertHashChainGrantDestination } from "./hash-chain-grant-url.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -183,11 +185,28 @@ export class DirectModeClient {
   ): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
     const parsed = this.selectPaymentRequirement(header);
-    const requestContext = contextWithRequestHash(context, parsed.accepted);
-    preflightSelectedPayment(
+    const isHashChainExact =
+      parsed.accepted.scheme === "exact" &&
+      parsed.accepted.extra.profile === "hash-chain-additive";
+    const paymentContext = isHashChainExact
+      ? canonicalHashChainPaymentContext(context)
+      : context;
+    const identifiedContext =
+      isHashChainExact && !paymentContext.paymentIdentifier
+        ? {
+            ...paymentContext,
+            paymentIdentifier: defaultExactPaymentIdentifier(paymentContext),
+          }
+        : paymentContext;
+    const requestContext = contextWithRequestHash(
+      identifiedContext,
+      parsed.accepted,
+    );
+    await preflightSelectedPayment(
       parsed.paymentRequired,
       parsed.accepted,
       requestContext,
+      this.#options.hashChainGrantDestinationPolicy,
     );
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
@@ -195,7 +214,7 @@ export class DirectModeClient {
         ...requestContext,
         paymentIdentifier:
           requestContext.paymentIdentifier ??
-          defaultExactPaymentIdentifier(context),
+          defaultExactPaymentIdentifier(paymentContext),
       });
     }
     if (parsed.accepted.scheme !== "batch-settlement") {
@@ -274,28 +293,36 @@ export class DirectModeClient {
   ): Promise<PaidFetchResult> {
     const fetch = this.#options.fetch ?? globalFetchLike();
     const requestInit = { ...init, redirect: "error" as const };
+    const originalRequestUrl = input;
+    const requestUrl = canonicalRequestUrl(input);
     const requestContext: PaymentRequestContext = {
-      url: input, paymentIdentifier: init.paymentIdentifier,
+      url: requestUrl, paymentIdentifier: init.paymentIdentifier,
       requestHash: init.requestHash, paymentAttemptId: init.paymentAttemptId,
       method: init.method, body: init.body,
       trustedSecurityContext: init.trustedSecurityContext,
     };
-    let previousIdentifier = init.paymentIdentifier;
-    if (!previousIdentifier) {
-      try { previousIdentifier = defaultExactPaymentIdentifier(requestContext); } catch { /* Free and non-JSON requests still proceed. */ }
-    }
-    const previous = previousIdentifier
-      ? await this.#options.store.loadExactPaymentAttemptByIdentifier(previousIdentifier)
-      : undefined;
+    const previous = await loadReplayExactPaymentAttempt(
+      this.#options.store,
+      requestContext,
+      originalRequestUrl,
+      init.paymentIdentifier,
+    );
     let payment: CreatePaymentResult;
-    if (previous?.status === "pending" && previous.payment.accepted.extra.profile === "hash-chain-additive") {
-      const bound = contextWithRequestHash(requestContext, previous.payment.accepted);
-      if (previous.resourceUrl !== input || previous.origin !== originForUrl(input) ||
-        previous.requestHash !== bound.requestHash ||
-        (init.paymentAttemptId && init.paymentAttemptId !== previous.attemptId)) {
-        throw new KaspaX402Error("invalid_kaspa_exact_replay", "pending hash-chain payment belongs to another request");
-      }
-      payment = previous.payment;
+    const recoveringHashChainAttempt =
+      previous &&
+      (previous.status === "pending" || previous.status === "accepted") &&
+      previous.payment.accepted.extra.profile === "hash-chain-additive"
+        ? previous
+        : undefined;
+    if (recoveringHashChainAttempt) {
+      assertHashChainReplayRequest(
+        recoveringHashChainAttempt,
+        requestContext,
+        originalRequestUrl,
+        requestUrl,
+        init.paymentAttemptId,
+      );
+      payment = recoveringHashChainAttempt.payment;
     } else {
       const firstResponse = await fetch(input, requestInit);
       assertPaidFetchResponseTarget(firstResponse, input, "payment challenge");
@@ -306,7 +333,8 @@ export class DirectModeClient {
       }
       payment = await this.createPayment(required, requestContext);
     }
-    if (payment.scheme === "exact" && payment.accepted.extra.profile === "hash-chain-additive") {
+    if (payment.scheme === "exact" && payment.accepted.extra.profile === "hash-chain-additive" &&
+      recoveringHashChainAttempt?.status !== "accepted") {
       try { await this.broadcastHashChainPayment(payment); }
       catch (error) {
         // The broadcast may have reached consensus. The paid retry lets the
@@ -404,6 +432,22 @@ export class DirectModeClient {
     if (payment.scheme !== "exact" || payment.accepted.extra.profile !== "hash-chain-additive" ||
       payment.paymentPayload.payload.type !== "exact-transaction" || !payment.transactionId) {
       throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain broadcast requires a prepared exact payment");
+    }
+    const accepted = payment.accepted as ExactPaymentRequirements;
+    const head = hashChainHeadHint(accepted);
+    if (!head) {
+      throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain broadcast requires a complete grant challenge");
+    }
+    const expiryError = exactAuthorizationExpiryError({
+      maxTimeoutSeconds: accepted.maxTimeoutSeconds,
+      authorizationExpiresAt: payment.paymentPayload.payload.authorization.expiresAt,
+      challengeExpiresAt: head.challengeExpiresAt,
+    });
+    if (expiryError) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_signature",
+        `hash-chain payment is recovery-only because its authorization is not live: ${expiryError}`,
+      );
     }
     try {
       const sent = await this.#options.fundingProvider.sendTransaction(payment.paymentPayload.payload.transaction);
@@ -1429,10 +1473,13 @@ export class DirectModeClient {
       );
     }
     const origin = context.origin ?? originForUrl(context.url);
+    const resourceUrl = profile === "hash-chain-additive"
+      ? canonicalRequestUrl(context.url)
+      : paymentRequired.resource.url;
     const intentHash = exactPaymentIntentHash(
       accepted,
       origin,
-      paymentRequired.resource.url,
+      resourceUrl,
       context.requestHash,
       context.paymentIdentifier,
     );
@@ -1476,14 +1523,13 @@ export class DirectModeClient {
     if (profile === "hash-chain-additive" && !hashChainHead) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact requirements must include a complete grant challenge");
     }
-    if (hashChainHead) assertHashChainGrantOrigin(hashChainHead.grantClaimUrl, paymentRequired.resource.url);
     const exactRequest: ExactPaymentRequest = {
       attemptId,
       intentHash,
       network: accepted.network,
       profile,
       origin,
-      resourceUrl: paymentRequired.resource.url,
+      resourceUrl,
       amount: accepted.amount,
       payTo: accepted.payTo,
       payToScriptPublicKey: payToScriptPublicKey!,
@@ -1554,7 +1600,7 @@ export class DirectModeClient {
       intentHash,
       requestHash: context.requestHash,
       origin,
-      resourceUrl: paymentRequired.resource.url,
+      resourceUrl,
       paymentIdentifier: context.paymentIdentifier,
       transactionId: exact.transactionId,
       inputOutpoints: exact.inputOutpoints.map((outpoint) => ({ ...outpoint })),
@@ -1656,7 +1702,8 @@ export class DirectModeClient {
       }
       const grant = await provider.claimHashChainGrant({
         network: "kaspa:testnet-10", head, requestHash: request.requestHash,
-        payerPublicKey: identity.publicKey,
+        payerPublicKey: identity.publicKey, resourceUrl: request.resourceUrl,
+        destinationPolicy: this.#options.hashChainGrantDestinationPolicy!,
       });
       assertDeliveredHashChainGrant(grant, head);
       const exact = await provider.payHashChainTransaction({ ...request, grant });
@@ -2983,6 +3030,109 @@ function pendingExactPaymentError(
     : new PendingExactPaymentError(payment, error);
 }
 
+async function loadReplayExactPaymentAttempt(
+  store: DirectModeClientOptions["store"],
+  context: PaymentRequestContext,
+  originalUrl: string,
+  explicitIdentifier?: string,
+): Promise<ExactPaymentAttemptRecord | undefined> {
+  const identifiers = new Set<string>();
+  if (explicitIdentifier) {
+    identifiers.add(explicitIdentifier);
+  } else {
+    const urls = new Set([context.url, originalUrl]);
+    const defaultPortAlias = explicitDefaultPortAlias(context.url);
+    if (defaultPortAlias) urls.add(defaultPortAlias);
+    for (const url of urls) {
+      try {
+        identifiers.add(defaultExactPaymentIdentifier({ ...context, url }));
+      } catch {
+        // Free and non-JSON requests still proceed to the ordinary first fetch.
+      }
+    }
+  }
+  const loaded = (
+    await Promise.all(
+      [...identifiers].map((identifier) =>
+        store.loadExactPaymentAttemptByIdentifier(identifier),
+      ),
+    )
+  ).filter((attempt): attempt is ExactPaymentAttemptRecord => !!attempt);
+  const byAttempt = new Map(
+    loaded.map((attempt) => [attempt.attemptId.toLowerCase(), attempt]),
+  );
+  if (byAttempt.size > 1) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_exact_replay",
+      "canonical request URL aliases belong to different exact payment attempts",
+    );
+  }
+  return byAttempt.values().next().value;
+}
+
+function assertHashChainReplayRequest(
+  attempt: ExactPaymentAttemptRecord,
+  context: PaymentRequestContext,
+  originalRequestUrl: string,
+  requestUrl: string,
+  suppliedAttemptId?: Hash32Hex,
+): void {
+  const accepted = attempt.payment.accepted;
+  const requestHashMatches = [
+    context.url,
+    originalRequestUrl,
+    attempt.resourceUrl,
+  ].some((url) => {
+    try {
+      return (
+        contextWithRequestHash({ ...context, url }, accepted).requestHash ===
+        attempt.requestHash
+      );
+    } catch {
+      return false;
+    }
+  });
+  if (
+    !sameCanonicalRequestUrl(attempt.resourceUrl, requestUrl) ||
+    !sameCanonicalOrigin(attempt.origin, originForUrl(requestUrl)) ||
+    !requestHashMatches ||
+    (suppliedAttemptId !== undefined &&
+      !sameHash32(suppliedAttemptId, attempt.attemptId))
+  ) {
+    throw new KaspaX402Error(
+      "invalid_kaspa_exact_replay",
+      "recoverable hash-chain payment belongs to another request",
+    );
+  }
+}
+
+function explicitDefaultPortAlias(value: string): string | undefined {
+  try {
+    const url = new URL(value);
+    const port = url.protocol === "https:" ? "443" : url.protocol === "http:" ? "80" : undefined;
+    if (!port || url.port) return undefined;
+    return `${url.protocol}//${url.hostname}:${port}${url.pathname}${url.search}${url.hash}`;
+  } catch {
+    return undefined;
+  }
+}
+
+function sameCanonicalRequestUrl(left: string, right: string): boolean {
+  try {
+    return canonicalRequestUrl(left) === canonicalRequestUrl(right);
+  } catch {
+    return false;
+  }
+}
+
+function sameCanonicalOrigin(left: string, right: string): boolean {
+  try {
+    return new URL(left).origin === new URL(right).origin;
+  } catch {
+    return false;
+  }
+}
+
 function exactPaymentIntentHash(
   accepted: ExactPaymentRequirements,
   origin: string,
@@ -3083,14 +3233,17 @@ function assertExactAcceptedOutput(
       "trusted exact output does not identify the persisted payment output",
     );
   }
-  const head = exactHeadHint(accepted);
+  const exactHead = exactHeadHint(accepted);
+  const hashChainHead = hashChainHeadHint(accepted);
+  const head = exactHead ?? hashChainHead;
   const expectedAmount = head
     ? formatSompiString(
         parseSompiString(head.headAmount) + parseSompiString(accepted.amount),
       )
     : accepted.amount;
-  const expectedScript =
-    head?.headScriptPublicKey ?? accepted.extra.payToScriptPublicKey;
+  const expectedScript = hashChainHead
+    ? accepted.extra.payToScriptPublicKey
+    : exactHead?.headScriptPublicKey ?? accepted.extra.payToScriptPublicKey;
   if (
     output.amount !== expectedAmount ||
     typeof expectedScript !== "string" ||
@@ -3197,19 +3350,24 @@ function hashChainHeadHint(
   };
 }
 
-function assertHashChainGrantOrigin(claimUrl: string, resourceUrl: string): void {
-  let claim: URL;
+async function assertHashChainGrantOrigin(
+  claimUrl: string,
+  resourceUrl: string,
+  requestUrl: string,
+  policy: DirectModeClientOptions["hashChainGrantDestinationPolicy"],
+): Promise<void> {
   let resource: URL;
+  let request: URL;
   try {
-    claim = new URL(claimUrl);
     resource = new URL(resourceUrl);
+    request = new URL(canonicalRequestUrl(requestUrl));
   } catch {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant URL or resource URL is invalid");
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant URL, resource URL, or request URL is invalid");
   }
-  const loopback = claim.hostname === "localhost" || claim.hostname === "127.0.0.1" || claim.hostname === "[::1]";
-  if (claim.origin !== resource.origin || (claim.protocol !== "https:" && !(loopback && claim.protocol === "http:")) || claim.username || claim.password || claim.hash) {
-    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant claim URL must be a same-origin HTTPS endpoint");
+  if (resource.href !== request.href) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain resource and grant claim URL must match the authorized request target");
   }
+  assertHashChainGrantDestination(claimUrl, request.href, policy);
 }
 
 function assertDeliveredHashChainGrant(
@@ -3301,11 +3459,12 @@ function paymentIdentifierExtensions(
   return extensions;
 }
 
-function preflightSelectedPayment(
+async function preflightSelectedPayment(
   paymentRequired: CreatePaymentResult["paymentRequired"],
   accepted: PaymentRequirements,
   context: PaymentRequestContext,
-): void {
+  grantDestinationPolicy: DirectModeClientOptions["hashChainGrantDestinationPolicy"],
+): Promise<void> {
   const requiredValidation = validatePaymentRequired(paymentRequired);
   if (!requiredValidation.ok) throw requiredValidation.error;
   const acceptedValidation = validateKaspaPaymentRequirement(accepted);
@@ -3341,6 +3500,24 @@ function preflightSelectedPayment(
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
       "batch challenge security context does not match the trusted request context",
+    );
+  }
+  if (
+    accepted.scheme === "exact" &&
+    accepted.extra.profile === "hash-chain-additive"
+  ) {
+    const head = hashChainHeadHint(accepted);
+    if (!head) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "hash-chain exact requirements must include a complete grant challenge",
+      );
+    }
+    await assertHashChainGrantOrigin(
+      head.grantClaimUrl,
+      paymentRequired.resource.url,
+      context.url,
+      grantDestinationPolicy,
     );
   }
   const extensions = paymentIdentifierExtensions(paymentRequired, context);
@@ -3713,6 +3890,48 @@ function originForUrl(url: string): string {
   } catch {
     return url;
   }
+}
+
+function canonicalRequestUrl(url: string): string {
+  try {
+    const browserBase = (globalThis as { location?: { href?: string } })
+      .location?.href;
+    return (browserBase ? new URL(url, browserBase) : new URL(url)).href;
+  } catch {
+    throw new KaspaX402Error(
+      "invalid_kaspa_x402_payload",
+      "request URL must be absolute outside a browser context",
+    );
+  }
+}
+
+function canonicalHashChainPaymentContext(
+  context: PaymentRequestContext,
+): PaymentRequestContext {
+  const url = canonicalRequestUrl(context.url);
+  const requestOrigin = originForUrl(url);
+  if (context.origin !== undefined) {
+    let suppliedOrigin: string;
+    try {
+      suppliedOrigin = new URL(context.origin).origin;
+    } catch {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_payload",
+        "hash-chain request origin must be an absolute URL origin",
+      );
+    }
+    if (suppliedOrigin !== requestOrigin) {
+      throw new KaspaX402Error(
+        "invalid_kaspa_x402_binding",
+        "hash-chain request origin does not match the actual request URL",
+      );
+    }
+  }
+  return {
+    ...context,
+    url,
+    ...(context.origin !== undefined ? { origin: requestOrigin } : {}),
+  };
 }
 
 function contextWithRequestHash(

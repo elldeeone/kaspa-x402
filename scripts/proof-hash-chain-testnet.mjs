@@ -7,7 +7,8 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-  decodePaymentRequiredHeader, decodePaymentResponseHeader, sha256Hex, stableStringify,
+  bindRequestHashToTrustedContext, decodePaymentRequiredHeader, decodePaymentResponseHeader,
+  sha256Hex, stableStringify,
 } from "@kaspa-x402/core";
 import {
   DirectModeClient, MemoryChannelStore, PendingExactPaymentError,
@@ -118,31 +119,44 @@ try {
     encodeScriptAddress({ serializedScriptPublicKey }) { return addressForScript(sdk, serializedScriptPublicKey); },
   };
   const reserved = new Set([outpointKey(genesisFunding.outpoint)]);
+  const trustedSecurityContext = { principal: "hash-chain-live-proof" };
   let server;
   http = createServer(async (req, res) => {
+    const disconnect = new AbortController();
+    const abortDisconnected = () => {
+      if (!res.writableEnded) disconnect.abort(new Error("HTTP caller disconnected"));
+    };
+    req.once("aborted", abortDisconnected);
+    res.once("close", abortDisconnected);
     try {
       const url = `http://127.0.0.1:${http.address().port}${req.url}`;
       if (req.url === "/hash-chain/grant") {
         const body = await readBody(req, 4096);
         const answer = await handleHashChainGrantClaimHttp(server,
-          new Request(url, { method: req.method, headers: req.headers, body }));
+          new Request(url, { method: req.method, headers: req.headers, body,
+            signal: disconnect.signal }));
         res.writeHead(answer.status, Object.fromEntries(answer.headers));
         res.end(await answer.text());
         return;
       }
       const resource = { url };
       const answer = await server.handlePaidRequest({ method: req.method, url,
-        headers: req.headers, resource, paymentScheme: "exact" },
+        headers: req.headers, resource, paymentScheme: "exact", trustedSecurityContext,
+        signal: disconnect.signal },
         async () => ({ status: 200, body: { access: "granted", resource: req.url } }));
       res.writeHead(answer.status, answer.headers);
       res.end(JSON.stringify(answer.body));
     } catch {
       res.writeHead(503, { "cache-control": "no-store" });
       res.end(JSON.stringify({ error: "request_failed" }));
+    } finally {
+      req.off("aborted", abortDisconnected);
+      res.off("close", abortDisconnected);
     }
   });
   await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
   const origin = `http://127.0.0.1:${http.address().port}`;
+  const grantDestinationPolicy = { allowedOrigins: [origin] };
   server = new DirectModeServer({
     network: "kaspa:testnet-10", payTo: fundingAddress, serverPublicKey: ownerPublicKey,
     minDepositSompi: "1000", claimReserveSompi: "10", amount: "20000000",
@@ -155,10 +169,26 @@ try {
     exactProfile: "hash-chain-additive", exactTransactionVerifier: new HashChainExactTransactionVerifier(rest),
     hashChainIssuer: issuer, hashChainHeadId: headId,
     hashChainGrantClaimUrl: `${origin}/hash-chain/grant`,
-    hashChainIsSelected: (transactionId) => rest.isSelected(transactionId),
-    hashChainCurrentHeadIsUnspent: async (head, address) => (await getAddressUtxos(rpc, address))
-      .some((utxo) => utxo.outpoint.txid === head.outpoint.txid && utxo.outpoint.index === head.outpoint.index &&
-        utxo.amount === head.amount && utxo.scriptPublicKey === head.scriptPublicKey && utxo.covenantId === head.covenantId),
+    admitHashChainChallenge: async () => true,
+    hashChainIsSelected: (transactionId, signal) => rest.isSelected(transactionId, { signal }),
+    hashChainGetCurrentUtxo: async (outpoint, signal) => {
+      signal?.throwIfAborted();
+      const current = issuer.getCurrent(headId).head;
+      const address = addressCodec.encodeScriptAddress({
+        network: "kaspa:testnet-10",
+        scriptPublicKey: { version: 0, script: current.scriptPublicKey.slice(4) },
+        serializedScriptPublicKey: current.scriptPublicKey,
+      });
+      const match = (await getAddressUtxos(rpc, address)).find((utxo) =>
+        utxo.outpoint.txid === outpoint.txid && utxo.outpoint.index === outpoint.index);
+      signal?.throwIfAborted();
+      return match ? {
+        outpoint: match.outpoint,
+        amount: match.amount,
+        scriptPublicKey: match.scriptPublicKey,
+        covenantId: match.covenantId ?? null,
+      } : null;
+    },
   });
   const provider = {
     networkId: "kaspa:testnet-10", sourceKind: "hot-wallet",
@@ -200,14 +230,15 @@ try {
   const client = new DirectModeClient({ fundingProvider: provider, signer: {},
     store: new MemoryChannelStore(), addressCodec, confirmationThreshold: 30,
     fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"], allowedOrigins: [origin],
-      maximumExactAmountSompi: "20000000" }, fetch,
+      maximumExactAmountSompi: "20000000" },
+    hashChainGrantDestinationPolicy: grantDestinationPolicy, fetch,
   });
   for (let i = 1; i <= 2; i++) {
     const url = `${origin}/resource/${i}`;
     const paymentIdentifier = `hash_chain_tn10_${path.basename(outputDir).replace(/[^A-Za-z0-9_-]/g, "_")}_${i}`;
     let outcome;
     for (let attempt = 0; attempt < 40; attempt++) {
-      try { outcome = await client.paidFetch(url, { paymentIdentifier }); break; }
+      try { outcome = await client.paidFetch(url, { paymentIdentifier, trustedSecurityContext }); break; }
       catch (error) {
         if (!(error instanceof PendingExactPaymentError)) throw error;
         await sleep(1000);
@@ -248,7 +279,10 @@ try {
   const abandonedRequired = decodePaymentRequiredHeader(abandonedResponse.headers.get("PAYMENT-REQUIRED"));
   const abandoned = abandonedRequired.accepts[0];
   if (abandoned?.scheme !== "exact" || abandoned.extra.profile !== "hash-chain-additive") throw new Error("abandonment offer is invalid");
-  const abandonHash = sha256Hex(stableStringify({ method: "GET", url: abandonUrl, body: null }));
+  const abandonHash = bindRequestHashToTrustedContext(
+    sha256Hex(stableStringify({ method: "GET", url: abandonUrl, body: null })),
+    trustedSecurityContext,
+  );
   const abandonedGrant = await claimHashChainGrantViaHttp({ network: "kaspa:testnet-10",
     head: { headId: abandoned.extra.headId, headVersion: abandoned.extra.headVersion,
       covenantId: abandoned.extra.covenantId, expectedHeadOutpoint: abandoned.extra.expectedHeadOutpoint,
@@ -257,7 +291,8 @@ try {
       nextGuard: abandoned.extra.nextGuard, oneTimePublicKey: abandoned.extra.oneTimePublicKey,
       grantId: abandoned.extra.grantId, grantClaimUrl: abandoned.extra.grantClaimUrl,
       challengeId: abandoned.extra.challengeId, challengeExpiresAt: abandoned.extra.challengeExpiresAt },
-    requestHash: abandonHash, payerPublicKey: fundingPublicKey },
+    resourceUrl: abandonUrl, requestHash: abandonHash, payerPublicKey: fundingPublicKey,
+    destinationPolicy: grantDestinationPolicy },
     (digest) => Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.from(fundingPrivateKeyHex, "hex"))).toString("hex"));
   report.stages.push("grant-delivered-and-abandoned");
   report.abandonedGrant = { grantId: abandonedGrant.grantId, headVersion: abandonedGrant.headVersion,

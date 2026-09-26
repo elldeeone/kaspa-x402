@@ -32,7 +32,7 @@ import type {
   VoucherPayload,
 } from "@kaspa-x402/core";
 import type { DeriveEscrowAddressInput } from "@kaspa-x402/covenant";
-import type { HashChainGrantIssuer, HashChainObservedHead } from "./hash-chain-grants.js";
+import type { HashChainGrantIssuer } from "./hash-chain-grants.js";
 import type {
   PublicBoundaryController,
   PublicBoundaryPolicy,
@@ -310,8 +310,25 @@ export interface ExactTransactionVerificationRequest {
   requestHash: Hash32Hex;
   paymentRequirementsHash: Hash32Hex;
   authorization: ExactRequestAuthorization;
+  /** Cancellation from the public adapter boundary. */
+  signal?: AbortSignal;
   head?: ExactHeadChallenge;
   hashChainHead?: HashChainHeadChallenge;
+}
+
+export interface HashChainChallengeAdmissionRequest {
+  trustedSecurityContext: TrustedSecurityContext;
+  resource: ResourceInfo;
+  requestHash: Hash32Hex;
+  amount: SompiString;
+}
+
+/** Complete exact-outpoint result from an authoritative virtual-UTXO lookup. */
+export interface HashChainCurrentUtxo {
+  outpoint: FundingOutpoint;
+  amount: SompiString;
+  scriptPublicKey: ByteHex;
+  covenantId: Hash32Hex | null;
 }
 
 export interface ExactTransactionVerification {
@@ -928,13 +945,30 @@ export interface DirectModeServerConfig {
   /** Node-only private issuer; the root server bundle only uses its structural interface. */
   hashChainIssuer?: Pick<HashChainGrantIssuer,
     "getCurrent" | "getChallenge" | "getDeliveryRecord" | "getAcceptedPayment" |
-    "issueChallenge" | "claimGrant" | "recordAcceptedPayment" | "holdForReorg">;
+    "getAdmittedChallenge" | "issueAdmittedChallenge" | "grantClaimAdmissionKey" |
+    "claimGrantAfterCurrentHeadObservation" |
+    "pinPaymentCandidate" | "recordAcceptedPayment" | "holdForReorg">;
   hashChainHeadId?: Hash32Hex;
   hashChainGrantClaimUrl?: string;
+  /** Host eligibility/rate decision required before scarce challenge allocation. */
+  admitHashChainChallenge?: (
+    request: HashChainChallengeAdmissionRequest,
+    signal: AbortSignal,
+  ) => Promise<boolean> | boolean;
   /** Authoritative fresh selected-chain read for cached response and reorg recovery. */
-  hashChainIsSelected?: (transactionId: Hash32Hex) => Promise<boolean>;
-  /** Fresh virtual-UTXO check before offering or delivering a one-time grant. */
-  hashChainCurrentHeadIsUnspent?: (head: HashChainObservedHead, address: string) => Promise<boolean>;
+  hashChainIsSelected?: (
+    transactionId: Hash32Hex,
+    signal?: AbortSignal,
+  ) => Promise<boolean>;
+  /**
+   * Fresh exact-outpoint virtual-UTXO lookup before offering or delivering a
+   * one-time grant. Null is authoritative only for a complete, untruncated
+   * snapshot; address-list adapters must fail instead of treating omission as absence.
+   */
+  hashChainGetCurrentUtxo?: (
+    outpoint: FundingOutpoint,
+    signal?: AbortSignal,
+  ) => Promise<HashChainCurrentUtxo | null>;
   /** Reconciles only the selected additive head before advertising it. */
   reconcileExactHeadOnOffer?: boolean;
   /** Exact wire profile offered by this server. Defaults to standard-native. */
@@ -973,6 +1007,8 @@ export interface BuildPaymentRequiredOptions {
   error?: string;
   /** Explicit fixed charge for an MCP isError result; must equal amount. */
   mcpErrorChargeSompi?: SompiString;
+  /** Caller cancellation propagated to challenge admission and chain observers. */
+  signal?: AbortSignal;
 }
 
 export interface DirectPaymentVerificationOptions {
@@ -981,6 +1017,7 @@ export interface DirectPaymentVerificationOptions {
   resource?: ResourceInfo;
   requestHash?: Hash32Hex;
   trustedSecurityContext?: TrustedSecurityContext;
+  signal?: AbortSignal;
 }
 
 export interface DirectPaymentVerification {
@@ -1006,6 +1043,8 @@ export interface PaidRequest {
   trustedSecurityContext?: TrustedSecurityContext;
   /** Trusted transport policy for MCP error charging. */
   mcpErrorChargeSompi?: SompiString;
+  /** Transport cancellation propagated to all public adapters. */
+  signal?: AbortSignal;
 }
 
 export type HeaderSource =

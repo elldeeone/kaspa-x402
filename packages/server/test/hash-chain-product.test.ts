@@ -5,7 +5,7 @@ import path from "node:path";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { describe, expect, it } from "vitest";
 import {
-  decodePaymentRequiredHeader, encodePaymentSignatureHeader,
+  bindRequestHashToTrustedContext, decodePaymentRequiredHeader, encodePaymentSignatureHeader,
   paymentIdentifierExtension, sha256Hex, stableStringify,
 } from "@kaspa-x402/core";
 import { signHashChainExactTransaction } from "@kaspa-x402/client";
@@ -41,8 +41,10 @@ class FailOnceAfterAcceptanceStore extends MemoryServerChannelStore {
 describe("native-KAS hash-chain x402 product path", () => {
   it("claims one grant, verifies the exact payer-signed successor, and only then runs protected work", async () => {
     const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-product-"));
+    let claimEligible = true;
     const issuer = await HashChainGrantIssuer.open({
-      databasePath: path.join(folder, "grants.sqlite"), encryptionKey: randomBytes(32), canClaim: () => true,
+      databasePath: path.join(folder, "grants.sqlite"), encryptionKey: randomBytes(32),
+      canClaim: () => claimEligible,
     });
     try {
       const chain = generateHashChainBorrowGrants(2);
@@ -54,12 +56,16 @@ describe("native-KAS hash-chain x402 product path", () => {
         grants: chain.grants,
       });
       let selected: HashChainSelectedTransaction | null = null;
+      let originBatches = 0;
       const view = {
-        async getAcceptedOrigin(outpoint: { txid: string; index: number }) {
-          if (outpoint.txid === HEAD_TX) return { amount: "100000000", scriptPublicKey: headScript, covenantId: COVENANT_ID };
-          if (outpoint.txid === FUNDING_TX) return { amount: "50000000", scriptPublicKey: PAYER_SCRIPT, covenantId: null };
-          if (outpoint.txid === THIEF_FUNDING_TX) return { amount: "50000000", scriptPublicKey: THIEF_SCRIPT, covenantId: null };
-          return null;
+        async getAcceptedOrigins(outpoints: readonly { txid: string; index: number }[]) {
+          originBatches++;
+          return outpoints.map((outpoint) => {
+            if (outpoint.txid === HEAD_TX) return { amount: "100000000", scriptPublicKey: headScript, covenantId: COVENANT_ID };
+            if (outpoint.txid === FUNDING_TX) return { amount: "50000000", scriptPublicKey: PAYER_SCRIPT, covenantId: null };
+            if (outpoint.txid === THIEF_FUNDING_TX) return { amount: "50000000", scriptPublicKey: THIEF_SCRIPT, covenantId: null };
+            return null;
+          });
         },
         async getSelectedTransaction(txid: string) { return selected?.transactionId === txid ? selected : null; },
       };
@@ -73,6 +79,11 @@ describe("native-KAS hash-chain x402 product path", () => {
       let serverBroadcasts = 0;
       let failHeadRead = false;
       let headUnspent = true;
+      let headReads = 0;
+      let challengeEligible = true;
+      let admissionCalls = 0;
+      let verifierCalls = 0;
+      const referenceVerifier = new HashChainExactTransactionVerifier(view);
       const store = new FailOnceAfterAcceptanceStore();
       const config = {
         network: "kaspa:testnet-10", payTo: "kaspatest:merchant", serverPublicKey: OWNER,
@@ -83,26 +94,123 @@ describe("native-KAS hash-chain x402 product path", () => {
         addressCodec, voucherVerifier: { verifyVoucher: () => true },
         batchPresentationVerifier: { verifyPresentation: () => true },
         exactProfile: "hash-chain-additive",
-        exactTransactionVerifier: new HashChainExactTransactionVerifier(view),
+        exactTransactionVerifier: {
+          verifyExactPayment(request) {
+            verifierCalls++;
+            return referenceVerifier.verifyExactPayment(request);
+          },
+        },
         hashChainIssuer: issuer, hashChainHeadId: HEAD_ID,
         hashChainGrantClaimUrl: "https://api.example.test/hash-chain/grant",
+        admitHashChainChallenge: async () => {
+          admissionCalls++;
+          return challengeEligible;
+        },
         hashChainIsSelected: async (txid) => (await view.getSelectedTransaction(txid)) !== null,
-        hashChainCurrentHeadIsUnspent: async (head) => {
+        hashChainGetCurrentUtxo: async (outpoint) => {
+          headReads++;
           if (failHeadRead) throw new Error("selected UTXO observer is unavailable");
-          return headUnspent && head.outpoint.txid === (selected?.transactionId ?? HEAD_TX);
+          const current = issuer.getCurrent(HEAD_ID).head;
+          if (!headUnspent || outpoint.txid !== (selected?.transactionId ?? current.outpoint.txid)) {
+            return null;
+          }
+          return {
+            outpoint: current.outpoint,
+            amount: current.amount,
+            scriptPublicKey: current.scriptPublicKey,
+            covenantId: current.covenantId,
+          };
         },
       } as DirectModeServerConfig;
       expect(() => new DirectModeServer({ ...config, acceptedFinality: "confirmed" })).toThrow("accepted finality only");
       const server = new DirectModeServer(config);
       let protectedCalls = 0;
-      const route = { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" as const };
+      const trustedSecurityContext = { principal: "hash-chain-product-test", tenant: "merchant-test" };
+      const anonymousRoute = { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" as const };
+      const fallback = await server.handlePaidRequest({
+        url: RESOURCE.url,
+        resource: RESOURCE,
+        paymentSchemes: ["exact", "batch-settlement"],
+      }, async () => ({ body: "must not run" }));
+      expect(fallback.status).toBe(402);
+      const fallbackRequired = decodePaymentRequiredHeader(fallback.headers["PAYMENT-REQUIRED"]!);
+      expect(fallbackRequired.accepts.length).toBeGreaterThan(0);
+      expect(fallbackRequired.accepts.every((item) => item.scheme === "batch-settlement")).toBe(true);
+      for (let index = 0; index < 65; index++) {
+        const rejected = await server.handlePaidRequest(
+          { ...anonymousRoute, url: `${RESOURCE.url}?anonymous=${index}`,
+            resource: { url: `${RESOURCE.url}?anonymous=${index}` } },
+          async () => ({ body: "must not run" }),
+        );
+        expect(rejected.status).toBe(503);
+      }
+      expect(headReads).toBe(0);
+      challengeEligible = false;
+      for (let index = 0; index < 65; index++) {
+        const deniedUrl = `${RESOURCE.url}?denied=${index}`;
+        const denied = await server.handlePaidRequest({
+          ...anonymousRoute,
+          url: deniedUrl,
+          resource: { url: deniedUrl },
+          trustedSecurityContext: {
+            principal: `ineligible-${index}`,
+            tenant: "merchant-test",
+          },
+        }, async () => ({ body: "must not run" }));
+        expect(denied.status).toBe(503);
+      }
+      expect(headReads).toBe(0);
+      expect(admissionCalls).toBe(65);
+      challengeEligible = true;
+      const route = { ...anonymousRoute, trustedSecurityContext };
       const unpaid = await server.handlePaidRequest(route, async () => { protectedCalls++; return { body: "paid" }; });
       expect(unpaid.status).toBe(402);
+      expect(headReads).toBe(1);
+      expect(admissionCalls).toBe(66);
       const required = decodePaymentRequiredHeader(unpaid.headers["PAYMENT-REQUIRED"]!);
       const accepted = required.accepts[0]!;
       if (accepted.scheme !== "exact") throw new Error("expected exact offer");
+      const repeatedUnpaid = await server.handlePaidRequest(
+        route,
+        async () => ({ body: "must not run" }),
+      );
+      const repeatedRequired = decodePaymentRequiredHeader(
+        repeatedUnpaid.headers["PAYMENT-REQUIRED"]!,
+      );
+      expect(repeatedRequired.accepts[0]?.extra.challengeId)
+        .toBe(accepted.extra.challengeId);
+      expect(admissionCalls).toBe(66);
+      const concurrentUrl = `${RESOURCE.url}?concurrent-retry=1`;
+      const concurrentRoute = {
+        ...route,
+        url: concurrentUrl,
+        resource: { url: concurrentUrl },
+      };
+      const callsBeforeConcurrentRetry = admissionCalls;
+      const [concurrentFirst, concurrentSecond] = await Promise.all([
+        server.handlePaidRequest(
+          concurrentRoute,
+          async () => ({ body: "must not run" }),
+        ),
+        server.handlePaidRequest(
+          concurrentRoute,
+          async () => ({ body: "must not run" }),
+        ),
+      ]);
+      const concurrentFirstRequired = decodePaymentRequiredHeader(
+        concurrentFirst.headers["PAYMENT-REQUIRED"]!,
+      );
+      const concurrentSecondRequired = decodePaymentRequiredHeader(
+        concurrentSecond.headers["PAYMENT-REQUIRED"]!,
+      );
+      expect(concurrentSecondRequired.accepts[0]?.extra.challengeId)
+        .toBe(concurrentFirstRequired.accepts[0]?.extra.challengeId);
+      expect(admissionCalls).toBe(callsBeforeConcurrentRetry + 1);
       const extra = accepted.extra;
-      const requestHash = sha256Hex(stableStringify({ method: "GET", url: RESOURCE.url, body: null }));
+      const requestHash = bindRequestHashToTrustedContext(
+        sha256Hex(stableStringify({ method: "GET", url: RESOURCE.url, body: null })),
+        trustedSecurityContext,
+      );
       const unsignedClaim = {
         grantId: extra.grantId!, challengeId: extra.challengeId!, requestHash,
         payerPublicKey: PAYER_PUBLIC, expiresAt: extra.challengeExpiresAt!,
@@ -110,14 +218,23 @@ describe("native-KAS hash-chain x402 product path", () => {
       const claim = { ...unsignedClaim, signature: Buffer.from(schnorr.sign(
         hashChainGrantClaimDigest("kaspa:testnet-10", unsignedClaim), PAYER,
       )).toString("hex") };
+      const readsBeforeInvalidClaims = headReads;
+      await expect(server.claimHashChainGrant({} as never)).rejects.toThrow();
+      await expect(server.claimHashChainGrant({ ...claim, signature: "00".repeat(64) }))
+        .rejects.toThrow("invalid grant payer signature");
+      claimEligible = false;
+      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("payer is ineligible");
+      claimEligible = true;
+      expect(headReads).toBe(readsBeforeInvalidClaims);
       headUnspent = false;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("absent from the selected UTXO set");
+      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("authoritative selected UTXO");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       headUnspent = true;
-      issuer.reconcileObservedHead(HEAD_ID, issuer.getCurrent(HEAD_ID).head);
+      expect(issuer.reconcileObservedHead(HEAD_ID, issuer.getCurrent(HEAD_ID).head).phase).toBe("ready");
       failHeadRead = true;
       await expect(server.claimHashChainGrant(claim)).rejects.toThrow();
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("ready");
+      expect(issuer.getDeliveryRecord(HEAD_ID, extra.grantId!)).toBeUndefined();
       failHeadRead = false;
       const grant = await server.claimHashChainGrant(claim);
       const signingRequest = {
@@ -164,21 +281,53 @@ describe("native-KAS hash-chain x402 product path", () => {
         spentHead: { txid: HEAD_TX, index: 0 },
         successor: { amount: artifact.outputs[0].value, scriptPublicKey: nextScript,
           covenantId: COVENANT_ID, authorizingInput: 0 } };
+      const readsBeforeStolenProof = originBatches;
+      const callsBeforeStolenProof = verifierCalls;
       await expect(server.verifyPayment({ paymentPayload: { ...payment,
         payload: { ...payment.payload, transaction: stolen.transaction,
           authorization: stolen.authorization, payerAddress: "kaspatest:thief" } } as never,
-        paymentRequirements: accepted, resource: RESOURCE, requestHash })).rejects.toThrow("assigned grant payer");
+        paymentRequirements: accepted, resource: RESOURCE, requestHash })).rejects.toThrow("assigned grant");
+      expect(originBatches).toBe(readsBeforeStolenProof);
+      expect(verifierCalls).toBe(callsBeforeStolenProof);
       selected = null;
       const paidRoute = { ...route, headers: { "PAYMENT-SIGNATURE": encodePaymentSignatureHeader(payment as never) } };
       const pending = await server.handlePaidRequest(paidRoute, async () => { protectedCalls++; return { body: "paid" }; });
       expect(pending.status).toBeGreaterThanOrEqual(400);
       expect(protectedCalls).toBe(0);
+      const competing = signHashChainExactTransaction({
+        request: signingRequest,
+        funding: {
+          outpoint: { txid: THIEF_FUNDING_TX, index: 0 },
+          amount: "50000000",
+          scriptPublicKey: PAYER_SCRIPT,
+          privateKey: PAYER.toString("hex"),
+          payerAddress: "kaspatest:payer",
+        },
+        feeSompi: "300000",
+      });
+      const callsBeforeCompetingProof = verifierCalls;
+      const readsBeforeCompetingProof = originBatches;
+      await expect(server.verifyPayment({
+        paymentPayload: {
+          ...payment,
+          payload: {
+            ...payment.payload,
+            transaction: competing.transaction,
+            authorization: competing.authorization,
+          },
+        } as never,
+        paymentRequirements: accepted,
+        resource: RESOURCE,
+        requestHash,
+      })).rejects.toThrow("another payment candidate");
+      expect(verifierCalls).toBe(callsBeforeCompetingProof);
+      expect(originBatches).toBe(readsBeforeCompetingProof);
       selected = { transactionId: signed.transactionId, finality: "accepted",
         spentHead: { txid: HEAD_TX, index: 0 },
         successor: { amount: artifact.outputs[0].value, scriptPublicKey: nextScript,
           covenantId: COVENANT_ID, authorizingInput: 0 } };
       headUnspent = false;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("absent from the selected UTXO set");
+      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("authoritative selected UTXO");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       await server.verifyPayment({ paymentPayload: payment as never, paymentRequirements: accepted,
         resource: RESOURCE, requestHash });

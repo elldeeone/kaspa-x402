@@ -1,5 +1,6 @@
 import {
   canonicalTrustedSecurityContext,
+  sha256Hex,
   stableStringify,
   type TrustedSecurityContext,
 } from "@kaspa-x402/core";
@@ -54,8 +55,14 @@ export interface PublicBoundaryPermit {
 
 export interface PublicBoundaryController {
   enterRequest(context?: TrustedSecurityContext): PublicBoundaryPermit;
+  /** Candidate extension: enters with a previously authenticated stable caller key. */
+  enterRequestKey?(callerKey: string): PublicBoundaryPermit;
   enterChannel(channelKey: string): PublicBoundaryPermit;
-  runAdapter<T>(adapter: string, operation: () => Promise<T> | T): Promise<T>;
+  runAdapter<T>(
+    adapter: string,
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    parentSignal?: AbortSignal,
+  ): Promise<T>;
 }
 
 type QuotaWindow = { count: number; resetAt: number };
@@ -82,7 +89,18 @@ export class MemoryPublicBoundaryController
   }
 
   enterRequest(context?: TrustedSecurityContext): PublicBoundaryPermit {
-    const caller = context ? authenticatedCallerKey(context) : "anonymous";
+    return this.enterRequestKey(
+      context ? publicBoundaryCallerKey(context) : "anonymous",
+    );
+  }
+
+  enterRequestKey(caller: string): PublicBoundaryPermit {
+    if (typeof caller !== "string" || caller.length === 0 || caller.length > 256) {
+      throw new PublicBoundaryError(
+        "caller_quota_exceeded",
+        "authenticated caller key is invalid",
+      );
+    }
     this.#admitCallerQuota(caller);
     if (this.#globalConcurrency >= this.#policy.maxGlobalConcurrency) {
       throw new PublicBoundaryError(
@@ -119,7 +137,8 @@ export class MemoryPublicBoundaryController
 
   async runAdapter<T>(
     adapter: string,
-    operation: () => Promise<T> | T,
+    operation: (signal: AbortSignal) => Promise<T> | T,
+    parentSignal?: AbortSignal,
   ): Promise<T> {
     const count = this.#adapterConcurrency.get(adapter) ?? 0;
     if (count >= this.#policy.maxAdapterConcurrency) {
@@ -130,28 +149,43 @@ export class MemoryPublicBoundaryController
     }
     this.#adapterConcurrency.set(adapter, count + 1);
 
-    const pending = Promise.resolve().then(operation);
+    const controller = new AbortController();
+    const pending = Promise.resolve().then(() => {
+      controller.signal.throwIfAborted();
+      return operation(controller.signal);
+    });
     void pending.then(
       () => decrement(this.#adapterConcurrency, adapter),
       () => decrement(this.#adapterConcurrency, adapter),
     );
     let timer: ReturnType<typeof setTimeout> | undefined;
-    const timeout = new Promise<never>((_resolve, reject) => {
+    let rejectCancellation!: (reason: unknown) => void;
+    const cancellation = new Promise<never>((_resolve, reject) => {
+      rejectCancellation = reject;
       timer = setTimeout(
-        () =>
-          reject(
-            new PublicBoundaryError(
-              "adapter_timeout",
-              `${adapter} exceeded the configured timeout`,
-            ),
-          ),
+        () => {
+          const error = new PublicBoundaryError(
+            "adapter_timeout",
+            `${adapter} exceeded the configured timeout`,
+          );
+          controller.abort(error);
+          reject(error);
+        },
         this.#policy.adapterTimeoutMs,
       );
     });
+    const abortFromParent = () => {
+      const reason = parentSignal?.reason ?? new Error(`${adapter} was aborted`);
+      controller.abort(reason);
+      rejectCancellation(reason);
+    };
+    if (parentSignal?.aborted) abortFromParent();
+    else parentSignal?.addEventListener("abort", abortFromParent, { once: true });
     try {
-      return await Promise.race([pending, timeout]);
+      return await Promise.race([pending, cancellation]);
     } finally {
       if (timer !== undefined) clearTimeout(timer);
+      parentSignal?.removeEventListener("abort", abortFromParent);
     }
   }
 
@@ -191,13 +225,17 @@ export class MemoryPublicBoundaryController
   }
 }
 
-function authenticatedCallerKey(context: TrustedSecurityContext): string {
+export function publicBoundaryCallerKey(
+  context: TrustedSecurityContext,
+): string {
   const canonical = canonicalTrustedSecurityContext(context);
-  return stableStringify({
-    scope: "kaspa:x402:authenticated-caller:v1",
-    principal: canonical.principal,
-    tenant: canonical.tenant,
-  });
+  return sha256Hex(
+    stableStringify({
+      scope: "kaspa:x402:authenticated-caller:v1",
+      principal: canonical.principal,
+      tenant: canonical.tenant,
+    }),
+  );
 }
 
 export function assertPublicBoundaryPolicy(

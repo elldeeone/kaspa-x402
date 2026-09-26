@@ -148,6 +148,13 @@ For this profile, `requestHash` is SHA-256 of canonical
 excludes `PaymentRequirements`: those requirements contain the challenge that
 cannot exist until the request hash has been calculated. The separate payer
 authorization binds the complete `PaymentRequirements` hash.
+Challenge issuance MUST require a host-authenticated admission context before
+it consumes durable issuer state. The issuer MUST deduplicate an identical
+live `(admission key, requestHash, amount, head version, grant)` offer without
+extending its expiry, enforce a durable per-admission-key live challenge cap,
+and retain the global head cap. If authenticated admission is unavailable or a
+cap is reached, a server offering batch settlement SHOULD return that usable
+fallback without allocating a hash-chain challenge.
 `headId` is the merchant's stable application identifier, while `covenantId`
 is the independently verified KIP-20 identity. `headVersion` increases for
 every accepted borrow or owner rotation. The outpoint, amount, script,
@@ -178,7 +185,16 @@ the upstream requirement for one identifiable transfer of `amount` to
 authorize a spend without the private key. The private key MUST NOT appear in
 `PaymentRequired`, `PaymentPayload`, public headers, logs, URLs, vectors or
 settlement responses. `grantClaimUrl` MUST be same-origin HTTPS with the
-protected resource, except for a loopback development server. `grantId` MUST
+client's actual protected request URL, not merely an advertised `resource.url`,
+except for a loopback development server when the actual request is loopback.
+Before signing or posting a claim, an automated client MUST require that exact
+canonical origin in a dedicated outbound allowlist. This allowlist is separate
+from funding policy and explicitly trusts all public or private addresses to
+which the origin can resolve; a client that cannot pin DNS and transport to a
+prevalidated peer MUST NOT represent a pre-resolution check as rebinding
+protection. Redirects, credentials and fragments are forbidden. Plain HTTP is
+limited to an explicitly listed loopback origin.
+`grantId` MUST
 be a fresh unpredictable 32-byte value for the current head; `challengeId`
 MUST be fresh for its request. A server may
 offer multiple public challenges for one current head, but only one payer may
@@ -212,6 +228,21 @@ The resource server MUST independently compute `requestHash`, compare every
 claim field to its still-live, stored offer and request, verify the payer
 signature, and reject a
 claim expiry later than `challengeExpiresAt` or the server's policy window.
+Before reading or parsing a claim body, the claim endpoint MUST acquire a
+bounded global or host-authenticated request permit. After parsing only the
+bounded claim fields, it MUST charge the same stored authenticated admission
+bucket used for its challenge before signature, eligibility, database mutation
+or chain work. It MUST enforce request-body, concurrency and timeout limits and
+propagate caller cancellation through current-head observation.
+The server MUST first authorize the claim without assigning the key, read the
+exact advertised head outpoint from an authoritative complete and untruncated
+current-UTXO source, and only then atomically revalidate the head version,
+outpoint, amount, script, covenant and claim tuple while committing the
+assignment. A transient observer failure, timeout or cancellation MUST leave
+the grant unassigned.
+The issuer MUST NOT expose an unchecked assignment helper: every public claim
+operation must require the authoritative exact-outpoint observation before its
+atomic commit.
 The grant issuer MUST atomically assign the current grant to one
 `(payerPublicKey, requestHash, challengeId)` tuple and persist the assignment
 before delivering the key. An identical authenticated retry receives the
@@ -340,7 +371,10 @@ client-supplied IDs, UTXO values, finality or fee claims are not authority.
 proof claim, and the former MUST be no later than the latter and the
 `maxTimeoutSeconds` window. A previously accepted immutable attempt may be
 recovered after expiry only under the existing exact replay rules; expiry
-never authorizes a new handler run. Clients should allow time for network
+never authorizes a new handler run. A client MUST recheck both expiries
+immediately before every broadcast and MUST NOT broadcast an expired attempt;
+it may only reconcile that exact transaction through trusted chain evidence.
+Clients should allow time for network
 acceptance before expiry. A payment that becomes final only after its
 presentation window closes has no automatic resource entitlement or refund
 under this binding; that consequence must be exposed before wallet approval.
@@ -356,6 +390,15 @@ under this binding; that consequence must be exposed before wallet approval.
    and historical UTXO data, exact net increase, and requested finality.
    It independently recomputes the transaction ID and validates every
    signature, witness, covenant binding, fee and mass under current consensus.
+   The server itself, before invoking any custom verifier adapter, MUST locally
+   authenticate and durably bind the first transaction ID to the assigned head
+   version, grant, challenge, request and payer. An alternate candidate MUST
+   fail before external reads. A matching candidate already recorded as the
+   accepted payment for that durable delivery MUST remain an idempotent retry
+   after issuer head advancement.
+   Input count MUST be bounded. Historical origins SHOULD be fetched in one
+   cancellable batch, and accepting-block reads MAY be deduplicated only within
+   that verification; all node reads MUST share the caller's deadline.
 4. If finality is not yet met but can still be reached, settlement reports
    the unmet condition and releases any transient proof claim. It does not
    run protected work. A retry may present the same immutable proof.
@@ -366,6 +409,12 @@ under this binding; that consequence must be exposed before wallet approval.
 6. The handler runs once. Its result and the payment/response commit are
    durable so an identical retry resumes the result. A different request
    presenting the same transaction or grant fails.
+
+Clients MUST canonicalize the actual request URL before deriving new payment
+identifiers and intent records. Recovery MAY recognize equivalent historical
+spellings, including an explicit default port, only when the canonical method,
+URL, body, origin and request hash still match. If two aliases identify
+different attempts, recovery MUST fail closed.
 
 The proof is presentable only while its claim and request-authorization
 window is live, apart from recovery of an already accepted identical

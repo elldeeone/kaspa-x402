@@ -13,7 +13,11 @@ import type { ExactTransactionVerificationRequest } from "../src/types.js";
 const root = fileURLToPath(new URL("../../../vectors/hash-chain/consensus-v1.json", import.meta.url));
 const vector = JSON.parse(readFileSync(root, "utf8")).expected;
 
-function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"): { request: ExactTransactionVerificationRequest; verifier: HashChainExactTransactionVerifier } {
+function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"): {
+  request: ExactTransactionVerificationRequest;
+  verifier: HashChainExactTransactionVerifier;
+  originReads: () => number;
+} {
   const step = vector.transactions.borrow1;
   const tx = structuredClone(step.transaction);
   tx.id = step.transactionId;
@@ -61,14 +65,19 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
     },
     hashChainHead: head,
   };
+  let reads = 0;
   const verifier = new HashChainExactTransactionVerifier({
-    async getAcceptedOrigin(outpoint) {
-      const input = tx.inputs.find((item: any) =>
-        item.previousOutpoint.txid === outpoint.txid && item.previousOutpoint.index === outpoint.index);
-      return input ? {
-        amount: input.utxo.amount, scriptPublicKey: input.utxo.scriptPublicKey,
-        covenantId: input === first ? vector.covenantId : null,
-      } : null;
+    async getAcceptedOrigins(outpoints) {
+      reads++;
+      return outpoints.map((outpoint) => {
+        const input = tx.inputs.find((item: any) =>
+          item.previousOutpoint.txid === outpoint.txid &&
+          item.previousOutpoint.index === outpoint.index);
+        return input ? {
+          amount: input.utxo.amount, scriptPublicKey: input.utxo.scriptPublicKey,
+          covenantId: input === first ? vector.covenantId : null,
+        } : null;
+      });
     },
     async getSelectedTransaction(id) {
       return id === tx.id && selectedMode !== "missing" ? {
@@ -82,18 +91,37 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
       } : null;
     },
   });
-  return { request, verifier };
+  return { request, verifier, originReads: () => reads };
 }
 
 describe("hash-chain exact selected-chain verifier", () => {
   it("accepts the fully signed Rusty-Kaspa consensus borrow and exact successor", async () => {
-    const { request, verifier } = fixture();
+    const { request, verifier, originReads } = fixture();
     await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({
       transactionId: vector.transactions.borrow1.transactionId,
       finality: "accepted",
       paymentOutput: { amount: "20000000" },
       continuation: { amount: "120000000" },
     });
+    expect(originReads()).toBe(1);
+  });
+
+  it("rejects noncanonical and unauthorized proofs before accepted-origin reads", async () => {
+    const noncanonical = fixture();
+    const artifact = JSON.parse(noncanonical.request.transaction);
+    artifact.id = "00".repeat(32);
+    await expect(noncanonical.verifier.verifyExactPayment({
+      ...noncanonical.request,
+      transaction: JSON.stringify(artifact),
+    })).rejects.toThrow("transaction ID is not canonical");
+    expect(noncanonical.originReads()).toBe(0);
+
+    const unauthorized = fixture();
+    await expect(unauthorized.verifier.verifyExactPayment({
+      ...unauthorized.request,
+      authorization: { ...unauthorized.request.authorization, signature: "00".repeat(64) },
+    })).rejects.toThrow("authorization signature");
+    expect(unauthorized.originReads()).toBe(0);
   });
 
   it("rejects underpayment, overpayment, a stolen grant, and an invalid payer authorization", async () => {
@@ -132,5 +160,41 @@ describe("hash-chain exact selected-chain verifier", () => {
       ...request.authorization, expiresAt: expired, digest,
       signature: Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.alloc(32, 7))).toString("hex"),
     } })).resolves.toHaveProperty("finality", "accepted");
+  });
+
+  it("rejects over-budget artifacts before any chain read", async () => {
+    const oversized = fixture();
+    const artifact = JSON.parse(oversized.request.transaction);
+    artifact.inputs = Array.from({ length: 9 }, (_, index) => ({
+      ...structuredClone(artifact.inputs[index % artifact.inputs.length]),
+      previousOutpoint: {
+        txid: index.toString(16).padStart(64, "0"),
+        index: 0,
+      },
+    }));
+    await expect(oversized.verifier.verifyExactPayment({
+      ...oversized.request,
+      transaction: JSON.stringify(artifact),
+    })).rejects.toThrow("input budget");
+    expect(oversized.originReads()).toBe(0);
+  });
+
+  it("propagates cancellation and rejects incomplete origin batches", async () => {
+    const cancelled = fixture();
+    const controller = new AbortController();
+    controller.abort(new Error("caller left"));
+    await expect(cancelled.verifier.verifyExactPayment({
+      ...cancelled.request,
+      signal: controller.signal,
+    })).rejects.toThrow("caller left");
+    expect(cancelled.originReads()).toBe(0);
+
+    const incomplete = fixture();
+    const verifier = new HashChainExactTransactionVerifier({
+      async getAcceptedOrigins() { return [null]; },
+      async getSelectedTransaction() { return null; },
+    });
+    await expect(verifier.verifyExactPayment(incomplete.request))
+      .rejects.toThrow("incomplete batch");
   });
 });

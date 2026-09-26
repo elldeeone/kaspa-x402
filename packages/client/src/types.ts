@@ -187,8 +187,22 @@ export interface HashChainGrantDelivery {
 export interface HashChainGrantClaimRequest {
   network: "kaspa:testnet-10";
   head: NonNullable<ExactPaymentRequest["hashChainHead"]>;
+  /** Trusted actual paid-resource URL; the grant endpoint must share its origin. */
+  resourceUrl: string;
   requestHash: Hash32Hex;
   payerPublicKey: PublicKeyHex;
+  /** Dedicated outbound trust policy for the private grant POST. */
+  destinationPolicy: HashChainGrantDestinationPolicy;
+}
+
+/**
+ * Exact origins authorized for the private grant POST. This is deliberately
+ * separate from payment funding policy: trusting an origin here also trusts
+ * every public or private address to which that origin can resolve. Plain HTTP
+ * remains limited to explicitly listed loopback origins for local testing.
+ */
+export interface HashChainGrantDestinationPolicy {
+  allowedOrigins: readonly string[];
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
@@ -784,6 +798,8 @@ export interface DirectModeClientOptions {
   refundReconciler?: RefundReconciler;
   fundingTransitionReconciler?: FundingTransitionReconciler;
   exactPaymentReconciler?: ExactPaymentReconciler;
+  /** Required before any hash-chain wallet or grant operation. */
+  hashChainGrantDestinationPolicy?: HashChainGrantDestinationPolicy;
   /** Deployment policy; Testnet-10 launch profile is 30. */
   confirmationThreshold: number;
   verifyVoucherSignature?: (

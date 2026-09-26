@@ -86,7 +86,9 @@ describe("hash-chain payer signing and HTTP grant claim", () => {
 
   it("signs the exact request-bound claim and rejects a cacheable secret response", async () => {
     const head = request().hashChainHead;
-    const claim = { network: "kaspa:testnet-10" as const, head, requestHash: "bb".repeat(32), payerPublicKey };
+    const claim = { network: "kaspa:testnet-10" as const, head,
+      resourceUrl: request().resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] } };
     const fetcher = async (_url: unknown, init: RequestInit | undefined) => {
       const body = JSON.parse(String(init?.body));
       expect(body.grantId).toBe(head.grantId);
@@ -103,5 +105,77 @@ describe("hash-chain payer signing and HTTP grant claim", () => {
     expect(delivered.grantId).toBe(head.grantId);
     await expect(claimHashChainGrantViaHttp(claim, () => "00".repeat(64),
       async () => new Response("{}", { headers: { "cache-control": "public" } }))).rejects.toThrow("caching");
+    let fetches = 0;
+    await expect(claimHashChainGrantViaHttp(
+      { ...claim, resourceUrl: "https://public.example.test/data" },
+      () => "00".repeat(64),
+      async () => { fetches++; return new Response("{}"); },
+    )).rejects.toThrow("same-origin");
+    expect(fetches).toBe(0);
+
+    const mutableHead = { ...head };
+    let fetchedUrl = "";
+    await claimHashChainGrantViaHttp(
+      { ...claim, head: mutableHead },
+      (value) => {
+        mutableHead.grantClaimUrl = "https://127.0.0.1/private";
+        return Buffer.from(schnorr.sign(
+          Buffer.from(value, "hex"),
+          Buffer.from(payerPrivateKey, "hex"),
+        )).toString("hex");
+      },
+      (async (url) => {
+        fetchedUrl = String(url);
+        return new Response(JSON.stringify(request().grant), {
+          headers: { "cache-control": "no-store" },
+        });
+      }) as typeof fetch,
+    );
+    expect(fetchedUrl).toBe(head.grantClaimUrl);
+  });
+
+  it("rejects unallowlisted private and DNS destinations before signing or fetch", async () => {
+    const base = request();
+    let signatures = 0;
+    let fetches = 0;
+    for (const origin of [
+      "http://127.0.0.1:7777",
+      "https://10.0.0.1",
+      "https://100.64.0.1",
+      "https://169.254.1.1",
+      "https://192.168.1.1",
+      "https://[::1]",
+      "https://[fc00::1]",
+      "https://rebind.example.test",
+    ]) {
+      await expect(claimHashChainGrantViaHttp({
+        network: "kaspa:testnet-10",
+        head: { ...base.hashChainHead, grantClaimUrl: `${origin}/grant` },
+        resourceUrl: `${origin}/data`,
+        requestHash: "bb".repeat(32),
+        payerPublicKey,
+        destinationPolicy: { allowedOrigins: ["https://api.example.test"] },
+      }, () => {
+        signatures++;
+        return "00".repeat(64);
+      }, async () => {
+        fetches++;
+        return new Response("{}");
+      })).rejects.toThrow("not explicitly allowlisted");
+    }
+    expect({ signatures, fetches }).toEqual({ signatures: 0, fetches: 0 });
+
+    const loopbackOrigin = "http://127.0.0.1:7777";
+    await expect(claimHashChainGrantViaHttp({
+      network: "kaspa:testnet-10",
+      head: { ...base.hashChainHead, grantClaimUrl: `${loopbackOrigin}/grant` },
+      resourceUrl: `${loopbackOrigin}/data`,
+      requestHash: "bb".repeat(32),
+      payerPublicKey,
+      destinationPolicy: { allowedOrigins: [loopbackOrigin] },
+    }, () => "00".repeat(64), async () =>
+      new Response(JSON.stringify(base.grant), {
+        headers: { "cache-control": "no-store" },
+      }))).resolves.toMatchObject({ grantId: base.grant.grantId });
   });
 });
