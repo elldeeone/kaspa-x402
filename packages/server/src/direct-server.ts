@@ -567,6 +567,7 @@ export class DirectModeServer {
               return this.#config.hashChainGetCurrentUtxo!(
                 current.head.outpoint,
                 observerSignal,
+                claim,
               );
             },
           },

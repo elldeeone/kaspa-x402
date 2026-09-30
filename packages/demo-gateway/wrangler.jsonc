@@ -31,6 +31,7 @@
     },
   ],
   "vars": {
+    "KASPA_X402_HASH_CHAIN_ENABLED": "false",
     "KASPA_X402_HASH_CHAIN_ORIGIN": "",
     "KASPA_X402_GATEWAY_ENABLED": "false",
     "KASPA_X402_NETWORK": "kaspa:testnet-10",

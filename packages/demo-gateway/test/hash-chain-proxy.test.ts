@@ -100,4 +100,15 @@ describe("hash-chain demo proxy", () => {
     expect(response.status).toBe(503);
     expect(await response.json()).toEqual({ error: "hash_chain_unavailable" });
   });
+  it("rejects an issuer redirect without forwarding it to the browser", async () => {
+    vi.stubGlobal("fetch", vi.fn(async (_url, init: RequestInit) => {
+      expect(init.redirect).toBe("manual");
+      return new Response(null, { status: 302, headers: { location: "https://other.example.test" } });
+    }));
+    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
+      headers: { "cf-connecting-ip": "203.0.113.1" },
+    }), readGatewayConfig(env));
+    expect(response.status).toBe(503);
+    expect(response.headers.has("location")).toBe(false);
+  });
 });
