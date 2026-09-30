@@ -86,19 +86,40 @@ export class HashChainDemoService {
       exactTransactionVerifier: this.#chain,
       admitHashChainChallenge: () => true,
       hashChainGetCurrentUtxo: (outpoint, signal, claim) => {
-        const head = this.issuer.getCurrent(current.headId).head;
-        return this.#chain.currentUtxo(outpoint, head.scriptPublicKey, signal, claim);
+        const grant = this.issuer.getCurrent(current.headId);
+        // The issuer has already authenticated an assigned retry's claim tuple.
+        const initialClaim = grant.phase === "ready" ? claim : undefined;
+        const challenge = initialClaim
+          ? this.issuer.getChallenge(current.headId, initialClaim.challengeId)
+          : undefined;
+        const requiredPayerFunding = challenge
+          ? (BigInt(challenge.quotedAmount) + BigInt(this.config.claimFeeSompi)).toString()
+          : undefined;
+        return this.#chain.currentUtxo(
+          outpoint,
+          grant.head.scriptPublicKey,
+          signal,
+          initialClaim,
+          requiredPayerFunding,
+        );
       },
       hashChainIsSelected: (id, signal) => this.#chain.isSelected(id, { signal }),
     });
-    if (path === "/hash-chain/grant") return handleHashChainGrantClaimHttp(server, request);
     const caller = request.headers.get(HASH_CHAIN_CALLER_HEADER);
     if (!/^[0-9a-f]{64}$/.test(caller ?? "")) return json({ error: "hash_chain_unavailable" }, 503);
+    const trustedSecurityContext = { principal: `public-hash-chain-demo:${caller}` };
+    if (path === "/hash-chain/grant") {
+      return handleHashChainGrantClaimHttp(
+        server,
+        request,
+        trustedSecurityContext,
+      );
+    }
     const url = new URL(new URL(request.url).pathname + new URL(request.url).search, this.config.gatewayBaseUrl).href;
     const answer = await server.handlePaidRequest({
       method: "GET", url, headers: Object.fromEntries(request.headers), paymentScheme: "exact",
       resource: { url, description: "Native-KAS hash-chain demo report", mimeType: "application/json" },
-      trustedSecurityContext: { principal: `public-hash-chain-demo:${caller}` }, signal: request.signal,
+      trustedSecurityContext, signal: request.signal,
     }, ({ payment }) => {
       if (payment.scheme !== "exact") throw new Error("Hash-chain demo requires exact payment");
       return { status: 200, body: {

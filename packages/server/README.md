@@ -79,7 +79,9 @@ hash-chain x402 profile through `DirectModeServer`, and route the advertised
 grant claim URL to `handleHashChainGrantClaimHttp`. Create it with a private
 SQLite file, a caller-managed 32-byte encryption key, and a synchronous,
 pure/idempotent payer eligibility callback. Apply rate limits through challenge
-admission and the shared public boundary, not side effects in `canClaim`. Store
+admission and the shared public boundary, not side effects in `canClaim`. Supply
+the same host-authenticated `TrustedSecurityContext` used to issue the challenge
+with each claim handler call; claims from a different caller are rejected. Store
 the encryption key separately from the
 database and back it up; losing it loses outstanding grants. See the
 [Node SQLite documentation](https://nodejs.org/download/release/v22.13.1/docs/api/sqlite.html)

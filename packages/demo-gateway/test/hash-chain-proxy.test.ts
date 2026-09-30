@@ -12,6 +12,46 @@ const env: GatewayEnv = {
   KASPA_X402_SERVER_PUBLIC_KEY: "aa".repeat(32),
 } as GatewayEnv;
 
+function gatewayEnv(overrides: Partial<GatewayEnv> = {}): GatewayEnv {
+  const counts = new Map<string, number>();
+  const leases = new Set<string>();
+  const namespace = {
+    idFromName(name: string) { return { name }; },
+    get() {
+      return {
+        acquirePublicAdmission(token: string, _nowMs: number, limit: number) {
+          if (!leases.has(token) && leases.size >= limit) {
+            return { allowed: false, retryAt: Date.now() + 1_000 };
+          }
+          leases.add(token);
+          return { allowed: true };
+        },
+        releasePublicAdmission(token: string) {
+          leases.delete(token);
+        },
+        async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+          const request = JSON.parse(String(init?.body ?? "{}")) as {
+            method: string;
+            payload?: { scope?: string; limit?: number; windowMs?: number };
+          };
+          if (request.method !== "checkRateLimit") {
+            return Response.json({ ok: false, error: `unexpected state method ${request.method}` }, { status: 500 });
+          }
+          const scope = request.payload?.scope ?? "unknown";
+          const count = (counts.get(scope) ?? 0) + 1;
+          counts.set(scope, count);
+          return Response.json({ ok: true, value: {
+            allowed: count <= (request.payload?.limit ?? 1),
+            count,
+            resetAt: Date.now() + (request.payload?.windowMs ?? 60_000),
+          } });
+        },
+      };
+    },
+  };
+  return { ...env, GATEWAY_STATE: namespace, ...overrides } as unknown as GatewayEnv;
+}
+
 describe("hash-chain demo proxy", () => {
   afterEach(() => vi.unstubAllGlobals());
   it("forwards payment headers and trusted caller identity while keeping the public path", async () => {
@@ -66,11 +106,98 @@ describe("hash-chain demo proxy", () => {
     })));
     const response = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
       headers: { origin: "https://kaspa-x402.org", "cf-connecting-ip": "203.0.113.1" },
-    }), env, { waitUntil() {} });
+    }), gatewayEnv(), { waitUntil() {} });
     expect(response.status).toBe(402);
     expect(response.headers.get("access-control-allow-origin")).toBe("https://kaspa-x402.org");
     expect(response.headers.get("access-control-expose-headers")?.toLowerCase()).toContain("x-kaspa-x402-demo-caller");
     expect(response.headers.get("x-kaspa-x402-demo-caller")).toMatch(/^[0-9a-f]{64}$/);
+  });
+  it("rate-limits public hash-chain and supported work before repeated upstream calls", async () => {
+    const fetcher = vi.fn(async (input: RequestInfo | URL) => {
+      const url = String(input);
+      return url.endsWith("/hash-chain/supported")
+        ? Response.json({ kinds: [] })
+        : new Response("{}", { status: 402 });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    for (const [index, path] of ["/hash-chain", "/hash-chain/report", "/hash-chain/grant", "/hash-chain/status"].entries()) {
+      const admitted = gatewayEnv({
+        KASPA_X402_HASH_CHAIN_ORIGIN: `https://rate-limit-${index}.example.test`,
+        KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
+      });
+      const request = () => handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}`, {
+        method: path.endsWith("/grant") ? "POST" : "GET",
+        headers: { "cf-connecting-ip": `203.0.113.${index + 1}` },
+      }), admitted, { waitUntil() {} });
+      expect((await request()).status).toBe(402);
+      const limited = await request();
+      expect(limited.status).toBe(429);
+      await expect(limited.json()).resolves.toMatchObject({ error: "rate_limited" });
+    }
+    const supportedEnv = gatewayEnv({
+      KASPA_X402_HASH_CHAIN_ORIGIN: "https://rate-limit-supported.example.test",
+      KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
+    });
+    const supported = () => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/supported", {
+      headers: { "cf-connecting-ip": "203.0.113.9" },
+    }), supportedEnv, { waitUntil() {} });
+    expect((await supported()).status).toBe(200);
+    const limitedSupported = await supported();
+    expect(limitedSupported.status).toBe(429);
+    await expect(limitedSupported.json()).resolves.toMatchObject({ error: "rate_limited" });
+    expect(fetcher).toHaveBeenCalledTimes(5);
+  });
+  it("coalesces and briefly caches repeated hash-chain capability lookups", async () => {
+    let release!: () => void;
+    const mayFinish = new Promise<void>((resolve) => { release = resolve; });
+    const fetcher = vi.fn(async () => {
+      await mayFinish;
+      return Response.json({ kinds: [] });
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const cached = gatewayEnv({
+      KASPA_X402_HASH_CHAIN_ORIGIN: "https://capability-cache.example.test",
+      KASPA_X402_RATE_LIMIT_PER_MINUTE: "10",
+    });
+    const request = (ip: string) => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/supported", {
+      headers: { "cf-connecting-ip": ip },
+    }), cached, { waitUntil() {} });
+
+    const first = request("203.0.113.20");
+    const second = request("203.0.113.21");
+    await vi.waitFor(() => expect(fetcher).toHaveBeenCalledTimes(1));
+    release();
+    await expect(Promise.all([first, second])).resolves.toEqual([
+      expect.objectContaining({ status: 200 }),
+      expect.objectContaining({ status: 200 }),
+    ]);
+    expect((await request("203.0.113.22")).status).toBe(200);
+    expect(fetcher).toHaveBeenCalledTimes(1);
+  });
+  it("holds the deployment-wide admission lease around hash-chain upstream work", async () => {
+    let startFirst!: () => void;
+    let finishFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { startFirst = resolve; });
+    const firstMayFinish = new Promise<void>((resolve) => { finishFirst = resolve; });
+    const fetcher = vi.fn(async () => {
+      startFirst();
+      await firstMayFinish;
+      return new Response("{}");
+    });
+    vi.stubGlobal("fetch", fetcher);
+    const admitted = gatewayEnv({ KASPA_X402_GLOBAL_CONCURRENCY: "1" });
+    const request = (ip: string) => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/hash-chain/status", {
+      headers: { "cf-connecting-ip": ip },
+    }), admitted, { waitUntil() {} });
+
+    const first = request("203.0.113.10");
+    await firstStarted;
+    const rejected = await request("203.0.113.11");
+    expect(rejected.status).toBe(503);
+    await expect(rejected.json()).resolves.toMatchObject({ error: "global_concurrency_exceeded" });
+    expect(fetcher).toHaveBeenCalledTimes(1);
+    finishFirst();
+    await expect(first).resolves.toMatchObject({ status: 200 });
   });
   it("rejects a resource request without trusted caller metadata", async () => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);

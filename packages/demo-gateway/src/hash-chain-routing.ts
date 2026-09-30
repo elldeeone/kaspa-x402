@@ -5,6 +5,17 @@ import type { GatewayConfig, GatewayEnv } from "./config.js";
 import { HASH_CHAIN_CALLER_HEADER, hashChainSupportedKinds, proxyHashChainRequest } from "./hash-chain-proxy.js";
 import { GATEWAY_STATE_OBJECT_NAME } from "./remote-state.js";
 
+const HASH_CHAIN_SUPPORTED_CACHE_TTL_MS = 5_000;
+let supportedCache: {
+  key: string;
+  expiresAt: number;
+  kinds: SupportedKind[];
+} | undefined;
+let supportedLookup: {
+  key: string;
+  promise: Promise<SupportedKind[]>;
+} | undefined;
+
 export function hashChainStub(env: GatewayEnv) {
   return env.GATEWAY_STATE.get(env.GATEWAY_STATE.idFromName(GATEWAY_STATE_OBJECT_NAME));
 }
@@ -32,12 +43,39 @@ export async function routeHashChainRequest(request: Request, config: GatewayCon
 }
 
 export async function hostedHashChainSupportedKinds(config: GatewayConfig, env: GatewayEnv): Promise<SupportedKind[]> {
-  if (config.hashChainOrigin) return hashChainSupportedKinds(config);
-  if (!config.enabled || !config.hashChainEnabled) return [];
-  try {
-    const response = await routeHashChainRequest(new Request(`${config.gatewayBaseUrl}/hash-chain/supported`), config, env);
-    return response.ok ? ((await response.json()) as { kinds: SupportedKind[] }).kinds : [];
-  } catch { return []; }
+  if (!config.enabled || (!config.hashChainOrigin && !config.hashChainEnabled)) return [];
+  const key = config.hashChainOrigin
+    ? `proxy:${config.hashChainOrigin}:${config.hashChainProxyToken ?? ""}`
+    : `local:${config.gatewayBaseUrl}:${config.adminToken ? "configured" : "unconfigured"}`;
+  const now = Date.now();
+  if (supportedCache?.key === key && supportedCache.expiresAt > now) {
+    return cloneKinds(supportedCache.kinds);
+  }
+  if (supportedLookup?.key === key) {
+    return supportedLookup.promise.then(cloneKinds);
+  }
+  const promise = (async () => {
+    if (config.hashChainOrigin) return hashChainSupportedKinds(config);
+    try {
+      const response = await routeHashChainRequest(new Request(`${config.gatewayBaseUrl}/hash-chain/supported`), config, env);
+      return response.ok ? ((await response.json()) as { kinds: SupportedKind[] }).kinds : [];
+    } catch { return []; }
+  })().then((kinds) => {
+    supportedCache = {
+      key,
+      expiresAt: Date.now() + HASH_CHAIN_SUPPORTED_CACHE_TTL_MS,
+      kinds: cloneKinds(kinds),
+    };
+    return kinds;
+  }).finally(() => {
+    if (supportedLookup?.promise === promise) supportedLookup = undefined;
+  });
+  supportedLookup = { key, promise };
+  return promise.then(cloneKinds);
+}
+
+function cloneKinds(kinds: SupportedKind[]): SupportedKind[] {
+  return kinds.map((kind) => structuredClone(kind));
 }
 
 function unavailable(): Response {

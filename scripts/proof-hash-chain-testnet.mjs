@@ -170,7 +170,7 @@ try {
         const body = await readBody(req, 4096);
         const answer = await handleHashChainGrantClaimHttp(server,
           new Request(url, { method: req.method, headers: req.headers, body,
-            signal: disconnect.signal }));
+            signal: disconnect.signal }), trustedSecurityContext);
         res.writeHead(answer.status, Object.fromEntries(answer.headers));
         res.end(await answer.text());
         return;

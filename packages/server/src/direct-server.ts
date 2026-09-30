@@ -537,6 +537,7 @@ export class DirectModeServer {
   /** Route POST grantClaimUrl here; callers must set Cache-Control: no-store. */
   async claimHashChainGrant(
     claim: HashChainGrantClaim,
+    trustedSecurityContext: TrustedSecurityContext,
     parentSignal?: AbortSignal,
   ): Promise<HashChainGrantDelivery> {
     if (this.#config.exactProfile !== "hash-chain-additive" || !this.#config.hashChainIssuer || !this.#config.hashChainHeadId) {
@@ -544,10 +545,7 @@ export class DirectModeServer {
     }
     const headId = this.#config.hashChainHeadId;
     parentSignal?.throwIfAborted();
-    const admissionKey = this.#config.hashChainIssuer.grantClaimAdmissionKey(
-      headId,
-      claim,
-    );
+    const admissionKey = publicBoundaryCallerKey(trustedSecurityContext);
     const requestPermit = this.#publicBoundary.enterRequestKey!(
       admissionKey,
     );

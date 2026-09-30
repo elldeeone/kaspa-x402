@@ -9,6 +9,9 @@ concurrency:
   group: ci-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
 jobs:
   windows:
     runs-on: windows-latest
@@ -16,6 +19,8 @@ jobs:
       - name: Use Windows checkout line endings
         run: git config --global core.autocrlf true
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -28,7 +33,7 @@ jobs:
         run: node scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offline-proof-windows
           path: proof-artifacts/offline.json
@@ -37,6 +42,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
       - uses: actions/setup-node@v4
         with:
           node-version-file: .node-version
@@ -49,7 +56,7 @@ jobs:
         run: npm run proof:offline -- --out proof-artifacts/offline.json
       - name: Retain offline proof report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offline-proof-linux
           path: proof-artifacts/offline.json
@@ -92,7 +99,7 @@ jobs:
           node scripts/validate-tx-v1-consensus.mjs --kaspa-root .kaspa-consensus 2> >(tee proof-artifacts/tx-v1-consensus.stderr.log >&2) | tee proof-artifacts/tx-v1-consensus.json
       - name: Retain consensus proof report
         if: always()
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tx-v1-consensus-linux
           path: |

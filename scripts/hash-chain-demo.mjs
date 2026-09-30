@@ -107,6 +107,14 @@ try {
           return found ? { outpoint: found.outpoint, amount: found.amount,
             scriptPublicKey: found.scriptPublicKey, covenantId: found.covenantId ?? null } : null;
         },
+        getPayerFundingUtxo: async (payerPublicKey, required, signal) => {
+          signal?.throwIfAborted();
+          const payerScript = `000020${payerPublicKey}ac`;
+          const entries = await getAddressUtxos(rpc, addressForScript(sdk, payerScript));
+          signal?.throwIfAborted();
+          return entries.some((item) => !item.covenantId &&
+            item.scriptPublicKey === payerScript && BigInt(item.amount) >= BigInt(required));
+        },
       });
       http = createServer(async (req, res) => {
         const disconnect = new AbortController();

@@ -5,6 +5,8 @@ import type { DirectModeServer } from "../src/direct-server.js";
 import { PublicBoundaryError } from "../src/public-boundary.js";
 
 describe("hash-chain HTTP trust boundaries", () => {
+  const trustedSecurityContext = { principal: "authenticated-test-caller" };
+
   it("rejects an oversized streaming grant claim before assigning a key", async () => {
     let claims = 0;
     const server = {
@@ -28,7 +30,7 @@ describe("hash-chain HTTP trust boundaries", () => {
     const request = new Request("https://merchant.example/grant", {
       method: "POST", headers: { "content-type": "application/json" }, body, duplex: "half",
     } as RequestInit & { duplex: "half" });
-    const response = await handleHashChainGrantClaimHttp(server, request);
+    const response = await handleHashChainGrantClaimHttp(server, request, trustedSecurityContext);
     expect(response.status).toBe(413);
     expect(response.headers.get("cache-control")).toBe("no-store");
     expect(claims).toBe(0);
@@ -48,7 +50,7 @@ describe("hash-chain HTTP trust boundaries", () => {
       ) {
         return operation(controller.signal);
       },
-      claimHashChainGrant(_claim: unknown, signal?: AbortSignal) {
+      claimHashChainGrant(_claim: unknown, _context: unknown, signal?: AbortSignal) {
         observed = signal;
         markEntered();
         return new Promise((_resolve, reject) => {
@@ -64,7 +66,7 @@ describe("hash-chain HTTP trust boundaries", () => {
       body: "{}",
       signal: controller.signal,
     });
-    const pending = handleHashChainGrantClaimHttp(server, request);
+    const pending = handleHashChainGrantClaimHttp(server, request, trustedSecurityContext);
     await entered;
     controller.abort(new Error("caller left"));
     const response = await pending;
@@ -99,7 +101,7 @@ describe("hash-chain HTTP trust boundaries", () => {
       body,
       duplex: "half",
     } as RequestInit & { duplex: "half" });
-    const response = await handleHashChainGrantClaimHttp(server, request);
+    const response = await handleHashChainGrantClaimHttp(server, request, trustedSecurityContext);
     expect(response.status).toBe(429);
     expect(pulls).toBe(0);
   });

@@ -220,24 +220,30 @@ describe("native-KAS hash-chain x402 product path", () => {
         hashChainGrantClaimDigest("kaspa:testnet-10", unsignedClaim), PAYER,
       )).toString("hex") };
       const readsBeforeInvalidClaims = headReads;
-      await expect(server.claimHashChainGrant({} as never)).rejects.toThrow();
-      await expect(server.claimHashChainGrant({ ...claim, signature: "00".repeat(64) }))
+      await expect(server.claimHashChainGrant({} as never, trustedSecurityContext)).rejects.toThrow();
+      await expect(server.claimHashChainGrant({ ...claim, signature: "00".repeat(64) }, trustedSecurityContext))
         .rejects.toThrow("invalid grant payer signature");
       claimEligible = false;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("payer is ineligible");
+      await expect(server.claimHashChainGrant(claim, trustedSecurityContext)).rejects.toThrow("payer is ineligible");
       claimEligible = true;
       expect(headReads).toBe(readsBeforeInvalidClaims);
+      await expect(server.claimHashChainGrant(claim, {
+        principal: "another-hash-chain-caller",
+        tenant: "merchant-test",
+      })).rejects.toThrow("grant claim admission changed");
+      expect(headReads).toBe(readsBeforeInvalidClaims);
+      expect(issuer.getCurrent(HEAD_ID).phase).toBe("ready");
       headUnspent = false;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("authoritative selected UTXO");
+      await expect(server.claimHashChainGrant(claim, trustedSecurityContext)).rejects.toThrow("authoritative selected UTXO");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       headUnspent = true;
       expect(issuer.reconcileObservedHead(HEAD_ID, issuer.getCurrent(HEAD_ID).head).phase).toBe("ready");
       failHeadRead = true;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow();
+      await expect(server.claimHashChainGrant(claim, trustedSecurityContext)).rejects.toThrow();
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("ready");
       expect(issuer.getDeliveryRecord(HEAD_ID, extra.grantId!)).toBeUndefined();
       failHeadRead = false;
-      const grant = await server.claimHashChainGrant(claim);
+      const grant = await server.claimHashChainGrant(claim, trustedSecurityContext);
       const signingRequest = {
           attemptId: "a1".repeat(32), intentHash: "a2".repeat(32),
           network: "kaspa:testnet-10", profile: "hash-chain-additive",
@@ -328,7 +334,7 @@ describe("native-KAS hash-chain x402 product path", () => {
         successor: { amount: artifact.outputs[0].value, scriptPublicKey: nextScript,
           covenantId: COVENANT_ID, authorizingInput: 0 } };
       headUnspent = false;
-      await expect(server.claimHashChainGrant(claim)).rejects.toThrow("authoritative selected UTXO");
+      await expect(server.claimHashChainGrant(claim, trustedSecurityContext)).rejects.toThrow("authoritative selected UTXO");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
       await server.verifyPayment({ paymentPayload: payment as never, paymentRequirements: accepted,
         resource: RESOURCE, requestHash });

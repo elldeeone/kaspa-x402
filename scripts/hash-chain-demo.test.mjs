@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { schnorr } from '@noble/curves/secp256k1.js';
+import { bindRequestHashToTrustedContext, sha256Hex, stableStringify } from '@kaspa-x402/core';
 import { hashChainGrantClaimDigest } from '@kaspa-x402/server/hash-chain-grants';
 import { createHashChainDemoFixture, TEST_PAYER_KEY } from './hash-chain-demo-fixture.mjs';
 import { createHashChainDemoPayment, readHashChainQuote } from '../site/dist/assets/hash-chain-client.js';
@@ -19,6 +20,88 @@ test('one caller exhausting unpaid quotes does not block another caller', async 
     assert.equal((await quote('bb', 'second-caller')).status, 402, 'another caller must still get a quote');
     assert.equal((await quote('aa', 0)).status, 402, 'an existing quote remains usable');
     assert.equal(fixture.state.phase, 'ready');
+  } finally { await fixture.close(); }
+});
+
+test('an unfunded self-signed claimant cannot reserve the sole grant', async () => {
+  const origin = 'http://127.0.0.1:9879';
+  const fixture = await createHashChainDemoFixture(origin);
+  const caller = 'ef'.repeat(32);
+  const url = `${origin}/hash-chain/report?unfunded=1`;
+  const key = Buffer.alloc(32, 9);
+  try {
+    const quote = readHashChainQuote(await fixture.fetch(url, {
+      headers: { 'x-kaspa-x402-demo-caller': caller },
+    }));
+    const requestHash = bindRequestHashToTrustedContext(
+      sha256Hex(stableStringify({ method: 'GET', url, body: null })),
+      quote.trustedSecurityContext,
+    );
+    const unsigned = {
+      grantId: quote.accepted.extra.grantId,
+      challengeId: quote.accepted.extra.challengeId,
+      requestHash,
+      payerPublicKey: Buffer.from(schnorr.getPublicKey(key)).toString('hex'),
+      expiresAt: quote.accepted.extra.challengeExpiresAt,
+    };
+    const response = await fixture.fetch(`${origin}/hash-chain/grant`, {
+      method: 'POST',
+      headers: { 'content-type': 'application/json', 'x-kaspa-x402-demo-caller': caller },
+      body: JSON.stringify({ ...unsigned, signature: Buffer.from(schnorr.sign(
+        hashChainGrantClaimDigest('kaspa:testnet-10', unsigned), key,
+      )).toString('hex') }),
+    });
+    assert.equal(response.status, 409);
+    assert.equal(fixture.state.phase, 'ready');
+  } finally { await fixture.close(); }
+});
+
+test('assigned grant retries survive funding loss and restart but still require the authenticated caller and unspent head', async () => {
+  const origin = 'http://127.0.0.1:9880';
+  const fixture = await createHashChainDemoFixture(origin);
+  const caller = 'ef'.repeat(32);
+  const url = `${origin}/hash-chain/report?grant-retry=1`;
+  const key = Buffer.from(TEST_PAYER_KEY, 'hex');
+  try {
+    const funding = fixture.funding().entries[0].outpoint;
+    const quote = readHashChainQuote(await fixture.fetch(url, {
+      headers: { 'x-kaspa-x402-demo-caller': caller },
+    }));
+    const unsigned = {
+      grantId: quote.accepted.extra.grantId,
+      challengeId: quote.accepted.extra.challengeId,
+      requestHash: bindRequestHashToTrustedContext(
+        sha256Hex(stableStringify({ method: 'GET', url, body: null })),
+        quote.trustedSecurityContext,
+      ),
+      payerPublicKey: Buffer.from(schnorr.getPublicKey(key)).toString('hex'),
+      expiresAt: quote.accepted.extra.challengeExpiresAt,
+    };
+    const body = JSON.stringify({ ...unsigned, signature: Buffer.from(schnorr.sign(
+      hashChainGrantClaimDigest('kaspa:testnet-10', unsigned), key,
+    )).toString('hex') });
+    const claim = (identity = caller) => fixture.fetch(`${origin}/hash-chain/grant`, {
+      method: 'POST', headers: {
+        'content-type': 'application/json', 'x-kaspa-x402-demo-caller': identity,
+      }, body,
+    });
+    const first = await claim();
+    assert.equal(first.status, 200);
+    const grant = await first.json();
+    const head = fixture.state.head;
+    fixture.spend({ txid: funding.transactionId, index: funding.index });
+    await fixture.reopen();
+
+    const retry = await claim();
+    assert.equal(retry.status, 200);
+    assert.deepEqual(await retry.json(), grant);
+    assert.equal(fixture.state.phase, 'assigned');
+    assert.deepEqual(fixture.state.head, head);
+    assert.equal((await claim('ab'.repeat(32))).status, 409);
+
+    fixture.spend(head.outpoint);
+    assert.equal((await claim()).status, 409);
+    assert.equal(fixture.state.phase, 'hold');
   } finally { await fixture.close(); }
 });
 

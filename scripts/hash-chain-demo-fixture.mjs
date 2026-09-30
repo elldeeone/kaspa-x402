@@ -52,8 +52,14 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
       },
       getCurrentUtxo: async (outpoint) => {
         const current = issuer.getCurrent(HEAD_ID).head;
-        return current.outpoint.txid === outpoint.txid && current.outpoint.index === outpoint.index
+        return current.outpoint.txid === outpoint.txid && current.outpoint.index === outpoint.index &&
+          origins.has(`${outpoint.txid}:${outpoint.index}`)
           ? { outpoint, amount: current.amount, scriptPublicKey: current.scriptPublicKey, covenantId: COVENANT_ID } : null;
+      },
+      getPayerFundingUtxo: async (payerPublicKey, required) => {
+        const script = `000020${payerPublicKey}ac`;
+        return [...origins.values()].some((item) => item.covenantId === null &&
+          item.scriptPublicKey === script && BigInt(item.amount) >= BigInt(required));
       },
     });
   }
@@ -71,6 +77,9 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
       const transactionId = String(fundingIndex++).padStart(64, '0');
       origins.set(`${transactionId}:0`, { amount: '50000000', scriptPublicKey: payerScript, covenantId: null });
       return { entries: [{ outpoint: { transactionId, index: 0 }, amount: '50000000', covenantId: null }] };
+    },
+    spend(outpoint) {
+      origins.delete(`${outpoint.txid}:${outpoint.index}`);
     },
     broadcast(artifact) {
       const tx = JSON.parse(artifact);

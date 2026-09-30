@@ -22,7 +22,13 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     storage.sql.exec("CREATE TABLE IF NOT EXISTS hash_chain_acceptance (transaction_id TEXT PRIMARY KEY, acceptance TEXT NOT NULL)");
   }
 
-  async currentUtxo(outpoint: FundingOutpoint, script: string, signal?: AbortSignal, claim?: HashChainGrantClaim) {
+  async currentUtxo(
+    outpoint: FundingOutpoint,
+    script: string,
+    signal?: AbortSignal,
+    claim?: HashChainGrantClaim,
+    requiredPayerFunding?: string,
+  ) {
     signal?.throwIfAborted();
     const addresses = [addressForScriptPublicKey(script, "kaspa:testnet-10")];
     if (claim) addresses.push(addressForScriptPublicKey(`000020${claim.payerPublicKey}ac`, "kaspa:testnet-10"));
@@ -31,6 +37,13 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     const matching = snapshot.utxos.filter((item) => sameOutpoint(item.outpoint, outpoint));
     if (matching.length > 1) throw new Error("PNN returned duplicate head UTXOs");
     if (claim && matching.length === 1) {
+      const payerScript = `000020${claim.payerPublicKey}ac`;
+      if (requiredPayerFunding === undefined || !snapshot.utxos.some((item) =>
+        item.covenantId === null &&
+        item.scriptPublicKey === payerScript &&
+        BigInt(item.amount) >= BigInt(requiredPayerFunding))) {
+        throw new Error("payer has no eligible funding UTXO");
+      }
       // A repeated delivery must retain the checkpoint from before the spend.
       this.storage.sql.exec("INSERT OR IGNORE INTO hash_chain_origin_snapshots(challenge_id, snapshot) VALUES(?, ?)",
         claim.challengeId, JSON.stringify(snapshot));

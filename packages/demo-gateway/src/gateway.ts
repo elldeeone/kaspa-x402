@@ -53,6 +53,7 @@ import {
 } from "./state.js";
 
 type Profile = "exact" | "batch-settlement";
+type PublicRateScope = Profile | "hash-chain" | "supported";
 type CanaryTrigger = GatewayCanaryReport["trigger"];
 type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
@@ -84,16 +85,28 @@ export async function handleGatewayRequest(
   if (request.method === "OPTIONS")
     return new Response(null, { status: 204, headers: corsHeaders(config) });
 
+  const state = new RemoteGatewayState(env.GATEWAY_STATE);
   if (HASH_CHAIN_ROUTES.has(url.pathname)) {
-    const response = await routeHashChainRequest(request, config, env);
-    return new Response(response.body, { status: response.status,
-      headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+    const admission = await admitGatewayPublicRequest(
+      request,
+      state,
+      config,
+      "hash-chain",
+    );
+    if (admission instanceof Response) return admission;
+    try {
+      const response = await routeHashChainRequest(request, config, env);
+      const body = await response.arrayBuffer();
+      return new Response(body, { status: response.status,
+        headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+    } finally {
+      await admission.release();
+    }
   }
   if (url.pathname.startsWith("/admin/hash-chain")) {
     return hashChainAdminResponse(request, url, config, env);
   }
 
-  const state = new RemoteGatewayState(env.GATEWAY_STATE);
   if (url.pathname.startsWith("/admin/exact-heads")) {
     return exactHeadsAdminResponse(request, url, config, state);
   }
@@ -110,15 +123,26 @@ export async function handleGatewayRequest(
     return canaryResponse(config, state);
 
   if (url.pathname === "/supported" && request.method === "GET") {
-    const exactAvailable = await hostedExactAvailable(config, state);
-    return json(
-      {
-        ok: true,
-        enabled: config.enabled,
-        kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hostedHashChainSupportedKinds(config, env)],
-      },
-      { headers: corsHeaders(config) },
+    const admission = await admitGatewayPublicRequest(
+      request,
+      state,
+      config,
+      "supported",
     );
+    if (admission instanceof Response) return admission;
+    try {
+      const exactAvailable = await hostedExactAvailable(config, state);
+      return json(
+        {
+          ok: true,
+          enabled: config.enabled,
+          kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hostedHashChainSupportedKinds(config, env)],
+        },
+        { headers: corsHeaders(config) },
+      );
+    } finally {
+      await admission.release();
+    }
   }
 
   const profile = routeProfile(url.pathname);
@@ -139,31 +163,6 @@ export async function handleGatewayRequest(
       { status: 503, headers: corsHeaders(config) },
     );
   }
-  const rate = await state.checkRateLimit(
-    rateScope(request, profile),
-    Date.now(),
-    config.rateLimitPerMinute,
-    60_000,
-  );
-  if (!rate.allowed) {
-    return json(
-      {
-        ok: false,
-        error: "rate_limited",
-        resetAt: new Date(rate.resetAt).toISOString(),
-      },
-      {
-        status: 429,
-        headers: {
-          ...corsHeaders(config),
-          "retry-after": String(
-            Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)),
-          ),
-        },
-      },
-    );
-  }
-
   if (profile === "exact" && !hostedExactConfigured(config)) {
     return json(
       { ok: false, error: "exact_unavailable" },
@@ -171,42 +170,13 @@ export async function handleGatewayRequest(
     );
   }
 
-  let admission: GatewayPublicAdmission;
-  try {
-    admission = await acquireGatewayPublicAdmission(
-      state,
-      config.globalConcurrency,
-    );
-  } catch (error) {
-    console.error(
-      JSON.stringify({
-        event: "gateway_public_admission_failed",
-        error: errorMessage(error),
-      }),
-    );
-    return json(
-      { ok: false, error: "admission_unavailable" },
-      { status: 503, headers: corsHeaders(config) },
-    );
-  }
-  if (!admission.allowed) {
-    return json(
-      {
-        ok: false,
-        error: "global_concurrency_exceeded",
-        retryAt: new Date(admission.retryAt).toISOString(),
-      },
-      {
-        status: 503,
-        headers: {
-          ...corsHeaders(config),
-          "retry-after": String(
-            Math.max(1, Math.ceil((admission.retryAt - Date.now()) / 1_000)),
-          ),
-        },
-      },
-    );
-  }
+  const admission = await admitGatewayPublicRequest(
+    request,
+    state,
+    config,
+    profile,
+  );
+  if (admission instanceof Response) return admission;
 
   try {
     let gateway: { server: DirectModeServer };
@@ -307,6 +277,76 @@ export async function handleGatewayRequest(
 type GatewayPublicAdmission =
   | { allowed: false; retryAt: number }
   | { allowed: true; release(): Promise<void> };
+
+async function admitGatewayPublicRequest(
+  request: Request,
+  state: GatewayStateClient,
+  config: GatewayConfig,
+  scope: PublicRateScope,
+): Promise<Response | Extract<GatewayPublicAdmission, { allowed: true }>> {
+  const rate = await state.checkRateLimit(
+    rateScope(request, scope),
+    Date.now(),
+    config.rateLimitPerMinute,
+    60_000,
+  );
+  if (!rate.allowed) {
+    return json(
+      {
+        ok: false,
+        error: "rate_limited",
+        resetAt: new Date(rate.resetAt).toISOString(),
+      },
+      {
+        status: 429,
+        headers: {
+          ...corsHeaders(config),
+          "retry-after": String(
+            Math.max(1, Math.ceil((rate.resetAt - Date.now()) / 1000)),
+          ),
+        },
+      },
+    );
+  }
+
+  let admission: GatewayPublicAdmission;
+  try {
+    admission = await acquireGatewayPublicAdmission(
+      state,
+      config.globalConcurrency,
+    );
+  } catch (error) {
+    console.error(
+      JSON.stringify({
+        event: "gateway_public_admission_failed",
+        error: errorMessage(error),
+      }),
+    );
+    return json(
+      { ok: false, error: "admission_unavailable" },
+      { status: 503, headers: corsHeaders(config) },
+    );
+  }
+  if (!admission.allowed) {
+    return json(
+      {
+        ok: false,
+        error: "global_concurrency_exceeded",
+        retryAt: new Date(admission.retryAt).toISOString(),
+      },
+      {
+        status: 503,
+        headers: {
+          ...corsHeaders(config),
+          "retry-after": String(
+            Math.max(1, Math.ceil((admission.retryAt - Date.now()) / 1_000)),
+          ),
+        },
+      },
+    );
+  }
+  return admission;
+}
 
 async function acquireGatewayPublicAdmission(
   state: GatewayStateClient,
@@ -1503,7 +1543,7 @@ function profileMetric(profile: Profile): string {
   return profile === "exact" ? "exact" : "batch";
 }
 
-function rateScope(request: Request, profile: Profile): string {
+function rateScope(request: Request, profile: PublicRateScope): string {
   const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
   return `${ip}:${profile}`;
 }

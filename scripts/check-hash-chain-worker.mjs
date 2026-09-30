@@ -23,6 +23,7 @@ const transactions = new Map();
 const utxos = new Map();
 let broadcasts = 0;
 let lastPaidRequest;
+let grantRetryAfterFundingLoss = false;
 let selectedHeight = 0;
 let reorged = false;
 const acceptedBlocks = new Map();
@@ -91,11 +92,29 @@ const fetcher = async (input, init) => {
   const request = new Request(input, init);
   request.headers.set('cf-connecting-ip', '203.0.113.10');
   request.headers.set('x-kaspa-x402-demo-caller', 'forged');
+  const grantRetry = new URL(request.url).pathname === '/hash-chain/grant' && !grantRetryAfterFundingLoss
+    ? request.clone() : undefined;
   if (request.headers.has('PAYMENT-SIGNATURE')) lastPaidRequest = request.clone();
   const response = await worker.dispatchFetch(request.url, {
     method: request.method, headers: request.headers,
     ...(request.body ? { body: request.body, duplex: 'half' } : {}),
   });
+  if (grantRetry && response.status === 200) {
+    const assignedGrant = await response.clone().json();
+    const payerUtxos = [...utxos.entries()].filter(([, item]) =>
+      item.utxoEntry.scriptPublicKey.scriptPublicKey === payerScript.slice(4));
+    for (const [key] of payerUtxos) utxos.delete(key);
+    try {
+      const retry = await worker.dispatchFetch(grantRetry.url, {
+        method: grantRetry.method, headers: grantRetry.headers, body: await grantRetry.text(),
+      });
+      assert.equal(retry.status, 200, 'assigned grant retry must survive loss of payer funding');
+      assert.deepEqual(await retry.json(), assignedGrant);
+      grantRetryAfterFundingLoss = true;
+    } finally {
+      for (const [key, value] of payerUtxos) utxos.set(key, value);
+    }
+  }
   if (request.headers.has('PAYMENT-SIGNATURE') && !response.headers.has('PAYMENT-RESPONSE')) {
     throw new Error(`Local Worker paid response: HTTP ${response.status}; ${await response.clone().text()}`);
   }
@@ -167,6 +186,7 @@ try {
     results.push(result.transactionId);
   }
   assert.equal(broadcasts, 2);
+  assert.equal(grantRetryAfterFundingLoss, true);
   const savedRetry = lastPaidRequest.clone();
   await worker.dispose();
   worker = createWorker();
@@ -182,7 +202,7 @@ try {
   });
   assert.notEqual(rejectedRetry.status, 200, 'a reorged accepting block must not return cached paid content');
   console.log(JSON.stringify({ ok: true, chain: 'simulated', runtime: 'Cloudflare Worker with SQLite Durable Object',
-    payments: 2, broadcasts, paidRetryAfterRestart: true, reorgedRetryRejected: true,
+    payments: 2, broadcasts, grantRetryAfterFundingLoss, paidRetryAfterRestart: true, reorgedRetryRejected: true,
     existingExactAndBatchOffers: true, callerIsolation: true }, null, 2));
 } catch (error) {
   console.error(error.stack?.split('\n').slice(0,5).join('\n') ?? String(error));
