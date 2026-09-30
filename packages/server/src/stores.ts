@@ -1,5 +1,21 @@
 import {
-  KASPA_X402_RESOURCE_BUDGET,
+  durableByteLength,
+  durableOpenRecordBytes,
+} from "./durable-record-budget.js";
+import {
+  exactTransitionScope,
+  prepareExactTransition,
+  type ExactTransitionCommand,
+  type ExactTransitionResult,
+  type ExactTransitionSnapshot,
+} from "./exact-payment-transitions.js";
+import {
+  assertPaymentIdentifierAvailable,
+  assertPaymentIdentifierCompletion,
+  transitionPaymentIdentifierReservation,
+  type PaymentIdentifierReservationTransition,
+} from "./payment-identifier-state.js";
+import {
   applyBatchClaimAccounting,
   batchLaneAccounting,
   decideChainEvidence,
@@ -13,16 +29,7 @@ import {
   batchSettlementAttemptsMatch,
   normalizeBatchSettlementAttempt,
 } from "./batch-settlement-attempts.js";
-import {
-  acceptExactHead,
-  applyExactHeadLineage as applyExactHeadLineageRecord,
-  claimExactHead,
-  exactHeadMatchesSelection as sharedExactHeadMatchesSelection,
-  exactSettlementAttemptsMatch,
-  normalizeExactHeadRecord,
-  normalizeExactSettlementAttempt,
-  releaseExactHeadClaim,
-} from "./exact-heads.js";
+import { exactHeadMatchesSelection as sharedExactHeadMatchesSelection } from "./exact-heads.js";
 import {
   assertServerChannelLineageConsistency,
   assertServerCovenantLineageExtension,
@@ -102,12 +109,6 @@ type BudgetRecord = {
   paymentIdentifier?: string;
   safelyReleased?: boolean;
 };
-
-const MAX_DURABLE_HANDLER_RESULT_BYTES = 256 * 1024;
-const MAX_DURABLE_RESPONSE_BYTES =
-  MAX_DURABLE_HANDLER_RESULT_BYTES +
-  KASPA_X402_RESOURCE_BUDGET.maxEncodedHeaderBytes +
-  1024;
 
 export class MemoryServerChannelStore implements ServerStateStore {
   readonly coordinationScope = "process-local" as const;
@@ -418,10 +419,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     this.#commitments.set(commitment.commitmentId, commitment);
     if (paymentIdentifier) {
       this.#paymentIdentifiers.set(paymentIdentifier.id, paymentIdentifier);
-      this.#completePaymentIdentifierReservation(
-        attempt.paymentIdentifier!,
-        attempt.updatedAt,
-      );
+      this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier!, {
+        kind: "complete",
+        observedAt: attempt.updatedAt,
+      });
     }
     this.#setChannel(channel);
     this.#batchAttempts.set(attempt.attemptId, appliedAttempt);
@@ -482,10 +483,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
       attempt.paymentIdentifier,
     );
     if (transition) this.#setChannel(transition.next);
-    this.#reservePaymentIdentifier(
-      attempt.paymentIdentifier,
-      attempt.createdAt,
-    );
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "reserve",
+      observedAt: attempt.createdAt,
+    });
     this.#batchAttempts.set(attempt.attemptId, clone(attempt));
     this.#openBatchAttemptByChannel.set(attempt.channelId, attempt.attemptId);
     this.#channelOperations.set(attempt.channelId, {
@@ -525,9 +526,12 @@ export class MemoryServerChannelStore implements ServerStateStore {
       status: "pending",
       updatedAt: startedAt,
     });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      updatedAt: startedAt,
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "update",
+      update: {
+        status: "pending",
+        updatedAt: startedAt,
+      },
     });
     return true;
   }
@@ -552,10 +556,13 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: undefined,
       updatedAt: completedAt,
     });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      recoveryReason: undefined,
-      updatedAt: completedAt,
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "update",
+      update: {
+        status: "pending",
+        recoveryReason: undefined,
+        updatedAt: completedAt,
+      },
     });
   }
 
@@ -577,11 +584,12 @@ export class MemoryServerChannelStore implements ServerStateStore {
       );
     }
     this.#requireChannelOperation(attempt.channelId, attempt.attemptId);
-    this.#releasePaymentIdentifierReservation(
-      attempt.paymentIdentifier,
-      reason,
-      observedAt,
-    );
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "release",
+      reason: reason,
+      observedAt: observedAt,
+      allowPending: false,
+    });
     this.#batchAttempts.delete(attempt.attemptId);
     this.#openBatchAttemptByChannel.delete(attempt.channelId);
     this.#channelOperations.delete(attempt.channelId);
@@ -627,113 +635,22 @@ export class MemoryServerChannelStore implements ServerStateStore {
       recoveryReason: reason,
       updatedAt: observedAt,
     });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "recovery-required",
-      recoveryReason: reason,
-      updatedAt: observedAt,
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "update",
+      update: {
+        status: "recovery-required",
+        recoveryReason: reason,
+        updatedAt: observedAt,
+      },
     });
   }
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
-    const payment = clone(record.payment);
-    const key = exactPaymentKey(payment.transactionId);
-    const existing = this.#exactPayments.get(key);
-    if (existing) {
-      if (
-        existing.requestFingerprint !== payment.requestFingerprint ||
-        existing.paymentPayloadHash !== payment.paymentPayloadHash ||
-        existing.paymentOutputIndex !== payment.paymentOutputIndex
-      ) {
-        throw new Error(
-          "exact payment transaction was already committed for a different request",
-        );
-      }
-      return;
-    }
-    const attempt = this.#exactAttempts.get(
-      payment.transactionId.toLowerCase(),
-    );
-    if (record.paymentIdentifier) {
-      if (!attempt)
-        throw new Error(
-          "payment identifier completion requires its reserved attempt",
-        );
-      this.#assertCompletedPaymentIdentifier(attempt, record.paymentIdentifier);
-    }
-    let appliedAttempt: ExactSettlementAttemptRecord | undefined;
-    let terminalBudgetBytes: number | undefined;
-    if (attempt) {
-      if (
-        attempt.status !== "accepted" ||
-        !attempt.handlerStartedAt ||
-        !attempt.handlerResult
-      ) {
-        throw new Error("exact settlement attempt is not ready to apply");
-      }
-      const {
-        handlerResult: _handlerResult,
-        handlerCompletedAt: _handlerCompletedAt,
-        ...compactAttempt
-      } = attempt;
-      appliedAttempt = {
-        ...compactAttempt,
-        status: "applied",
-        transaction: "",
-        recoveryReason: undefined,
-        updatedAt: new Date().toISOString(),
-      };
-      terminalBudgetBytes = durableByteLength({
-        attempt: appliedAttempt,
-        payment,
-        paymentIdentifier: record.paymentIdentifier,
-      });
-      this.#assertTerminalBudgetFits(
-        `exact:${attempt.transactionId}`,
-        terminalBudgetBytes,
-      );
-      this.#exactAttempts.set(payment.transactionId, appliedAttempt);
-    }
-    if (record.paymentIdentifier) {
-      this.#paymentIdentifiers.set(
-        record.paymentIdentifier.id,
-        clone(record.paymentIdentifier),
-      );
-      this.#completePaymentIdentifierReservation(
-        attempt!.paymentIdentifier!,
-        new Date().toISOString(),
-      );
-    }
-    this.#exactPayments.set(key, payment);
-    if (attempt) {
-      this.#terminalizeBudgetRecord(
-        `exact:${attempt.transactionId}`,
-        terminalBudgetBytes!,
-        undefined,
-        record.paymentIdentifier?.id,
-      );
-    }
+    this.#applyExactTransition({ kind: "commit", args: [record] });
   }
 
   async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
-    const record = normalizeExactHeadRecord(input);
-    const existing = this.#exactHeads.get(record.headId);
-    if (existing) {
-      if (stableJson(existing) !== stableJson(record))
-        throw new Error(
-          "exact head id is already registered for different state",
-        );
-      return clone(existing);
-    }
-    for (const current of this.#exactHeads.values()) {
-      if (sameOutpoint(current.currentOutpoint, record.currentOutpoint)) {
-        throw new Error("exact head outpoint is already registered");
-      }
-    }
-    if (this.#exactHeads.size >= this.#limits.maxExactHeads) {
-      throw new Error("exact head admission limit exceeded");
-    }
-    this.#exactHeads.set(record.headId, clone(record));
-    return clone(record);
+    return this.#applyExactTransition({ kind: "register-head", args: [input] });
   }
 
   async loadExactHead(headId: Hash32Hex): Promise<ExactHeadRecord | undefined> {
@@ -763,42 +680,7 @@ export class MemoryServerChannelStore implements ServerStateStore {
   async claimExactSettlement(
     input: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementClaimResult> {
-    const attempt = normalizeExactSettlementAttempt(input);
-    const existing = this.#exactAttempts.get(attempt.transactionId);
-    if (existing) {
-      if (!exactSettlementAttemptsMatch(existing, attempt))
-        throw new Error(
-          "exact transaction is already claimed for a different request",
-        );
-      return { attempt: clone(existing), created: false };
-    }
-    this.#assertPaymentIdentifierClaimAvailable(attempt.paymentIdentifier);
-    let claimedHead: ExactHeadRecord | undefined;
-    if (attempt.profile === "additive") {
-      if (!attempt.head)
-        throw new Error("additive exact settlement requires a head claim");
-      const head = this.#exactHeads.get(attempt.head.headId);
-      if (!head) throw new Error("exact head changed before settlement claim");
-      claimedHead = claimExactHead(head, attempt);
-    } else if (attempt.head) {
-      throw new Error("standard-native exact settlement cannot claim a head");
-    }
-    this.#admitBudgetRecord(
-      `exact:${attempt.transactionId}`,
-      "exact",
-      attempt.transactionId,
-      attempt.payerId,
-      attempt.paymentIdentifier?.id,
-      durableOpenRecordBytes(attempt),
-      attempt.paymentIdentifier,
-    );
-    if (claimedHead) this.#exactHeads.set(claimedHead.headId, claimedHead);
-    this.#reservePaymentIdentifier(
-      attempt.paymentIdentifier,
-      attempt.createdAt,
-    );
-    this.#exactAttempts.set(attempt.transactionId, clone(attempt));
-    return { attempt: clone(attempt), created: true };
+    return this.#applyExactTransition({ kind: "claim", args: [input] });
   }
 
   async loadExactSettlementAttempt(
@@ -813,17 +695,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     finality: import("./types.js").SettlementFinality,
     observedAt: string,
   ): Promise<void> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    if (attempt.status === "accepted" || attempt.status === "applied") return;
-    this.#exactAttempts.set(attempt.transactionId, {
-      ...attempt,
-      status: "broadcast",
-      finality,
-      updatedAt: observedAt,
-    });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      updatedAt: observedAt,
+    this.#applyExactTransition({
+      kind: "broadcast",
+      args: [transactionId, finality, observedAt],
     });
   }
 
@@ -832,28 +706,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     finality: "accepted" | "confirmed",
     observedAt: string,
   ): Promise<void> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    if (attempt.status === "applied") return;
-    if (attempt.head) {
-      const head = this.#exactHeads.get(attempt.head.headId);
-      if (!head)
-        throw new Error(
-          "exact head was not found during settlement acceptance",
-        );
-      this.#exactHeads.set(
-        head.headId,
-        acceptExactHead(head, attempt, observedAt),
-      );
-    }
-    this.#exactAttempts.set(attempt.transactionId, {
-      ...attempt,
-      status: "accepted",
-      finality,
-      updatedAt: observedAt,
-    });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      updatedAt: observedAt,
+    this.#applyExactTransition({
+      kind: "accept",
+      args: [transactionId, finality, observedAt],
     });
   }
 
@@ -861,18 +716,10 @@ export class MemoryServerChannelStore implements ServerStateStore {
     transactionId: Hash32Hex,
     startedAt: string,
   ): Promise<boolean> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    if (attempt.status !== "accepted" || attempt.handlerStartedAt) return false;
-    this.#exactAttempts.set(attempt.transactionId, {
-      ...attempt,
-      handlerStartedAt: startedAt,
-      updatedAt: startedAt,
+    return this.#applyExactTransition({
+      kind: "begin-handler",
+      args: [transactionId, startedAt],
     });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      updatedAt: startedAt,
-    });
-    return true;
   }
 
   async recordExactHandlerResult(
@@ -880,24 +727,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     result: import("./types.js").ProtectedHandlerResult,
     completedAt: string,
   ): Promise<void> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    assertExactHandlerResultTransition(attempt, result, completedAt);
-    if (attempt.handlerResult) {
-      if (stableJson(attempt.handlerResult) !== stableJson(result))
-        throw new Error("exact handler result conflicts with durable state");
-      return;
-    }
-    this.#exactAttempts.set(attempt.transactionId, {
-      ...attempt,
-      handlerResult: clone(result),
-      handlerCompletedAt: completedAt,
-      recoveryReason: undefined,
-      updatedAt: completedAt,
-    });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "pending",
-      recoveryReason: undefined,
-      updatedAt: completedAt,
+    this.#applyExactTransition({
+      kind: "record-result",
+      args: [transactionId, result, completedAt],
     });
   }
 
@@ -906,23 +738,9 @@ export class MemoryServerChannelStore implements ServerStateStore {
     reason: string,
     observedAt: string,
   ): Promise<void> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    if (
-      attempt.status !== "accepted" ||
-      !attempt.handlerStartedAt ||
-      attempt.handlerResult
-    ) {
-      throw new Error("exact handler is not awaiting recovery");
-    }
-    this.#exactAttempts.set(attempt.transactionId, {
-      ...attempt,
-      recoveryReason: reason,
-      updatedAt: observedAt,
-    });
-    this.#updatePaymentIdentifierReservation(attempt.paymentIdentifier, {
-      status: "recovery-required",
-      recoveryReason: reason,
-      updatedAt: observedAt,
+    this.#applyExactTransition({
+      kind: "recovery",
+      args: [transactionId, reason, observedAt],
     });
   }
 
@@ -931,80 +749,108 @@ export class MemoryServerChannelStore implements ServerStateStore {
     reason: string,
     observedAt: string,
   ): Promise<void> {
-    const attempt = this.#requireExactAttempt(transactionId);
-    if (attempt.status === "accepted" || attempt.status === "applied")
-      throw new Error("accepted exact settlement cannot be abandoned");
-    if (
-      attempt.handlerStartedAt ||
-      attempt.handlerResult ||
-      attempt.recoveryReason
-    ) {
-      throw new Error("uncertain exact settlement cannot be abandoned");
-    }
-    let releasedHead: ExactHeadRecord | undefined;
-    if (attempt.head) {
-      const head = this.#exactHeads.get(attempt.head.headId);
-      if (head) releasedHead = releaseExactHeadClaim(head, attempt, observedAt);
-    }
-    this.#releasePaymentIdentifierReservation(
-      attempt.paymentIdentifier,
-      reason,
-      observedAt,
-      true,
-    );
-    if (releasedHead) this.#exactHeads.set(releasedHead.headId, releasedHead);
-    this.#exactAttempts.delete(attempt.transactionId);
-    if (attempt.paymentIdentifier) {
-      this.#terminalizeBudgetRecord(
-        `exact:${attempt.transactionId}`,
-        durableByteLength({
-          paymentIdentifierReservation: this.#paymentIdentifierReservations.get(
-            attempt.paymentIdentifier.id,
-          ),
-        }),
-        undefined,
-        attempt.paymentIdentifier.id,
-        true,
-      );
-    } else {
-      this.#deleteBudgetRecord(`exact:${attempt.transactionId}`);
-    }
+    this.#applyExactTransition({
+      kind: "abandon",
+      args: [transactionId, reason, observedAt],
+    });
   }
 
   async markExactHeadUnavailable(
     input: ExactHeadUnavailableApply,
   ): Promise<ExactHeadUnavailableResult> {
-    const head = this.#exactHeads.get(input.headId.toLowerCase());
-    if (!head) throw new Error("exact head was not found");
-    if (head.status === "retired")
-      throw new Error("retired exact head cannot be marked unavailable");
-    if (!exactHeadMatchesUnavailableSnapshot(head, input)) {
-      return { applied: false, head: clone(head) };
-    }
-    const unavailable = {
-      ...head,
-      status: "unavailable",
-      unavailableReason: input.reason,
-      updatedAt: input.observedAt,
-    } as const;
-    this.#exactHeads.set(head.headId, unavailable);
-    return { applied: true, head: clone(unavailable) };
+    return this.#applyExactTransition({
+      kind: "unavailable-head",
+      args: [input],
+    });
   }
 
   async applyExactHeadLineage(
     input: ExactHeadLineageApply,
   ): Promise<ExactHeadRecord> {
-    const head = this.#exactHeads.get(input.headId.toLowerCase());
-    if (!head) throw new Error("exact head was not found");
-    const advanced = applyExactHeadLineageRecord(head, input);
-    this.#exactHeads.set(advanced.headId, clone(advanced));
-    return clone(advanced);
+    return this.#applyExactTransition({ kind: "lineage", args: [input] });
   }
 
-  #requireExactAttempt(transactionId: Hash32Hex): ExactSettlementAttemptRecord {
-    const attempt = this.#exactAttempts.get(transactionId.toLowerCase());
-    if (!attempt) throw new Error("exact settlement attempt was not found");
-    return attempt;
+  #applyExactTransition<C extends ExactTransitionCommand>(
+    command: C,
+  ): ExactTransitionResult<C> {
+    const initial = exactTransitionScope(command);
+    const attempt = initial.transactionId
+      ? this.#exactAttempts.get(initial.transactionId)
+      : undefined;
+    const scope = exactTransitionScope(command, attempt);
+    const snapshot: ExactTransitionSnapshot = {
+      now: new Date().toISOString(),
+      attempt,
+      head: scope.headId ? this.#exactHeads.get(scope.headId) : undefined,
+      payment: scope.transactionId
+        ? this.#exactPayments.get(exactPaymentKey(scope.transactionId))
+        : undefined,
+      identifier: scope.identifierId
+        ? this.#paymentIdentifiers.get(scope.identifierId)
+        : undefined,
+      reservation: scope.identifierId
+        ? this.#paymentIdentifierReservations.get(scope.identifierId)
+        : undefined,
+    };
+    if (command.kind === "register-head" && !snapshot.head) {
+      snapshot.heads = Array.from(this.#exactHeads.values());
+      snapshot.maxHeads = this.#limits.maxExactHeads;
+    }
+    const changes = prepareExactTransition(command, snapshot);
+    const budget = changes.budget;
+    // All fallible quota checks precede record writes; there is no async yield here.
+    if (budget?.kind === "admit") {
+      const next = budget.attempt;
+      this.#admitBudgetRecord(
+        `exact:${next.transactionId}`,
+        "exact",
+        next.transactionId,
+        next.payerId,
+        next.paymentIdentifier?.id,
+        budget.bytes,
+        next.paymentIdentifier,
+      );
+    } else if (budget?.kind === "terminal") {
+      this.#assertTerminalBudgetFits(
+        `exact:${budget.transactionId}`,
+        budget.bytes,
+      );
+    }
+    if (changes.head)
+      this.#exactHeads.set(changes.head.headId, clone(changes.head));
+    if (changes.reservation)
+      this.#paymentIdentifierReservations.set(
+        changes.reservation.id,
+        clone(changes.reservation),
+      );
+    if (changes.identifier)
+      this.#paymentIdentifiers.set(
+        changes.identifier.id,
+        clone(changes.identifier),
+      );
+    if (changes.payment)
+      this.#exactPayments.set(
+        exactPaymentKey(changes.payment.transactionId),
+        clone(changes.payment),
+      );
+    if (changes.attempt === null)
+      this.#exactAttempts.delete(changes.transactionId!);
+    else if (changes.attempt)
+      this.#exactAttempts.set(
+        changes.attempt.transactionId,
+        clone(changes.attempt),
+      );
+    if (budget?.kind === "terminal") {
+      this.#terminalizeBudgetRecord(
+        `exact:${budget.transactionId}`,
+        budget.bytes,
+        undefined,
+        budget.identifierId,
+        budget.safelyReleased,
+      );
+    } else if (budget?.kind === "delete")
+      this.#deleteBudgetRecord(`exact:${budget.transactionId}`);
+    return changes.result;
   }
 
   #requireBatchAttempt(attemptId: Hash32Hex): BatchSettlementAttemptRecord {
@@ -1016,25 +862,11 @@ export class MemoryServerChannelStore implements ServerStateStore {
   #assertPaymentIdentifierClaimAvailable(
     claim: PaymentIdentifierReservationClaim | undefined,
   ): void {
-    if (!claim) return;
-    assertPaymentIdentifierReservationClaim(claim);
-    const completed = this.#paymentIdentifiers.get(claim.id);
-    if (
-      completed &&
-      (completed.fingerprint !== claim.fingerprint ||
-        completed.paymentPayloadHash !== claim.paymentPayloadHash ||
-        completed.paymentScopeId !== claim.paymentScopeId)
-    ) {
-      throw new Error("payment identifier is already owned by another payment");
-    }
-    const existing = this.#paymentIdentifierReservations.get(claim.id);
-    if (
-      existing &&
-      existing.status !== "safely-released" &&
-      !paymentIdentifierReservationClaimsMatch(existing, claim)
-    ) {
-      throw new Error("payment identifier is already owned by another payment");
-    }
+    assertPaymentIdentifierAvailable(
+      claim,
+      claim ? this.#paymentIdentifierReservations.get(claim.id) : undefined,
+      claim ? this.#paymentIdentifiers.get(claim.id) : undefined,
+    );
   }
 
   #safelyReleasedPaymentIdentifierReclaim(
@@ -1059,114 +891,32 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return { reservationId: claim.id, budget };
   }
 
-  #reservePaymentIdentifier(
+  #applyPaymentIdentifierTransition(
     claim: PaymentIdentifierReservationClaim | undefined,
-    observedAt: string,
+    transition: PaymentIdentifierReservationTransition,
   ): void {
-    if (!claim) return;
-    const existing = this.#paymentIdentifierReservations.get(claim.id);
-    if (existing && existing.status !== "safely-released") return;
-    this.#paymentIdentifierReservations.set(claim.id, {
-      ...clone(claim),
-      status: "reserved",
-      createdAt: observedAt,
-      updatedAt: observedAt,
-    });
-  }
-
-  #updatePaymentIdentifierReservation(
-    claim: PaymentIdentifierReservationClaim | undefined,
-    update: Pick<PaymentIdentifierReservationRecord, "status" | "updatedAt"> &
-      Pick<Partial<PaymentIdentifierReservationRecord>, "recoveryReason">,
-  ): void {
-    if (!claim) return;
-    const existing = this.#paymentIdentifierReservations.get(claim.id);
-    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-      throw new Error("payment identifier reservation ownership changed");
-    if (
-      existing.status === "completed" ||
-      existing.status === "safely-released"
-    )
-      throw new Error("terminal payment identifier reservation cannot change");
-    this.#paymentIdentifierReservations.set(claim.id, {
-      ...existing,
-      ...update,
-    });
-  }
-
-  #completePaymentIdentifierReservation(
-    claim: PaymentIdentifierReservationClaim,
-    observedAt: string,
-  ): void {
-    const existing = this.#paymentIdentifierReservations.get(claim.id);
-    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-      throw new Error("payment identifier completion lost its reservation");
-    if (existing.status === "safely-released")
-      throw new Error("released payment identifier cannot be completed");
-    this.#paymentIdentifierReservations.set(claim.id, {
-      ...existing,
-      status: "completed",
-      recoveryReason: undefined,
-      updatedAt: observedAt,
-    });
-  }
-
-  #releasePaymentIdentifierReservation(
-    claim: PaymentIdentifierReservationClaim | undefined,
-    reason: string,
-    observedAt: string,
-    allowPending = false,
-  ): void {
-    if (!claim) return;
-    const existing = this.#paymentIdentifierReservations.get(claim.id);
-    if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-      throw new Error("payment identifier release lost its reservation");
-    if (
-      (existing.status !== "reserved" &&
-        !(allowPending && existing.status === "pending")) ||
-      existing.recoveryReason !== undefined
-    )
-      throw new Error(
-        "uncertain or completed payment identifier cannot be released",
-      );
-    this.#paymentIdentifierReservations.set(claim.id, {
-      ...existing,
-      status: "safely-released",
-      recoveryReason: reason,
-      updatedAt: observedAt,
-    });
+    const next = transitionPaymentIdentifierReservation(
+      claim,
+      claim ? this.#paymentIdentifierReservations.get(claim.id) : undefined,
+      transition,
+    );
+    if (next) this.#paymentIdentifierReservations.set(next.id, next);
   }
 
   #assertCompletedPaymentIdentifier(
     attempt:
-      BatchSettlementAttemptRecord | ExactSettlementAttemptRecord | undefined,
+      | BatchSettlementAttemptRecord
+      | ExactSettlementAttemptRecord
+      | undefined,
     completed: PaymentIdentifierRecord | undefined,
   ): void {
     const claim = attempt?.paymentIdentifier;
-    if (!claim && !completed) return;
-    if (
-      !claim ||
-      !completed ||
-      claim.id !== completed.id ||
-      claim.fingerprint !== completed.fingerprint ||
-      claim.paymentPayloadHash !== completed.paymentPayloadHash ||
-      claim.paymentScopeId !== completed.paymentScopeId ||
-      claim.channelId !== completed.channelId ||
-      claim.transactionId !== completed.transactionId ||
-      claim.paymentOutputIndex !== completed.paymentOutputIndex
-    ) {
-      throw new Error(
-        "payment identifier completion does not match reservation",
-      );
-    }
-    const reservation = this.#paymentIdentifierReservations.get(claim.id);
-    if (
-      !reservation ||
-      !paymentIdentifierReservationClaimsMatch(reservation, claim) ||
-      reservation.status === "safely-released"
-    )
-      throw new Error("payment identifier completion lost its reservation");
-    this.#assertPaymentIdentifierClaimAvailable(claim);
+    assertPaymentIdentifierCompletion(
+      claim,
+      completed,
+      claim ? this.#paymentIdentifierReservations.get(claim.id) : undefined,
+      claim ? this.#paymentIdentifiers.get(claim.id) : undefined,
+    );
   }
 
   #requireChannelOperation(
@@ -1571,18 +1321,6 @@ function sameOutpoint(
   );
 }
 
-function exactHeadMatchesUnavailableSnapshot(
-  head: ExactHeadRecord,
-  input: ExactHeadUnavailableApply,
-): boolean {
-  return (
-    head.version === input.expectedVersion &&
-    sameOutpoint(head.currentOutpoint, input.expectedOutpoint) &&
-    head.currentAmount === input.expectedAmount &&
-    head.status === input.expectedStatus
-  );
-}
-
 function stableJson(value: unknown): string {
   if (value === null || typeof value !== "object") return JSON.stringify(value);
   if (Array.isArray(value)) return `[${value.map(stableJson).join(",")}]`;
@@ -1603,17 +1341,6 @@ function sameChannelSnapshot(
 
 function incrementVersion(version: string): string {
   return (parseBatchLaneAmount(version, "channel version") + 1n).toString();
-}
-
-function durableByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-function durableOpenRecordBytes(value: unknown): number {
-  // Terminal replay state may cache the response in both the payment or
-  // commitment and the payment-identifier record. Reserve both copies before
-  // protected work starts so a successful effect cannot exceed the byte quota.
-  return durableByteLength(value) + 2 * MAX_DURABLE_RESPONSE_BYTES;
 }
 
 function expiredReplayResponse(): import("./types.js").ServerResponse {
@@ -1697,105 +1424,6 @@ function channelOperationLeasesMatch(
   );
 }
 
-function assertPaymentIdentifierReservationClaim(
-  claim: PaymentIdentifierReservationClaim,
-): void {
-  if (
-    typeof claim.id !== "string" ||
-    claim.id.length === 0 ||
-    claim.id.length > 256 ||
-    typeof claim.payerId !== "string" ||
-    claim.payerId.length === 0 ||
-    claim.payerId.length > 256 ||
-    !isLowerHash32(claim.fingerprint) ||
-    !isLowerHash32(claim.paymentPayloadHash) ||
-    !isLowerHash32(claim.paymentScopeId) ||
-    !isLowerHash32(claim.ownerId)
-  )
-    throw new Error("payment identifier reservation is invalid");
-  if (claim.paymentKind === "batch-settlement") {
-    if (
-      !claim.channelId ||
-      claim.transactionId ||
-      claim.paymentOutputIndex !== undefined
-    )
-      throw new Error("batch payment identifier ownership is invalid");
-  } else if (claim.paymentKind === "exact") {
-    if (
-      !claim.transactionId ||
-      claim.channelId ||
-      !Number.isInteger(claim.paymentOutputIndex) ||
-      claim.paymentOutputIndex! < 0
-    )
-      throw new Error("exact payment identifier ownership is invalid");
-  } else {
-    throw new Error("payment identifier kind is invalid");
-  }
-}
-
-function paymentIdentifierReservationClaimsMatch(
-  left: PaymentIdentifierReservationClaim,
-  right: PaymentIdentifierReservationClaim,
-): boolean {
-  const project = (value: PaymentIdentifierReservationClaim) => ({
-    id: value.id,
-    fingerprint: value.fingerprint,
-    paymentPayloadHash: value.paymentPayloadHash,
-    paymentScopeId: value.paymentScopeId,
-    paymentKind: value.paymentKind,
-    ownerId: value.ownerId,
-    payerId: value.payerId,
-    channelId: value.channelId,
-    transactionId: value.transactionId,
-    paymentOutputIndex: value.paymentOutputIndex,
-  });
-  return stableJson(project(left)) === stableJson(project(right));
-}
-
-function assertExactHandlerResultTransition(
-  attempt: ExactSettlementAttemptRecord,
-  result: import("./types.js").ProtectedHandlerResult,
-  completedAt: string,
-): void {
-  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
-    throw new Error("exact handler has not started on an accepted settlement");
-  if (Number.isNaN(Date.parse(completedAt)))
-    throw new Error("exact handler completion time must be an ISO date string");
-  if (
-    result.status !== undefined &&
-    (!Number.isInteger(result.status) ||
-      result.status < 100 ||
-      result.status > 599)
-  ) {
-    throw new Error("exact handler status is invalid");
-  }
-  if (
-    result.headers &&
-    Object.values(result.headers).some((value) => typeof value !== "string")
-  ) {
-    throw new Error("exact handler headers are invalid");
-  }
-  if (result.headers && Object.keys(result.headers).length > 64)
-    throw new Error("exact handler has too many response headers");
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(result);
-  } catch {
-    throw new Error("exact handler result must be JSON serializable");
-  }
-  if (
-    new TextEncoder().encode(serialized).byteLength >
-    MAX_DURABLE_HANDLER_RESULT_BYTES
-  )
-    throw new Error("exact handler result exceeds the durable size limit");
-  if (
-    result.chargedAmount !== undefined &&
-    result.chargedAmount !== attempt.amount
-  ) {
-    throw new Error("exact handler charge must equal the accepted amount");
-  }
-}
-
 /** Validates one durable claim record and, when present, its legal next state. */
 export function normalizeClaimAttempt(
   input: ClaimAttemptRecord,
@@ -1822,10 +1450,12 @@ export function normalizeClaimAttempt(
       );
     return clone(input);
   }
-  if (!(
-    (existing.status === "pending" && input.status === "broadcast") ||
-    (existing.status === "broadcast" && input.status === "accepted")
-  )) {
+  if (
+    !(
+      (existing.status === "pending" && input.status === "broadcast") ||
+      (existing.status === "broadcast" && input.status === "accepted")
+    )
+  ) {
     throw new Error("invalid claim attempt status transition");
   }
   return clone(input);

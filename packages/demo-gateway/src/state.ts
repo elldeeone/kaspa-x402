@@ -1,5 +1,4 @@
 import {
-  KASPA_X402_RESOURCE_BUDGET,
   applyBatchClaimAccounting,
   batchLaneAccounting,
   parseBatchLaneAmount,
@@ -32,8 +31,17 @@ import type {
   SettlementCommit,
 } from "@kaspa-x402/server";
 import {
-  acceptExactHead,
-  applyExactHeadLineage as applyExactHeadLineageRecord,
+  durableByteLength,
+  durableOpenRecordBytes,
+  exactTransitionScope,
+  prepareExactTransition,
+  assertPaymentIdentifierAvailable,
+  assertPaymentIdentifierCompletion,
+  transitionPaymentIdentifierReservation,
+  type PaymentIdentifierReservationTransition,
+  type ExactTransitionCommand,
+  type ExactTransitionResult,
+  type ExactTransitionSnapshot,
   assertServerChannelLineageConsistency,
   assertServerCovenantLineageExtension,
   assertServerCovenantJournalExtension,
@@ -43,14 +51,9 @@ import {
   batchSettlementAttemptIsReadyToCommit,
   batchSettlementAttemptsMatch,
   claimAttemptsMatch,
-  claimExactHead,
   exactHeadMatchesSelection,
-  exactSettlementAttemptsMatch,
-  normalizeExactHeadRecord,
-  normalizeExactSettlementAttempt,
   normalizeBatchSettlementAttempt,
   normalizeClaimAttempt,
-  releaseExactHeadClaim,
 } from "@kaspa-x402/server";
 
 type GatewayTransaction = {
@@ -128,11 +131,6 @@ type DurableBudgetRecord = {
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
 const MAX_PUBLIC_ADMISSION_LEASES = 256;
 const MAX_PUBLIC_ADMISSION_TTL_MS = 10 * 60 * 1_000;
-const MAX_DURABLE_HANDLER_RESULT_BYTES = 256 * 1024;
-const MAX_DURABLE_RESPONSE_BYTES =
-  MAX_DURABLE_HANDLER_RESULT_BYTES +
-  KASPA_X402_RESOURCE_BUDGET.maxEncodedHeaderBytes +
-  1024;
 export const GATEWAY_COORDINATION_DOMAIN = "demo-gateway-state:v1.0.0-rc.1";
 const DEFAULT_DURABLE_STATE_LIMITS: GatewayDurableStateLimits = {
   maxRecords: 10_000,
@@ -469,11 +467,10 @@ export class GatewayLedger implements ServerStateStore {
           : {}),
       });
       if (transition) await putChannel(txn, transition.next);
-      await reservePaymentIdentifier(
-        txn,
-        attempt.paymentIdentifier,
-        attempt.createdAt,
-      );
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "reserve",
+        observedAt: attempt.createdAt,
+      });
       await txn.put(batchAttemptKey(attempt.attemptId), clone(attempt));
       await txn.put(openBatchAttemptKey(attempt.channelId), attempt.attemptId);
       await putChannelOperation(txn, {
@@ -518,9 +515,12 @@ export class GatewayLedger implements ServerStateStore {
         status: "pending",
         updatedAt: startedAt,
       });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        updatedAt: startedAt,
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "update",
+        update: {
+          status: "pending",
+          updatedAt: startedAt,
+        },
       });
       return true;
     });
@@ -547,10 +547,13 @@ export class GatewayLedger implements ServerStateStore {
         recoveryReason: undefined,
         updatedAt: completedAt,
       });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        recoveryReason: undefined,
-        updatedAt: completedAt,
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "update",
+        update: {
+          status: "pending",
+          recoveryReason: undefined,
+          updatedAt: completedAt,
+        },
       });
     });
   }
@@ -580,10 +583,13 @@ export class GatewayLedger implements ServerStateStore {
         recoveryReason: reason,
         updatedAt: observedAt,
       });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "recovery-required",
-        recoveryReason: reason,
-        updatedAt: observedAt,
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "update",
+        update: {
+          status: "recovery-required",
+          recoveryReason: reason,
+          updatedAt: observedAt,
+        },
       });
     });
   }
@@ -613,12 +619,12 @@ export class GatewayLedger implements ServerStateStore {
       await txn.delete(batchAttemptKey(attempt.attemptId));
       await txn.delete(openBatchAttemptKey(attempt.channelId));
       await deleteChannelOperation(txn, lease);
-      await releasePaymentIdentifierReservation(
-        txn,
-        attempt.paymentIdentifier,
-        reason,
-        observedAt,
-      );
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "release",
+        reason: reason,
+        observedAt: observedAt,
+        allowPending: false,
+      });
       if (attempt.paymentIdentifier) {
         await terminalizeDurableBudget(
           txn,
@@ -670,32 +676,7 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async registerExactHead(input: ExactHeadRecord): Promise<ExactHeadRecord> {
-    const record = normalizeExactHeadRecord(input);
-    return this.#storage.transaction(async (txn) => {
-      const existing = await txn.get<ExactHeadRecord>(
-        exactHeadKey(record.headId),
-      );
-      if (existing) {
-        if (stableJson(existing) !== stableJson(record))
-          throw new Error(
-            "exact head id is already registered for different state",
-          );
-        // Re-registering an unchanged pre-alpha.8 head also repairs its
-        // bounded selection index without changing the head itself.
-        await putExactHead(txn, existing, existing);
-        return clone(existing);
-      }
-      const heads = await txn.list<ExactHeadRecord>({ prefix: "exact-head:" });
-      if (heads.size >= this.#limits.maxExactHeads) {
-        throw new Error("exact head admission limit exceeded");
-      }
-      for (const current of heads.values()) {
-        if (sameOutpoint(current.currentOutpoint, record.currentOutpoint))
-          throw new Error("exact head outpoint is already registered");
-      }
-      await putExactHead(txn, undefined, record);
-      return clone(record);
-    });
+    return this.#applyExactTransition({ kind: "register-head", args: [input] });
   }
 
   async loadExactHead(headId: string): Promise<ExactHeadRecord | undefined> {
@@ -751,59 +732,7 @@ export class GatewayLedger implements ServerStateStore {
   async claimExactSettlement(
     input: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementClaimResult> {
-    const attempt = normalizeExactSettlementAttempt(input);
-    await this.#storage.transaction((txn) =>
-      pruneTerminalDurableBudgets(txn, this.#limits, this.#now()),
-    );
-    return this.#storage.transaction(async (txn) => {
-      const existing = await txn.get<ExactSettlementAttemptRecord>(
-        exactAttemptKey(attempt.transactionId),
-      );
-      if (existing) {
-        if (!exactSettlementAttemptsMatch(existing, attempt))
-          throw new Error(
-            "exact transaction is already claimed for a different request",
-          );
-        return { attempt: clone(existing), created: false };
-      }
-      await assertPaymentIdentifierClaimAvailable(
-        txn,
-        attempt.paymentIdentifier,
-      );
-      await reclaimSafelyReleasedPaymentIdentifier(
-        txn,
-        attempt.paymentIdentifier,
-      );
-      await admitDurableBudget(txn, this.#limits, this.#now(), {
-        key: `exact:${attempt.transactionId}`,
-        kind: "exact",
-        attemptId: attempt.transactionId,
-        payerId: attempt.payerId,
-        bytes: durableOpenRecordBytes(attempt),
-        ...(attempt.paymentIdentifier
-          ? { paymentIdentifier: attempt.paymentIdentifier.id }
-          : {}),
-      });
-      if (attempt.profile === "additive") {
-        if (!attempt.head)
-          throw new Error("additive exact settlement requires a head claim");
-        const head = await txn.get<ExactHeadRecord>(
-          exactHeadKey(attempt.head.headId),
-        );
-        if (!head)
-          throw new Error("exact head changed before settlement claim");
-        await putExactHead(txn, head, claimExactHead(head, attempt));
-      } else if (attempt.head) {
-        throw new Error("standard-native exact settlement cannot claim a head");
-      }
-      await reservePaymentIdentifier(
-        txn,
-        attempt.paymentIdentifier,
-        attempt.createdAt,
-      );
-      await txn.put(exactAttemptKey(attempt.transactionId), clone(attempt));
-      return { attempt: clone(attempt), created: true };
-    });
+    return this.#applyExactTransition({ kind: "claim", args: [input] });
   }
 
   async loadExactSettlementAttempt(
@@ -821,19 +750,9 @@ export class GatewayLedger implements ServerStateStore {
     finality: "broadcast" | "accepted" | "confirmed",
     observedAt: string,
   ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      if (attempt.status === "accepted" || attempt.status === "applied") return;
-      await txn.put(exactAttemptKey(attempt.transactionId), {
-        ...attempt,
-        status: "broadcast",
-        finality,
-        updatedAt: observedAt,
-      });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        updatedAt: observedAt,
-      });
+    await this.#applyExactTransition({
+      kind: "broadcast",
+      args: [transactionId, finality, observedAt],
     });
   }
 
@@ -842,33 +761,9 @@ export class GatewayLedger implements ServerStateStore {
     finality: "accepted" | "confirmed",
     observedAt: string,
   ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      if (attempt.status === "applied") return;
-      if (attempt.head) {
-        const head = await txn.get<ExactHeadRecord>(
-          exactHeadKey(attempt.head.headId),
-        );
-        if (!head)
-          throw new Error(
-            "exact head was not found during settlement acceptance",
-          );
-        await putExactHead(
-          txn,
-          head,
-          acceptExactHead(head, attempt, observedAt),
-        );
-      }
-      await txn.put(exactAttemptKey(attempt.transactionId), {
-        ...attempt,
-        status: "accepted",
-        finality,
-        updatedAt: observedAt,
-      });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        updatedAt: observedAt,
-      });
+    await this.#applyExactTransition({
+      kind: "accept",
+      args: [transactionId, finality, observedAt],
     });
   }
 
@@ -876,20 +771,9 @@ export class GatewayLedger implements ServerStateStore {
     transactionId: string,
     startedAt: string,
   ): Promise<boolean> {
-    return this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      if (attempt.status !== "accepted" || attempt.handlerStartedAt)
-        return false;
-      await txn.put(exactAttemptKey(attempt.transactionId), {
-        ...attempt,
-        handlerStartedAt: startedAt,
-        updatedAt: startedAt,
-      });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        updatedAt: startedAt,
-      });
-      return true;
+    return this.#applyExactTransition({
+      kind: "begin-handler",
+      args: [transactionId, startedAt],
     });
   }
 
@@ -898,26 +782,9 @@ export class GatewayLedger implements ServerStateStore {
     result: ProtectedHandlerResult,
     completedAt: string,
   ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      assertExactHandlerResultTransition(attempt, result, completedAt);
-      if (attempt.handlerResult) {
-        if (stableJson(attempt.handlerResult) !== stableJson(result))
-          throw new Error("exact handler result conflicts with durable state");
-        return;
-      }
-      await txn.put(exactAttemptKey(attempt.transactionId), {
-        ...attempt,
-        handlerResult: clone(result),
-        handlerCompletedAt: completedAt,
-        recoveryReason: undefined,
-        updatedAt: completedAt,
-      });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "pending",
-        recoveryReason: undefined,
-        updatedAt: completedAt,
-      });
+    await this.#applyExactTransition({
+      kind: "record-result",
+      args: [transactionId, result, completedAt],
     });
   }
 
@@ -926,25 +793,9 @@ export class GatewayLedger implements ServerStateStore {
     reason: string,
     observedAt: string,
   ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      if (
-        attempt.status !== "accepted" ||
-        !attempt.handlerStartedAt ||
-        attempt.handlerResult
-      ) {
-        throw new Error("exact handler is not awaiting recovery");
-      }
-      await txn.put(exactAttemptKey(attempt.transactionId), {
-        ...attempt,
-        recoveryReason: reason,
-        updatedAt: observedAt,
-      });
-      await updatePaymentIdentifierReservation(txn, attempt.paymentIdentifier, {
-        status: "recovery-required",
-        recoveryReason: reason,
-        updatedAt: observedAt,
-      });
+    await this.#applyExactTransition({
+      kind: "recovery",
+      args: [transactionId, reason, observedAt],
     });
   }
 
@@ -953,91 +804,128 @@ export class GatewayLedger implements ServerStateStore {
     reason: string,
     observedAt: string,
   ): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const attempt = await requireExactAttempt(txn, transactionId);
-      if (attempt.status === "accepted" || attempt.status === "applied")
-        throw new Error("accepted exact settlement cannot be abandoned");
-      if (
-        attempt.handlerStartedAt ||
-        attempt.handlerResult ||
-        attempt.recoveryReason
-      )
-        throw new Error("uncertain exact settlement cannot be abandoned");
-      if (attempt.head) {
-        const head = await txn.get<ExactHeadRecord>(
-          exactHeadKey(attempt.head.headId),
-        );
-        if (head)
-          await putExactHead(
-            txn,
-            head,
-            releaseExactHeadClaim(head, attempt, observedAt),
-          );
-      }
-      await txn.delete(exactAttemptKey(attempt.transactionId));
-      await releasePaymentIdentifierReservation(
-        txn,
-        attempt.paymentIdentifier,
-        reason,
-        observedAt,
-        true,
-      );
-      if (attempt.paymentIdentifier) {
-        await terminalizeDurableBudget(
-          txn,
-          `exact:${attempt.transactionId}`,
-          durableByteLength({
-            paymentIdentifierReservation: await txn.get(
-              paymentIdentifierReservationKey(attempt.paymentIdentifier.id),
-            ),
-          }),
-          this.#now(),
-          undefined,
-          attempt.paymentIdentifier.id,
-          true,
-        );
-      } else {
-        await deleteDurableBudget(txn, `exact:${attempt.transactionId}`);
-      }
+    await this.#applyExactTransition({
+      kind: "abandon",
+      args: [transactionId, reason, observedAt],
     });
   }
 
   async markExactHeadUnavailable(
     input: ExactHeadUnavailableApply,
   ): Promise<ExactHeadUnavailableResult> {
-    return this.#storage.transaction(async (txn) => {
-      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
-      if (!head) throw new Error("exact head was not found");
-      if (head.status === "retired")
-        throw new Error("retired exact head cannot be marked unavailable");
-      if (
-        head.version !== input.expectedVersion ||
-        !sameOutpoint(head.currentOutpoint, input.expectedOutpoint) ||
-        head.currentAmount !== input.expectedAmount ||
-        head.status !== input.expectedStatus
-      ) {
-        return { applied: false, head: clone(head) };
-      }
-      const unavailable = {
-        ...head,
-        status: "unavailable",
-        unavailableReason: input.reason,
-        updatedAt: input.observedAt,
-      } as const;
-      await putExactHead(txn, head, unavailable);
-      return { applied: true, head: clone(unavailable) };
+    return this.#applyExactTransition({
+      kind: "unavailable-head",
+      args: [input],
     });
   }
 
   async applyExactHeadLineage(
     input: ExactHeadLineageApply,
   ): Promise<ExactHeadRecord> {
+    return this.#applyExactTransition({ kind: "lineage", args: [input] });
+  }
+
+  async #applyExactTransition<C extends ExactTransitionCommand>(
+    command: C,
+  ): Promise<ExactTransitionResult<C>> {
+    command = clone(command);
+    const initial = exactTransitionScope(command);
+    if (command.kind === "claim") {
+      // Commit bounded cleanup even when the later admission rejects the claim.
+      await this.#storage.transaction((txn) =>
+        pruneTerminalDurableBudgets(txn, this.#limits, this.#now()),
+      );
+    }
     return this.#storage.transaction(async (txn) => {
-      const head = await txn.get<ExactHeadRecord>(exactHeadKey(input.headId));
-      if (!head) throw new Error("exact head was not found");
-      const advanced = applyExactHeadLineageRecord(head, input);
-      await putExactHead(txn, head, advanced);
-      return clone(advanced);
+      const attempt = initial.transactionId
+        ? await txn.get<ExactSettlementAttemptRecord>(
+            exactAttemptKey(initial.transactionId),
+          )
+        : undefined;
+      const scope = exactTransitionScope(command, attempt);
+      const snapshot: ExactTransitionSnapshot = {
+        now: new Date().toISOString(),
+        attempt,
+        head: scope.headId
+          ? await txn.get<ExactHeadRecord>(exactHeadKey(scope.headId))
+          : undefined,
+        payment: scope.transactionId
+          ? await txn.get<ExactPaymentRecord>(
+              exactPaymentKey(scope.transactionId),
+            )
+          : undefined,
+        identifier: scope.identifierId
+          ? await txn.get<PaymentIdentifierRecord>(
+              paymentIdentifierKey(scope.identifierId),
+            )
+          : undefined,
+        reservation: scope.identifierId
+          ? await txn.get<PaymentIdentifierReservationRecord>(
+              paymentIdentifierReservationKey(scope.identifierId),
+            )
+          : undefined,
+      };
+      if (command.kind === "register-head" && !snapshot.head) {
+        snapshot.heads = Array.from(
+          (await txn.list<ExactHeadRecord>({ prefix: "exact-head:" })).values(),
+        );
+        snapshot.maxHeads = this.#limits.maxExactHeads;
+      }
+      const changes = prepareExactTransition(command, snapshot);
+      const budget = changes.budget;
+      if (budget?.kind === "admit") {
+        const next = budget.attempt;
+        await reclaimSafelyReleasedPaymentIdentifier(
+          txn,
+          next.paymentIdentifier,
+        );
+        await admitDurableBudget(txn, this.#limits, this.#now(), {
+          key: `exact:${next.transactionId}`,
+          kind: "exact",
+          attemptId: next.transactionId,
+          payerId: next.payerId,
+          bytes: budget.bytes,
+          ...(next.paymentIdentifier
+            ? { paymentIdentifier: next.paymentIdentifier.id }
+            : {}),
+        });
+      }
+      if (changes.head) await putExactHead(txn, snapshot.head, changes.head);
+      if (changes.reservation)
+        await txn.put(
+          paymentIdentifierReservationKey(changes.reservation.id),
+          clone(changes.reservation),
+        );
+      if (changes.identifier)
+        await txn.put(
+          paymentIdentifierKey(changes.identifier.id),
+          clone(changes.identifier),
+        );
+      if (changes.payment)
+        await txn.put(
+          exactPaymentKey(changes.payment.transactionId),
+          clone(changes.payment),
+        );
+      if (changes.attempt === null)
+        await txn.delete(exactAttemptKey(changes.transactionId!));
+      else if (changes.attempt)
+        await txn.put(
+          exactAttemptKey(changes.attempt.transactionId),
+          clone(changes.attempt),
+        );
+      if (budget?.kind === "terminal") {
+        await terminalizeDurableBudget(
+          txn,
+          `exact:${budget.transactionId}`,
+          budget.bytes,
+          this.#now(),
+          undefined,
+          budget.identifierId,
+          budget.safelyReleased,
+        );
+      } else if (budget?.kind === "delete")
+        await deleteDurableBudget(txn, `exact:${budget.transactionId}`);
+      return changes.result;
     });
   }
 
@@ -1080,10 +968,10 @@ export class GatewayLedger implements ServerStateStore {
           paymentIdentifierKey(record.paymentIdentifier.id),
           clone(record.paymentIdentifier),
         );
-        await completePaymentIdentifierReservation(
+        await applyPaymentIdentifierTransition(
           txn,
           attempt.paymentIdentifier!,
-          attempt.updatedAt,
+          { kind: "complete", observedAt: attempt.updatedAt },
         );
       }
       await putChannel(txn, record.channel);
@@ -1120,85 +1008,7 @@ export class GatewayLedger implements ServerStateStore {
   }
 
   async commitExactPayment(record: ExactSettlementCommit): Promise<void> {
-    await this.#storage.transaction(async (txn) => {
-      const payment = clone(record.payment);
-      const existing = await txn.get<ExactPaymentRecord>(
-        exactPaymentKey(payment.transactionId),
-      );
-      if (existing) {
-        if (
-          existing.requestFingerprint !== payment.requestFingerprint ||
-          existing.paymentPayloadHash !== payment.paymentPayloadHash ||
-          existing.paymentOutputIndex !== payment.paymentOutputIndex
-        ) {
-          throw new Error(
-            "exact payment transaction was already committed for a different request",
-          );
-        }
-        return;
-      }
-      const attempt = await txn.get<ExactSettlementAttemptRecord>(
-        exactAttemptKey(payment.transactionId),
-      );
-      if (record.paymentIdentifier) {
-        if (!attempt)
-          throw new Error(
-            "payment identifier completion requires its reserved attempt",
-          );
-        await assertCompletedPaymentIdentifier(
-          txn,
-          attempt,
-          record.paymentIdentifier,
-        );
-      }
-      let appliedAttempt: ExactSettlementAttemptRecord | undefined;
-      if (attempt) {
-        if (
-          attempt.status !== "accepted" ||
-          !attempt.handlerStartedAt ||
-          !attempt.handlerResult
-        )
-          throw new Error("exact settlement attempt is not ready to apply");
-        const {
-          handlerResult: _handlerResult,
-          handlerCompletedAt: _handlerCompletedAt,
-          ...compactAttempt
-        } = attempt;
-        appliedAttempt = {
-          ...compactAttempt,
-          status: "applied",
-          transaction: "",
-          recoveryReason: undefined,
-          updatedAt: new Date().toISOString(),
-        };
-        await txn.put(exactAttemptKey(payment.transactionId), appliedAttempt);
-      }
-      if (record.paymentIdentifier) {
-        await txn.put(
-          paymentIdentifierKey(record.paymentIdentifier.id),
-          clone(record.paymentIdentifier),
-        );
-        await completePaymentIdentifierReservation(
-          txn,
-          attempt!.paymentIdentifier!,
-          new Date().toISOString(),
-        );
-      }
-      await txn.put(exactPaymentKey(payment.transactionId), payment);
-      if (attempt)
-        await terminalizeDurableBudget(
-          txn,
-          `exact:${attempt.transactionId}`,
-          durableByteLength({
-            attempt: appliedAttempt,
-            payment,
-            paymentIdentifier: record.paymentIdentifier,
-          }),
-          this.#now(),
-          undefined,
-          record.paymentIdentifier?.id,
-        );
-    });
+    await this.#applyExactTransition({ kind: "commit", args: [record] });
   }
 
   async loadOpenClaimAttempt(
@@ -1864,26 +1674,13 @@ async function assertPaymentIdentifierClaimAvailable(
   claim: PaymentIdentifierReservationClaim | undefined,
 ): Promise<void> {
   if (!claim) return;
-  assertPaymentIdentifierReservationClaim(claim);
-  const existing = await txn.get<PaymentIdentifierRecord>(
-    paymentIdentifierKey(claim.id),
+  assertPaymentIdentifierAvailable(
+    claim,
+    await txn.get<PaymentIdentifierReservationRecord>(
+      paymentIdentifierReservationKey(claim.id),
+    ),
+    await txn.get<PaymentIdentifierRecord>(paymentIdentifierKey(claim.id)),
   );
-  if (
-    existing &&
-    (existing.fingerprint !== claim.fingerprint ||
-      existing.paymentPayloadHash !== claim.paymentPayloadHash ||
-      existing.paymentScopeId !== claim.paymentScopeId)
-  )
-    throw new Error("payment identifier is already owned by another payment");
-  const reservation = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
-  );
-  if (
-    reservation &&
-    reservation.status !== "safely-released" &&
-    !paymentIdentifierReservationClaimsMatch(reservation, claim)
-  )
-    throw new Error("payment identifier is already owned by another payment");
 }
 
 async function reclaimSafelyReleasedPaymentIdentifier(
@@ -1905,176 +1702,43 @@ async function reclaimSafelyReleasedPaymentIdentifier(
   await txn.delete(paymentIdentifierReservationKey(claim.id));
 }
 
-async function reservePaymentIdentifier(
+async function applyPaymentIdentifierTransition(
   txn: GatewayTransaction,
   claim: PaymentIdentifierReservationClaim | undefined,
-  observedAt: string,
+  transition: PaymentIdentifierReservationTransition,
 ): Promise<void> {
   if (!claim) return;
-  const existing = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
+  const next = transitionPaymentIdentifierReservation(
+    claim,
+    await txn.get<PaymentIdentifierReservationRecord>(
+      paymentIdentifierReservationKey(claim.id),
+    ),
+    transition,
   );
-  if (existing && existing.status !== "safely-released") return;
-  await txn.put(paymentIdentifierReservationKey(claim.id), {
-    ...clone(claim),
-    status: "reserved",
-    createdAt: observedAt,
-    updatedAt: observedAt,
-  } satisfies PaymentIdentifierReservationRecord);
-}
-
-async function updatePaymentIdentifierReservation(
-  txn: GatewayTransaction,
-  claim: PaymentIdentifierReservationClaim | undefined,
-  update: Pick<PaymentIdentifierReservationRecord, "status" | "updatedAt"> &
-    Pick<Partial<PaymentIdentifierReservationRecord>, "recoveryReason">,
-): Promise<void> {
-  if (!claim) return;
-  const existing = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
-  );
-  if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-    throw new Error("payment identifier reservation ownership changed");
-  if (existing.status === "completed" || existing.status === "safely-released")
-    throw new Error("terminal payment identifier reservation cannot change");
-  await txn.put(paymentIdentifierReservationKey(claim.id), {
-    ...existing,
-    ...update,
-  });
-}
-
-async function completePaymentIdentifierReservation(
-  txn: GatewayTransaction,
-  claim: PaymentIdentifierReservationClaim,
-  observedAt: string,
-): Promise<void> {
-  const existing = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
-  );
-  if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-    throw new Error("payment identifier completion lost its reservation");
-  if (existing.status === "safely-released")
-    throw new Error("released payment identifier cannot be completed");
-  await txn.put(paymentIdentifierReservationKey(claim.id), {
-    ...existing,
-    status: "completed",
-    recoveryReason: undefined,
-    updatedAt: observedAt,
-  });
-}
-
-async function releasePaymentIdentifierReservation(
-  txn: GatewayTransaction,
-  claim: PaymentIdentifierReservationClaim | undefined,
-  reason: string,
-  observedAt: string,
-  allowPending = false,
-): Promise<void> {
-  if (!claim) return;
-  const existing = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
-  );
-  if (!existing || !paymentIdentifierReservationClaimsMatch(existing, claim))
-    throw new Error("payment identifier release lost its reservation");
-  if (
-    (existing.status !== "reserved" &&
-      !(allowPending && existing.status === "pending")) ||
-    existing.recoveryReason !== undefined
-  )
-    throw new Error(
-      "uncertain or completed payment identifier cannot be released",
-    );
-  await txn.put(paymentIdentifierReservationKey(claim.id), {
-    ...existing,
-    status: "safely-released",
-    recoveryReason: reason,
-    updatedAt: observedAt,
-  });
+  if (next) await txn.put(paymentIdentifierReservationKey(next.id), next);
 }
 
 async function assertCompletedPaymentIdentifier(
   txn: GatewayTransaction,
   attempt:
-    BatchSettlementAttemptRecord | ExactSettlementAttemptRecord | undefined,
+    | BatchSettlementAttemptRecord
+    | ExactSettlementAttemptRecord
+    | undefined,
   completed: PaymentIdentifierRecord | undefined,
 ): Promise<void> {
   const claim = attempt?.paymentIdentifier;
-  if (!claim && !completed) return;
-  if (
-    !claim ||
-    !completed ||
-    claim.id !== completed.id ||
-    claim.fingerprint !== completed.fingerprint ||
-    claim.paymentPayloadHash !== completed.paymentPayloadHash ||
-    claim.paymentScopeId !== completed.paymentScopeId ||
-    claim.channelId !== completed.channelId ||
-    claim.transactionId !== completed.transactionId ||
-    claim.paymentOutputIndex !== completed.paymentOutputIndex
-  )
-    throw new Error("payment identifier completion does not match reservation");
-  const reservation = await txn.get<PaymentIdentifierReservationRecord>(
-    paymentIdentifierReservationKey(claim.id),
+  assertPaymentIdentifierCompletion(
+    claim,
+    completed,
+    claim
+      ? await txn.get<PaymentIdentifierReservationRecord>(
+          paymentIdentifierReservationKey(claim.id),
+        )
+      : undefined,
+    claim
+      ? await txn.get<PaymentIdentifierRecord>(paymentIdentifierKey(claim.id))
+      : undefined,
   );
-  if (
-    !reservation ||
-    !paymentIdentifierReservationClaimsMatch(reservation, claim) ||
-    reservation.status === "safely-released"
-  )
-    throw new Error("payment identifier completion lost its reservation");
-  await assertPaymentIdentifierClaimAvailable(txn, claim);
-}
-
-function assertPaymentIdentifierReservationClaim(
-  claim: PaymentIdentifierReservationClaim,
-): void {
-  if (
-    typeof claim.id !== "string" ||
-    claim.id.length === 0 ||
-    claim.id.length > 256 ||
-    typeof claim.payerId !== "string" ||
-    claim.payerId.length === 0 ||
-    claim.payerId.length > 256 ||
-    !isLowerHash32(claim.fingerprint) ||
-    !isLowerHash32(claim.paymentPayloadHash) ||
-    !isLowerHash32(claim.paymentScopeId) ||
-    !isLowerHash32(claim.ownerId)
-  )
-    throw new Error("payment identifier reservation is invalid");
-  if (claim.paymentKind === "batch-settlement") {
-    if (
-      !claim.channelId ||
-      claim.transactionId ||
-      claim.paymentOutputIndex !== undefined
-    )
-      throw new Error("batch payment identifier ownership is invalid");
-  } else if (claim.paymentKind === "exact") {
-    if (
-      !claim.transactionId ||
-      claim.channelId ||
-      !Number.isInteger(claim.paymentOutputIndex) ||
-      claim.paymentOutputIndex! < 0
-    )
-      throw new Error("exact payment identifier ownership is invalid");
-  } else throw new Error("payment identifier kind is invalid");
-}
-
-function paymentIdentifierReservationClaimsMatch(
-  left: PaymentIdentifierReservationClaim,
-  right: PaymentIdentifierReservationClaim,
-): boolean {
-  const project = (value: PaymentIdentifierReservationClaim) => ({
-    id: value.id,
-    fingerprint: value.fingerprint,
-    paymentPayloadHash: value.paymentPayloadHash,
-    paymentScopeId: value.paymentScopeId,
-    paymentKind: value.paymentKind,
-    ownerId: value.ownerId,
-    payerId: value.payerId,
-    channelId: value.channelId,
-    transactionId: value.transactionId,
-    paymentOutputIndex: value.paymentOutputIndex,
-  });
-  return stableJson(project(left)) === stableJson(project(right));
 }
 
 async function putChannel(
@@ -2281,19 +1945,19 @@ function matchesClaimSnapshot(
 ): boolean {
   return Boolean(
     current &&
-    current.channelId === attempt.channelId &&
-    current.covenantId.toLowerCase() === attempt.covenantId.toLowerCase() &&
-    current.activeOutpoint.txid.toLowerCase() ===
-      attempt.activeOutpoint.txid.toLowerCase() &&
-    current.activeOutpoint.index === attempt.activeOutpoint.index &&
-    current.activeScriptPublicKey.toLowerCase() ===
-      attempt.activeScriptPublicKey.toLowerCase() &&
-    current.fundingAmount === attempt.fundingAmount &&
-    current.chargedCumulativeAmount === attempt.chargedCumulativeAmount &&
-    current.claimedCumulativeAmount === attempt.claimedCumulativeAmount &&
-    current.signedMaxClaimable === attempt.signedMaxClaimable &&
-    current.voucherSignature === attempt.voucherSignature &&
-    current.status === attempt.channelStatus,
+      current.channelId === attempt.channelId &&
+      current.covenantId.toLowerCase() === attempt.covenantId.toLowerCase() &&
+      current.activeOutpoint.txid.toLowerCase() ===
+        attempt.activeOutpoint.txid.toLowerCase() &&
+      current.activeOutpoint.index === attempt.activeOutpoint.index &&
+      current.activeScriptPublicKey.toLowerCase() ===
+        attempt.activeScriptPublicKey.toLowerCase() &&
+      current.fundingAmount === attempt.fundingAmount &&
+      current.chargedCumulativeAmount === attempt.chargedCumulativeAmount &&
+      current.claimedCumulativeAmount === attempt.claimedCumulativeAmount &&
+      current.signedMaxClaimable === attempt.signedMaxClaimable &&
+      current.voucherSignature === attempt.voucherSignature &&
+      current.status === attempt.channelStatus,
   );
 }
 
@@ -2692,14 +2356,6 @@ async function pruneTerminalDurableBudgets(
   }
 }
 
-function durableByteLength(value: unknown): number {
-  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
-}
-
-function durableOpenRecordBytes(value: unknown): number {
-  return durableByteLength(value) + 2 * MAX_DURABLE_RESPONSE_BYTES;
-}
-
 function expiredReplayResponse() {
   return {
     status: 409,
@@ -2729,7 +2385,9 @@ function assertPublicAdmissionInput(
 ): void {
   assertPublicAdmissionToken(token);
   if (!Number.isSafeInteger(nowMs) || nowMs < 0)
-    throw new Error("public admission time must be a non-negative safe integer");
+    throw new Error(
+      "public admission time must be a non-negative safe integer",
+    );
   if (
     !Number.isSafeInteger(limit) ||
     limit < 1 ||
@@ -2772,11 +2430,7 @@ function readPublicAdmissionLeases(
   const leases: Record<string, PublicAdmissionRecord> = {};
   for (const [token, lease] of entries) {
     assertPublicAdmissionToken(token);
-    if (
-      !lease ||
-      !Number.isSafeInteger(lease.expiresAt) ||
-      lease.expiresAt < 0
-    )
+    if (!lease || !Number.isSafeInteger(lease.expiresAt) || lease.expiresAt < 0)
       throw new Error("public admission lease is invalid");
     leases[token] = { expiresAt: lease.expiresAt };
   }
@@ -2801,17 +2455,6 @@ async function requireBatchAttempt(
 function assertIsoDate(value: string, label: string): void {
   if (Number.isNaN(Date.parse(value)))
     throw new Error(`${label} must be an ISO date string`);
-}
-
-async function requireExactAttempt(
-  txn: GatewayTransaction,
-  transactionId: string,
-): Promise<ExactSettlementAttemptRecord> {
-  const attempt = await txn.get<ExactSettlementAttemptRecord>(
-    exactAttemptKey(transactionId),
-  );
-  if (!attempt) throw new Error("exact settlement attempt was not found");
-  return attempt;
 }
 
 function sameOutpoint(
@@ -2840,48 +2483,4 @@ function isLowerHash32(value: string): boolean {
 
 function isNonzeroLowerHash32(value: string): boolean {
   return isLowerHash32(value) && !/^0{64}$/.test(value);
-}
-
-function assertExactHandlerResultTransition(
-  attempt: ExactSettlementAttemptRecord,
-  result: ProtectedHandlerResult,
-  completedAt: string,
-): void {
-  if (attempt.status !== "accepted" || !attempt.handlerStartedAt)
-    throw new Error("exact handler has not started on an accepted settlement");
-  if (Number.isNaN(Date.parse(completedAt)))
-    throw new Error("exact handler completion time must be an ISO date string");
-  if (
-    result.status !== undefined &&
-    (!Number.isInteger(result.status) ||
-      result.status < 100 ||
-      result.status > 599)
-  ) {
-    throw new Error("exact handler status is invalid");
-  }
-  if (
-    result.headers &&
-    Object.values(result.headers).some((value) => typeof value !== "string")
-  ) {
-    throw new Error("exact handler headers are invalid");
-  }
-  if (result.headers && Object.keys(result.headers).length > 64)
-    throw new Error("exact handler has too many response headers");
-  let serialized: string;
-  try {
-    serialized = JSON.stringify(result);
-  } catch {
-    throw new Error("exact handler result must be JSON serializable");
-  }
-  if (
-    new TextEncoder().encode(serialized).byteLength >
-    MAX_DURABLE_HANDLER_RESULT_BYTES
-  )
-    throw new Error("exact handler result exceeds the durable size limit");
-  if (
-    result.chargedAmount !== undefined &&
-    result.chargedAmount !== attempt.amount
-  ) {
-    throw new Error("exact handler charge must equal the accepted amount");
-  }
 }
