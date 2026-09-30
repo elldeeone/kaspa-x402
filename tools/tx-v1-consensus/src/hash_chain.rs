@@ -207,7 +207,7 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
     let result = json!({
         "status": "full-consensus-cross-validated",
         "source": {
-            "rustyKaspaCommit": EXPECTED_SOURCE_COMMIT,
+            "rustyKaspaCommit": SOURCE_COMMIT,
             "silverscriptCommit": fixture_compiler_commit(),
             "contractSourceSha256": fixture.source_hash,
             "compiledBaseSha256": fixture.compiled_hash,

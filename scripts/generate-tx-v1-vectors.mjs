@@ -3,6 +3,7 @@ import path from "node:path";
 import { spawnSync } from "node:child_process";
 import { fileURLToPath } from "node:url";
 import crypto from "node:crypto";
+import { KASPA_CONSENSUS_COMMIT, KASPA_CONSENSUS_VERSION } from "./kaspa-consensus-source.mjs";
 
 import { schnorr } from "@noble/curves/secp256k1.js";
 
@@ -62,8 +63,8 @@ const state17m = escrowAt("17000000");
 const consensusValidation = {
   status: "full-consensus-cross-validated",
   tool: "kaspa-consensus",
-  toolVersion: "2.0.1",
-  sourceCommit: "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+  toolVersion: KASPA_CONSENSUS_VERSION,
+  sourceCommit: KASPA_CONSENSUS_COMMIT,
   command:
     "KASPA_X402_KASPA_CONSENSUS_ROOT=<kaspa-consensus-checkout> npm run validate:tx-v1-consensus",
   checkedFields: [

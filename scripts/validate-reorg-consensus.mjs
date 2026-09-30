@@ -4,13 +4,13 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import { KASPA_CONSENSUS_COMMIT as expectedCommit } from "./kaspa-consensus-source.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const input = process.argv[2] ?? process.env.KASPA_X402_KASPA_CONSENSUS_ROOT;
 if (!input)
   throw new Error("Pass the pinned canonical Rusty Kaspa checkout path.");
 const kaspa = fs.realpathSync(input);
-const expectedCommit = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
 
 function run(command, args, options = {}) {
   const result = spawnSync(command, args, { encoding: "utf8", ...options });
@@ -74,11 +74,13 @@ ${Object.entries(dependencies)
   .join("\n")}
 `,
   );
+  // Match this manifest's direct dependencies: tokio replaces tx-v1-only blake3.
   const lock = fs
     .readFileSync(path.join(root, "tools/tx-v1-consensus/Cargo.lock"), "utf8")
     .replace(
       /name = "kaspa-x402-tx-v1-consensus-check"([\s\S]*?)\n\]/,
-      'name = "kaspa-x402-reorg-consensus-check"$1\n "tokio",\n]',
+      (_, dependencies) =>
+        `name = "kaspa-x402-reorg-consensus-check"${dependencies.replace('\n "blake3",', "")}\n "tokio",\n]`,
     );
   fs.writeFileSync(path.join(temporary, "Cargo.lock"), lock);
   const environment = Object.fromEntries(
@@ -95,6 +97,7 @@ ${Object.entries(dependencies)
   environment.CARGO_TARGET_DIR =
     process.env.CARGO_TARGET_DIR ??
     path.join(root, ".kaspa-x402-consensus-target");
+  environment.KASPA_X402_CONSENSUS_SOURCE_COMMIT = expectedCommit;
   const result = spawnSync(
     "cargo",
     [

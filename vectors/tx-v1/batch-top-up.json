@@ -4,8 +4,8 @@
   "validation": {
     "status": "full-consensus-cross-validated",
     "tool": "kaspa-consensus",
-    "toolVersion": "2.0.1",
-    "sourceCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+    "toolVersion": "2.1.0",
+    "sourceCommit": "01b532e8b553523216471682649693af92f0fd16",
     "command": "KASPA_X402_KASPA_CONSENSUS_ROOT=<kaspa-consensus-checkout> npm run validate:tx-v1-consensus",
     "checkedFields": [
       "transactionId",

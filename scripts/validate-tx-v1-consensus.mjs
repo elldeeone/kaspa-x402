@@ -4,9 +4,12 @@ import fs from "node:fs";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
+import {
+  KASPA_CONSENSUS_COMMIT as EXPECTED_COMMIT,
+  KASPA_CONSENSUS_VERSION as EXPECTED_VERSION,
+  readKaspaConsensusSource,
+} from "./kaspa-consensus-source.mjs";
 
-const EXPECTED_COMMIT = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
-const EXPECTED_VERSION = "2.0.1";
 const CONSENSUS_SOURCE_PATHS = [
   "Cargo.lock",
   "Cargo.toml",
@@ -67,12 +70,7 @@ if (!fs.existsSync(consensusCargo) || !fs.existsSync(hashesCargo)) {
   );
 }
 
-const actualCommit = run("git", [
-  "-C",
-  kaspaRoot,
-  "rev-parse",
-  "HEAD",
-]).stdout.trim();
+const { commit: actualCommit, version: actualVersion } = readKaspaConsensusSource(kaspaRoot);
 if (actualCommit !== EXPECTED_COMMIT && !options.allowDifferentSource) {
   fail(`Kaspa checkout is at ${actualCommit}; expected ${EXPECTED_COMMIT}.`);
 }
@@ -120,22 +118,8 @@ if (dirtySourceEntries.length > 0 && !options.allowDifferentSource) {
   );
 }
 
-const consensusCargoToml = fs.readFileSync(consensusCargo, "utf8");
-const workspaceCargoToml = fs.readFileSync(
-  path.join(kaspaRoot, "Cargo.toml"),
-  "utf8",
-);
-const packageVersionMatches = new RegExp(
-  `^version\\s*=\\s*"${escapeRegExp(EXPECTED_VERSION)}"`,
-  "m",
-).test(consensusCargoToml);
-const workspaceVersionMatches =
-  /^version\.workspace\s*=\s*true/m.test(consensusCargoToml) &&
-  new RegExp(`^version\\s*=\\s*"${escapeRegExp(EXPECTED_VERSION)}"`, "m").test(
-    workspaceCargoToml,
-  );
-if (!packageVersionMatches && !workspaceVersionMatches) {
-  fail(`kaspa-consensus-core package version must be ${EXPECTED_VERSION}.`);
+if (actualVersion !== EXPECTED_VERSION && !options.allowDifferentSource) {
+  fail(`Kaspa consensus package version is ${actualVersion}; expected ${EXPECTED_VERSION}.`);
 }
 
 const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-txv1-"));
@@ -194,7 +178,15 @@ try {
       ],
       {
         cwd: root,
-        env: { ...cargoEnvironment, CARGO_TARGET_DIR: targetDir },
+        env: {
+          ...cargoEnvironment,
+          CARGO_TARGET_DIR: targetDir,
+          KASPA_X402_CONSENSUS_SOURCE_VERSION: actualVersion,
+          KASPA_X402_CONSENSUS_SOURCE_COMMIT: actualCommit,
+          KASPA_X402_CONSENSUS_SOURCE_DIRTY: String(
+            dirtySourceEntries.length > 0 || specialIndexEntries.length > 0 || ignoredSourceEntries.length > 0,
+          ),
+        },
         encoding: "utf8",
       },
     );
@@ -326,8 +318,4 @@ function isConsensusSourcePath(file) {
 function fail(message) {
   console.error(message);
   process.exit(1);
-}
-
-function escapeRegExp(value) {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }

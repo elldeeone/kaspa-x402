@@ -4,6 +4,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { KASPA_CONSENSUS_COMMIT, KASPA_CONSENSUS_VERSION } from "./kaspa-consensus-source.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const U64_DECIMAL_PATTERN =
@@ -13,8 +14,8 @@ const BATCH_AMOUNT_DECIMAL_PATTERN =
 const HEX32_PATTERN = /^[0-9a-fA-F]{64}$/;
 const NONZERO_HEX32_PATTERN = /^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])/;
 const GIT_COMMIT_PATTERN = /^[0-9a-fA-F]{40}$/;
-const TX_V1_CONSENSUS_COMMIT = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
-const EXACT_CONSENSUS_COMMIT = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
+const TX_V1_CONSENSUS_COMMIT = KASPA_CONSENSUS_COMMIT;
+const EXACT_CONSENSUS_COMMIT = KASPA_CONSENSUS_COMMIT;
 const SIGNATURE64_PATTERN = /^[0-9a-fA-F]{128}$/;
 const HEX_BYTES_PATTERN = /^(?:[0-9a-fA-F]{2})*$/;
 const U32_MAX = 4294967295;
@@ -610,8 +611,8 @@ function assertTxV1Validation(file, validation) {
   if (validation.tool !== "kaspa-consensus") {
     throw new Error(`${file}: tx-v1 validation.tool must be kaspa-consensus`);
   }
-  if (validation.toolVersion !== "2.0.1") {
-    throw new Error(`${file}: tx-v1 validation.toolVersion must be 2.0.1`);
+  if (validation.toolVersion !== KASPA_CONSENSUS_VERSION) {
+    throw new Error(`${file}: tx-v1 validation.toolVersion must be ${KASPA_CONSENSUS_VERSION}`);
   }
   if (
     typeof validation.sourceCommit !== "string" ||
@@ -1505,7 +1506,7 @@ function assertHashChainConsensusVector(file, vector) {
   if (
     validation?.status !== "full-consensus-cross-validated" ||
     validation?.tool !== "kaspa-consensus" ||
-    validation?.toolVersion !== "2.0.1" ||
+    validation?.toolVersion !== KASPA_CONSENSUS_VERSION ||
     validation?.sourceCommit !== EXACT_CONSENSUS_COMMIT ||
     typeof validation?.command !== "string" ||
     !validation.command.includes("validate:tx-v1-consensus")
@@ -1567,7 +1568,7 @@ function assertExactConsensusProfiles(file, vector) {
   if (
     validation?.status !== "full-consensus-cross-validated" ||
     validation?.tool !== "kaspa-consensus" ||
-    validation?.toolVersion !== "2.0.1" ||
+    validation?.toolVersion !== KASPA_CONSENSUS_VERSION ||
     validation?.sourceCommit !== EXACT_CONSENSUS_COMMIT ||
     typeof validation?.command !== "string" ||
     !validation.command.includes("validate:tx-v1-consensus")
