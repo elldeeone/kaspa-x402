@@ -179,7 +179,7 @@ async fn main() {
             "transactionId": refund.id().to_string(),
             "scope": "Generic tx-v1 non-final input with DAA lock time, not x402 refund covenant script"
         },
-        "consensusCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+        "consensusCommit": env!("KASPA_X402_CONSENSUS_SOURCE_COMMIT"),
         "scope": "Isolated canonical TestConsensus simnet DAG; proof of work skipped, deterministic block hashes, coinbase maturity reduced to 2; full consensus virtual-state/UTXO/acceptance processing; no node RPC or public network",
         "fundingOutpoint": format!("{}:{}", funding.transaction_id, funding.index),
         "initialSpend": initial.id().to_string(),

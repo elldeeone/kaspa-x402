@@ -7,7 +7,7 @@ KASPA_X402_KASPA_CONSENSUS_ROOT=/path/to/canonical/rusty-kaspa npm run validate:
 ```
 
 This requires Rust and a clean Rusty Kaspa checkout at
-`c338d495bec29e4dc8b5149f99e8db6fa916ed4a` (`2.0.1`). The launcher shares the
+`01b532e8b553523216471682649693af92f0fd16` (`2.1.0`). The launcher shares the
 existing tx-v1 oracle's pinned dependency versions and build cache. Successful
 execution prints a JSON report.
 

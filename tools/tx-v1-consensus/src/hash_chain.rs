@@ -207,7 +207,7 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
     let result = json!({
         "status": "full-consensus-cross-validated",
         "source": {
-            "rustyKaspaCommit": EXPECTED_SOURCE_COMMIT,
+            "rustyKaspaCommit": SOURCE_COMMIT,
             "silverscriptCommit": fixture_compiler_commit(),
             "contractSourceSha256": fixture.source_hash,
             "compiledBaseSha256": fixture.compiled_hash,
@@ -249,9 +249,15 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
     });
     if env::var("KASPA_X402_GENERATE_HASH_CHAIN_VECTORS").as_deref() != Ok("1") {
         let vector_path = root.join("vectors/hash-chain/consensus-v1.json");
-        let expected: serde_json::Value = serde_json::from_str(&fs::read_to_string(&vector_path)
+        let mut vector: serde_json::Value = serde_json::from_str(&fs::read_to_string(&vector_path)
             .with_context(|| format!("reading {}", vector_path.display()))?)?;
-        if expected["expected"] != result {
+        let expected = &mut vector["expected"];
+        if env!("KASPA_X402_CONSENSUS_ALLOW_DIFFERENT_SOURCE") == "true" {
+            // An explicit alternate source may change this label, while every
+            // transaction, budget, compiler, and contract check still applies.
+            expected["source"]["rustyKaspaCommit"] = json!(SOURCE_COMMIT);
+        }
+        if *expected != result {
             return Err(anyhow!("hash-chain consensus vector is stale; regenerate it"));
         }
     }

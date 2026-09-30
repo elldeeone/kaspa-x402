@@ -77,7 +77,7 @@ jobs:
         uses: actions/checkout@v4
         with:
           repository: kaspanet/rusty-kaspa
-          ref: c338d495bec29e4dc8b5149f99e8db6fa916ed4a
+          ref: 01b532e8b553523216471682649693af92f0fd16
           path: .kaspa-consensus
           persist-credentials: false
       - name: Install consensus harness native build dependencies

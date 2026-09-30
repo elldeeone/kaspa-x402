@@ -54,6 +54,23 @@ The recorded validation level must be refreshed whenever consensus code,
 transaction serialization assumptions, covenant state, fixture scripts, fee
 policy, or compute-budget assumptions change.
 
+Recorded offline validation (2026-09-30): Rusty-Kaspa `2.1.0` at
+`01b532e8b553523216471682649693af92f0fd16`, using a clean checkout and the
+committed consensus harness lockfile. The full `TransactionValidator` accepted
+all five batch tx-v1 vectors, exact standard-native and additive profiles,
+KIP-10 continuation, and the hash-chain genesis, borrow, rotation, recovery,
+top-up, and sweep paths. The batch guard matrix rejected ten signed invalid
+transitions and accepted its three controls; the existing exact and hash-chain
+negative cases also passed. Regenerated batch, exact, and hash-chain vectors
+changed only source provenance, preserving transaction bytes, IDs, covenant
+IDs, fees, mass, and compute-budget evidence.
+
+Harness JSON reports the actual checkout commit and consensus package version,
+plus whether the source has local or hidden changes. The default launcher
+requires the exact clean pin; `--allow-different-source` is an explicit
+experimental override. Fresh funded Testnet-10 validation and the remaining
+mainnet gates are separate requirements.
+
 ### Independent Chain Evidence
 
 Mainnet must not trust one node, endpoint, RPC provider, or commonly operated

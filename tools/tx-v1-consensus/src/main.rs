@@ -42,7 +42,8 @@ use std::{env, fs, path::Path, str::FromStr};
 
 mod hash_chain;
 
-const EXPECTED_SOURCE_COMMIT: &str = "c338d495bec29e4dc8b5149f99e8db6fa916ed4a";
+const SOURCE_COMMIT: &str = env!("KASPA_X402_CONSENSUS_SOURCE_COMMIT");
+const SOURCE_VERSION: &str = env!("KASPA_X402_CONSENSUS_SOURCE_VERSION");
 const STORAGE_MASS_PARAMETER: u64 = 1_000_000_000_000;
 const POST_TOCCATA_DAA_SCORE: u64 = 600_000_000;
 const EXACT_FEE_SOMPI: u64 = 200_000;
@@ -212,8 +213,9 @@ fn main() -> Result<()> {
             "status": "ok",
             "source": {
                 "package": "kaspa-consensus",
-                "version": "2.0.1",
-                "commit": EXPECTED_SOURCE_COMMIT,
+                "version": SOURCE_VERSION,
+                "commit": SOURCE_COMMIT,
+                "dirty": env!("KASPA_X402_CONSENSUS_SOURCE_DIRTY") == "true",
             },
             "vectors": checked,
             "batchChain": batch_chain,

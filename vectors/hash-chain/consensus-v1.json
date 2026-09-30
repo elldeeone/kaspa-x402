@@ -4,8 +4,8 @@
   "validation": {
     "status": "full-consensus-cross-validated",
     "tool": "kaspa-consensus",
-    "toolVersion": "2.0.1",
-    "sourceCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+    "toolVersion": "2.1.0",
+    "sourceCommit": "01b532e8b553523216471682649693af92f0fd16",
     "command": "KASPA_X402_KASPA_CONSENSUS_ROOT=<pinned-kaspa-checkout> npm run validate:tx-v1-consensus"
   },
   "expected": {
@@ -36,7 +36,7 @@
     "source": {
       "compiledBaseSha256": "025ce0fc578f18e94996328cccc0026339d20ea2ef21efcca40397ade9c86808",
       "contractSourceSha256": "9ebdc8ae7a50cb5e566e86877fef317852acbcf5024e2524f3700acb6afe5509",
-      "rustyKaspaCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+      "rustyKaspaCommit": "01b532e8b553523216471682649693af92f0fd16",
       "sampleTemplateHash": "64bff15c6f2c3d4b3063a979c2e09c5079996bb750e9c7d718f841968e20b841",
       "silverscriptCommit": "3ed973335b59269293564805cc2c58a14595ec03"
     },
