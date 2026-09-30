@@ -32,6 +32,28 @@ Runtime serialization is a separate adapter contract. Deployments with multiple
 server processes must also provide a shared `ChannelLockManager` as described in
 [server-runtime-lock-contract.md](server-runtime-lock-contract.md).
 
+## Shared Exact Transitions
+
+The memory store and gateway ledger use `exact-payment-transitions.ts` to decide
+complete exact transitions: attempt phases, head changes, identifier ownership,
+retained results, recovery, replay compaction, and quota disposition. Existing
+head validators remain responsible for head and successor validity. Identifier
+reservation rules and response-byte budgets are shared with the existing batch
+storage paths.
+
+Adapters read the transition's facts and apply its complete record changes in
+one atomic operation. The memory adapter performs validation and quota preflight
+before synchronously installing transition records. The gateway snapshots submitted
+commands before awaiting storage, and performs reads, quota admission, record
+writes, and head-index changes inside one storage transaction.
+The gateway compacts expired terminal records in separate committed cleanup pages
+before claim admission, so a rejected claim cannot undo retention cleanup progress.
+
+The shared exact store contract exercises the existing `ServerStateStore`
+interface against memory and the independent gateway ledger, including
+concurrent ownership, recovery, replay retention, quota failures, and injected
+write failures. A computed transition alone does not establish storage atomicity.
+
 ## Replay And Idempotency
 
 `commitExactPayment` consumes a transaction id once per server or facilitator

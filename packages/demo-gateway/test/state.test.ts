@@ -1,3 +1,4 @@
+import { FakeStorage } from "./fake-storage.js";
 import { describe, expect, it } from "vitest";
 import type {
   BatchCommitmentRecord,
@@ -23,11 +24,7 @@ import {
   createCovenantLineageState,
   type AcceptedTransactionEvidence,
 } from "@kaspa-x402/core";
-import {
-  DurableGatewayLockManager,
-  GatewayLedger,
-  type GatewayStorage,
-} from "../src/state.js";
+import { DurableGatewayLockManager, GatewayLedger } from "../src/state.js";
 
 const CHANNEL_ID = "11".repeat(32);
 const COVENANT_ID = "10".repeat(32);
@@ -166,41 +163,6 @@ describe("gateway durable ledger", () => {
     );
   });
 
-  it("commits exact transaction ids once while allowing identical retries", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    const first = exactPayment({ paymentOutputIndex: 1 });
-
-    await ledger.commitExactPayment({ payment: first });
-    await ledger.commitExactPayment({ payment: first });
-
-    await expect(ledger.loadExactPayment(TX)).resolves.toMatchObject({
-      transactionId: TX,
-      paymentOutputIndex: 1,
-    });
-    await expect(
-      ledger.commitExactPayment({
-        payment: exactPayment({ paymentOutputIndex: 2 }),
-      }),
-    ).rejects.toThrow("already committed");
-  });
-
-  it("keeps conflicting payment identifiers atomic", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await stageExactAttemptWithIdentifier(ledger, TX, TX);
-
-    await expect(
-      ledger.claimExactSettlement(
-        exactSettlementAttempt({
-          transactionId: OTHER_TX,
-          profile: "standard-native",
-          head: undefined,
-          paymentIdentifier: exactIdentifierClaim(OTHER_TX, OTHER_TX),
-        }),
-      ),
-    ).rejects.toThrow("payment identifier");
-    await expect(ledger.loadExactPayment(OTHER_TX)).resolves.toBeUndefined();
-  });
-
   it("selects durable additive heads without consuming unanswered challenges", async () => {
     const storage = new FakeStorage();
     const ledger = new GatewayLedger(storage);
@@ -254,164 +216,6 @@ describe("gateway durable ledger", () => {
       unavailable: 0,
       retired: 0,
     });
-  });
-
-  it("atomically persists a verified external head lineage", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.registerExactHead(exactHead());
-
-    await expect(
-      ledger.applyExactHeadLineage({
-        headId: HEAD_ID,
-        expectedVersion: "0",
-        expectedOutpoint: { txid: FUNDING_TX, index: 0 },
-        expectedAmount: "100000000",
-        steps: [
-          {
-            transactionId: OTHER_TX,
-            spentOutpoint: { txid: FUNDING_TX, index: 0 },
-            successor: {
-              outpoint: { txid: OTHER_TX, index: 0 },
-              amount: "110000000",
-              scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
-            },
-            finality: "accepted",
-          },
-        ],
-        observedAt: "2026-07-07T00:00:01.000Z",
-      }),
-    ).resolves.toMatchObject({
-      version: "1",
-      currentOutpoint: { txid: OTHER_TX, index: 0 },
-      currentAmount: "110000000",
-      status: "available",
-    });
-  });
-
-  it("atomically advances one additive head winner and opens its handler once", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    await ledger.registerExactHead(exactHead());
-    const attempt = exactSettlementAttempt();
-
-    await expect(ledger.claimExactSettlement(attempt)).resolves.toMatchObject({
-      created: true,
-    });
-    await expect(
-      ledger.claimExactSettlement({
-        ...attempt,
-        createdAt: "2026-07-07T00:00:01.000Z",
-      }),
-    ).resolves.toMatchObject({
-      created: false,
-    });
-    await expect(
-      ledger.claimExactSettlement(
-        exactSettlementAttempt({
-          transactionId: OTHER_TX,
-          head: {
-            ...attempt.head!,
-            successor: {
-              ...attempt.head!.successor,
-              outpoint: { txid: OTHER_TX, index: 0 },
-            },
-          },
-        }),
-      ),
-    ).rejects.toThrow("head changed");
-    await expect(
-      ledger.selectExactHead(exactHeadSelection()),
-    ).resolves.toBeUndefined();
-
-    await ledger.recordExactSettlementBroadcast(
-      TX,
-      "broadcast",
-      "2026-07-07T00:00:02.000Z",
-    );
-    await ledger.acceptExactSettlement(
-      TX,
-      "accepted",
-      "2026-07-07T00:00:03.000Z",
-    );
-    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
-      status: "available",
-      version: "1",
-      currentOutpoint: { txid: TX, index: 0 },
-      currentAmount: "120000000",
-      lastTransactionId: TX,
-    });
-    await expect(
-      ledger.beginExactHandler(TX, "2026-07-07T00:00:04.000Z"),
-    ).resolves.toBe(true);
-    await expect(
-      ledger.beginExactHandler(TX, "2026-07-07T00:00:05.000Z"),
-    ).resolves.toBe(false);
-    await ledger.recordExactHandlerResult(
-      TX,
-      { body: "download", chargedAmount: "20000000" },
-      "2026-07-07T00:00:05.000Z",
-    );
-    await ledger.commitExactPayment({
-      payment: exactPayment({
-        transactionId: TX,
-        paymentOutputIndex: 0,
-        amount: "20000000",
-      }),
-    });
-    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toMatchObject({
-      status: "applied",
-      handlerStartedAt: "2026-07-07T00:00:04.000Z",
-    });
-    await expect(
-      ledger.loadExactSettlementAttempt(TX),
-    ).resolves.not.toHaveProperty("handlerResult");
-  });
-
-  it("releases rejected attempts and fails uncertain heads closed", async () => {
-    const ledger = new GatewayLedger(new FakeStorage());
-    const paymentIdentifier = exactIdentifierClaim(TX, TX);
-    await ledger.registerExactHead(exactHead());
-    await ledger.claimExactSettlement(
-      exactSettlementAttempt({ paymentIdentifier }),
-    );
-    await ledger.recordExactSettlementBroadcast(
-      TX,
-      "broadcast",
-      "2026-07-07T00:00:01.000Z",
-    );
-    await ledger.abandonExactSettlement(
-      TX,
-      "trusted node rejected transaction",
-      "2026-07-07T00:00:02.000Z",
-    );
-
-    await expect(
-      ledger.loadExactSettlementAttempt(TX),
-    ).resolves.toBeUndefined();
-    await expect(
-      ledger.loadPaymentIdentifierReservation(paymentIdentifier.id),
-    ).resolves.toMatchObject({ status: "safely-released" });
-    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
-      status: "available",
-      claimTransactionId: undefined,
-    });
-    await expect(
-      ledger.markExactHeadUnavailable({
-        headId: HEAD_ID,
-        expectedVersion: "0",
-        expectedOutpoint: { txid: FUNDING_TX, index: 0 },
-        expectedAmount: "100000000",
-        expectedStatus: "available",
-        reason: "successor lineage unavailable",
-        observedAt: "2026-07-07T00:00:03.000Z",
-      }),
-    ).resolves.toMatchObject({ applied: true });
-    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
-      status: "unavailable",
-      unavailableReason: "successor lineage unavailable",
-    });
-    await expect(
-      ledger.selectExactHead(exactHeadSelection()),
-    ).resolves.toBeUndefined();
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {
@@ -721,7 +525,9 @@ describe("gateway durable ledger", () => {
         }),
       ),
     ]);
-    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(
+      claims.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
     const winner = claims[0]!.status === "fulfilled" ? ATTEMPT : OTHER_TX;
     const starts = await Promise.all([
       first.beginBatchHandler(winner, "2026-07-07T00:00:01.000Z"),
@@ -798,7 +604,9 @@ describe("gateway durable ledger", () => {
         }),
       ),
     ]);
-    expect(claims.filter((result) => result.status === "fulfilled")).toHaveLength(1);
+    expect(
+      claims.filter((result) => result.status === "fulfilled"),
+    ).toHaveLength(1);
     await expect(first.listChannels()).resolves.toHaveLength(1);
   });
 
@@ -921,27 +729,31 @@ describe("gateway durable ledger", () => {
       checkpoint: topUpAcceptance.checkpoint,
       continuity: "complete",
       removedChainBlockHashes: [],
-      addedChainBlocks: [{
-        blockHash: topUpAcceptance.acceptingBlockHash,
-        transitions: [{
-          kind: "top-up",
-          covenantId: previous.covenantId,
-          templateId: previous.channelConfig.templateId,
-          consumedOutpoint: previous.activeOutpoint,
-          transactionId: OTHER_TX,
-          authorizedSuccessorCount: 1,
-          successor: {
-            covenantId: previous.covenantId,
-            authorizingInput: 0,
-            outpoint: { txid: OTHER_TX, index: 0 },
-            scriptPublicKey: topUpScript,
-            value: "1001",
-            claimedCumulativeAmount: previous.claimedCumulativeAmount,
-          },
-          terminalOutput: null,
-          acceptance: topUpAcceptance,
-        }],
-      }],
+      addedChainBlocks: [
+        {
+          blockHash: topUpAcceptance.acceptingBlockHash,
+          transitions: [
+            {
+              kind: "top-up",
+              covenantId: previous.covenantId,
+              templateId: previous.channelConfig.templateId,
+              consumedOutpoint: previous.activeOutpoint,
+              transactionId: OTHER_TX,
+              authorizedSuccessorCount: 1,
+              successor: {
+                covenantId: previous.covenantId,
+                authorizingInput: 0,
+                outpoint: { txid: OTHER_TX, index: 0 },
+                scriptPublicKey: topUpScript,
+                value: "1001",
+                claimedCumulativeAmount: previous.claimedCumulativeAmount,
+              },
+              terminalOutput: null,
+              acceptance: topUpAcceptance,
+            },
+          ],
+        },
+      ],
     });
     const toppedUp: ServerChannelRecord = {
       ...previous,
@@ -1192,8 +1004,9 @@ describe("gateway durable ledger", () => {
         }),
       ),
     ).resolves.toMatchObject({ created: true });
-    await expect(storage.get(`durable-budget:record:${legacyKey}`)).resolves
-      .toBeUndefined();
+    await expect(
+      storage.get(`durable-budget:record:${legacyKey}`),
+    ).resolves.toBeUndefined();
     await expect(storage.get(`exact:${legacyTransactionId}`)).resolves.toEqual(
       replay,
     );
@@ -1229,7 +1042,10 @@ describe("gateway durable ledger", () => {
   it("renews a gateway lock while protected work is still running", async () => {
     const storage = new FakeStorage();
     const first = new DurableGatewayLockManager(new GatewayLedger(storage), 90);
-    const second = new DurableGatewayLockManager(new GatewayLedger(storage), 90);
+    const second = new DurableGatewayLockManager(
+      new GatewayLedger(storage),
+      90,
+    );
     const events: string[] = [];
     let releaseFirst!: () => void;
     const held = new Promise<void>((resolve) => {
@@ -1437,7 +1253,10 @@ describe("gateway durable ledger", () => {
       ledger.saveClaimAttempt({
         ...pending,
         transactionId: OTHER_TX,
-        continuationOutpoint: { ...pending.continuationOutpoint!, txid: OTHER_TX },
+        continuationOutpoint: {
+          ...pending.continuationOutpoint!,
+          txid: OTHER_TX,
+        },
       }),
     ).rejects.toThrow("immutable artifact");
     await expect(
@@ -1491,17 +1310,14 @@ describe("gateway durable ledger", () => {
       }),
     ).rejects.toThrow("same-state update");
     await expect(
-      ledger.applyClaimAttempt(
-        claimSuccessor(claimableChannel(), accepted),
-        {
-          ...accepted,
-          transactionId: OTHER_TX,
-          continuationOutpoint: {
-            ...accepted.continuationOutpoint!,
-            txid: OTHER_TX,
-          },
+      ledger.applyClaimAttempt(claimSuccessor(claimableChannel(), accepted), {
+        ...accepted,
+        transactionId: OTHER_TX,
+        continuationOutpoint: {
+          ...accepted.continuationOutpoint!,
+          txid: OTHER_TX,
         },
-      ),
+      }),
     ).rejects.toThrow("persisted accepted attempt");
     const changedChannel = {
       ...channel(),
@@ -1509,14 +1325,11 @@ describe("gateway durable ledger", () => {
       signedMaxClaimable: "1",
     };
     await expect(
-      ledger.applyClaimAttempt(
-        claimSuccessor(claimableChannel(), accepted),
-        {
-          ...accepted,
-          chargedCumulativeAmount: "1",
-          signedMaxClaimable: "1",
-        },
-      ),
+      ledger.applyClaimAttempt(claimSuccessor(claimableChannel(), accepted), {
+        ...accepted,
+        chargedCumulativeAmount: "1",
+        signedMaxClaimable: "1",
+      }),
     ).rejects.toThrow("persisted accepted attempt");
     await expect(ledger.loadOpenClaimAttempt(CHANNEL_ID)).resolves.toEqual(
       accepted,
@@ -1526,70 +1339,6 @@ describe("gateway durable ledger", () => {
     );
   });
 });
-
-class FakeStorage implements GatewayStorage {
-  #values = new Map<string, unknown>();
-  #transactionTail: Promise<void> = Promise.resolve();
-  readonly listRequests: Array<{
-    prefix?: string;
-    start?: string;
-    end?: string;
-    limit?: number;
-  }> = [];
-
-  async get<T = unknown>(key: string): Promise<T | undefined> {
-    return cloneOrUndefined(this.#values.get(key) as T | undefined);
-  }
-
-  async put<T = unknown>(key: string, value: T): Promise<void> {
-    this.#values.set(key, structuredClone(value));
-  }
-
-  async delete(key: string): Promise<boolean> {
-    return this.#values.delete(key);
-  }
-
-  async list<T = unknown>(options: {
-    prefix?: string;
-    start?: string;
-    end?: string;
-    limit?: number;
-  }): Promise<Map<string, T>> {
-    this.listRequests.push({ ...options });
-    const result = new Map<string, T>();
-    const entries = Array.from(this.#values.entries()).sort(([left], [right]) =>
-      left.localeCompare(right),
-    );
-    for (const [key, value] of entries) {
-      if (options.prefix && !key.startsWith(options.prefix)) continue;
-      if (options.start && key < options.start) continue;
-      if (options.end && key >= options.end) continue;
-      result.set(key, structuredClone(value) as T);
-      if (options.limit !== undefined && result.size >= options.limit) break;
-    }
-    return result;
-  }
-
-  async transaction<T>(
-    closure: (txn: GatewayStorage) => Promise<T>,
-  ): Promise<T> {
-    const previous = this.#transactionTail;
-    let release!: () => void;
-    this.#transactionTail = new Promise<void>((resolve) => {
-      release = resolve;
-    });
-    await previous;
-    const snapshot = structuredClone(Array.from(this.#values.entries()));
-    try {
-      return await closure(this);
-    } catch (error) {
-      this.#values = new Map(snapshot);
-      throw error;
-    } finally {
-      release();
-    }
-  }
-}
 
 function channel(
   overrides: Partial<ServerChannelRecord> = {},
@@ -1633,28 +1382,32 @@ function channel(
     ServerChannelRecord,
     "lineage"
   > & { lineage?: ServerChannelRecord["lineage"] };
-  const lineage = overrides.lineage ?? createCovenantLineageState({
-    format: "kaspa-x402-covenant-launch-v1",
-    network: merged.channelConfig.network,
-    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
-    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
-    bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
-    constructorSlots: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots),
-    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
-    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
-    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
-    genesis: {
-      derivation: "kip20-covenant-id-v1",
-      covenantId: merged.covenantId,
-      authorizingInput: merged.genesisEvidence.authorizingInput,
-      transactionId: merged.activeOutpoint.txid,
-      outpoint: merged.activeOutpoint,
-      scriptPublicKey: merged.activeScriptPublicKey,
-      value: merged.fundingAmount,
-      claimedCumulativeAmount: merged.claimedCumulativeAmount,
-      acceptance: acceptedEvidence(merged.activeOutpoint.txid),
-    },
-  });
+  const lineage =
+    overrides.lineage ??
+    createCovenantLineageState({
+      format: "kaspa-x402-covenant-launch-v1",
+      network: merged.channelConfig.network,
+      compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
+      source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
+      bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+      constructorSlots: structuredClone(
+        ESCROW_V4_LAUNCH_IDENTITY.constructorSlots,
+      ),
+      abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
+      selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
+      identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+      genesis: {
+        derivation: "kip20-covenant-id-v1",
+        covenantId: merged.covenantId,
+        authorizingInput: merged.genesisEvidence.authorizingInput,
+        transactionId: merged.activeOutpoint.txid,
+        outpoint: merged.activeOutpoint,
+        scriptPublicKey: merged.activeScriptPublicKey,
+        value: merged.fundingAmount,
+        claimedCumulativeAmount: merged.claimedCumulativeAmount,
+        acceptance: acceptedEvidence(merged.activeOutpoint.txid),
+      },
+    });
   return { ...merged, lineage };
 }
 
@@ -1719,27 +1472,31 @@ function claimSuccessor(
     checkpoint: acceptance.checkpoint,
     continuity: "complete",
     removedChainBlockHashes: [],
-    addedChainBlocks: [{
-      blockHash: acceptance.acceptingBlockHash,
-      transitions: [{
-        kind: "claim",
-        covenantId: previous.covenantId,
-        templateId: previous.channelConfig.templateId,
-        consumedOutpoint: previous.activeOutpoint,
-        transactionId: attempt.transactionId,
-        authorizedSuccessorCount: 1,
-        successor: {
-          covenantId: previous.covenantId,
-          authorizingInput: 0,
-          outpoint: attempt.continuationOutpoint!,
-          scriptPublicKey: attempt.continuationScriptPublicKey!,
-          value: attempt.continuationFundingAmount!,
-          claimedCumulativeAmount,
-        },
-        terminalOutput: null,
-        acceptance,
-      }],
-    }],
+    addedChainBlocks: [
+      {
+        blockHash: acceptance.acceptingBlockHash,
+        transitions: [
+          {
+            kind: "claim",
+            covenantId: previous.covenantId,
+            templateId: previous.channelConfig.templateId,
+            consumedOutpoint: previous.activeOutpoint,
+            transactionId: attempt.transactionId,
+            authorizedSuccessorCount: 1,
+            successor: {
+              covenantId: previous.covenantId,
+              authorizingInput: 0,
+              outpoint: attempt.continuationOutpoint!,
+              scriptPublicKey: attempt.continuationScriptPublicKey!,
+              value: attempt.continuationFundingAmount!,
+              claimedCumulativeAmount,
+            },
+            terminalOutput: null,
+            acceptance,
+          },
+        ],
+      },
+    ],
   });
   return {
     ...previous,
@@ -1942,10 +1699,7 @@ async function stageExactAttemptWithIdentifier(
     "accepted",
     "2026-07-07T00:00:01.000Z",
   );
-  await ledger.beginExactHandler(
-    transactionId,
-    "2026-07-07T00:00:02.000Z",
-  );
+  await ledger.beginExactHandler(transactionId, "2026-07-07T00:00:02.000Z");
   await ledger.recordExactHandlerResult(
     transactionId,
     { chargedAmount: "20000000" },
