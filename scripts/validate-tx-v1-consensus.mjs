@@ -183,6 +183,7 @@ try {
           CARGO_TARGET_DIR: targetDir,
           KASPA_X402_CONSENSUS_SOURCE_VERSION: actualVersion,
           KASPA_X402_CONSENSUS_SOURCE_COMMIT: actualCommit,
+          KASPA_X402_CONSENSUS_ALLOW_DIFFERENT_SOURCE: String(options.allowDifferentSource),
           KASPA_X402_CONSENSUS_SOURCE_DIRTY: String(
             dirtySourceEntries.length > 0 || specialIndexEntries.length > 0 || ignoredSourceEntries.length > 0,
           ),
