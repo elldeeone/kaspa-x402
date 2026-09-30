@@ -72,6 +72,20 @@ transaction or one of its inputs permits a new logical payment. Provider input
 reservations are finalized idempotently only after either confirmed acceptance
 or proven absence.
 
+For `hash-chain-additive`, configure `hashChainGrantDestinationPolicy` with
+canonical exact origins. The SDK requires the advertised private-claim endpoint
+to share the actual request origin, rejects redirects and credentials, and
+refuses wallet or signing work unless that origin is explicitly listed.
+Listing an origin also trusts every public or private address to which its DNS
+name can resolve; HTTP is limited to listed loopback origins for local testing.
+
+Request URLs are canonicalized before hash-chain attempt identifiers are
+created. Recovery also checks legacy equivalent spellings such as an explicit
+default port, but fails closed if aliases resolve to different attempts. A
+trusted-chain `accepted` attempt can resume the paid request after its
+authorization expires without rebroadcasting; a pending expired attempt stays
+recovery-only and cannot be sent again.
+
 ## Durable Funding Transitions
 
 Genesis and top-up are prepare-then-broadcast transitions. The funding provider

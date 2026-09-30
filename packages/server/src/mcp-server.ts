@@ -36,6 +36,8 @@ export interface PaidMcpToolOptions {
   scheme?: "exact" | "batch-settlement";
   /** Host-derived normalized claims, never raw credentials. */
   trustedSecurityContext?: TrustedSecurityContext;
+  /** Host transport cancellation propagated into verification and adapters. */
+  signal?: AbortSignal;
   /** Required for batch tools; explicitly authorizes the fixed charge on isError. */
   mcpErrorChargeSompi?: SompiString;
 }
@@ -94,6 +96,7 @@ export async function handlePaidMcpToolCall(
         amount: options.amount,
         scheme: "batch-settlement",
         trustedSecurityContext: options.trustedSecurityContext,
+        signal: options.signal,
         mcpErrorChargeSompi: options.mcpErrorChargeSompi,
       });
     } catch {
@@ -117,6 +120,7 @@ export async function handlePaidMcpToolCall(
         paymentAmount: options.amount,
         paymentScheme: options.scheme,
         trustedSecurityContext: options.trustedSecurityContext,
+        signal: options.signal,
         mcpErrorChargeSompi: options.mcpErrorChargeSompi,
       },
       async () => ({ body: mcpErrorResult("unreachable") }),
@@ -160,6 +164,7 @@ export async function handlePaidMcpToolCall(
       paymentScheme: options.scheme,
       requestHash,
       trustedSecurityContext: options.trustedSecurityContext,
+      signal: options.signal,
       mcpErrorChargeSompi: options.mcpErrorChargeSompi,
       headers: paymentPayload
         ? {

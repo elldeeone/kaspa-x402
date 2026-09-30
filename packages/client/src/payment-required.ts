@@ -17,6 +17,9 @@ import {
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
 import {
+  hashChainBorrowGuard,
+  hashChainHeadScriptPublicKey,
+  parseHashChainHeadRedeemScript,
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
   serializedScriptPublicKey,
@@ -144,7 +147,7 @@ function isSupportedKaspaRequirement(
 ): requirement is ExactPaymentRequirements | BatchPaymentRequirements {
   if (requirement.asset !== "KAS") return false;
   if (requirement.scheme === "exact") {
-    return requirement.extra.binding === "kaspa-exact-v2";
+    return requirement.extra.binding === "kaspa-exact-v2" || requirement.extra.binding === "kaspa-hash-chain-exact-v1";
   }
   return (
     requirement.scheme === "batch-settlement" &&
@@ -203,7 +206,7 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
     );
   }
   const extra = accepted.extra;
-  if (extra.profile !== "standard-native" && extra.profile !== "additive") {
+  if (extra.profile !== "standard-native" && extra.profile !== "additive" && extra.profile !== "hash-chain-additive") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
       "exact v2 requirements must select a profile",
@@ -217,6 +220,13 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
       "invalid_kaspa_x402_payload",
       "exact v2 requirements must bind transaction encoding and payTo script",
     );
+  }
+  if (extra.profile === "hash-chain-additive") {
+    validateHashChainTerms(accepted);
+    return;
+  }
+  if (extra.binding !== "kaspa-exact-v2") {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact profile and binding do not match");
   }
   if (extra.profile === "standard-native") return;
   if (
@@ -284,6 +294,41 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
       "invalid_kaspa_x402_payload",
       "additive exact challenge must bind the canonical KIP-10 script, threshold, head, and payTo script",
     );
+  }
+}
+
+function validateHashChainTerms(accepted: ExactPaymentRequirements): void {
+  const extra = accepted.extra;
+  if (accepted.network !== "kaspa:testnet-10" || extra.binding !== "kaspa-hash-chain-exact-v1" ||
+    extra.paymentFlow !== "upfront" || extra.assetTransferMethod !== "kaspa-v1-hash-chain-proof" ||
+    extra.templateId !== "kaspa-x402-hash-chain-head-v1" || extra.paymentOutputIndex !== 0 ||
+    !extra.expectedHeadOutpoint || extra.expectedHeadOutpoint.index !== 0 ||
+    !extra.headId || !extra.headVersion || !extra.covenantId || !extra.headAmount ||
+    !extra.headRedeemScript || !extra.headScriptPublicKey || !extra.currentGuard ||
+    !extra.nextGuard || !extra.oneTimePublicKey || !extra.grantId || !extra.grantClaimUrl ||
+    !extra.challengeId || !extra.challengeIssuedAt || !extra.challengeExpiresAt) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact challenge terms are incomplete");
+  }
+  const headAmount = parseSompiString(extra.headAmount);
+  if (headAmount <= 0n || headAmount + parseSompiString(accepted.amount) > 18_446_744_073_709_551_615n) {
+    throw new KaspaX402Error("invalid_kaspa_x402_amount", "hash-chain exact successor value is invalid");
+  }
+  parseSompiString(extra.headVersion);
+  const issued = Date.parse(extra.challengeIssuedAt);
+  const expires = Date.parse(extra.challengeExpiresAt);
+  if (!Number.isFinite(issued) || !Number.isFinite(expires) || expires <= Date.now() || expires <= issued || expires - issued > accepted.maxTimeoutSeconds * 1000) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain challenge interval is invalid");
+  }
+  try {
+    const script = parseHashChainHeadRedeemScript(extra.headRedeemScript);
+    if (script.guard !== extra.currentGuard.toLowerCase() ||
+      hashChainBorrowGuard(extra.nextGuard, extra.oneTimePublicKey) !== script.guard ||
+      hashChainHeadScriptPublicKey(script) !== extra.headScriptPublicKey.toLowerCase() ||
+      hashChainHeadScriptPublicKey({ ownerPublicKey: script.ownerPublicKey, guard: extra.nextGuard }) !== extra.payToScriptPublicKey?.toLowerCase()) {
+      throw new Error("head or successor script mismatch");
+    }
+  } catch {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain challenge does not match the pinned covenant and successor");
   }
 }
 

@@ -980,6 +980,10 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactConsensusProfiles(file, vector);
       break;
     }
+    case "native-kas-hash-chain-consensus-v1": {
+      assertHashChainConsensusVector(file, vector);
+      break;
+    }
     case "exact-interop-v1": {
       assertExactInteropVector(ajv, file, vector);
       break;
@@ -1493,6 +1497,68 @@ function assertExactInteropVector(ajv, file, vector) {
         `${file}: invalid finality case ${stableStringify(testCase)}`,
       );
     }
+  }
+}
+
+function assertHashChainConsensusVector(file, vector) {
+  const validation = vector.validation;
+  if (
+    validation?.status !== "full-consensus-cross-validated" ||
+    validation?.tool !== "kaspa-consensus" ||
+    validation?.toolVersion !== "2.0.1" ||
+    validation?.sourceCommit !== EXACT_CONSENSUS_COMMIT ||
+    typeof validation?.command !== "string" ||
+    !validation.command.includes("validate:tx-v1-consensus")
+  ) {
+    throw new Error(`${file}: hash-chain vector requires pinned full-consensus metadata`);
+  }
+  const proof = vector.expected;
+  if (proof?.status !== "full-consensus-cross-validated" ||
+      proof?.source?.rustyKaspaCommit !== EXACT_CONSENSUS_COMMIT ||
+      proof?.source?.silverscriptCommit !== "3ed973335b59269293564805cc2c58a14595ec03") {
+    throw new Error(`${file}: hash-chain proof source is not pinned`);
+  }
+  for (const field of ["contractSourceSha256", "compiledBaseSha256", "sampleTemplateHash"]) {
+    assertHash32(proof.source[field], `${file}:source.${field}`);
+  }
+  assertHash32(proof.covenantId, `${file}:covenantId`);
+  for (const field of ["initialGuard", "firstRevealedGuard", "secondRevealedGuard", "firstOneTimePublicKey", "secondOneTimePublicKey"]) {
+    assertHash32(proof.chain?.[field], `${file}:chain.${field}`);
+  }
+  const names = ["genesis", "borrow1", "borrow2", "smallTopUp", "ownerRotation", "postRotationBorrow", "ownerSweep"];
+  for (const name of names) {
+    const item = proof.transactions?.[name];
+    if (item?.transaction?.version !== 1 || item?.version !== 1 || item?.fee !== "300000") {
+      throw new Error(`${file}:${name}: version or fee mismatch`);
+    }
+    assertHash32(item.transactionId, `${file}:${name}:transactionId`);
+    assertHash32(item.transactionHash, `${file}:${name}:transactionHash`);
+    for (const field of ["amount", "fee", "storageMass", "computeMass", "transientMass"]) {
+      if (!isUint64String(item[field])) throw new Error(`${file}:${name}:${field} must be a uint64 string`);
+    }
+    if (!Array.isArray(item.transaction.inputs) || item.transaction.inputs.length !== item.inputs ||
+        !Array.isArray(item.transaction.outputs) || item.transaction.outputs.length !== item.outputs) {
+      throw new Error(`${file}:${name}: transaction input/output evidence mismatch`);
+    }
+    if (name !== "ownerSweep") {
+      assertEqual(item.transaction.outputs[0]?.covenant?.covenantId, proof.covenantId,
+        `${file}:${name}: successor covenant identity mismatch`);
+    }
+  }
+  const txs = proof.transactions;
+  for (const [name, predecessor] of [
+    ["borrow1", "genesis"], ["borrow2", "borrow1"], ["ownerRotation", "borrow1"],
+    ["postRotationBorrow", "ownerRotation"], ["ownerSweep", "borrow2"],
+  ]) {
+    assertEqual(txs[name].transaction.inputs[0].previousOutpoint.txid, txs[predecessor].transactionId,
+      `${file}:${name}: predecessor outpoint mismatch`);
+  }
+  if (proof.negative?.smallPositiveTopUp !== "consensus-accepted-exact-rejected" ||
+      proof.negative?.duplicateBorrowRace !== "competing-valid-spends-of-one-outpoint; second is stale after first" ||
+      proof.negative?.oldGrantAfterOwnerRotation !== "consensus-rejected" ||
+      proof.negative?.wrongBorrowerSighashFlag !== "consensus-rejected" ||
+      proof.negative?.wrongOwnerRotationSignature !== "consensus-rejected") {
+    throw new Error(`${file}: required underpayment and race evidence is missing`);
   }
 }
 

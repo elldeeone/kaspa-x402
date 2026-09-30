@@ -42,6 +42,7 @@ import {
   type GatewayEnv,
 } from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
+import { HASH_CHAIN_ROUTES, HASH_CHAIN_CALLER_HEADER, proxyHashChainRequest, hashChainSupportedKinds } from "./hash-chain-proxy.js";
 import {
   DurableGatewayLockManager,
   type GatewayCanaryCheck,
@@ -81,6 +82,12 @@ export async function handleGatewayRequest(
   if (request.method === "OPTIONS")
     return new Response(null, { status: 204, headers: corsHeaders(config) });
 
+  if (HASH_CHAIN_ROUTES.has(url.pathname)) {
+    const response = await proxyHashChainRequest(request, config);
+    for (const [name, value] of Object.entries(corsHeaders(config))) response.headers.set(name, value);
+    return response;
+  }
+
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
   if (url.pathname.startsWith("/admin/exact-heads")) {
     return exactHeadsAdminResponse(request, url, config, state);
@@ -103,7 +110,7 @@ export async function handleGatewayRequest(
       {
         ok: true,
         enabled: config.enabled,
-        kinds: gatewaySupportedKinds(config, exactAvailable),
+        kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hashChainSupportedKinds(config)],
       },
       { headers: corsHeaders(config) },
     );
@@ -230,6 +237,7 @@ export async function handleGatewayRequest(
         resource,
         paymentAmount: amountFor(config, profile),
         paymentScheme: profile,
+        signal: request.signal,
       },
       async ({ payment, requestFingerprint, paymentIdentifier }) => ({
         status: 200,
@@ -1359,6 +1367,7 @@ async function gatewayUnsupportedPaymentResponse(
     amount: amountFor(config, profile),
     scheme: profile,
     error: toX402ErrorReason("unsupported_scheme"),
+    signal: request.signal,
   });
   return serverResponse(
     { ...response, body: { error: toX402ErrorReason("unsupported_scheme") } },
@@ -1436,8 +1445,8 @@ function corsHeaders(
     "access-control-allow-origin":
       config?.corsOrigin ?? "https://kaspa-x402.org",
     "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
-    "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, authorization, content-type`,
-    "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}`,
+    "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, authorization, content-type, cache-control`,
+    "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}, ${HASH_CHAIN_CALLER_HEADER}`,
     "access-control-max-age": "86400",
     vary: "Origin",
   };

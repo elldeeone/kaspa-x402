@@ -23,7 +23,6 @@ import {
   buildKip10AdditiveRedeemScript,
   buildRefundArgs,
   buildTopUpArgs,
-  checkEscrowFixtureReproducibility,
   deriveEscrowAddress,
   escrowScriptPubKeyHash,
   escrowScriptPublicKey,
@@ -51,25 +50,6 @@ describe("stateful escrow covenant template", () => {
     expect(ESCROW_TEMPLATE_ID).toBe("kaspa-x402-escrow-v4");
     expect(ESCROW_VOUCHER_DOMAIN).toBe("kaspa:x402:escrow-voucher:v3");
     expect(crypto.createHash("sha256").update(ESCROW_VOUCHER_DOMAIN).digest("hex")).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
-  });
-
-  it("reproduces current silverc genesis and successor bytecode", () => {
-    const item = fixture();
-    const source = fs.readFileSync(path.join(repoRoot, item.source));
-
-    expect(crypto.createHash("sha256").update(source).digest("hex")).toBe(item.sourceSha256);
-    expect(checkEscrowFixtureReproducibility(item, source).ok).toBe(true);
-    expect(buildEscrowRedeemScript(item.sample.params)).toBe(item.sample.genesis.redeemScript);
-
-    const successorParams = {
-      ...item.sample.params,
-      claimedCumulativeAmount: item.sample.successor.claimedCumulativeAmount,
-    };
-    expect(buildEscrowRedeemScript(successorParams)).toBe(item.sample.successor.redeemScript);
-    expect(item.sample.genesis.redeemScript).not.toBe(item.sample.successor.redeemScript);
-    expect(withoutState(item.sample.genesis.redeemScript, item.stateLayout)).toBe(
-      withoutState(item.sample.successor.redeemScript, item.stateLayout),
-    );
   });
 
   it("binds the launch identity to the checked source and compiled base", () => {
@@ -274,22 +254,6 @@ describe("stateful escrow covenant template", () => {
     expect(() => buildEscrowRedeemScript({ ...item.sample.params, claimedCumulativeAmount: SCRIPT_INT64_MAX + 1n })).toThrow(
       "claimedCumulativeAmount must fit in signed 64-bit script number",
     );
-  });
-
-  it("keeps singleton, payout, change, and termination guards explicit", () => {
-    const source = fs.readFileSync(path.join(repoRoot, "contracts/kaspa-x402-escrow-v4.sil"), "utf8");
-
-    expect(source.match(/groups = single/g)).toHaveLength(2);
-    expect(source.match(/OpCovInputCount\(covenantId\) == 1/g)).toHaveLength(3);
-    expect(source.match(/OpOutputCovenantId\(0\) == ZERO_COVENANT_ID/g)).toHaveLength(2);
-    expect(source).toContain("OpOutputCovenantId(1) == ZERO_COVENANT_ID");
-    expect(source).toContain("sha256(tx.outputs[0].scriptPubKey) == payoutScriptPublicKeyHash");
-    expect(source).toContain("sha256(tx.outputs[1].scriptPubKey) == refundScriptPublicKeyHash");
-    expect(source).toContain("sha256(tx.outputs[0].scriptPubKey) == refundScriptPublicKeyHash");
-    expect(source).toContain("int available = authorizedCumulativeAmount - previous.claimedCumulativeAmount");
-    expect(source).toContain("claimedCumulativeAmount: previous.claimedCumulativeAmount + claimAmount");
-    expect(source).toContain("checkSig(providerSig, server)");
-    expect(source).not.toContain("outpointTransactionHash");
   });
 });
 

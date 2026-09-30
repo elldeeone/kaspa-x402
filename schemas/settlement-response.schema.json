@@ -234,10 +234,10 @@
           "const": "kaspa-sdk-safe-json-v2.0.0"
         },
         "exactProfile": {
-          "enum": ["standard-native", "additive"]
+          "enum": ["standard-native", "additive", "hash-chain-additive"]
         },
         "templateId": {
-          "const": "kaspa-x402-kip10-additive-v1"
+          "enum": ["kaspa-x402-kip10-additive-v1", "kaspa-x402-hash-chain-head-v1"]
         },
         "headId": {
           "$ref": "#/$defs/hash32"
@@ -248,6 +248,9 @@
         },
         "headOutpoint": {
           "$ref": "#/$defs/outpoint"
+        },
+        "grantId": {
+          "$ref": "#/$defs/hash32"
         },
         "channelState": {
           "$ref": "https://kaspa-x402.org/schemas/channel-state.schema.json"

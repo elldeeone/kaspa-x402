@@ -13,6 +13,7 @@ import {
   validatePaymentRetry,
 } from "../packages/core/dist/index.js";
 import { SITE_DIST } from "./site-config.mjs";
+import { createHashChainDemoFixture, TEST_PAYER_KEY } from "./hash-chain-demo-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const outDir = path.join(root, SITE_DIST);
@@ -20,8 +21,10 @@ const chrome = process.env.CHROME_BIN || findChrome();
 const demoConnectTimeoutMs = Number(process.env.KASPA_X402_BROWSER_CONNECT_TIMEOUT_MS ?? 75_000);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-chrome-"));
 const remotePort = await openPort();
+let hashFixture;
 const server = await startServer();
 const baseUrl = `http://127.0.0.1:${server.address().port}`;
+hashFixture = await createHashChainDemoFixture(baseUrl);
 const chromeProcess = spawn(chrome, [
   "--headless=new",
   "--no-sandbox",
@@ -35,8 +38,11 @@ const chromeProcess = spawn(chrome, [
 try {
   await waitForDevtools(remotePort);
   const result = await exerciseDemo(remotePort, `${baseUrl}/demo/`);
+  assert(hashFixture.broadcasts === 2, "browser hash-chain retry rebroadcast or payment was skipped");
+  assert(hashFixture.state.headVersion === 2, "browser payments did not advance the shared head twice");
   console.log(JSON.stringify({ ok: true, ...result }, null, 2));
 } finally {
+  await hashFixture.close();
   chromeProcess.kill("SIGTERM");
   await waitForProcessExit(chromeProcess);
   await new Promise((resolve) => server.close(resolve));
@@ -121,9 +127,12 @@ async function exerciseDemo(port, url) {
   const errors = events
     .map((event) => ({
       level: event.params?.entry?.level,
+      url: event.params?.entry?.url,
       text: event.params?.entry?.text || event.params?.args?.map((arg) => arg.value || arg.description).join(" "),
     }))
-    .filter((event) => event.level === "error" || /Refused to|CSP|Exception/i.test(event.text ?? ""));
+    .filter((event) => event.level === "error" || /Refused to|CSP|Exception/i.test(event.text ?? ""))
+    .filter((event) => !(event.url?.startsWith(`${baseUrl}/hash-chain/report`) &&
+      event.text?.includes("402 (Payment Required)")));
   if (errors.length > 0) throw new Error(`browser console errors: ${JSON.stringify(errors)}`);
   const {
     paymentRequiredHeader: _paymentRequiredHeader,
@@ -136,6 +145,8 @@ async function exerciseDemo(port, url) {
 }
 
 function assertBrowserResult(value) {
+  assert(value.hashChain.amount === "140000000", "browser hash-chain successor amount is wrong");
+  assert(value.hashChain.retryMatched, "browser hash-chain retry changed the payment");
   assert(value.addressPrefix === "kaspatest:", `unexpected address prefix: ${value.addressPrefix}`);
   assert(value.acceptedScheme === "exact", `unexpected accepted scheme: ${value.acceptedScheme}`);
   assert(value.requiredBytes > 0, "missing PAYMENT-REQUIRED header");
@@ -290,7 +301,51 @@ function demoExerciseExpression() {
     'custom endpoint block'
   );
   await click('demo-reset', 500);
+  const sdk = await import('/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js');
+  // Route the live panel to the local simulated chain while keeping the actual
+  // DOM handlers, browser signer, SDK transaction serialization, and issuer.
+  const NativeURL = globalThis.URL;
+  globalThis.URL = class extends NativeURL {
+    constructor(input, base) {
+      super(input, base === 'https://demo.kaspa-x402.org' ? location.origin : base);
+    }
+  };
+  const fakeRpc = {
+    async connect() {},
+    async disconnect() {},
+    async getServerInfo() { return { networkId: 'testnet-10', isSynced: true }; },
+    async getBlockDagInfo() { return { virtualDaaScore: 1234 }; },
+    async getUtxosByAddresses() { return (await fetch('/__hash-demo/funding')).json(); },
+    async submitTransaction({ transaction }) {
+      return (await fetch('/__hash-demo/broadcast', { method: 'POST', body: transaction.serializeToSafeJSON() })).json();
+    },
+  };
+  for (const [method, implementation] of Object.entries(fakeRpc)) {
+    sdk.RpcClient.prototype[method] = implementation;
+  }
+  byId('demo-endpoint').value = '';
+  byId('demo-private-key').value = ${JSON.stringify(TEST_PAYER_KEY)};
+  await click('demo-import-key');
+  const hashAddress = byId('demo-address').value;
+  if (!hashAddress.startsWith('kaspatest:')) throw new Error('Hash-chain payer import failed');
+  let hashResult;
+  let hashRetry;
+  for (let index = 0; index < 2; index++) {
+    await click('demo-hash-quote');
+    await waitFor(() => !byId('demo-hash-pay').disabled, 'hash-chain quote');
+    await click('demo-hash-pay');
+    await waitFor(() => byId('demo-hash-status').value.startsWith('Payment accepted.'), 'hash-chain paid response');
+    hashResult = JSON.parse(byId('demo-hash-output').textContent);
+    await click('demo-hash-retry');
+    await waitFor(() => byId('demo-hash-status').value.startsWith('Payment accepted.'), 'hash-chain retry');
+    hashRetry = JSON.parse(byId('demo-hash-output').textContent);
+    if (hashResult.transactionId !== hashRetry.transactionId) throw new Error('UI retry changed the payment');
+    if (byId('demo-address').value !== hashAddress) throw new Error('Second quote reset the funded payer');
+  }
+  globalThis.URL = NativeURL;
+  await click('demo-reset');
   return {
+    hashChain: { amount: hashResult.headAfter.amount, retryMatched: hashRetry.transactionId === hashResult.transactionId },
     addressPrefix: address.slice(0, 10),
     requiredBytes: required.length,
     signatureBytes: signature.length,
@@ -348,8 +403,27 @@ async function waitForLoadEvent(ws) {
 
 async function startServer() {
   if (!fs.existsSync(outDir)) throw new Error("site/dist is missing; run npm run site:build first");
-  const server = http.createServer((request, response) => {
+  const server = http.createServer(async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+    if (url.pathname.startsWith('/hash-chain/') || url.pathname.startsWith('/__hash-demo/')) {
+      try {
+        let body = '';
+        for await (const chunk of request) {
+          body += chunk;
+          if (body.length > 128 * 1024) throw new Error('Test request is too large');
+        }
+        if (url.pathname === '/__hash-demo/funding' || url.pathname === '/__hash-demo/broadcast') {
+          const value = url.pathname.endsWith('/funding') ? hashFixture.funding() : hashFixture.broadcast(body);
+          response.writeHead(200, { 'content-type': 'application/json' }); response.end(JSON.stringify(value)); return;
+        }
+        const result = await hashFixture.fetch(new Request(url, { method: request.method,
+          headers: request.headers, ...(body ? { body } : {}) }));
+        response.writeHead(result.status, Object.fromEntries(result.headers)); response.end(await result.text());
+      } catch (error) {
+        response.writeHead(500, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: error.message }));
+      }
+      return;
+    }
     const file = resolveFile(url.pathname);
     if (!file || !isInsideOutput(file) || !fs.existsSync(file) || !fs.statSync(file).isFile()) {
       response.writeHead(404, { "Content-Type": "text/plain; charset=utf-8" });

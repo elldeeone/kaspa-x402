@@ -19,6 +19,9 @@
         "profile": {
           "enum": ["standard-native", "additive"]
         },
+        "paymentFlow": {
+          "const": "upfront"
+        },
         "finality": {
           "enum": ["accepted", "confirmed"]
         },
@@ -136,6 +139,37 @@
           }
         }
       ],
+      "additionalProperties": true
+    },
+    {
+      "type": "object",
+      "required": ["binding", "profile", "assetTransferMethod", "paymentFlow", "templateId", "finality", "transactionEncoding", "payToScriptPublicKey", "headId", "headVersion", "covenantId", "expectedHeadOutpoint", "headAmount", "headScriptPublicKey", "headRedeemScript", "currentGuard", "nextGuard", "oneTimePublicKey", "grantId", "grantClaimUrl", "challengeId", "challengeIssuedAt", "challengeExpiresAt", "paymentOutputIndex"],
+      "properties": {
+        "binding": { "const": "kaspa-hash-chain-exact-v1" },
+        "profile": { "const": "hash-chain-additive" },
+        "assetTransferMethod": { "const": "kaspa-v1-hash-chain-proof" },
+        "paymentFlow": { "const": "upfront" },
+        "templateId": { "const": "kaspa-x402-hash-chain-head-v1" },
+        "finality": { "enum": ["accepted", "confirmed"] },
+        "transactionEncoding": { "const": "kaspa-sdk-safe-json-v2.0.0" },
+        "payToScriptPublicKey": { "type": "string", "pattern": "^0000(?:[0-9a-fA-F]{2})+$" },
+        "headId": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "headVersion": { "$ref": "#/$defs/amount" },
+        "covenantId": { "type": "string", "pattern": "^(?=[0-9a-fA-F]{64}$)(?=.*[1-9a-fA-F])[0-9a-fA-F]{64}$" },
+        "expectedHeadOutpoint": { "$ref": "#/$defs/outpoint" },
+        "headAmount": { "$ref": "#/$defs/amount" },
+        "headScriptPublicKey": { "type": "string", "pattern": "^0000(?:[0-9a-fA-F]{2})+$" },
+        "headRedeemScript": { "type": "string", "pattern": "^(?:[0-9a-fA-F]{2})+$" },
+        "currentGuard": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "nextGuard": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "oneTimePublicKey": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "grantId": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "grantClaimUrl": { "type": "string", "minLength": 1 },
+        "challengeId": { "type": "string", "pattern": "^[0-9a-fA-F]{64}$" },
+        "challengeIssuedAt": { "type": "string" },
+        "challengeExpiresAt": { "type": "string" },
+        "paymentOutputIndex": { "const": 0 }
+      },
       "additionalProperties": true
     },
     {

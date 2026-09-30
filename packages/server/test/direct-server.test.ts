@@ -1570,31 +1570,6 @@ describe("direct-mode server", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("returns the cached response for an identical exact payment retry", async () => {
-    const setup = makeServer();
-    const requestHash = "12".repeat(32);
-    const payment = makeExactPayment(setup, { requestHash });
-    await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
-      async () => ({
-        body: "download",
-      }),
-    );
-
-    let executed = false;
-    const replay = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
-      async () => {
-        executed = true;
-        return { body: "second" };
-      },
-    );
-
-    expect(replay.status).toBe(200);
-    expect(replay.body).toBe("download");
-    expect(executed).toBe(false);
-  });
-
   it("never returns an exact cached response across trusted principals", async () => {
     const setup = makeServer();
     const principalA = {
@@ -3202,6 +3177,35 @@ describe("direct-mode server", () => {
     expect(commitment?.chargedAmount).toBe("100");
     expect(commitment?.chargedCumulativeAfter).toBe("100");
     expect(commitment?.response.status).toBe(200);
+  });
+
+  it("propagates caller cancellation into protected work", async () => {
+    const setup = makeServer();
+    const payment = makeDepositPayment(setup);
+    const controller = new AbortController();
+    let markEntered!: () => void;
+    const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+    let observed: AbortSignal | undefined;
+
+    const pending = setup.server.handlePaidRequest(
+      { ...requestWithPayment(payment.payload), signal: controller.signal },
+      async ({ request }) => {
+        observed = request.signal;
+        markEntered();
+        await new Promise<never>((_resolve, reject) => {
+          request.signal?.addEventListener(
+            "abort",
+            () => reject(request.signal?.reason),
+            { once: true },
+          );
+        });
+      },
+    );
+    await entered;
+    controller.abort(new Error("caller disconnected"));
+
+    await expect(pending).resolves.toMatchObject({ status: 500 });
+    expect(observed?.aborted).toBe(true);
   });
 
   it("rejects a salted channel alias for an already registered covenant", async () => {

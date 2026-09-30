@@ -49,3 +49,8 @@ Cloudflare Pages configuration:
 The apex site is a standards reference with a static, testnet-only browser
 client. The hosted gateway and its paid test resources run on the separate
 `demo.kaspa-x402.org` subdomain (`packages/demo-gateway/`).
+
+The hash-chain panel uses a browser bundle built from the existing payment
+client, with a small SHA-256/Buffer adapter. The separate Node issuer is run
+with `scripts/hash-chain-demo.mjs`; see `docs/demo-operations.md`. The site
+does not provision or fund that service.

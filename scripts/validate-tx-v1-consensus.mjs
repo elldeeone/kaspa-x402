@@ -146,6 +146,10 @@ try {
     path.join(root, "tools/tx-v1-consensus/src/main.rs"),
     path.join(srcDir, "main.rs"),
   );
+  fs.copyFileSync(
+    path.join(root, "tools/tx-v1-consensus/src/hash_chain.rs"),
+    path.join(srcDir, "hash_chain.rs"),
+  );
   fs.writeFileSync(path.join(tempDir, "Cargo.toml"), cargoToml(kaspaRoot));
   if (options.refreshLock) {
     const lock = spawnSync(
@@ -251,6 +255,7 @@ publish = false
 [dependencies]
 anyhow = "1"
 hex = "0.4"
+blake3 = "1"
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kaspa-consensus-core = { path = "${consensusPath}" }

@@ -1,5 +1,13 @@
 # Testnet Gateway
 
+The branch also includes an optional native-KAS `hash-chain-additive` demo.
+It is advertised only when its separately hosted Node issuer is configured
+and has an available head. Use `/hash-chain/report` for the protected resource,
+`/hash-chain/grant` for signed private grant claims, and `/hash-chain/status`
+for availability. See the [browser walkthrough](demo-implementer-guide.md#hash-chain-browser-demo)
+and [operator setup](demo-operations.md#hash-chain-demo). This candidate is
+not deployed merely by merging the source or updating the static website.
+
 Status: v1 RC1 is live on `kaspa:testnet-10` as the current recommended Testnet
 release, with funded deployment and fresh-state release evidence recorded.
 

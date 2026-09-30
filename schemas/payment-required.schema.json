@@ -135,7 +135,7 @@
                   "required": ["binding"],
                   "properties": {
                     "binding": {
-                      "const": "kaspa-exact-v2"
+                      "enum": ["kaspa-exact-v2", "kaspa-hash-chain-exact-v1"]
                     }
                   }
                 }

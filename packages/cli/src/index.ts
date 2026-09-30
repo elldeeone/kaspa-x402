@@ -193,11 +193,20 @@ function verifyExact(parsed: ParsedArgs): Record<string, unknown> {
   return {
     ok: true,
     scheme: "exact",
+    profile: paymentPayload.accepted.extra.profile,
     network: paymentPayload.accepted.network,
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
     transactionEncoding: paymentPayload.payload.transactionEncoding,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
+    ...(paymentPayload.accepted.extra.binding === "kaspa-hash-chain-exact-v1"
+      ? {
+          headId: paymentPayload.accepted.extra.headId,
+          headVersion: paymentPayload.accepted.extra.headVersion,
+          grantId: paymentPayload.payload.grantId,
+          covenantId: paymentPayload.accepted.extra.covenantId,
+        }
+      : {}),
   };
 }
 
@@ -211,6 +220,7 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
   }
   return {
     scheme: "exact",
+    profile: paymentPayload.accepted.extra.profile,
     network: paymentPayload.accepted.network,
     amount: paymentPayload.accepted.amount,
     payTo: paymentPayload.accepted.payTo,
@@ -219,6 +229,15 @@ function inspectExact(parsed: ParsedArgs): Record<string, unknown> {
     transactionBytes: paymentPayload.payload.transaction.length,
     paymentOutputIndex: paymentPayload.payload.paymentOutputIndex,
     requestHash: paymentPayload.payload.requestHash ?? null,
+    ...(paymentPayload.accepted.extra.binding === "kaspa-hash-chain-exact-v1"
+      ? {
+          headId: paymentPayload.accepted.extra.headId,
+          headVersion: paymentPayload.accepted.extra.headVersion,
+          grantId: paymentPayload.payload.grantId,
+          covenantId: paymentPayload.accepted.extra.covenantId,
+          predecessor: paymentPayload.accepted.extra.expectedHeadOutpoint,
+        }
+      : {}),
   };
 }
 

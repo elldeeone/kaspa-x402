@@ -863,7 +863,7 @@ function exactPaymentAttemptIsConsistent(
     !payment.exactAttemptId ||
     !sameHex(payment.transactionId, attempt.transactionId) ||
     !sameHex(payment.exactAttemptId, attempt.attemptId) ||
-    payment.paymentRequired.resource.url !== attempt.resourceUrl ||
+    !sameCanonicalUrl(payment.paymentRequired.resource.url, attempt.resourceUrl) ||
     exactIntentHash(attempt) !== attempt.intentHash.toLowerCase()
   ) {
     return false;
@@ -884,6 +884,14 @@ function exactPaymentAttemptIsConsistent(
   return attempt.status === "accepted"
     ? attempt.evidence.status === "accepted" && attempt.output !== undefined
     : attempt.evidence.status === "absent" && attempt.output === undefined;
+}
+
+function sameCanonicalUrl(left: string, right: string): boolean {
+  try {
+    return new URL(left).href === new URL(right).href;
+  } catch {
+    return false;
+  }
 }
 
 function exactIntentHash(attempt: ExactPaymentAttemptRecord): string {

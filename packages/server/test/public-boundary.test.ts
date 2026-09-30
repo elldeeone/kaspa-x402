@@ -3,6 +3,7 @@ import { describe, expect, it } from "vitest";
 import {
   MemoryPublicBoundaryController,
   PublicBoundaryError,
+  publicBoundaryCallerKey,
 } from "../src/index.js";
 
 const ALICE = { principal: "alice", tenant: "merchant" } as const;
@@ -29,6 +30,13 @@ describe("public boundary controller", () => {
 
     now += 100;
     expect(() => boundary.enterRequest(ALICE).release()).not.toThrow();
+  });
+
+  it("charges stored challenge keys to the original caller quota", () => {
+    const boundary = new MemoryPublicBoundaryController({ callerQuota: 1 });
+    boundary.enterRequest(ALICE).release();
+    expect(() => boundary.enterRequestKey(publicBoundaryCallerKey(ALICE)))
+      .toThrowError(expect.objectContaining({ reason: "caller_quota_exceeded" }));
   });
 
   it("bounds tracked callers and reclaims expired quota windows", () => {
@@ -113,5 +121,38 @@ describe("public boundary controller", () => {
     await expect(
       boundary.runAdapter("chain-provider", async () => "released"),
     ).resolves.toBe("released");
+  });
+
+  it("aborts cooperative adapters on timeout and parent cancellation", async () => {
+    const boundary = new MemoryPublicBoundaryController({
+      maxAdapterConcurrency: 1,
+      adapterTimeoutMs: 10,
+    });
+    let timedOutSignal: AbortSignal | undefined;
+    await expect(boundary.runAdapter("cooperative", (signal) =>
+      new Promise<void>((_resolve, reject) => {
+        timedOutSignal = signal;
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }))).rejects.toMatchObject({ reason: "adapter_timeout" });
+    expect(timedOutSignal?.aborted).toBe(true);
+    await new Promise<void>((resolve) => setTimeout(resolve, 0));
+    await expect(boundary.runAdapter("cooperative", async () => "released"))
+      .resolves.toBe("released");
+
+    const parent = new AbortController();
+    let parentSignal: AbortSignal | undefined;
+    const pending = boundary.runAdapter("parent", (signal) =>
+      new Promise<void>((_resolve, reject) => {
+        parentSignal = signal;
+        signal.addEventListener("abort", () => reject(signal.reason), {
+          once: true,
+        });
+      }), parent.signal);
+    await Promise.resolve();
+    parent.abort(new Error("caller left"));
+    await expect(pending).rejects.toThrow("caller left");
+    expect(parentSignal?.aborted).toBe(true);
   });
 });

@@ -14,6 +14,10 @@
     ".": {
       "types": "./dist/index.d.ts",
       "import": "./dist/index.js"
+    },
+    "./hash-chain-grants": {
+      "types": "./dist/hash-chain-grants.d.ts",
+      "import": "./dist/hash-chain-grants.js"
     }
   },
   "files": [
@@ -22,12 +26,13 @@
   "scripts": {
     "prepack": "node ../../scripts/assert-package-dist.mjs",
     "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && npm run build:self",
-    "build:self": "tsup src/index.ts --format esm --dts --clean",
+    "build:self": "tsup src/index.ts --format esm --dts --clean && tsup src/hash-chain-grants.ts --format esm --dts --platform node",
     "test": "npm run build && npm run test:self",
     "test:self": "vitest run"
   },
   "dependencies": {
     "@kaspa-x402/core": "1.0.0-rc.1",
-    "@kaspa-x402/covenant": "1.0.0-rc.1"
+    "@kaspa-x402/covenant": "1.0.0-rc.1",
+    "@noble/curves": "^2.2.0"
   }
 }

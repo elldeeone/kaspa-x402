@@ -1,0 +1,659 @@
+{
+  "kind": "native-kas-hash-chain-consensus-v1",
+  "description": "Deterministic KCC20 hash-chain adaptation: genesis, two signed borrows, owner rotation, recovery, and negative cases under pinned Rusty-Kaspa full consensus.",
+  "validation": {
+    "status": "full-consensus-cross-validated",
+    "tool": "kaspa-consensus",
+    "toolVersion": "2.0.1",
+    "sourceCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+    "command": "KASPA_X402_KASPA_CONSENSUS_ROOT=<pinned-kaspa-checkout> npm run validate:tx-v1-consensus"
+  },
+  "expected": {
+    "chain": {
+      "firstOneTimePublicKey": "0f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d177",
+      "firstRevealedGuard": "a8c0401ec42a0b154d4725efc7d84c477a1a33794ba8eb792f0ec3c3503acacf",
+      "initialGuard": "a05372202c491c83c3069329611a1167e968d8b685b840022cd2c3826700dcbb",
+      "secondOneTimePublicKey": "552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a84",
+      "secondRevealedGuard": "3333333333333333333333333333333333333333333333333333333333333333"
+    },
+    "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+    "negative": {
+      "duplicateBorrowRace": "competing-valid-spends-of-one-outpoint; second is stale after first",
+      "duplicateCovenantOutput": "consensus-rejected",
+      "oldGrantAfterOwnerRotation": "consensus-rejected",
+      "overpayment": "consensus-accepted-exact-rejected",
+      "ownerRotationRace": "competing-valid-spends-of-one-outpoint",
+      "reusedLinkOnSuccessor": "consensus-rejected",
+      "smallPositiveTopUp": "consensus-accepted-exact-rejected",
+      "unauthorizedOwnerSweep": "consensus-rejected",
+      "unchangedOwnerRotationGuard": "consensus-rejected",
+      "wrongBorrowerSighashFlag": "consensus-rejected",
+      "wrongLink": "consensus-rejected",
+      "wrongOneTimeSignature": "consensus-rejected",
+      "wrongOwnerRotationSignature": "consensus-rejected",
+      "wrongSuccessor": "consensus-rejected"
+    },
+    "source": {
+      "compiledBaseSha256": "025ce0fc578f18e94996328cccc0026339d20ea2ef21efcca40397ade9c86808",
+      "contractSourceSha256": "9ebdc8ae7a50cb5e566e86877fef317852acbcf5024e2524f3700acb6afe5509",
+      "rustyKaspaCommit": "c338d495bec29e4dc8b5149f99e8db6fa916ed4a",
+      "sampleTemplateHash": "64bff15c6f2c3d4b3063a979c2e09c5079996bb750e9c7d718f841968e20b841",
+      "silverscriptCommit": "3ed973335b59269293564805cc2c58a14595ec03"
+    },
+    "status": "full-consensus-cross-validated",
+    "transactions": {
+      "borrow1": {
+        "amount": "20000000",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          },
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "3954",
+        "estimatedSerializedSize": 1224,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 2,
+        "outputs": 2,
+        "profile": "hash-chain-borrow-1",
+        "scriptUnits": [
+          105151,
+          100001
+        ],
+        "storageMass": "7003",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "41ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f67"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "20a8c0401ec42a0b154d4725efc7d84c477a1a33794ba8eb792f0ec3c3503acacf200f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d1774122a49977f92618a55a51fd3c97d44ad0f94f3325b88ca987fe309bb3ca039cc430a6dd8728a2d8738c54cf4102d8e5a31c98c2f0f769a8f0461ceaf153a70b4e0104c6e1d7054da5026b20a05372202c491c83c3069329611a1167e968d8b685b840022cd2c3826700dcbb6c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "100000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa200bf21dbb71bb4209f22391f3ff9141d78c112b4a74751b6bbf76860d4d081d2087"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5151515151515151515151515151515151515151515151515151515151515151"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "413324e0cd214fac3ee415c0d8c0e76fedbd241b2424127e93e62447aaa4bd1bce230faff4318204e5a435998190c3f17cabdf7d9df3de23cb68852f32a554c2fe01",
+              "utxo": {
+                "amount": "50000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "120000000",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387"
+            },
+            {
+              "amount": "29700000",
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "7003",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "fb2454337f46dcab9afa919a8ae59ef0c07676848eefffb7fb64d5ac66b72ffb",
+        "transactionId": "a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a1",
+        "transientMass": "4896",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a1",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a387843f03c0a0d5c43cd9c088038794588d1423d89af408fc39daf879888ff18d4",
+          "restDigest": "7843f03c0a0d5c43cd9c088038794588d1423d89af408fc39daf879888ff18d4",
+          "restDomain": "TransactionRest",
+          "restPreimage": "0100020000000000000041ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f670000000000000000000000000000000000000000515151515151515151515151515151515151515151515151515151515151515100000000000000000000000000000000000000000200000000000000000e27070000000000002300000000000000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2a02fc501000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "borrow2": {
+        "amount": "20000000",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          },
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "3954",
+        "estimatedSerializedSize": 1224,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 2,
+        "outputs": 2,
+        "profile": "hash-chain-borrow-2",
+        "scriptUnits": [
+          105151,
+          100001
+        ],
+        "storageMass": "9300",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a1"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "20333333333333333333333333333333333333333333333333333333333333333320552c630b64b54bf50210c9e253d38bd4949c72e22873500f6285c2bede312a8441fc00095ff6a3286df9743f087542bf880447c014c5b77d3520ae7be2113f1b61f8db326421dd9d855275fab0eb67d373dcb0791105d2c444f9cd39fe45bc66170104c6e1d7054da5026b20a8c0401ec42a0b154d4725efc7d84c477a1a33794ba8eb792f0ec3c3503acacf6c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "120000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5252525252525252525252525252525252525252525252525252525252525252"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "41b8b5cc63d58960d2af573fa8724f42af3b8923ab171a474eaa082b9c098c1408993b75312e879b21ad502c29e716b4a458bf2b8f054237b80e18f3c92e0234f101",
+              "utxo": {
+                "amount": "50000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "140000000",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa20bca5f55bfd8cb892b38d5644b05f4659a7a8e5eb5d4dfde500b5b7109f78b28e87"
+            },
+            {
+              "amount": "29700000",
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "9300",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "940deb9de71584a41d696fe1e5a3cb345f0ddbf0ef74ad517f21613b3458197a",
+        "transactionId": "d95e7ae0ef496156e3121d783a78e9be680af79e37714b8c761375c6bffc0df5",
+        "transientMass": "4896",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "d95e7ae0ef496156e3121d783a78e9be680af79e37714b8c761375c6bffc0df5",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38fcf856886f8a2c082afd17c0ec489efe365f13a266373cfa3a6c0e8a88c28036",
+          "restDigest": "fcf856886f8a2c082afd17c0ec489efe365f13a266373cfa3a6c0e8a88c28036",
+          "restDomain": "TransactionRest",
+          "restPreimage": "01000200000000000000a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a10000000000000000000000000000000000000000525252525252525252525252525252525252525252525252525252525252525200000000000000000000000000000000000000000200000000000000003b58080000000000002300000000000000aa20bca5f55bfd8cb892b38d5644b05f4659a7a8e5eb5d4dfde500b5b7109f78b28e87010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2a02fc501000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "genesis": {
+        "amount": "0",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "1671",
+        "estimatedSerializedSize": 301,
+        "fee": "300000",
+        "headCovenantId": null,
+        "inputs": 1,
+        "outputs": 1,
+        "profile": "hash-chain-genesis",
+        "scriptUnits": [
+          100001
+        ],
+        "storageMass": "30030",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5050505050505050505050505050505050505050505050505050505050505050"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "41e4aee6be39a059c8ba0f637a17a30e1ef5e450c3520b76fed1359c66b4722aed213b073fc4b8c660a0dbbf6c14e5f76dbe1c6424be931d323247952ca87a7dc701",
+              "utxo": {
+                "amount": "100300000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "100000000",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa200bf21dbb71bb4209f22391f3ff9141d78c112b4a74751b6bbf76860d4d081d2087"
+            }
+          ],
+          "payload": "",
+          "storageMass": "30030",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "e9f48c632fad661daa82fac152631cdb8d78ea5d22637c54a2311a1d2b6bac1b",
+        "transactionId": "41ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f67",
+        "transientMass": "1204",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "41ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f67",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a3848682af65c6cea756eade55dc74af6e3e3006129f46a510288a143297af1e22c",
+          "restDigest": "48682af65c6cea756eade55dc74af6e3e3006129f46a510288a143297af1e22c",
+          "restDomain": "TransactionRest",
+          "restPreimage": "0100010000000000000050505050505050505050505050505050505050505050505050505050505050500000000000000000000000000000000000000000010000000000000000e1f5050000000000002300000000000000aa200bf21dbb71bb4209f22391f3ff9141d78c112b4a74751b6bbf76860d4d081d2087010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e20000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "ownerRotation": {
+        "amount": "0",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          },
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "3921",
+        "estimatedSerializedSize": 1191,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 2,
+        "outputs": 2,
+        "profile": "hash-chain-owner-rotation",
+        "scriptUnits": [
+          104895,
+          100001
+        ],
+        "storageMass": "512",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a1"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "203dddc8709a56714824c7c0f8e50f60dbe8a8e428c43455ab09527836db945651414c342b96af15b901166ce3e9151158d45d31987235878d4a3549233465d27001a6b8b537c00038fbea421917b1ec3bbd1d426d341a39e30b8e53fe7c231359dd010460104a234da5026b20a8c0401ec42a0b154d4725efc7d84c477a1a33794ba8eb792f0ec3c3503acacf6c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "120000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5656565656565656565656565656565656565656565656565656565656565656"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "413cb2b885c7cdcac9bcc9c6a66861c755a6c26c661dd1a7c3fd1bf68f84b13b292ff0cbcc25ea90ae988da24c67fbf0dec0c1312b98d208a8e8b459f2b086749b01",
+              "utxo": {
+                "amount": "50000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "120000000",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa20b74c03d8571cc5fec077bf898ee21c812da5b0ed90c2f2620f63d67caee3747f87"
+            },
+            {
+              "amount": "49700000",
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "512",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "d7270be22f3a5111bc18dfe04bb5dae05208d4571847a048b9a6d6cd33315719",
+        "transactionId": "fb2239621cffdee174f0e420220560f8a6de0629debd13f4339004c05b94f9bf",
+        "transientMass": "4764",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "fb2239621cffdee174f0e420220560f8a6de0629debd13f4339004c05b94f9bf",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a384570647453f400e52fb74a4cb3b8dfbdfcf9c68a3c939c88e0d95fc7b907dd37",
+          "restDigest": "4570647453f400e52fb74a4cb3b8dfbdfcf9c68a3c939c88e0d95fc7b907dd37",
+          "restDomain": "TransactionRest",
+          "restPreimage": "01000200000000000000a104099350e9a6c341d2e2d16e599a8babfb7cfc54cf7a95449bbc7d4876a5a10000000000000000000000000000000000000000565656565656565656565656565656565656565656565656565656565656565600000000000000000000000000000000000000000200000000000000000e27070000000000002300000000000000aa20b74c03d8571cc5fec077bf898ee21c812da5b0ed90c2f2620f63d67caee3747f87010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2a05cf602000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "ownerSweep": {
+        "amount": "0",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "2311",
+        "estimatedSerializedSize": 951,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 1,
+        "outputs": 1,
+        "profile": "hash-chain-owner-sweep",
+        "scriptUnits": [
+          101763
+        ],
+        "storageMass": "0",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "d95e7ae0ef496156e3121d783a78e9be680af79e37714b8c761375c6bffc0df5"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "41cc1db0c6e5ef5469d3e27e1488395367f66a4d34668210b19ceed04f77d0cb1c5c681033c4788b6491922b9787b0b52601c3e54ba552d6e2b6fe327c9867dbe2010489d59c064da5026b2033333333333333333333333333333333333333333333333333333333333333336c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "140000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa20bca5f55bfd8cb892b38d5644b05f4659a7a8e5eb5d4dfde500b5b7109f78b28e87"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "139700000",
+              "covenant": null,
+              "scriptPublicKey": "00002056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "0",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "8470dc917731e4fd12906c10c34de2438bb90d070c042b7fc3e2339292dbf94b",
+        "transactionId": "d68a34c0357da7969e28b86953e66ce3f1fb5cb30f255e0aa430cfc03a1b5e26",
+        "transientMass": "3804",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "d68a34c0357da7969e28b86953e66ce3f1fb5cb30f255e0aa430cfc03a1b5e26",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a389fdff31d280605600587fbbbfe1f948ae302d6c0846e228f5b12f0ea733a8430",
+          "restDigest": "9fdff31d280605600587fbbbfe1f948ae302d6c0846e228f5b12f0ea733a8430",
+          "restDomain": "TransactionRest",
+          "restPreimage": "01000100000000000000d95e7ae0ef496156e3121d783a78e9be680af79e37714b8c761375c6bffc0df50000000000000000000000000000000000000000010000000000000020a7530800000000000022000000000000002056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "postRotationBorrow": {
+        "amount": "20000000",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          },
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "3954",
+        "estimatedSerializedSize": 1224,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 2,
+        "outputs": 2,
+        "profile": "hash-chain-post-rotation-borrow",
+        "scriptUnits": [
+          105151,
+          100001
+        ],
+        "storageMass": "9300",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "fb2239621cffdee174f0e420220560f8a6de0629debd13f4339004c05b94f9bf"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "204444444444444444444444444444444444444444444444444444444444444444202f1b310f4c065331bc0d79ba4661bb9822d67d7c4a1b0a1892e1fd0cd23aa68d415acf000bbfb7f0ec6f3f21dd1a046ee0b4ceb6663040120a3d5371ca2280ac807efb12546ad1e439cc6a9810b9907b55d37d5a6f05d517034b8c9682b7ed09b90104c6e1d7054da5026b203dddc8709a56714824c7c0f8e50f60dbe8a8e428c43455ab09527836db9456516c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "120000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa20b74c03d8571cc5fec077bf898ee21c812da5b0ed90c2f2620f63d67caee3747f87"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5858585858585858585858585858585858585858585858585858585858585858"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "41670e1861fcdecb35efc6f1022cd0adb72f0a0c7b6704a27cb07fd5560a989969e457cf16ae763518962100620989f8afdbeb4ae7f6d59547c0159e1dea106d9a01",
+              "utxo": {
+                "amount": "50000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "140000000",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa2086468ba1130fd398e6514f7e5fcf0a8a341c019843e54324e16f0ba29f52be0787"
+            },
+            {
+              "amount": "29700000",
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "9300",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "4f8473b91ba3b5d8e55523537f85c722bdac3ce5706bd431d5e13707c7d776e5",
+        "transactionId": "1e58e34b8a46add5b26cea9c60279538e96a6a94e81554c866e89ff61f13bdab",
+        "transientMass": "4896",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "1e58e34b8a46add5b26cea9c60279538e96a6a94e81554c866e89ff61f13bdab",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38379273f2c6691c7083ec101f8e4f6a317f50036ab94fd9f5ad57d45a80dad035",
+          "restDigest": "379273f2c6691c7083ec101f8e4f6a317f50036ab94fd9f5ad57d45a80dad035",
+          "restDomain": "TransactionRest",
+          "restPreimage": "01000200000000000000fb2239621cffdee174f0e420220560f8a6de0629debd13f4339004c05b94f9bf0000000000000000000000000000000000000000585858585858585858585858585858585858585858585858585858585858585800000000000000000000000000000000000000000200000000000000003b58080000000000002300000000000000aa2086468ba1130fd398e6514f7e5fcf0a8a341c019843e54324e16f0ba29f52be0787010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2a02fc501000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      },
+      "smallTopUp": {
+        "amount": "1",
+        "computeCommitments": [
+          {
+            "computeBudget": 10
+          },
+          {
+            "computeBudget": 10
+          }
+        ],
+        "computeMass": "3954",
+        "estimatedSerializedSize": 1224,
+        "fee": "300000",
+        "headCovenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2",
+        "inputs": 2,
+        "outputs": 2,
+        "profile": "hash-chain-small-top-up",
+        "scriptUnits": [
+          105151,
+          100001
+        ],
+        "storageMass": "119",
+        "transaction": {
+          "gas": "0",
+          "inputs": [
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "41ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f67"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "20a8c0401ec42a0b154d4725efc7d84c477a1a33794ba8eb792f0ec3c3503acacf200f0fb9a244ad31a369ee02b7abfbbb0bfa3812b9a39ed93346d03d67d412d1774131fc72fa44d111cb7c12952889f38587b4821815def337bcdf342be52f2b174f492a9d284672aadd08315ebc5ec70d500ebd186fc81c225762078241684cb8080104c6e1d7054da5026b20a05372202c491c83c3069329611a1167e968d8b685b840022cd2c3826700dcbb6c7604c6e1d70587637553798201209d7552798201209d75788201419d75537953797ed9788769b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769785379ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea069b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696854790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c3887575757575755167760460104a2387637552798201209d75788201419d75527978879169b2519c69b5009c69b352a269b400a069b452a169b9009c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2519c6900cb519c690000cc009c6900d578876900c200bea269b4529c6351d5200000000000000000000000000000000000000000000000000000000000000000876951c200a0696853790120787eb976c902a50294765193bc7c7eb976c976028382937cbc7eaa02000001aa7e01207e7c7e01877e00c38875757575755167760489d59c06876375788201419d75b2519c69b5009c69b9009c69b3519c69b4519c6900bd080000000000000000876978014001417f01018769782056b328b30c8bf5839e24058747879408bdb36241dc9c2e7c619faa12b2920967ac6900cf76d0519c6976d2009c6900cb009c6900d5200000000000000000000000000000000000000000000000000000000000000000876900c200a06900c200bea16975757551676a686868",
+              "utxo": {
+                "amount": "100000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "0000aa200bf21dbb71bb4209f22391f3ff9141d78c112b4a74751b6bbf76860d4d081d2087"
+              }
+            },
+            {
+              "computeBudget": 10,
+              "previousOutpoint": {
+                "index": 0,
+                "txid": "5353535353535353535353535353535353535353535353535353535353535353"
+              },
+              "sequence": "0",
+              "sigOpCount": null,
+              "signatureScript": "41185d1b74f0f581c7cd88334d8b5ad4422aecd824a36d12e8beb9e5991c86cafb9d15e2bad5c4e5134a74d67c3ad79b68a788a1f34f9f44ca3eb1ad89791e5bdf01",
+              "utxo": {
+                "amount": "50000000",
+                "blockDaaScore": "0",
+                "isCoinbase": false,
+                "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+              }
+            }
+          ],
+          "lockTime": "0",
+          "outputs": [
+            {
+              "amount": "100000001",
+              "covenant": {
+                "authorizingInput": 0,
+                "covenantId": "b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e2"
+              },
+              "scriptPublicKey": "0000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387"
+            },
+            {
+              "amount": "49699999",
+              "covenant": null,
+              "scriptPublicKey": "000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac"
+            }
+          ],
+          "payload": "",
+          "storageMass": "119",
+          "subnetworkId": "0000000000000000000000000000000000000000",
+          "version": 1
+        },
+        "transactionHash": "baebd3ee3ae4bd1f32d751ea80ec695b26f5998edd398146cc42350c329f8459",
+        "transactionId": "fe0acc55728fb3fe29de7306ed6a31d1c8e635ed878b75724dbc950a6bdb567f",
+        "transientMass": "4896",
+        "txid": {
+          "algorithm": "blake3-256-keyed",
+          "digest": "fe0acc55728fb3fe29de7306ed6a31d1c8e635ed878b75724dbc950a6bdb567f",
+          "domain": "TransactionV1Id",
+          "payloadDigest": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38",
+          "payloadDomain": "PayloadDigest",
+          "preimage": "9c0ca2acb45e92ffe6ceb4ae29188b35c82d9676cdd3ce067fd6ccc30a9c4a38afbaa5776c1daaec0394acd180259c0c662ea23485ed69b194d453b99402d398",
+          "restDigest": "afbaa5776c1daaec0394acd180259c0c662ea23485ed69b194d453b99402d398",
+          "restDomain": "TransactionRest",
+          "restPreimage": "0100020000000000000041ccbf49739ff92aa876a5e0a601467c669041a6cb540ec0d51fd2edee5d3f67000000000000000000000000000000000000000053535353535353535353535353535353535353535353535353535353535353530000000000000000000000000000000000000000020000000000000001e1f5050000000000002300000000000000aa20a5c02c3b3dde5690ba300581e10ea806269cc33f39e19ca89af27f52e71e8d5387010000b21a12a6d1ece16cd52c11d1a393a1cf77091ef590672e438ed7bed6a97ca4e29f5cf602000000000000220000000000000020989c0b76cb563971fdc9bef31ec06c3560f3249d6ee9e5d83c57625596e05f6fac000000000000000000000000000000000000000000000000000000000000000000000000000000000000000000"
+        },
+        "version": 1
+      }
+    }
+  }
+}

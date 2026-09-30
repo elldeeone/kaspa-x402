@@ -18,6 +18,7 @@ type GeneratedGatewayEnv = WidenStringBindings<Env>;
 export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
   Pick<GeneratedGatewayEnv, "GATEWAY_STATE"> & {
     KASPA_X402_ADMIN_TOKEN?: string;
+    KASPA_X402_HASH_CHAIN_PROXY_TOKEN?: string;
   };
 
 export interface GatewayConfig {
@@ -47,6 +48,8 @@ export interface GatewayConfig {
   pnnEndpoints: string[];
   pnnTimeoutMs: number;
   pnnAttempts: number;
+  hashChainOrigin?: string;
+  hashChainProxyToken?: string;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -125,6 +128,10 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     );
   }
   return {
+    ...(env.KASPA_X402_HASH_CHAIN_ORIGIN?.trim() ? {
+      hashChainOrigin: hashChainOrigin(env.KASPA_X402_HASH_CHAIN_ORIGIN),
+      hashChainProxyToken: env.KASPA_X402_HASH_CHAIN_PROXY_TOKEN?.trim(),
+    } : {}),
     enabled: bool(
       env.KASPA_X402_GATEWAY_ENABLED ?? "false",
       "KASPA_X402_GATEWAY_ENABLED",
@@ -201,6 +208,15 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       ? { adminToken: env.KASPA_X402_ADMIN_TOKEN.trim() }
       : {}),
   };
+}
+
+function hashChainOrigin(value: string): string {
+  const url = new URL(value);
+  if (url.protocol !== "https:" || url.username || url.password ||
+      url.pathname !== "/" || url.search || url.hash) {
+    throw new Error("KASPA_X402_HASH_CHAIN_ORIGIN must be an HTTPS origin");
+  }
+  return url.origin;
 }
 
 function releaseVersion(value: string): string {

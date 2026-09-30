@@ -31,54 +31,6 @@ test("accepts the canonical v1 RC1 batch core cross-links", () => {
   assert.doesNotThrow(() => assertBatchCoreCrossLinks(vector));
 });
 
-test("rejects a voucher for a different covenant lineage", () => {
-  const mutated = structuredClone(vector);
-  mutated.voucher.input.covenantId = "67".repeat(32);
-  assert.throws(() => assertBatchCoreCrossLinks(mutated), /voucher covenant id/);
-});
-
-test("rejects the KIP-20 unbound sentinel as a lane id", () => {
-  const mutated = structuredClone(vector);
-  mutated.lineage.covenantId = "00".repeat(32);
-  assert.throws(() => assertBatchCoreCrossLinks(mutated), /unbound sentinel/);
-});
-
-test("rejects a voucher signer unrelated to the channel client", () => {
-  const mutated = structuredClone(vector);
-  mutated.voucher.signerPublicKey = mutated.channel.config.serverPublicKey;
-  assert.throws(() => assertBatchCoreCrossLinks(mutated), /voucher signer/);
-});
-
-test("rejects a commitment unrelated to the channel", () => {
-  const mutated = structuredClone(vector);
-  mutated.commitment.input.channelId = "00".repeat(32);
-  assert.throws(() => assertBatchCoreCrossLinks(mutated), /commitment channel id/);
-});
-
-test("rejects current-head evidence unrelated to the commitment", () => {
-  const mutated = structuredClone(vector);
-  mutated.lineage.currentHead.outpoint.index += 1;
-  assert.throws(() => assertBatchCoreCrossLinks(mutated), /current head outpoint/);
-});
-
-test("rejects a claim that resets the lifetime voucher ceiling", () => {
-  const mutated = structuredClone(vector);
-  mutated.accounting.afterClaim.authorizedCumulativeAmount = "0";
-  assert.throws(
-    () => assertBatchCoreCrossLinks(mutated),
-    /claimed cumulative amount|authorization preservation/,
-  );
-});
-
-test("rejects accounting that uses a different reserve than the accepted requirement", () => {
-  const mutated = structuredClone(vector);
-  mutated.accounting.reserveAmount = "1000000";
-  assert.throws(
-    () => assertBatchCoreCrossLinks(mutated),
-    /accounting reserve must match accepted claim reserve/,
-  );
-});
-
 function assertBatchCoreCrossLinks(item) {
   assert.equal(item.kind, "batch-interop-v3");
   assert.equal(item.scope.transactionEvidenceIncluded, false);

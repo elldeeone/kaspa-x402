@@ -9,10 +9,16 @@ stable `1.0.0` release. It is not published on the standards site.
    dependency together.
 2. Update the current specs, schemas, vectors, docs, site, and gateway release
    version. Do not add repository copies of old releases.
-3. From a clean checkout of the candidate commit, run:
+3. Prepare clean source checkouts of Rusty-Kaspa at
+   `c338d495bec29e4dc8b5149f99e8db6fa916ed4a` and SilverScript at
+   `3ed973335b59269293564805cc2c58a14595ec03`. The consensus and
+   hash-chain fixture checks use these sources; `npm ci` does not fetch them.
+   From a clean checkout of the candidate commit, run:
 
    ```sh
    npm ci
+   KASPA_X402_KASPA_CONSENSUS_ROOT=/path/to/rusty-kaspa \
+   SILVERSCRIPT_DIR=/path/to/silverscript \
    npm run validate:release
    ```
 

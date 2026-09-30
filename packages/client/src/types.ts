@@ -157,6 +157,52 @@ export interface ExactPaymentRequest {
     challengeId: Hash32Hex;
     challengeExpiresAt: string;
   };
+  hashChainHead?: {
+    headId: Hash32Hex;
+    headVersion: SompiString;
+    covenantId: Hash32Hex;
+    expectedHeadOutpoint: FundingOutpoint;
+    headAmount: SompiString;
+    headScriptPublicKey: ByteHex;
+    headRedeemScript: ByteHex;
+    currentGuard: Hash32Hex;
+    nextGuard: Hash32Hex;
+    oneTimePublicKey: PublicKeyHex;
+    grantId: Hash32Hex;
+    grantClaimUrl: string;
+    challengeId: Hash32Hex;
+    challengeExpiresAt: string;
+  };
+}
+
+export interface HashChainGrantDelivery {
+  grantId: Hash32Hex;
+  headVersion: number;
+  nextGuard: Hash32Hex;
+  oneTimePublicKey: PublicKeyHex;
+  oneTimePrivateKey: string;
+  expiresAt: string;
+}
+
+export interface HashChainGrantClaimRequest {
+  network: "kaspa:testnet-10";
+  head: NonNullable<ExactPaymentRequest["hashChainHead"]>;
+  /** Trusted actual paid-resource URL; the grant endpoint must share its origin. */
+  resourceUrl: string;
+  requestHash: Hash32Hex;
+  payerPublicKey: PublicKeyHex;
+  /** Dedicated outbound trust policy for the private grant POST. */
+  destinationPolicy: HashChainGrantDestinationPolicy;
+}
+
+/**
+ * Exact origins authorized for the private grant POST. This is deliberately
+ * separate from payment funding policy: trusting an origin here also trusts
+ * every public or private address to which that origin can resolve. Plain HTTP
+ * remains limited to explicitly listed loopback origins for local testing.
+ */
+export interface HashChainGrantDestinationPolicy {
+  allowedOrigins: readonly string[];
 }
 
 export interface ExactTransactionPaymentRequest extends ExactPaymentRequest {
@@ -238,6 +284,14 @@ export interface FundingProvider {
    */
   payExactTransaction?(
     request: ExactTransactionPaymentRequest,
+  ): Promise<ExactTransactionPaymentResult>;
+  /** Signs the grant claim with the payer key and privately retrieves one current link. */
+  claimHashChainGrant?(
+    request: HashChainGrantClaimRequest,
+  ): Promise<HashChainGrantDelivery>;
+  /** Signs both the head and funding inputs; persists one immutable signed artifact. */
+  payHashChainTransaction?(
+    request: ExactTransactionPaymentRequest & { grant: HashChainGrantDelivery },
   ): Promise<ExactTransactionPaymentResult>;
   /** Idempotently releases provider reservations only after trusted terminal evidence. */
   finalizeExactPaymentAttempt?(
@@ -744,6 +798,8 @@ export interface DirectModeClientOptions {
   refundReconciler?: RefundReconciler;
   fundingTransitionReconciler?: FundingTransitionReconciler;
   exactPaymentReconciler?: ExactPaymentReconciler;
+  /** Required before any hash-chain wallet or grant operation. */
+  hashChainGrantDestinationPolicy?: HashChainGrantDestinationPolicy;
   /** Deployment policy; Testnet-10 launch profile is 30. */
   confirmationThreshold: number;
   verifyVoucherSignature?: (

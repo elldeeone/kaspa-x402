@@ -6,6 +6,8 @@ import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
+  BROWSER_BUNDLE_INPUTS,
+  GENERATED_SITE_ASSETS,
   CONTRACT_FILES,
   PRIVATE_SITE_PATTERNS,
   PUBLIC_DOC_FILES,
@@ -163,6 +165,7 @@ function checkPrivateFiles() {
 
 function checkAssetAllowlist() {
   const expectedAssets = new Set([
+    ...GENERATED_SITE_ASSETS,
     "assets/styles.css",
     ...SITE_ASSET_FILES.map((file) =>
       path.relative(SITE_SRC, file).replaceAll(path.sep, "/"),
@@ -277,7 +280,10 @@ function checkContent() {
   for (const file of textFiles) {
     const relative = path.relative(outDir, file).replaceAll(path.sep, "/");
     const text = fs.readFileSync(file, "utf8");
-    if (internalPhase.test(text)) fail(`internal phase label in ${relative}`);
+    // Bundled cryptography uses identifiers such as p1/p2. Editorial labels
+    // are checked in authored content; generated JS still gets secret checks.
+    if (!GENERATED_SITE_ASSETS.includes(relative) && internalPhase.test(text))
+      fail(`internal phase label in ${relative}`);
     if (privateRepoReference.test(text))
       fail(`private repo reference in ${relative}`);
     if (privateIpv4.test(text) || localEndpoint.test(text))
@@ -468,6 +474,7 @@ function dirtyPublishableInputs() {
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
+    ...BROWSER_BUNDLE_INPUTS,
   ]);
   return git(["status", "--porcelain=v1", "--untracked-files=all"])
     .split(/\r?\n/)

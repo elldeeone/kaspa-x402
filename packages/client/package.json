@@ -27,6 +27,7 @@
     "test:self": "vitest run"
   },
   "dependencies": {
+    "@noble/curves": "^2.2.0",
     "@kaspa-x402/core": "1.0.0-rc.1",
     "@kaspa-x402/covenant": "1.0.0-rc.1"
   }
