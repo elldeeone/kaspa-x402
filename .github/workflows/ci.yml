@@ -25,7 +25,7 @@ jobs:
       - name: Workspace tests
         run: npm test
       - name: Offline proofs
-        run: npm run proof:offline -- --out proof-artifacts/offline.json
+        run: node scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
         if: always()
         uses: actions/upload-artifact@v4
