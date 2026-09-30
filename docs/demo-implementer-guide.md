@@ -134,6 +134,35 @@ The hosted gateway uses REST for read-side evidence and public TN10 PNN/WSS for
 KIP-10 exact transaction submission. Public REST submit is not used for hosted
 KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
+## Hash-chain Browser Demo
+
+The candidate `hash-chain-additive` flow is available from the browser demo
+when the operator enables its Node issuer behind the gateway. It is not part
+of the currently published npm RC1. Check `/supported` for
+`extra.profile: "hash-chain-additive"` before expecting a live quote.
+
+1. Open `https://kaspa-x402.org/demo/`, load the SDK, and generate or import a
+   throwaway Testnet-10 key. Fund its address and connect to a Testnet-10 node.
+2. Under **Hash-chain exact**, fetch a quote. The page shows the exact price,
+   the fee budget (target 0.01 KAS, maximum 0.1 KAS), the current head, and expiry.
+3. Click **Pay quoted Testnet KAS**. The browser signs a grant claim, receives
+   its one-use key, signs and broadcasts the payment, then retrieves the report.
+4. The result shows the accepted transaction ID, actual fee, and the head's value before
+   and after payment. **Retry same payment** retrieves that same payment result.
+   Fetch another quote after success to start a new logical payment using the
+   same testnet key. While pending, retry that payment rather than starting another.
+
+The merchant head increases by exactly the quote. Unlike the older `additive`
+profile, this profile changes its hash guard and the payer broadcasts the
+transaction. Wallet and grant keys stay in browser memory and are cleared on
+reset; keep the page open while a payment is pending.
+
+A busy/unavailable message is normal for this small demo. An abandoned claimed
+grant can require a manual operator rotation before the head is available again.
+Expiry alone does not revoke its signing key on-chain. See the
+[profile](../spec/kaspa-hash-chain-exact-v1.md) and
+[operator instructions](demo-operations.md#hash-chain-demo).
+
 ## Batch Flow
 
 Request:

@@ -4,9 +4,12 @@ import fs from "node:fs";
 import path from "node:path";
 import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
+import { buildBrowserHashChain } from "./build-browser-hash-chain.mjs";
 
 import {
   ARTIFACT_NOTES,
+  BROWSER_BUNDLE_INPUTS,
+  GENERATED_SITE_ASSETS,
   CONTRACT_FILES,
   DOC_GROUPS,
   PUBLIC_DOC_FILES,
@@ -75,6 +78,7 @@ fs.rmSync(outDir, { recursive: true, force: true });
 fs.mkdirSync(outDir, { recursive: true });
 
 copyStaticAssets();
+await buildBrowserHashChain(outDir);
 writeHeaders();
 writeRedirects();
 writeText("robots.txt", "User-agent: *\nAllow: /\n");
@@ -173,6 +177,7 @@ function writeHomePage() {
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
+    <p>The candidate <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile uses one-use merchant grants. The payer broadcasts a payment that increases the head and advances its hash guard. Try it in the <a href="/demo/#demo-hash-chain">browser demo</a> when the hosted issuer is available.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated requests with a payer-approved fixed charge per invocation against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -366,7 +371,7 @@ function writeDemoPage() {
         <li>The network is fixed to <code>kaspa:testnet-10</code>; there is no mainnet selector.</li>
         <li>Generated or imported private keys stay in browser memory. The page does not write key material to local storage, cookies, query strings, or the server.</li>
         <li>Reset clears the in-memory key, visible fields, and RPC connection state.</li>
-        <li>The only signed data that should leave the page is a transaction you intentionally broadcast through the public node network.</li>
+        <li>Hash-chain payments send signed grant claims and payment proofs to the demo gateway. Private wallet keys stay in the browser.</li>
         <li>The apex domain hosts static files only. The hosted gateway and its paid test resources run on the separate <code>demo.kaspa-x402.org</code> subdomain.</li>
       </ul>
     </section>
@@ -405,6 +410,20 @@ function writeDemoPage() {
         </div>
         <pre id="demo-utxo-output"><code>{}</code></pre>
       </form>
+    </section>
+
+    <section class="demo-panel" aria-labelledby="demo-hash-chain">
+      <h2 id="demo-hash-chain">Hash-chain exact — live Testnet payment</h2>
+      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to claim a one-use grant and retrieve the protected report.</p>
+      <p class="muted">One payment increases the merchant head by the quoted price. The target fee is 0.01 KAS; small change may be included in the fee, up to 0.1 KAS total. The result shows the actual fee. If someone abandons a claimed grant, the operator resets the head manually.</p>
+      <div class="demo-actions">
+        <button type="button" id="demo-hash-quote">Get hash-chain quote</button>
+        <button type="button" id="demo-hash-pay" disabled>Pay quoted Testnet KAS</button>
+        <button type="button" id="demo-hash-retry" disabled>Retry same payment</button>
+      </div>
+      <output id="demo-hash-status" class="demo-status">Fetch a quote to check availability.</output>
+      <pre id="demo-hash-output"><code>{}</code></pre>
+      <p><a href="/spec/kaspa-hash-chain-exact-v1/">Profile specification</a> · <a href="/docs/demo-implementer-guide/#hash-chain-browser-demo">Walkthrough</a></p>
     </section>
 
     <section class="demo-panel" aria-labelledby="demo-offer">
@@ -536,7 +555,7 @@ function writeDemoPage() {
         <li>Run locally with <code>npm run site:serve</code> and open <code>/demo/</code>. The local preview binds to the LAN; use the host IP from another device. Add <code>?allow-custom-endpoints=1&amp;endpoint=...</code> only when testing a local or private-network node endpoint.</li>
         <li>Fund generated addresses with testnet funds only. The Kaspa testnet page lists a TN10 faucet at <a href="https://faucet-tn10.kaspanet.io/">faucet-tn10.kaspanet.io</a>; a local or private faucet is also suitable.</li>
         <li>The browser SDK is loaded from <code>/vendor/kaspa-wasm/2.0.0/kaspa-core/</code>. The browser uses public WSS endpoints directly; <code>npm run check:pnn-browser</code> verifies resolver lookup from Node. Runtime spike metadata is available at <a href="/demo/pnn-spike.json"><code>/demo/pnn-spike.json</code></a>.</li>
-        <li>The published TypeScript helpers are currently Node-oriented for header encoding and hashing. This page uses browser-native header encoding until a browser-safe package build is added.</li>
+        <li>The published TypeScript helpers remain Node-oriented. The hash-chain panel bundles the payment client with a small browser adapter; the mock header builders use browser-native encoding.</li>
         <li>Public Node Network endpoints are shared test infrastructure. Treat outages, latency, and endpoint rotation as expected development failures.</li>
       </ul>
     </section>
@@ -711,6 +730,7 @@ function writeManifest(copiedArtifacts, vectorIndex) {
     vectors: vectorIndex,
     packages: publicPackages,
     siteAssets: [
+      ...GENERATED_SITE_ASSETS.map((file) => ({ path: `/${file}`, sha256: sha256File(path.join(outDir, file)) })),
       artifactRecord("site/src/styles.css", "assets/styles.css"),
       ...SITE_ASSET_FILES.map((file) =>
         artifactRecord(
@@ -951,7 +971,7 @@ function writeHeaders() {
   Referrer-Policy: no-referrer
   X-Frame-Options: DENY
   Permissions-Policy: camera=(), microphone=(), geolocation=(), payment=(), usb=(), serial=(), clipboard-read=(), clipboard-write=(self)
-  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' wss://vector-10.kaspa.green wss://electron-10.kaspa.stream wss://electron-10.kaspa.blue wss://muon-10.kaspa.blue; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
+  Content-Security-Policy: default-src 'self'; script-src 'self' 'wasm-unsafe-eval'; style-src 'self'; connect-src 'self' https://demo.kaspa-x402.org wss://vector-10.kaspa.green wss://electron-10.kaspa.stream wss://electron-10.kaspa.blue wss://muon-10.kaspa.blue; img-src 'self'; object-src 'none'; base-uri 'none'; frame-ancestors 'none'; form-action 'none'
 
 /schemas/*.json
   Content-Type: application/schema+json; charset=utf-8
@@ -1050,6 +1070,7 @@ function dirtyPublishableInputs() {
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
+    ...BROWSER_BUNDLE_INPUTS,
   ]);
   return git(["status", "--porcelain=v1", "--untracked-files=all"])
     .split(/\r?\n/)

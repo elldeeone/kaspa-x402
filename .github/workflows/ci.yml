@@ -62,6 +62,8 @@ jobs:
         run: npm run site:build
       - name: Site checks
         run: npm run site:check
+      - name: Hash-chain demo flow
+        run: npm run check:hash-chain-demo
       - name: Whitespace and diff checks
         run: npm run check:diff
       - name: Check out pinned Kaspa consensus source

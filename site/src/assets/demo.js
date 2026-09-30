@@ -6,6 +6,8 @@ import init, {
   Transaction,
   version,
 } from "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js";
+import * as kaspaSdk from "/vendor/kaspa-wasm/2.0.0/kaspa-core/kaspa.js";
+import { createHashChainDemoPayment, readHashChainQuote, isHashChainRequirement, DEMO_FEE_SOMPI, DEMO_MAX_FEE_SOMPI } from "/assets/hash-chain-client.js";
 
 const NETWORK_ID = "testnet-10";
 const NETWORK = "kaspa:testnet-10";
@@ -28,6 +30,10 @@ const state = {
   privateKey: undefined,
   paymentRequired: undefined,
   paymentPayload: undefined,
+  hashQuote: undefined,
+  hashPayment: undefined,
+  hashBusy: false,
+  hashComplete: false,
 };
 
 const ui = {
@@ -72,6 +78,10 @@ const ui = {
   paymentOutput: element("demo-payment-output"),
   narrowInput: element("demo-narrow-input"),
   narrowOutput: element("demo-narrow-output"),
+  hashStatus: element("demo-hash-status"),
+  hashOutput: element("demo-hash-output"),
+  hashPay: element("demo-hash-pay"),
+  hashRetry: element("demo-hash-retry"),
 };
 
 bind("demo-init", initializeSdk);
@@ -93,6 +103,9 @@ bind("demo-copy-signature", () =>
 bind("demo-check-tx", checkTransactionStatus);
 bind("demo-broadcast-tx", broadcastTransaction);
 bind("demo-narrow-offer", inspectAccepts);
+bind("demo-hash-quote", getHashChainQuote);
+bind("demo-hash-pay", payHashChainQuote);
+bind("demo-hash-retry", retryHashChainPayment);
 
 const initialCustomEndpoint = customEndpointFromQuery();
 if (initialCustomEndpoint) ui.endpoint.value = initialCustomEndpoint;
@@ -256,11 +269,80 @@ async function importKey() {
 }
 
 function setKey(privateKey) {
+  clearHashChainDemo();
   disposePrivateKey();
   state.privateKey = privateKey;
   ui.privateKey.value = privateKey.toString();
   ui.address.value = privateKey.toAddress(NETWORK_ID).toString();
   if (!ui.payTo.value.trim()) ui.payTo.value = ui.address.value;
+}
+
+function clearHashChainDemo() {
+  state.hashQuote = undefined;
+  state.hashPayment = undefined;
+  state.hashComplete = false;
+  ui.hashPay.disabled = true;
+  ui.hashRetry.disabled = true;
+  ui.hashStatus.value = "Fetch a quote to check availability.";
+  writeJson(ui.hashOutput, {});
+}
+
+async function getHashChainQuote() {
+  if (state.hashPayment && !state.hashComplete) throw new Error("Retry the current payment or reset the demo before fetching another quote.");
+  state.hashPayment = undefined;
+  state.hashComplete = false;
+  ui.hashRetry.disabled = true;
+  const url = new URL("/hash-chain/report", "https://demo.kaspa-x402.org");
+  url.searchParams.set("demo-payment", crypto.randomUUID());
+  ui.hashStatus.value = "Fetching quote...";
+  try {
+    const response = await fetch(url, { cache: "no-store", credentials: "omit", redirect: "error", signal: AbortSignal.timeout(15_000) });
+    const quote = readHashChainQuote(response);
+    state.hashQuote = { ...quote, url: url.href };
+    ui.hashPay.disabled = false;
+    ui.hashStatus.value = `Quote: ${quote.accepted.amount} sompi + a fee up to ${DEMO_MAX_FEE_SOMPI} sompi. Pay to continue.`;
+    writeJson(ui.hashOutput, { amountSompi: quote.accepted.amount, targetFeeSompi: DEMO_FEE_SOMPI, maximumFeeSompi: DEMO_MAX_FEE_SOMPI,
+      headVersion: quote.accepted.extra.headVersion, headAmount: quote.accepted.extra.headAmount,
+      expiresAt: quote.accepted.extra.challengeExpiresAt });
+  } catch (error) {
+    state.hashQuote = undefined;
+    ui.hashPay.disabled = true;
+    ui.hashStatus.value = String(error.message ?? error);
+  }
+}
+
+async function payHashChainQuote() {
+  if (!state.hashQuote || state.hashBusy) return;
+  if (!state.privateKey) throw new Error("Generate or import a funded throwaway testnet key first.");
+  await retryHashChainPayment({ prepare: true });
+}
+
+async function retryHashChainPayment({ prepare = false } = {}) {
+  if ((!state.hashPayment && !prepare) || state.hashBusy) return;
+  state.hashBusy = true;
+  const controls = ["demo-hash-quote", "demo-hash-pay", "demo-hash-retry", "demo-reset", "demo-generate-key", "demo-import-key"];
+  for (const id of controls) element(id).disabled = true;
+  ui.hashStatus.value = "Claiming grant, signing in browser, and waiting for the paid response...";
+  try {
+    if (prepare) {
+      const rpc = await ensureRpc();
+      const walletKeyHex = state.privateKey.toString();
+      state.hashPayment = createHashChainDemoPayment({ sdk: kaspaSdk, rpc,
+        privateKey: walletKeyHex, address: ui.address.value,
+        url: state.hashQuote.url, quote: state.hashQuote });
+    }
+    const result = await state.hashPayment.run();
+    state.hashComplete = true;
+    writeJson(ui.hashOutput, result);
+    ui.hashStatus.value = "Payment accepted. The protected report is below. Retry returns the same payment.";
+  } catch (error) {
+    ui.hashStatus.value = `${String(error.message ?? error)} Retry keeps the same payment.`;
+  } finally {
+    state.hashBusy = false;
+    for (const id of controls) element(id).disabled = false;
+    ui.hashPay.disabled = !state.hashQuote || Boolean(state.hashPayment);
+    ui.hashRetry.disabled = !state.hashPayment;
+  }
 }
 
 async function loadUtxos() {
@@ -738,6 +820,7 @@ function inspectAccepts() {
 }
 
 function isSupportedRequirement(entry) {
+  if (isHashChainRequirement(entry)) return true;
   if (!entry || typeof entry !== "object") return false;
   if (entry.network !== NETWORK || entry.asset !== "KAS") return false;
   if (!isAmount(entry.amount) || !isNonEmptyString(entry.payTo)) return false;
@@ -1105,6 +1188,7 @@ async function copyText(value, successMessage) {
 }
 
 async function resetDemo() {
+  clearHashChainDemo();
   await disconnectRpc({ quiet: true });
   disposePrivateKey();
   state.paymentRequired = undefined;

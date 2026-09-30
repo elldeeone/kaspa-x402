@@ -187,6 +187,8 @@ export interface HashChainHeadChallenge {
   challengeId: Hash32Hex;
   challengeIssuedAt: string;
   challengeExpiresAt: string;
+  /** Effective lifetime authenticated from the issuer's durable delivery. */
+  grantExpiresAt?: string;
 }
 
 export type ExactHeadStatus =

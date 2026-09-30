@@ -327,6 +327,89 @@ operator pins.
 Also confirm that unsupported legacy `exact-transfer` evidence is rejected and
 does not return protected content.
 
+## Hash-chain Demo
+
+The hash-chain candidate uses the existing Node/SQLite grant issuer on one
+host. The Worker proxies its resource and grant routes under the public
+`demo.kaspa-x402.org` origin. It does not replace standard exact or batch.
+One funded head, saved grant state, and manual rotation are sufficient for
+this Testnet demo; there is no automatic rotation or availability commitment.
+
+Build the workspaces first (`npm run build`). Use Node 22.13 or newer and the
+pinned Rusty-Kaspa 2.0.0 Node WASM SDK, including its `websocket` dependency.
+Create a private config file, outside the published site, with:
+
+```json
+{
+  "dataDir": "./.kaspa-x402-live/hash-chain-demo",
+  "sdkModule": "./.kaspa-x402-live/runtime/sdk-v2.0.0/kaspa.js",
+  "rpcUrl": "wss://your-testnet-10-node/kaspa/testnet-10/wrpc/borsh",
+  "apiBase": "https://api-tn10.kaspa.org",
+  "publicBaseUrl": "https://demo.kaspa-x402.org",
+  "walletFile": "./.kaspa-x402-live/operator-wallet.json",
+  "proxyTokenFile": "./.kaspa-x402-live/hash-chain-proxy-token",
+  "port": 8788
+}
+```
+
+The operator wallet file contains a funded Testnet private key as plain hex or
+JSON with a `private_key` field. Wallet and token files must have mode `0600`.
+Generate a random proxy token of at least 32 characters and save it privately.
+The service listens on loopback by default; expose it through an HTTPS reverse
+proxy or tunnel. Keep its data directory on persistent disk.
+
+1. Create the demo head with explicit Testnet broadcast permission:
+
+   ```sh
+   node scripts/hash-chain-demo.mjs init --config <private-config> --live
+   ```
+
+   This funds a 1 KAS merchant head and installs 32 one-use grants. It waits for
+   30 genesis confirmations. The private directory holds the encrypted issuer
+   database, its encryption key, and the owner key.
+
+2. Start the Node process:
+
+   ```sh
+   node scripts/hash-chain-demo.mjs serve --config <private-config>
+   ```
+
+   The same private directory holds `payments.sqlite`, which saves exact
+   settlement attempts, handler results, and paid responses. Restarting the
+   process preserves identical paid retries, including after quote expiry.
+   Keep both databases together on persistent disk and run one service process.
+
+3. Configure the Worker with `KASPA_X402_HASH_CHAIN_ORIGIN` set to the service's
+   HTTPS origin. Set `KASPA_X402_HASH_CHAIN_PROXY_TOKEN` as a Wrangler secret
+   containing the same token. Deploy this separately from the static website.
+   An empty origin leaves the existing demo working and hash-chain unavailable.
+
+4. Check `/hash-chain/status`, `/supported`, and an unpaid
+   `/hash-chain/report` quote. Then run one funded payment in the browser.
+   The default price is 0.2 KAS. The target fee is 0.01 KAS; small change may
+   raise it to at most 0.1 KAS, as shown before payment and in the result.
+
+For an abandoned grant or an exhausted chain, stop the Node process, wait for
+any assigned grant to expire, and run:
+
+```sh
+node scripts/hash-chain-demo.mjs status --config <private-config>
+node scripts/hash-chain-demo.mjs rotate --config <private-config> --live
+node scripts/hash-chain-demo.mjs serve --config <private-config>
+```
+
+Rotation uses the owner key and a separate funding input for its fee, preserves
+the merchant value and covenant ID, and installs a fresh set of grants. It
+does not reuse an abandoned key. If setup or rotation was interrupted after
+submission, `recover --config <private-config>` checks the saved transaction
+and records its accepted result without broadcasting again. Resolve a pending
+setup before another init/rotation. Keep the pending setup file private.
+
+The service reuses the selected-chain REST verifier and a fresh PNN UTXO read
+for the current head. If those public Testnet sources lag or fail, it stays
+unavailable/pending. Local simulation checks do not establish live payment
+acceptance. Enable the public flow only after the deployed paid browser check.
+
 ## Durable State Policy
 
 The hosted gateway uses one SQLite-backed Durable Object. It stores exact

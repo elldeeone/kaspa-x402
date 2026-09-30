@@ -1,10 +1,10 @@
 # Native-KAS hash-chain Testnet-10 proof
 
-Status: candidate validation, 2026-09-22. These are funded Testnet-10 runs of
+Status: candidate validation, latest funded run 2026-09-26. These are funded Testnet-10 runs of
 the unreleased `hash-chain-additive` x402 profile, not mainnet evidence or a
-release designation. The latest run used committed runtime code `bd62fee`.
+release designation. The latest run used committed runtime code `6d02163`.
 Its detailed report is ignored by Git at
-`.kaspa-x402-live/hash-chain-proof-20260922-bd62fee-retry1/report.json`;
+`.kaspa-x402-live/hash-chain-security-6d02163-20260926-run1/report.json`;
 signing keys and the encrypted grant database remain in that private directory.
 
 ## Reproduce
@@ -27,6 +27,25 @@ and broadcasts an owner rotation. It requires both payment responses to be
 HTTP 200 with `PAYMENT-RESPONSE.success = true` and each transaction to be
 selected on chain before reporting success. It records the full response and
 head lineage locally. It does not reuse an output directory.
+
+## Selected-chain PNN run on `6d02163`
+
+The run completed on 2026-09-26. One configured PNN supplied the pre-spend UTXO
+snapshots and coherent selected-chain checkpoint evidence. Genesis reached 30
+confirmations; both exact HTTP requests returned 200; an abandoned grant was
+recovered by owner rotation, leaving the issuer ready at head version 3.
+
+| Step | Accepted transaction |
+| --- | --- |
+| Genesis | `793cb3993743f525d28a30b0d1370a1e90684d2a268112fce264486aff06c42b` |
+| Payer 1 | `71fcfd84d1e0180d7ab591a7fe4bde9ebb210f6a8a1ddc5d805a47124ce0fd81` |
+| Payer 2 | `765b6fa2e11309d403338cc9220e2ea081ace27dce6e2fb118de69edba350922` |
+| Owner rotation | `d92171f34570824ccb17433a9a6a27a43197ac5f1bc17079bdeb7b115ac6deaf` |
+
+This proves the candidate's funded Testnet-10 flow against that configured
+PNN. It is not independent multi-node corroboration, a hosted browser demo
+proof, or mainnet evidence. The browser/host wiring added later must be checked
+separately after deployment.
 
 ## Post-review run on `bd62fee`
 

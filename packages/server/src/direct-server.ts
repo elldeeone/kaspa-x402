@@ -2525,12 +2525,13 @@ export class DirectModeServer {
       maxTimeoutSeconds: accepted.maxTimeoutSeconds,
       authorizationExpiresAt: payload.authorization.expiresAt,
       ...(head || hashChainHead ? { challengeExpiresAt: head?.expiresAt ?? hashChainHead!.challengeExpiresAt } : {}),
-    });
+    }) ?? hashChainGrantExpiryError(hashChainHead);
     let recoveryOnly = false;
     if (currentExpiryError) {
       const currentlyExpiredEvidence =
         currentExpiryError === "expired_authorization" ||
-        currentExpiryError === "expired_challenge";
+        currentExpiryError === "expired_challenge" ||
+        currentExpiryError === "expired_grant";
       if (!currentlyExpiredEvidence) {
         throw new KaspaX402Error(
           "invalid_kaspa_signature",
@@ -2611,7 +2612,7 @@ export class DirectModeServer {
       ...(verified.head || verified.hashChainHead
         ? { challengeExpiresAt: verified.head?.expiresAt ?? verified.hashChainHead!.challengeExpiresAt }
         : {}),
-    });
+    }) ?? hashChainGrantExpiryError(verified.hashChainHead);
     if (expiryError) {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
@@ -2679,6 +2680,7 @@ export class DirectModeServer {
       oneTimePublicKey: extra.oneTimePublicKey, grantId: extra.grantId,
       challengeId: extra.challengeId, challengeIssuedAt: extra.challengeIssuedAt,
       challengeExpiresAt: extra.challengeExpiresAt,
+      grantExpiresAt: delivery.expiresAt,
     };
   }
 
@@ -5169,6 +5171,15 @@ function exactProfileFromAccepted(
     "invalid_kaspa_x402_payload",
     "exact v2 requirements must select a profile",
   );
+}
+
+function hashChainGrantExpiryError(
+  head: HashChainHeadChallenge | undefined,
+): "expired_grant" | "invalid_grant_expiry" | undefined {
+  if (!head?.grantExpiresAt) return undefined;
+  const expiry = Date.parse(head.grantExpiresAt);
+  if (!Number.isFinite(expiry)) return "invalid_grant_expiry";
+  return expiry <= Date.now() ? "expired_grant" : undefined;
 }
 
 function exactHeadFromAccepted(

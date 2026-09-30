@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import {
   bindRequestHashToTrustedContext, decodePaymentRequiredHeader, encodePaymentSignatureHeader,
   paymentIdentifierExtension, sha256Hex, stableStringify,
@@ -40,6 +40,7 @@ class FailOnceAfterAcceptanceStore extends MemoryServerChannelStore {
 
 describe("native-KAS hash-chain x402 product path", () => {
   it("claims one grant, verifies the exact payer-signed successor, and only then runs protected work", async () => {
+    let expiryClock: { mockRestore(): void } | undefined;
     const folder = mkdtempSync(path.join(tmpdir(), "kaspa-hash-chain-product-"));
     let claimEligible = true;
     const issuer = await HashChainGrantIssuer.open({
@@ -213,7 +214,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       );
       const unsignedClaim = {
         grantId: extra.grantId!, challengeId: extra.challengeId!, requestHash,
-        payerPublicKey: PAYER_PUBLIC, expiresAt: extra.challengeExpiresAt!,
+        payerPublicKey: PAYER_PUBLIC, expiresAt: new Date(Date.now() + 10_000).toISOString(),
       };
       const claim = { ...unsignedClaim, signature: Buffer.from(schnorr.sign(
         hashChainGrantClaimDigest("kaspa:testnet-10", unsignedClaim), PAYER,
@@ -336,6 +337,10 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(interrupted.status).not.toBe(200);
       expect((await store.loadExactSettlementAttempt(signed.transactionId))?.status).toBe("accepted");
       expect(protectedCalls).toBe(0);
+      // An identical durably accepted payment can finish after the shorter
+      // delivered grant expires, without constructing or broadcasting again.
+      expiryClock = vi.spyOn(Date, "now").mockReturnValue(Date.parse(grant.expiresAt) + 1);
+      expect(Date.now()).toBeLessThan(Date.parse(extra.challengeExpiresAt!));
       const selectedPayment = selected;
       selected = null;
       const staleAttempt = await server.handlePaidRequest(paidRoute, async () => { protectedCalls++; return { body: "paid" }; });
@@ -360,6 +365,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(protectedCalls).toBe(1);
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
     } finally {
+      expiryClock?.mockRestore();
       issuer.close(); rmSync(folder, { recursive: true, force: true });
     }
   });

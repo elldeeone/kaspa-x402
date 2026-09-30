@@ -62,6 +62,17 @@ export const SITE_ASSET_FILES = [
   "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/package.json",
 ];
 
+export const BROWSER_BUNDLE_INPUTS = [
+  "scripts/build-browser-hash-chain.mjs",
+  "site/src/browser",
+  "packages/core/src",
+  "packages/covenant/src",
+  "packages/client/src",
+  "packages/demo-gateway/src/kaspa-native.ts",
+  "package-lock.json",
+];
+export const GENERATED_SITE_ASSETS = ["assets/hash-chain-client.js"];
+
 export const SCHEMA_FILES = [
   "schemas/payment-required.schema.json",
   "schemas/payment-payload.schema.json",
@@ -76,6 +87,7 @@ export const SCHEMA_FILES = [
 export const SPEC_FILES = [
   "spec/kaspa-x402-v1.md",
   "spec/kaspa-exact-v2.md",
+  "spec/kaspa-hash-chain-exact-v1.md",
   "spec/kaspa-batch-settlement-v3.md",
   "spec/http-profile.md",
   "spec/mcp-profile.md",
@@ -86,6 +98,8 @@ export const SPEC_FILES = [
 export const CONTRACT_FILES = [
   "contracts/kaspa-x402-escrow-v4.sil",
   "contracts/fixtures/kaspa-x402-escrow-v4.json",
+  "contracts/kaspa-x402-hash-chain-head-v1.sil",
+  "contracts/fixtures/kaspa-x402-hash-chain-head-v1.json",
 ];
 
 export const PUBLIC_DOC_FILES = [
@@ -93,6 +107,7 @@ export const PUBLIC_DOC_FILES = [
   "docs/testnet-gateway.md",
   "docs/demo-operations.md",
   "docs/demo-implementer-guide.md",
+  "docs/hash-chain-live-proof.md",
   "docs/live-testnet-report.md",
   "docs/live-testnet-proof.md",
   "docs/security-threat-model.md",
@@ -125,6 +140,8 @@ export const ARTIFACT_NOTES = {
     "Core binding: common rules for x402 v2 payments on Kaspa — networks, asset, amounts, envelopes.",
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
+  "spec/kaspa-hash-chain-exact-v1.md":
+    "Candidate exact profile: native-KAS hash-chain grants, payer broadcast, and accepted payment proof.",
   "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
@@ -139,6 +156,10 @@ export const ARTIFACT_NOTES = {
     "Normative SilverScript source for the v1 RC1 stateful batch escrow covenant.",
   "contracts/fixtures/kaspa-x402-escrow-v4.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
+  "contracts/kaspa-x402-hash-chain-head-v1.sil":
+    "SilverScript source for the native-KAS one-use hash-chain head.",
+  "contracts/fixtures/kaspa-x402-hash-chain-head-v1.json":
+    "Hash-chain constructor layout, compiled bytes, and borrow/owner selectors.",
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
   "docs/testnet-gateway.md":
@@ -147,6 +168,8 @@ export const ARTIFACT_NOTES = {
     "Operator runbook for the hosted testnet gateway: deploy, rollback, disable, canary, state, and incident notes.",
   "docs/demo-implementer-guide.md":
     "Third-party implementer guide for schemas, vectors, exact and batch gateway calls, and error handling.",
+  "docs/hash-chain-live-proof.md":
+    "Funded candidate Testnet-10 hash-chain evidence and its limits.",
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
@@ -185,6 +208,7 @@ export const DOC_GROUPS = [
     files: [
       "docs/live-testnet-report.md",
       "docs/live-testnet-proof.md",
+      "docs/hash-chain-live-proof.md",
     ],
   },
   {
@@ -199,6 +223,7 @@ export const DOC_GROUPS = [
 
 // Grouping for the /vectors/ index page, in display order.
 export const VECTOR_GROUPS = [
+  { dir: "hash-chain", note: "Native-KAS hash-chain consensus borrow, rotation, and guard vectors." },
   { dir: "x402-http", note: "End-to-end HTTP envelope fixtures." },
   {
     dir: "settlement-response",
