@@ -42,7 +42,7 @@ import {
   type GatewayEnv,
 } from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
-import { HASH_CHAIN_ROUTES, proxyHashChainRequest, hashChainSupportedKinds } from "./hash-chain-proxy.js";
+import { HASH_CHAIN_ROUTES, HASH_CHAIN_CALLER_HEADER, proxyHashChainRequest, hashChainSupportedKinds } from "./hash-chain-proxy.js";
 import {
   DurableGatewayLockManager,
   type GatewayCanaryCheck,
@@ -1446,7 +1446,7 @@ function corsHeaders(
       config?.corsOrigin ?? "https://kaspa-x402.org",
     "access-control-allow-methods": "GET, HEAD, POST, OPTIONS",
     "access-control-allow-headers": `${PAYMENT_SIGNATURE_HEADER}, authorization, content-type, cache-control`,
-    "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}`,
+    "access-control-expose-headers": `${PAYMENT_REQUIRED_HEADER}, ${PAYMENT_RESPONSE_HEADER}, ${HASH_CHAIN_CALLER_HEADER}`,
     "access-control-max-age": "86400",
     vary: "Origin",
   };

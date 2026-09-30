@@ -5,10 +5,9 @@ import { randomBytes } from 'node:crypto';
 import { schnorr } from '@noble/curves/secp256k1.js';
 import { generateHashChainBorrowGrants, hashChainHeadScriptPublicKey } from '@kaspa-x402/covenant';
 import { HashChainGrantIssuer } from '@kaspa-x402/server/hash-chain-grants';
-import { decodePaymentRequiredHeader } from '@kaspa-x402/core';
-import { createHashChainDemoHandler, DEMO_SECURITY_CONTEXT } from './hash-chain-demo-service.mjs';
+import { createHashChainDemoHandler } from './hash-chain-demo-service.mjs';
 import { openHashChainDemoStore } from './hash-chain-demo-store.mjs';
-import { addressForScriptPublicKey, scriptPublicKeyForAddress } from '../site/dist/assets/hash-chain-client.js';
+import { addressForScriptPublicKey, scriptPublicKeyForAddress, readHashChainQuote } from '../site/dist/assets/hash-chain-client.js';
 
 export const TEST_PAYER_KEY = '07'.repeat(32);
 const owner = Buffer.from(schnorr.getPublicKey(Buffer.alloc(32, 8))).toString('hex');
@@ -88,13 +87,16 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
     reopen,
     async fetch(request, init) {
       const target = request instanceof Request ? request : new Request(request, init);
+      if (!target.headers.has('x-kaspa-x402-demo-caller')) {
+        target.headers.set('x-kaspa-x402-demo-caller', 'cd'.repeat(32));
+      }
       const response = await handler(target);
       Object.defineProperty(response, 'url', { value: target.url });
       return response;
     },
     async abandonAndRotate() {
-      const response = await handler(new Request(`${publicBaseUrl}/hash-chain/report?abandon=1`));
-      const accepted = decodePaymentRequiredHeader(response.headers.get('PAYMENT-REQUIRED')).accepts[0];
+      const response = await fixture.fetch(`${publicBaseUrl}/hash-chain/report?abandon=1`);
+      const { accepted, trustedSecurityContext } = readHashChainQuote(response);
       // Use the same request hashing as the real client for a signed grant claim.
       const { DirectModeClient } = await import('@kaspa-x402/client');
       const { claimHashChainGrantViaHttp } = await import('@kaspa-x402/client');
@@ -118,7 +120,7 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
       });
       try { await client.createPayment(response.headers.get('PAYMENT-REQUIRED'), {
         url: accepted.grantClaimUrl ?? `${publicBaseUrl}/hash-chain/report?abandon=1`,
-        trustedSecurityContext: DEMO_SECURITY_CONTEXT, paymentIdentifier: 'abandoned_demo_payment',
+        trustedSecurityContext, paymentIdentifier: 'abandoned_demo_payment',
       }); } catch (error) {
         if (!claimed) throw error;
       }

@@ -6,9 +6,9 @@ import {
 } from '@kaspa-x402/client';
 import { decodePaymentRequiredHeader, validateKaspaPaymentRequirement } from '@kaspa-x402/core';
 import { scriptPublicKeyForAddress, addressForScriptPublicKey } from '../../../packages/demo-gateway/src/kaspa-native.ts';
+import { HASH_CHAIN_CALLER_HEADER } from '../../../packages/demo-gateway/src/hash-chain-proxy.ts';
 export { addressForScriptPublicKey, scriptPublicKeyForAddress };
 
-export const DEMO_SECURITY_CONTEXT = { principal: 'public-hash-chain-demo' };
 export const DEMO_FEE_SOMPI = '1000000';
 export const DEMO_MAX_FEE_SOMPI = '10000000';
 
@@ -24,7 +24,9 @@ export function readHashChainQuote(response) {
   const accepted = required.accepts.find((item) => item.scheme === 'exact' &&
     item.network === 'kaspa:testnet-10' && item.extra.profile === 'hash-chain-additive');
   if (!accepted) throw new Error('This gateway does not offer hash-chain exact.');
-  return { header, required, accepted };
+  const caller = response.headers.get(HASH_CHAIN_CALLER_HEADER);
+  if (!/^[0-9a-f]{64}$/.test(caller ?? '')) throw new Error('The gateway did not return the demo caller identity.');
+  return { header, required, accepted, trustedSecurityContext: { principal: `public-hash-chain-demo:${caller}` } };
 }
 
 /** One in-memory logical payment. Retry always retains its signed transaction. */
@@ -108,7 +110,7 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
       let lastPending;
       for (let attempt = 0; attempt < 30; attempt++) {
         try {
-          const result = await client.paidFetch(url, { paymentIdentifier, trustedSecurityContext: DEMO_SECURITY_CONTEXT });
+          const result = await client.paidFetch(url, { paymentIdentifier, trustedSecurityContext: quote.trustedSecurityContext });
           if (result.response.status !== 200 || !result.settlement?.response.success) throw new Error('The gateway did not confirm payment.');
           const prepared = [...attempts.values()].find((item) => item.transactionId === result.payment.transactionId);
           const artifact = JSON.parse(prepared.transaction);

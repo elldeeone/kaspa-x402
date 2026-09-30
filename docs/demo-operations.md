@@ -335,6 +335,16 @@ host. The Worker proxies its resource and grant routes under the public
 One funded head, saved grant state, and manual rotation are sufficient for
 this Testnet demo; there is no automatic rotation or availability commitment.
 
+The Worker derives an opaque caller identity from
+[Cloudflare's ingress IP](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip) and
+sets `X-KASPA-X402-DEMO-CALLER` on its authenticated service request. The service
+returns that identity with the quote so the browser binds payment to the same
+caller. The four-live-quote limit applies per public IP; users sharing an IP
+share that limit. Use the same public IP for quotes, payments, and retries.
+Resource requests without trusted caller metadata are unavailable. Local
+proxy checks must supply `CF-Connecting-IP`; direct service checks also need
+the proxy bearer token and a 64-character lowercase hex caller header.
+
 Build the workspaces first (`npm run build`). Use Node 22.13 or newer and the
 pinned Rusty-Kaspa 2.0.0 Node WASM SDK, including its `websocket` dependency.
 Create a private config file, outside the published site, with:

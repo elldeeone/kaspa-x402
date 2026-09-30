@@ -5,6 +5,23 @@ import { hashChainGrantClaimDigest } from '@kaspa-x402/server/hash-chain-grants'
 import { createHashChainDemoFixture, TEST_PAYER_KEY } from './hash-chain-demo-fixture.mjs';
 import { createHashChainDemoPayment, readHashChainQuote } from '../site/dist/assets/hash-chain-client.js';
 
+test('one caller exhausting unpaid quotes does not block another caller', async () => {
+  const origin = 'http://127.0.0.1:9878';
+  const fixture = await createHashChainDemoFixture(origin);
+  const quote = (caller, payment) => fixture.fetch(`${origin}/hash-chain/report?payment=${payment}`, {
+    headers: { 'x-kaspa-x402-demo-caller': caller.repeat(32) },
+  });
+  try {
+    for (let index = 0; index < 4; index++) {
+      assert.equal((await quote('aa', index)).status, 402);
+    }
+    assert.equal((await quote('aa', 4)).status, 503, 'the original caller keeps its four-quote limit');
+    assert.equal((await quote('bb', 'second-caller')).status, 402, 'another caller must still get a quote');
+    assert.equal((await quote('aa', 0)).status, 402, 'an existing quote remains usable');
+    assert.equal(fixture.state.phase, 'ready');
+  } finally { await fixture.close(); }
+});
+
 test('bundled browser client pays twice, preserves paid retries across restart and expiry, and supports manual rotation', async (t) => {
   const origin = 'http://127.0.0.1:9876';
   const fixture = await createHashChainDemoFixture(origin);

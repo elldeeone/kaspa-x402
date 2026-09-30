@@ -3,9 +3,9 @@ import {
   handleHashChainGrantClaimHttp,
 } from '@kaspa-x402/server';
 
-export const DEMO_SECURITY_CONTEXT = { principal: 'public-hash-chain-demo' };
+const CALLER_HEADER = 'X-KASPA-X402-DEMO-CALLER';
 
-/** Thin Node host around the existing issuer and payment implementation. */
+/** Thin Node host; its caller header is trusted only after proxy authentication. */
 export function createHashChainDemoHandler({ issuer, headId, publicBaseUrl, payTo,
   ownerPublicKey, addressCodec, chainView, getCurrentUtxo, amount = '20000000',
   maxTimeoutSeconds = 150, store,
@@ -56,12 +56,14 @@ export function createHashChainDemoHandler({ issuer, headId, publicBaseUrl, payT
         headAmount: current.head.amount, network: 'kaspa:testnet-10' });
     }
     if (!['/hash-chain', '/hash-chain/report'].includes(incoming.pathname)) return json({ error: 'not_found' }, 404);
+    const caller = request.headers.get(CALLER_HEADER);
+    if (!/^[0-9a-f]{64}$/.test(caller ?? '')) return json({ error: 'hash_chain_unavailable' }, 503);
     const answer = await server.handlePaidRequest({
       method: 'GET', url, headers: Object.fromEntries(request.headers),
       resource: { url, description: 'Native-KAS hash-chain demo report', mimeType: 'application/json' },
-      paymentScheme: 'exact', trustedSecurityContext: DEMO_SECURITY_CONTEXT, signal: request.signal,
+      paymentScheme: 'exact', trustedSecurityContext: { principal: `public-hash-chain-demo:${caller}` }, signal: request.signal,
     }, protectedHandler);
-    return json(answer.body, answer.status, answer.headers);
+    return json(answer.body, answer.status, { ...answer.headers, [CALLER_HEADER]: caller });
   };
 }
 
