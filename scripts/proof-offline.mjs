@@ -198,10 +198,12 @@ async function runExactProof() {
   );
   assert.equal(cached.status, 200);
   assert.equal(cachedExecutions, 0);
-  assert.equal(cached.body.route, "exact-download");
+  assert.equal(executions, 1);
+  assert.deepEqual(cached.body, { ok: true, route: "exact-download" });
   check("standard-native exact payment identifier idempotency", {
     status: cached.status,
-    handlerExecutions: cachedExecutions,
+    handlerExecutions: executions + cachedExecutions,
+    cachedBody: cached.body,
   });
 
   const replayUrl = "https://api.example.test/exact-replay";
@@ -521,9 +523,12 @@ async function runBatchProof() {
   );
   assert.equal(cached.status, 200);
   assert.equal(cachedExecutions, 0);
+  assert.equal(executions, 1);
+  assert.deepEqual(cached.body, { ok: true, route: "metered", sequence: 2 });
   check("batch payment identifier idempotency", {
     status: cached.status,
-    handlerExecutions: cachedExecutions,
+    handlerExecutions: executions + cachedExecutions,
+    cachedBody: cached.body,
   });
 
   let replayExecutions = 0;

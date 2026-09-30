@@ -479,13 +479,183 @@ fn validate_batch_negative_cases(vectors: &[(&str, VectorFile)]) -> Result<serde
         "refund before timeout",
     )?;
 
+    let guards = validate_batch_guard_failures(claim1, top_up, refund)?;
+
     Ok(json!({
         "exhaustedVoucher": "rejected-by-full-TransactionValidator",
         "wrongCovenantId": "rejected-by-full-TransactionValidator",
         "wrongSuccessor": "rejected-by-full-TransactionValidator",
         "clientOnlyTopUp": "rejected-by-full-TransactionValidator",
         "earlyRefund": "rejected-by-full-TransactionValidator",
+        "guards": guards,
     }))
+}
+
+// Failure modes are recorded in BATCH_GUARD_FAILURE_MODES.md. Unlike source
+// substring checks, these execute the compiled contract with valid signatures.
+fn validate_batch_guard_failures(
+    claim: &Artifact,
+    top_up: &Artifact,
+    refund: &Artifact,
+) -> Result<serde_json::Value> {
+    let mut results = serde_json::Map::new();
+    for (kind, artifact) in [("claim", claim), ("top-up", top_up), ("refund", refund)] {
+        let mut tx = build_transaction(&artifact.transaction)?;
+        let entries = build_utxo_entries(&artifact.transaction)?;
+        resign_batch_guard_transaction(&mut tx, &entries, kind)?;
+        validate_full_consensus(&tx, &entries)
+            .with_context(|| format!("re-signed {kind} positive control"))?;
+        measure_input_units(&tx, &entries, 0)
+            .with_context(|| format!("re-signed {kind} script positive control"))?;
+        results.insert(
+            format!("{kind}Control"),
+            json!("accepted-by-script-and-full-consensus"),
+        );
+    }
+
+    let cases = [
+        ("claimPayoutRedirect", "claim", claim),
+        ("claimBoundPayout", "claim", claim),
+        ("claimExtraSuccessor", "claim", claim),
+        ("claimExtraLineageInput", "claim", claim),
+        ("topUpChangeRedirect", "top-up", top_up),
+        ("topUpBoundChange", "top-up", top_up),
+        ("topUpExtraSuccessor", "top-up", top_up),
+        ("topUpExtraLineageInput", "top-up", top_up),
+        ("refundRedirect", "refund", refund),
+        ("refundBoundOutput", "refund", refund),
+    ];
+    for (label, kind, artifact) in cases {
+        let mut tx = build_transaction(&artifact.transaction)?;
+        let mut entries = build_utxo_entries(&artifact.transaction)?;
+        let binding = CovenantBinding::new(
+            0,
+            entries[0]
+                .covenant_id
+                .ok_or_else(|| anyhow!("missing escrow covenant id"))?,
+        );
+        match label {
+            "claimPayoutRedirect" | "refundRedirect" => {
+                tx.outputs[0].script_public_key = p2pk_script(&[6_u8; 32])?;
+            }
+            "topUpChangeRedirect" => {
+                tx.outputs[1].script_public_key = p2pk_script(&[6_u8; 32])?;
+            }
+            "claimBoundPayout" | "refundBoundOutput" => {
+                tx.outputs[0].covenant = Some(binding);
+            }
+            "topUpBoundChange" => tx.outputs[1].covenant = Some(binding),
+            "claimExtraSuccessor" | "topUpExtraSuccessor" => {
+                let successor_index = if kind == "claim" { 1 } else { 0 };
+                let mut extra = tx.outputs[successor_index].clone();
+                extra.value = 1;
+                // Keep total value and fees unchanged while branching lineage.
+                tx.outputs[successor_index].value -= 1;
+                tx.outputs.push(extra);
+            }
+            "claimExtraLineageInput" | "topUpExtraLineageInput" => {
+                let mut extra = tx.inputs[0].clone();
+                extra.previous_outpoint.index += 1;
+                tx.inputs.push(extra);
+                entries.push(entries[0].clone());
+            }
+            _ => return Err(anyhow!("unknown guard mutation {label}")),
+        }
+        resign_batch_guard_transaction(&mut tx, &entries, kind)?;
+        let script_error = measure_input_units(&tx, &entries, 0)
+            .err()
+            .ok_or_else(|| anyhow!("{label} was accepted by escrow script execution"))?;
+        // Require a contract assertion failure, rather than accepting malformed
+        // context, compute exhaustion, or another incidental failure as proof.
+        let script_message = script_error.to_string();
+        if script_message != "script ran, but verification failed"
+            && script_message != "false stack entry at end of script execution"
+        {
+            return Err(anyhow!(
+                "{label} failed outside a contract assertion: {script_error}"
+            ));
+        }
+        expect_consensus_rejection(&tx, &entries, label)?;
+        results.insert(
+            label.to_owned(),
+            json!({
+                "transactionSignatures": "verified",
+                "scriptExecution": "rejected",
+                "scriptError": script_message,
+                "fullTransactionValidator": "rejected",
+            }),
+        );
+    }
+    Ok(serde_json::Value::Object(results))
+}
+
+fn resign_batch_guard_transaction(
+    tx: &mut Transaction,
+    entries: &[UtxoEntry],
+    kind: &str,
+) -> Result<()> {
+    set_storage_mass(tx, entries)?;
+    tx.finalize();
+    for (index, entry) in entries.iter().enumerate() {
+        let populated = PopulatedTransaction::new(tx, entries.to_vec());
+        if entry.covenant_id.is_none() {
+            tx.inputs[index].signature_script =
+                deterministic_signature(&populated, index, &[7_u8; 32])?;
+        } else {
+            let key = if kind == "claim" {
+                [9_u8; 32]
+            } else {
+                [7_u8; 32]
+            };
+            let signature = deterministic_signature(&populated, index, &key)?;
+            let provider = if kind == "top-up" {
+                Some(deterministic_signature(&populated, index, &[9_u8; 32])?)
+            } else {
+                None
+            };
+            let script = &mut tx.inputs[index].signature_script;
+            if script.len() < 66 || script[0] != 65 {
+                return Err(anyhow!("{kind} embedded signature ABI mismatch"));
+            }
+            script[1..66].copy_from_slice(&signature[1..66]);
+            if let Some(provider) = provider {
+                if script.len() < 132 || script[66] != 65 {
+                    return Err(anyhow!("top-up provider signature ABI mismatch"));
+                }
+                script[67..132].copy_from_slice(&provider[1..66]);
+            }
+        }
+    }
+    tx.finalize();
+    let populated = PopulatedTransaction::new(tx, entries.to_vec());
+    for (index, entry) in entries.iter().enumerate() {
+        let digest = calc_schnorr_signature_hash(
+            &populated,
+            index,
+            SIG_HASH_ALL,
+            &SigHashReusedValuesUnsync::new(),
+        );
+        let message = Message::from_digest_slice(digest.as_bytes().as_slice())?;
+        let script = &tx.inputs[index].signature_script;
+        let first_key = if entry.covenant_id.is_some() && kind == "claim" {
+            [9_u8; 32]
+        } else {
+            [7_u8; 32]
+        };
+        let mut signatures = vec![(&script[1..65], first_key)];
+        if entry.covenant_id.is_some() && kind == "top-up" {
+            signatures.push((&script[67..131], [9_u8; 32]));
+        }
+        for (bytes, private_key) in signatures {
+            let public_key = Keypair::from_seckey_slice(SECP256K1, &private_key)?
+                .x_only_public_key()
+                .0;
+            SECP256K1
+                .verify_schnorr(&Signature::from_slice(bytes)?, &message, &public_key)
+                .with_context(|| format!("{kind} input {index} re-signed signature"))?;
+        }
+    }
+    Ok(())
 }
 
 fn claim_ceiling_and_delta(transaction: &ArtifactTransaction) -> Result<(u64, u64)> {

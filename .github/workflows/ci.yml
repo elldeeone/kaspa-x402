@@ -25,7 +25,14 @@ jobs:
       - name: Workspace tests
         run: npm test
       - name: Offline proofs
-        run: npm run proof:offline
+        run: npm run proof:offline -- --out proof-artifacts/offline.json
+      - name: Retain offline proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-proof-windows
+          path: proof-artifacts/offline.json
+          if-no-files-found: warn
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -38,6 +45,15 @@ jobs:
         run: npm ci
       - name: Workspace tests
         run: npm test
+      - name: Offline proofs
+        run: npm run proof:offline -- --out proof-artifacts/offline.json
+      - name: Retain offline proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: offline-proof-linux
+          path: proof-artifacts/offline.json
+          if-no-files-found: warn
       - name: Schema validation
         run: npm run validate:schemas
       - name: Generated schema validator drift
@@ -48,3 +64,36 @@ jobs:
         run: npm run site:check
       - name: Whitespace and diff checks
         run: npm run check:diff
+      - name: Check out pinned Kaspa consensus source
+        uses: actions/checkout@v4
+        with:
+          repository: kaspanet/rusty-kaspa
+          ref: c338d495bec29e4dc8b5149f99e8db6fa916ed4a
+          path: .kaspa-consensus
+          persist-credentials: false
+      - name: Install consensus harness native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev cmake pkg-config
+      - name: Install consensus harness Rust toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - name: Validate transaction vectors against Kaspa consensus
+        shell: bash
+        env:
+          RUSTUP_TOOLCHAIN: 1.95.0
+          CARGO_BUILD_JOBS: 2
+          KASPA_X402_CONSENSUS_CARGO_HOME: ${{ runner.temp }}/kaspa-x402-consensus-cargo-home
+          CARGO_TARGET_DIR: ${{ runner.temp }}/kaspa-x402-consensus-target
+        run: |
+          set -o pipefail
+          mkdir -p proof-artifacts
+          node scripts/validate-tx-v1-consensus.mjs --kaspa-root .kaspa-consensus 2> >(tee proof-artifacts/tx-v1-consensus.stderr.log >&2) | tee proof-artifacts/tx-v1-consensus.json
+      - name: Retain consensus proof report
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: tx-v1-consensus-linux
+          path: |
+            proof-artifacts/tx-v1-consensus.json
+            proof-artifacts/tx-v1-consensus.stderr.log
+          if-no-files-found: warn

@@ -1570,31 +1570,6 @@ describe("direct-mode server", () => {
     ).resolves.toBeUndefined();
   });
 
-  it("returns the cached response for an identical exact payment retry", async () => {
-    const setup = makeServer();
-    const requestHash = "12".repeat(32);
-    const payment = makeExactPayment(setup, { requestHash });
-    await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
-      async () => ({
-        body: "download",
-      }),
-    );
-
-    let executed = false;
-    const replay = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
-      async () => {
-        executed = true;
-        return { body: "second" };
-      },
-    );
-
-    expect(replay.status).toBe(200);
-    expect(replay.body).toBe("download");
-    expect(executed).toBe(false);
-  });
-
   it("never returns an exact cached response across trusted principals", async () => {
     const setup = makeServer();
     const principalA = {
