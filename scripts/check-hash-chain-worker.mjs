@@ -139,6 +139,7 @@ try {
       const tx = JSON.parse(transaction.artifact);
       for (const input of tx.inputs) utxos.delete(`${input.transactionId}:${input.index}`);
       recordTransaction(tx.id, tx.inputs, tx.outputs);
+      selectedHeight += 100; // Many unrelated blocks can arrive between claim and payment.
       selectedHeight++;
       acceptedBlocks.set(selectedHeight, [{ transactionId: tx.id,
         inputs: tx.inputs.map((input) => ({ previousOutpoint: { transactionId: input.transactionId, index: input.index } })),
@@ -201,9 +202,17 @@ function rpcResult(method, params) {
     .filter((item) => params.addresses.includes(item.address))
     .map((item) => ({ outpoint: item.outpoint, utxoEntry: { ...item.utxoEntry,
       scriptPublicKey: { version: 0, script: item.utxoEntry.scriptPublicKey.scriptPublicKey } } })) };
+  if (method === 'getVirtualChainFromBlock') {
+    const heights = Array.from({ length: selectedHeight - Number.parseInt(params.startHash, 16) },
+      (_, index) => Number.parseInt(params.startHash, 16) + index + 1);
+    return { removedChainBlockHashes: [], addedChainBlockHashes: heights.map(hashAt),
+      acceptedTransactionIds: heights.map(height => ({ acceptingBlockHash: hashAt(height),
+        acceptedTransactionIds: (acceptedBlocks.get(height) ?? []).map(tx => tx.transactionId) })) };
+  }
   if (method === 'getVirtualChainFromBlockV2') {
     const heights = Array.from({ length: selectedHeight - Number.parseInt(params.startHash, 16) },
       (_, index) => Number.parseInt(params.startHash, 16) + index + 1);
+    assert(heights.length <= 3, 'full transaction readback must start at the payment accepting block parent');
     return { removedChainBlockHashes: [], addedChainBlockHashes: heights.map(hashAt),
       chainBlockAcceptedTransactions: heights.map((height) => ({ chainBlockHeader: block(height).header,
         acceptedTransactions: acceptedBlocks.get(height) ?? [] })) };

@@ -97,6 +97,11 @@ type PnnRpc = {
     dataVerbosityLevel: "Low" | "High";
     minConfirmationCount: number;
   }): Promise<unknown>;
+  getVirtualChainFromBlock?(request: {
+    startHash: string;
+    includeAcceptedTransactionIds: boolean;
+    minConfirmationCount: number;
+  }): Promise<unknown>;
   getBlockDagInfo?(): Promise<unknown>;
   getBlock?(request: {
     hash: string;
@@ -791,11 +796,22 @@ export class KaspaPnnClient {
   } | null> {
     return this.#withRpc(async ({ rpc, endpoint }) => {
       await this.#checkedServerInfo(rpc, endpoint);
-      if (!rpc.getBlockDagInfo || !rpc.getBlock || !rpc.getVirtualChainFromBlockV2) {
+      if (!rpc.getBlockDagInfo || !rpc.getBlock || !rpc.getVirtualChainFromBlockV2 || !rpc.getVirtualChainFromBlock) {
         throw invalidTransaction("PNN selected-chain V2 methods are required");
       }
       const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, from.blockHash, 1, this.#timeoutMs, "High");
+      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs);
+      if (!acceptingHash) return null;
+      const rawAccepting = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
+        this.#timeoutMs, "pnn read hash-chain accepting block");
+      const accepting = pnnSelectedBlockCheckpoint(rawAccepting, acceptingHash, "hash-chain accepting block");
+      const distance = BigInt(before.blueScore) - BigInt(accepting.blueScore);
+      if (distance <= 1n) return null;
+      if (distance > BigInt(Number.MAX_SAFE_INTEGER)) throw invalidTransaction("PNN accepting block distance is too large");
+      const verbose = requiredRecord(unwrapRecord(rawAccepting, "block").verboseData, "PNN accepting block verbose data");
+      const parent = hashValue(verbose.selectedParentHash, "PNN accepting block selected parent");
+      // Limit full transaction data to the accepting block, as in cached-payment confirmation.
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n), this.#timeoutMs, "High");
       const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(
         rpc.getBlock({ hash: before.blockHash, includeTransactions: false }), this.#timeoutMs,
@@ -803,6 +819,7 @@ export class KaspaPnnClient {
       if (selected.removedChainBlockHashes.includes(from.blockHash) || !sameChainCheckpoint(before, verified) ||
         BigInt(after.blueScore) < BigInt(before.blueScore)) throw invalidTransaction("PNN hash-chain checkpoint changed");
       for (const block of selected.addedChainBlocks) {
+        if (block.blockHash !== acceptingHash) continue;
         const raw = block.transactions.find((item) => pnnAcceptedTransactionId(item) === transactionId);
         if (!raw) continue;
         const tx = unwrapRecord(raw, "transaction");
@@ -1298,6 +1315,14 @@ class JsonPnnRpc implements PnnRpc {
     minConfirmationCount: number;
   }): Promise<unknown> {
     return this.#request("getVirtualChainFromBlockV2", request);
+  }
+
+  getVirtualChainFromBlock(request: {
+    startHash: string;
+    includeAcceptedTransactionIds: boolean;
+    minConfirmationCount: number;
+  }): Promise<unknown> {
+    return this.#request("getVirtualChainFromBlock", request);
   }
 
   getBlockDagInfo(): Promise<unknown> {
@@ -2673,6 +2698,40 @@ async function pnnSelectedChainFromCheckpoint(
     startHash = added.at(-1)!;
   }
   throw invalidTransaction("Kaspa PNN selected-chain response did not converge");
+}
+
+/** Locate acceptance using small ID lists before requesting covenant details. */
+async function pnnFindAcceptingBlock(rpc: PnnRpc, transactionId: string, initialHash: string, timeoutMs: number): Promise<string | null> {
+  let startHash = initialHash;
+  const seen = new Set<string>();
+  let bytes = 0;
+  for (let page = 0; page < 64; page++) {
+    const raw = await withTimeout(rpc.getVirtualChainFromBlock!({ startHash,
+      includeAcceptedTransactionIds: true, minConfirmationCount: 1 }), timeoutMs, "pnn locate hash-chain acceptance");
+    bytes += new TextEncoder().encode(JSON.stringify(raw)).byteLength;
+    if (bytes > MAX_PNN_SELECTED_CHAIN_BYTES) throw invalidTransaction("PNN acceptance ID lists exceed the byte limit");
+    const response = unwrapRecord(raw, "virtualChainFromBlockResponse");
+    const removed = optionalArray(response.removedChainBlockHashes, "PNN removed chain blocks")
+      .map(value => hashValue(value, "PNN removed chain block"));
+    if (removed.includes(initialHash)) throw invalidTransaction("PNN origin checkpoint left the selected chain");
+    const added = optionalArray(response.addedChainBlockHashes, "PNN added chain blocks")
+      .map(value => hashValue(value, "PNN added chain block"));
+    for (const hash of added) {
+      if (seen.has(hash) || seen.size >= 4096) throw invalidTransaction("PNN acceptance traversal repeats or exceeds the block limit");
+      seen.add(hash);
+    }
+    for (const item of optionalArray(response.acceptedTransactionIds, "PNN accepted transaction ID blocks")) {
+      const block = requiredRecord(item, "PNN accepted transaction ID block");
+      const hash = hashValue(block.acceptingBlockHash, "PNN accepting block hash");
+      if (!added.includes(hash)) throw invalidTransaction("PNN accepting block is missing from the chain update");
+      const ids = optionalArray(block.acceptedTransactionIds, "PNN accepted transaction IDs")
+        .map(value => hashValue(value, "PNN accepted transaction ID"));
+      if (ids.includes(transactionId)) return hash;
+    }
+    if (added.length === 0) return null;
+    startHash = added.at(-1)!;
+  }
+  throw invalidTransaction("PNN acceptance ID traversal did not converge");
 }
 
 function covenantUpdateFromPnnSelection(

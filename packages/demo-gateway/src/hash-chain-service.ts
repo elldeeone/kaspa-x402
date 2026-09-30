@@ -77,6 +77,7 @@ export class HashChainDemoService {
       amount: this.config.exactAmount, minDepositSompi: "1000", claimReserveSompi: "10",
       refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
       maxTimeoutSeconds: 150, acceptedFinality: "accepted", store: this.state, lockManager: this.#lock,
+      publicBoundaryPolicy: { adapterTimeoutMs: 60_000 },
       chainProvider: new RestKaspaChainProvider(this.#rest, book, this.config.claimFeeSompi),
       addressCodec: new NativeAddressCodec(book),
       voucherVerifier: { verifyVoucher: () => false }, batchPresentationVerifier: { verifyPresentation: () => false },
