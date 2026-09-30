@@ -944,7 +944,7 @@ export interface DirectModeServerConfig {
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
-  /** Node-only private issuer; the root server bundle only uses its structural interface. */
+  /** Private issuer; the root server bundle only uses its structural interface. */
   hashChainIssuer?: Pick<HashChainGrantIssuer,
     "getCurrent" | "getChallenge" | "getDeliveryRecord" | "getAcceptedPayment" |
     "getAdmittedChallenge" | "issueAdmittedChallenge" | "grantClaimAdmissionKey" |
@@ -970,6 +970,7 @@ export interface DirectModeServerConfig {
   hashChainGetCurrentUtxo?: (
     outpoint: FundingOutpoint,
     signal?: AbortSignal,
+    claim?: import("./hash-chain-issuer.js").HashChainGrantClaim,
   ) => Promise<HashChainCurrentUtxo | null>;
   /** Reconciles only the selected additive head before advertising it. */
   reconcileExactHeadOnOffer?: boolean;

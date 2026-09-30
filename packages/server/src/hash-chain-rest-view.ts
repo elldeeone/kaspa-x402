@@ -4,7 +4,7 @@ import type { HashChainChainView, HashChainSelectedTransaction, HashChainTrusted
 /** Bounded Testnet-10 REST readback; both the transaction and its accepting block must remain selected. */
 export class HashChainRestView implements HashChainChainView {
   readonly #baseUrl: string;
-  constructor(baseUrl: string, private readonly fetcher: typeof fetch = fetch) {
+  constructor(baseUrl: string, private readonly fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
     const parsed = new URL(baseUrl);
     if (parsed.protocol !== "https:") throw new Error("selected-chain REST endpoint must use HTTPS");
     this.#baseUrl = parsed.href.replace(/\/+$/, "");
@@ -166,7 +166,7 @@ export class HashChainRestView implements HashChainChainView {
         ...(init.headers ?? {}),
       },
       cache: "no-store",
-      redirect: "error",
+      redirect: "manual",
       signal: requestSignal,
     });
     if (response.status === 404) return null;

@@ -34,6 +34,7 @@ import type {
   TransactionBroadcast,
   VoucherVerificationRequest,
   VoucherVerifier,
+  HashChainSelectedTransaction,
 } from "@kaspa-x402/server";
 import {
   KIP10_EXACT_TRANSACTION_ENCODING,
@@ -759,6 +760,69 @@ export class KaspaPnnClient {
           ? { virtualDaaScore: String(info.virtualDaaScore) }
           : {}),
       };
+    });
+  }
+
+  /** Snapshot origins before the browser receives a one-time signing grant. */
+  async snapshotHashChainUtxos(addresses: string[]): Promise<{
+    utxos: PnnUtxo[];
+    checkpoint: ChainCheckpoint;
+  }> {
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      if (!rpc.getBlockDagInfo || !rpc.getBlock) throw invalidTransaction("PNN checkpoint methods are required");
+      const checkpoint = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const result = await withTimeout(rpc.getUtxosByAddresses(addresses), this.#timeoutMs, "pnn snapshot hash-chain origins");
+      if (!Array.isArray(result.entries) || result.entries.length > MAX_PNN_UTXO_ENTRIES) {
+        throw invalidTransaction("PNN origin snapshot is incomplete or exceeds the UTXO limit");
+      }
+      const verified = pnnSelectedBlockCheckpoint(await withTimeout(
+        rpc.getBlock({ hash: checkpoint.blockHash, includeTransactions: false }), this.#timeoutMs,
+        "pnn recheck origin checkpoint"), checkpoint.blockHash, "origin checkpoint");
+      if (!sameChainCheckpoint(checkpoint, verified)) throw invalidTransaction("PNN origin checkpoint changed");
+      return { utxos: result.entries.map(pnnUtxo), checkpoint };
+    });
+  }
+
+  /** Read the accepted transaction itself, including its covenant successor. */
+  async findHashChainPayment(transactionId: string, from: ChainCheckpoint): Promise<{
+    transaction: HashChainSelectedTransaction;
+    evidence: AcceptedTransactionEvidence;
+  } | null> {
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      if (!rpc.getBlockDagInfo || !rpc.getBlock || !rpc.getVirtualChainFromBlockV2) {
+        throw invalidTransaction("PNN selected-chain V2 methods are required");
+      }
+      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, from.blockHash, 1, this.#timeoutMs, "High");
+      const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const verified = pnnSelectedBlockCheckpoint(await withTimeout(
+        rpc.getBlock({ hash: before.blockHash, includeTransactions: false }), this.#timeoutMs,
+        "pnn recheck hash-chain checkpoint"), before.blockHash, "hash-chain checkpoint");
+      if (selected.removedChainBlockHashes.includes(from.blockHash) || !sameChainCheckpoint(before, verified) ||
+        BigInt(after.blueScore) < BigInt(before.blueScore)) throw invalidTransaction("PNN hash-chain checkpoint changed");
+      for (const block of selected.addedChainBlocks) {
+        const raw = block.transactions.find((item) => pnnAcceptedTransactionId(item) === transactionId);
+        if (!raw) continue;
+        const tx = unwrapRecord(raw, "transaction");
+        const input = requiredRecord(optionalArray(tx.inputs, "hash-chain inputs")[0], "hash-chain head input");
+        const output = requiredRecord(optionalArray(tx.outputs, "hash-chain outputs")[0], "hash-chain successor");
+        const covenant = pnnOutputCovenant(output);
+        const blueScore = uintStringValue(block.header.blueScore, "hash-chain accepting block blue score");
+        if (!covenant || covenant.authorizingInput !== 0 || BigInt(blueScore) > BigInt(after.blueScore)) {
+          throw invalidTransaction("PNN hash-chain successor or accepting block is invalid");
+        }
+        return {
+          transaction: { transactionId, finality: "accepted", spentHead: pnnInputOutpoint(input),
+            successor: { amount: uintStringValue(output.value ?? output.amount, "hash-chain successor amount"),
+              scriptPublicKey: serializeSdkScriptPublicKey(output.scriptPublicKey),
+              covenantId: covenant.covenantId, authorizingInput: 0 } },
+          evidence: { status: "accepted", transactionId, acceptingBlockHash: block.blockHash,
+            acceptingBlockBlueScore: blueScore, confirmationCount: 1, checkpoint: after },
+        };
+      }
+      return null;
     });
   }
 
@@ -2335,6 +2399,7 @@ type PnnUtxo = {
   outpoint: FundingOutpoint;
   amount: string;
   scriptPublicKey: string;
+  covenantId: string | null;
 };
 
 type PnnSelectedChain = {
@@ -2399,6 +2464,7 @@ function pnnUtxo(entry: unknown): PnnUtxo {
     scriptPublicKey: serializeSdkScriptPublicKey(
       utxoEntry.scriptPublicKey ?? raw.scriptPublicKey ?? entry.scriptPublicKey,
     ),
+    covenantId: normalizeOptionalCovenantId(utxoEntry.covenantId ?? utxoEntry.covenant_id) ?? null,
   };
 }
 

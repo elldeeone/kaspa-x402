@@ -5,7 +5,8 @@ import {
   readRequestJsonWithLimit,
   runGatewayCanary,
 } from "./gateway.js";
-import type { GatewayEnv } from "./config.js";
+import { readGatewayConfig, type GatewayEnv } from "./config.js";
+import { HashChainDemoService, type HashChainHeadRegistration } from "./hash-chain-service.js";
 import {
   dispatchGatewayState,
   GatewayLedger,
@@ -16,10 +17,28 @@ import {
 
 export class GatewayState extends DurableObject<GatewayEnv> {
   readonly #ledger: GatewayLedger;
+  #hashChain?: HashChainDemoService;
 
   constructor(ctx: DurableObjectState, env: GatewayEnv) {
     super(ctx, env);
     this.#ledger = new GatewayLedger(ctx.storage as GatewayStorage);
+  }
+
+  #hashChainService(): HashChainDemoService {
+    return this.#hashChain ??= new HashChainDemoService(this.ctx.storage,
+      this.#ledger, readGatewayConfig(this.env));
+  }
+
+  handleHashChainRequest(request: Request): Promise<Response> {
+    return this.#hashChainService().fetch(request);
+  }
+
+  registerHashChainHead(input: HashChainHeadRegistration) {
+    return this.#hashChainService().register(input);
+  }
+
+  hashChainHead() {
+    return this.#hashChainService().current() ?? null;
   }
 
   acquirePublicAdmission(

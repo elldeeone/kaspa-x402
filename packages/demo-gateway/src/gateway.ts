@@ -42,7 +42,9 @@ import {
   type GatewayEnv,
 } from "./config.js";
 import { RemoteGatewayState } from "./remote-state.js";
-import { HASH_CHAIN_ROUTES, HASH_CHAIN_CALLER_HEADER, proxyHashChainRequest, hashChainSupportedKinds } from "./hash-chain-proxy.js";
+import { HASH_CHAIN_ROUTES, HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
+import { routeHashChainRequest, hostedHashChainSupportedKinds, hashChainStub } from "./hash-chain-routing.js";
+import type { HashChainHeadRegistration } from "./hash-chain-service.js";
 import {
   DurableGatewayLockManager,
   type GatewayCanaryCheck,
@@ -83,9 +85,12 @@ export async function handleGatewayRequest(
     return new Response(null, { status: 204, headers: corsHeaders(config) });
 
   if (HASH_CHAIN_ROUTES.has(url.pathname)) {
-    const response = await proxyHashChainRequest(request, config);
-    for (const [name, value] of Object.entries(corsHeaders(config))) response.headers.set(name, value);
-    return response;
+    const response = await routeHashChainRequest(request, config, env);
+    return new Response(response.body, { status: response.status,
+      headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+  }
+  if (url.pathname.startsWith("/admin/hash-chain")) {
+    return hashChainAdminResponse(request, url, config, env);
   }
 
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
@@ -110,7 +115,7 @@ export async function handleGatewayRequest(
       {
         ok: true,
         enabled: config.enabled,
-        kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hashChainSupportedKinds(config)],
+        kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hostedHashChainSupportedKinds(config, env)],
       },
       { headers: corsHeaders(config) },
     );
@@ -913,6 +918,26 @@ function healthResponse(config: GatewayConfig): Response {
     },
     { headers: corsHeaders(config) },
   );
+}
+
+async function hashChainAdminResponse(request: Request, url: URL, config: GatewayConfig, env: GatewayEnv): Promise<Response> {
+  const reply = (body: unknown, status = 200) => json(body, { status, headers: corsHeaders(config) });
+  if (!config.adminToken) return reply({ ok: false, error: "not_found" }, 404);
+  if (!secureAdminTransport(url)) return reply({ ok: false, error: "https_required" }, 400);
+  if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`)
+    return reply({ ok: false, error: "unauthorized" }, 401);
+  try {
+    if (url.pathname === "/admin/hash-chain" && request.method === "GET")
+      return reply({ ok: true, head: await hashChainStub(env).hashChainHead() });
+    if (url.pathname === "/admin/hash-chain/register" && request.method === "POST") {
+      const input = await readRequestJsonWithLimit<HashChainHeadRegistration>(request, MAX_ADMIN_JSON_BYTES, "hash-chain head");
+      return reply({ ok: true, head: await hashChainStub(env).registerHashChainHead(input) });
+    }
+    return reply({ ok: false, error: "not_found" }, 404);
+  } catch {
+    // Registration contains private one-time keys; never echo input or errors.
+    return reply({ ok: false, error: "hash_chain_registration_rejected" }, 409);
+  }
 }
 
 async function exactHeadsAdminResponse(

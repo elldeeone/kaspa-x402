@@ -57,10 +57,12 @@ async function upstream(request: Request, config: GatewayConfig, timeoutMs = 45_
     const value = request.headers.get(name);
     if (value) headers.set(name, value);
   }
-  return fetch(new URL(source.pathname + source.search, config.hashChainOrigin), {
-    method: request.method, headers, body: request.body, redirect: "error",
+  const response = await fetch(new URL(source.pathname + source.search, config.hashChainOrigin), {
+    method: request.method, headers, body: request.body, redirect: "manual",
     signal: AbortSignal.any([request.signal, AbortSignal.timeout(timeoutMs)]),
   });
+  if (response.status >= 300 && response.status < 400) throw new Error("Issuer redirects are not allowed");
+  return response;
 }
 
 async function boundedBytes(response: Response): Promise<Uint8Array> {

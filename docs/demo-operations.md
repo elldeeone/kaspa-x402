@@ -47,9 +47,11 @@ Important non-secret variables:
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
 | `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact submission and authoritative batch selected-chain lineage. REST mode cannot prove batch lineage continuity.                      |
 | `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used for exact submission and `GetVirtualChainFromBlockV2` batch lineage recovery.                                   |
+| `KASPA_X402_HASH_CHAIN_ENABLED`             | Enable hash-chain exact in the existing gateway Durable Object after registering a funded Testnet head. Default: `false`. |
 
-The Worker must not receive a mainnet key, a spending key, or a faucet key.
-Claim broadcasting is disabled in the hosted gateway package.
+The Worker must not receive a mainnet, operator wallet, head owner, or faucet
+key. Hash-chain registration supplies only its limited one-time grant keys.
+Merchant claim broadcasting is disabled in the hosted gateway package.
 
 Secret variables:
 
@@ -329,21 +331,82 @@ does not return protected content.
 
 ## Hash-chain Demo
 
-The hash-chain candidate uses the existing Node/SQLite grant issuer on one
-host. The Worker proxies its resource and grant routes under the public
-`demo.kaspa-x402.org` origin. It does not replace standard exact or batch.
-One funded head, saved grant state, and manual rotation are sufficient for
-this Testnet demo; there is no automatic rotation or availability commitment.
+The hash-chain candidate can run in the existing `GatewayState` Durable
+Object. Grant tables use its SQLite storage; payment responses use the existing
+gateway ledger. Pages, the Worker, its binding, and the standard exact and batch
+routes remain the same. One funded head and manual resets are sufficient for
+this Testnet demo. No Container or separate server is required.
+
+The hash-chain route uses the configured Testnet-10 PNNs for fresh UTXOs and
+selected-chain V2 transaction evidence. It snapshots the payer's accepted
+funding outputs before delivering a signing grant because spent outputs can
+disappear from the public REST index. Paid retries recheck selected-chain
+acceptance. The public REST API is not the hash-chain verification source.
+
+### Cloudflare Hosting
+
+1. Build and check the Worker and browser client:
+
+   ```sh
+   npm run build
+   npm run site:build
+   npm run check:hash-chain-worker
+   npm run check:browser-demo
+   ```
+
+2. Use a private local operator config. Set `dataDir` to a new private directory,
+   `sdkModule` to the pinned Node WASM SDK, `rpcUrl` to a synced Testnet-10 node,
+   and `walletFile` to the funded Testnet operator wallet. Also set
+   `publicBaseUrl` to `https://demo.kaspa-x402.org` and `adminTokenFile` to the
+   private file containing the existing gateway admin token. Run:
+
+   ```sh
+   node scripts/hash-chain-demo.mjs init --config <private-config> --live
+   ```
+
+   This funds a 1 KAS head and creates 32 fresh one-use grants. It saves
+   `cloudflare-head.json` with mode `0600` alongside the local owner key and
+   grant database. Keep these files outside the published site.
+
+3. Deploy the Worker with `KASPA_X402_GATEWAY_ENABLED=true`, preserving the
+   live gateway variables and existing admin secret. Leave
+   `KASPA_X402_HASH_CHAIN_ORIGIN` empty. Publish the fresh head:
+
+   ```sh
+   node scripts/hash-chain-demo.mjs publish --config <private-config>
+   ```
+
+   Publication uses the authenticated HTTPS admin route and returns only public
+   head metadata. The operator wallet and owner keys stay local. Use this head
+   only in the Cloudflare demo; the local Node service must not issue its grants.
+
+4. Set `KASPA_X402_HASH_CHAIN_ENABLED=true`, deploy the Worker, and deploy the
+   static site to the existing Pages project. Check `/hash-chain/status` and
+   `/supported`, then make a funded browser payment and retry that same payment.
+   Check the existing exact and batch demos too.
+
+If a grant is abandoned or the chain is exhausted, create a new private data
+directory, initialize a fresh funded head, and publish it. Registration waits
+for an assigned grant to expire before replacing it. Old quotes and unfinished
+demo payments can become unavailable after a reset. Automatic rotation and
+recovery are outside this demo's scope.
+
+### Caller Admission
 
 The Worker derives an opaque caller identity from
 [Cloudflare's ingress IP](https://developers.cloudflare.com/fundamentals/reference/http-headers/#cf-connecting-ip) and
-sets `X-KASPA-X402-DEMO-CALLER` on its authenticated service request. The service
+sets `X-KASPA-X402-DEMO-CALLER` on its private Durable Object call. The service
 returns that identity with the quote so the browser binds payment to the same
 caller. The four-live-quote limit applies per public IP; users sharing an IP
 share that limit. Use the same public IP for quotes, payments, and retries.
 Resource requests without trusted caller metadata are unavailable. Local
-proxy checks must supply `CF-Connecting-IP`; direct service checks also need
+Worker checks must supply `CF-Connecting-IP`; direct Node service checks also need
 the proxy bearer token and a 64-character lowercase hex caller header.
+
+### Optional Node Hosting
+
+For a separate Node host, the Worker can proxy the same resource and grant
+routes under the public origin. Use this option instead of Cloudflare hosting.
 
 Build the workspaces first (`npm run build`). Use Node 22.13 or newer and the
 pinned Rusty-Kaspa 2.0.0 Node WASM SDK, including its `websocket` dependency.

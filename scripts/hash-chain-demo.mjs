@@ -19,8 +19,8 @@ import { openHashChainDemoStore } from './hash-chain-demo-store.mjs';
 
 const [command, ...args] = process.argv.slice(2);
 const configIndex = args.indexOf('--config');
-if (!['serve', 'init', 'rotate', 'recover', 'status'].includes(command) || configIndex < 0 || !args[configIndex + 1]) {
-  throw new Error('Usage: hash-chain-demo.mjs <init|serve|status|rotate|recover> --config <private-json-file> [--live]');
+if (!['serve', 'init', 'rotate', 'recover', 'status', 'publish'].includes(command) || configIndex < 0 || !args[configIndex + 1]) {
+  throw new Error('Usage: hash-chain-demo.mjs <init|serve|status|rotate|recover|publish> --config <private-json-file> [--live]');
 }
 if (['init', 'rotate'].includes(command) && !args.includes('--live')) {
   throw new Error(`${command} broadcasts Testnet-10 transactions; add --live explicitly.`);
@@ -38,7 +38,21 @@ let rpc;
 let http;
 let payments;
 try {
-  if (command === 'status') {
+  if (command === 'publish') {
+    const base = new URL(config.publicBaseUrl ?? 'https://demo.kaspa-x402.org');
+    if (base.protocol !== 'https:' && !['127.0.0.1', 'localhost'].includes(base.hostname)) throw new Error('Publishing private grants requires HTTPS');
+    const registration = JSON.parse(privateRead(path.join(dataDir, 'cloudflare-head.json')));
+    const current = issuer.getCurrent(registration.headId);
+    if (current.phase !== 'ready' || current.headVersion !== 0) throw new Error('Publish only a fresh, unused head');
+    const token = privateRead(path.resolve(config.adminTokenFile));
+    const response = await fetch(new URL('/admin/hash-chain/register', base), {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify(registration), redirect: 'error', signal: AbortSignal.timeout(45_000),
+    });
+    const result = await response.json();
+    if (!response.ok || !result.ok) throw new Error(`Cloudflare head registration failed (${response.status})`);
+    console.log(JSON.stringify({ command, headId: result.head.headId, phase: result.head.phase }));
+  } else if (command === 'status') {
     const { headId } = JSON.parse(fs.readFileSync(headFile, 'utf8'));
     const current = issuer.getCurrent(headId);
     console.log(JSON.stringify({ headId, phase: current.phase, headVersion: current.headVersion, head: current.head }, null, 2));
@@ -203,6 +217,9 @@ function finishSetup(setup, sdk) {
     else issuer.recordAcceptedRotation(headId, { finality: 'accepted', predecessor, successor: head }, grants.grants);
   }
   privateWrite(headFile, JSON.stringify({ headId, ownerPublicKey, payTo: addressForScript(sdk, head.scriptPublicKey) }));
+  if (setup.command === 'init') privateWrite(path.join(dataDir, 'cloudflare-head.json'), JSON.stringify({
+    headId, network: 'kaspa:testnet-10', ownerPublicKey, head, grants: grants.grants,
+  }));
   fs.unlinkSync(pendingFile);
 }
 

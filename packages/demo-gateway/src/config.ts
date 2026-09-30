@@ -50,6 +50,7 @@ export interface GatewayConfig {
   pnnAttempts: number;
   hashChainOrigin?: string;
   hashChainProxyToken?: string;
+  hashChainEnabled: boolean;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -128,6 +129,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     );
   }
   return {
+    hashChainEnabled: bool(env.KASPA_X402_HASH_CHAIN_ENABLED ?? "false", "KASPA_X402_HASH_CHAIN_ENABLED"),
     ...(env.KASPA_X402_HASH_CHAIN_ORIGIN?.trim() ? {
       hashChainOrigin: hashChainOrigin(env.KASPA_X402_HASH_CHAIN_ORIGIN),
       hashChainProxyToken: env.KASPA_X402_HASH_CHAIN_PROXY_TOKEN?.trim(),
