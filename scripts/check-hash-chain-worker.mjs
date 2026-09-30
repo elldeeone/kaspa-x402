@@ -55,10 +55,15 @@ const options = {
     const url = new URL(request.url);
     if (request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
       const [client, server] = Object.values(new WebSocketPair());
+      let fullChainReads = 0;
       server.accept();
       server.addEventListener('message', (event) => {
         const { id, method, params } = JSON.parse(event.data);
-        try { server.send(JSON.stringify({ id, params: rpcResult(method, params) })); }
+        try {
+          if (method === 'getVirtualChainFromBlockV2') assert(++fullChainReads === 1,
+            'payment verification must stop after finding its accepting block');
+          server.send(JSON.stringify({ id, params: rpcResult(method, params) }));
+        }
         catch (error) { server.send(JSON.stringify({ id, error: String(error) })); }
       });
       return new WorkerResponse(null, { status: 101, webSocket: client });
@@ -211,8 +216,10 @@ function rpcResult(method, params) {
   }
   if (method === 'getVirtualChainFromBlockV2') {
     const heights = Array.from({ length: selectedHeight - Number.parseInt(params.startHash, 16) },
-      (_, index) => Number.parseInt(params.startHash, 16) + index + 1);
+      (_, index) => Number.parseInt(params.startHash, 16) + index + 1)
+      .filter(height => height <= selectedHeight - params.minConfirmationCount);
     assert(heights.length <= 3, 'full transaction readback must start at the payment accepting block parent');
+    selectedHeight++; // The live tip keeps moving; fetching until an empty page never converges.
     return { removedChainBlockHashes: [], addedChainBlockHashes: heights.map(hashAt),
       chainBlockAcceptedTransactions: heights.map((height) => ({ chainBlockHeader: block(height).header,
         acceptedTransactions: acceptedBlocks.get(height) ?? [] })) };

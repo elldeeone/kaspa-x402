@@ -811,7 +811,7 @@ export class KaspaPnnClient {
       const verbose = requiredRecord(unwrapRecord(rawAccepting, "block").verboseData, "PNN accepting block verbose data");
       const parent = hashValue(verbose.selectedParentHash, "PNN accepting block selected parent");
       // Limit full transaction data to the accepting block, as in cached-payment confirmation.
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n), this.#timeoutMs, "High");
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n), this.#timeoutMs, "High", acceptingHash);
       const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(
         rpc.getBlock({ hash: before.blockHash, includeTransactions: false }), this.#timeoutMs,
@@ -1029,6 +1029,7 @@ export class KaspaPnnClient {
           Number(proofMinConfirmationCount),
           this.#timeoutMs,
           "Low",
+          evidence.acceptingBlockHash,
         );
         const proofBlock = selected.addedChainBlocks.find(
           (block) => block.blockHash === evidence.acceptingBlockHash.toLowerCase(),
@@ -2582,6 +2583,7 @@ async function pnnSelectedChainFromCheckpoint(
   minConfirmationCount: number,
   timeoutMs: number,
   dataVerbosityLevel: "Low" | "High",
+  stopAfterBlockHash?: Hash32Hex,
 ): Promise<PnnSelectedChain> {
   if (
     !Number.isSafeInteger(minConfirmationCount) ||
@@ -2687,6 +2689,9 @@ async function pnnSelectedChainFromCheckpoint(
     }
     removedChainBlockHashes.push(...pageRemoved);
     addedChainBlocks.push(...pageAdded);
+    if (stopAfterBlockHash && seenAdded.has(stopAfterBlockHash)) {
+      return { removedChainBlockHashes, addedChainBlocks };
+    }
     if (added.length === 0) {
       return { removedChainBlockHashes, addedChainBlocks };
     }
