@@ -1,6 +1,6 @@
 # Kaspa x402 Binding v1
 
-Status: draft
+Status: specification included in the published RC2 release; interoperability draft.
 
 This document defines common rules for x402 v2 payments on Kaspa. Active
 scheme-specific behavior is defined in sibling documents:
@@ -28,7 +28,7 @@ outside this binding. Kaspa clients must not reject the envelope because such
 entries are present: they must skip entries that do not validate as Kaspa
 requirements during offer selection and fail with `invalid_kaspa_x402_accepted`
 only when no supported Kaspa entry remains. Kaspa servers, in contrast, must
-emit only entries defined by this binding. In the current alpha,
+emit only entries defined by this binding. In the published RC2 release,
 `kaspa:testnet-10` is the testnet validation target and `kaspa:mainnet` is a
 reserved profile name that requires explicit runtime opt-in plus the mainnet
 gates in `docs/mainnet-readiness.md`.

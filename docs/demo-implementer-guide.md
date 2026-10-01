@@ -1,6 +1,6 @@
 # Demo Implementer Guide
 
-Status: v1 RC2 release candidate, Testnet-10 only. The hosted gateway is an
+Status: published `1.0.0-rc.2`, Testnet-10 only. The hosted gateway is an
 integration target, not a production or mainnet service.
 
 This guide describes the published v1 RC2 source and deployed public gateway.
@@ -130,9 +130,11 @@ cached HTTP `200`. Reusing the same exact transaction for a different resource
 must be rejected. If an additive gateway has no available head, clients should
 use `batch-settlement` or another server.
 
-The hosted gateway uses REST for read-side evidence and public TN10 PNN/WSS for
-KIP-10 exact transaction submission. Public REST submit is not used for hosted
-KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
+The hosted RC2 gateway uses public Testnet-10 PNN/WSS nodes for funding,
+UTXOs, DAA, fees, transaction submission, acceptance, and selected-chain
+lineage. It does not require the public REST transaction index. Durable
+receipts and pre-broadcast checkpoints support retries and Worker restart
+recovery without treating uncertain transactions as new payments.
 
 ## Hash-chain Browser Demo
 
@@ -194,7 +196,7 @@ authoritative selected-chain traversal. Accepting-block and durable-checkpoint
 blue scores bind the evidence but do not determine selected-chain depth.
 Clients resume lineage from that checkpoint, process removed blocks before
 additions, and accept only one verified successor. Missing or pruned continuity
-keeps the lane unavailable; REST UTXO presence or peer channel metadata is not
+keeps the lane unavailable; UTXO presence alone or peer channel metadata is not
 enough.
 
 For one lane define A as lifetime committed fixed charges, S as lifetime gross

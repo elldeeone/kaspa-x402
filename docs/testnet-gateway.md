@@ -5,11 +5,12 @@ Durable Object. It is advertised when the operator enables it and registers an
 available funded head. Use `/hash-chain/report` for the protected resource,
 `/hash-chain/grant` for signed private grant claims, and `/hash-chain/status`
 for availability. See the [browser walkthrough](demo-implementer-guide.md#hash-chain-browser-demo)
-and [operator setup](demo-operations.md#hash-chain-demo). This candidate is
-not deployed merely by merging the source or updating the static website.
+and [operator setup](demo-operations.md#hash-chain-demo). The RC2 public
+gateway has this profile enabled with a registered head; its live status may
+change if a grant is abandoned or operator recovery is required.
 
-Status: v1 RC2 release candidate for `kaspa:testnet-10`. Fresh candidate and
-deployment evidence is published with the matching GitHub prerelease.
+Status: deployed `1.0.0-rc.2` release for `kaspa:testnet-10`. Release and
+hosted validation evidence is attached to the [published prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
@@ -70,56 +71,33 @@ origin and resource pins strict and point them at this same local origin.
 Funded tests still require the isolated wallet and environment described in
 [Live Testnet Proof](live-testnet-proof.md).
 
-## Recorded RC1 Deployment Evidence
+## Recorded RC2 Deployment Evidence
 
-The recorded RC1 gateway deployment was Worker version
-`f9ef62e0-17b4-45c4-8765-e3c1789efb99`, built from tagged commit
-`040b1ec8335abadbb3c69cf1ea720ae45816b0f7` with fresh
-`demo-gateway-v1.0.0-rc.1` durable state.
+The gateway was deployed on 2026-10-01 from release source
+`724c5fff22de500fcf729c43b59d25036fbffa9c`, with Worker version
+`b9022476-0b04-4a0b-8fe2-309aa54dd0ed` and
+`demo-gateway-v1.0.0-rc.2` durable state. This is the release deployment
+record; subsequent operator redeployments can have different version IDs.
 
-- `/health` reports enabled v1 RC1 `standard-native` exact settlement with PNN
-  broadcasting;
-- the scheduled canary passes the TN10 REST, current release metadata, schema, docs,
-  exact-offer, batch-offer, and unsupported-scheme checks;
-- funded exact transaction
-  `a502fc42046dd18b8ac7712e9b13ebe90f70c9d5094a86a73c4300e625943575`
-  settled at accepted finality;
-- its identical retry returned the stored HTTP `200` settlement, while
-  cross-resource reuse returned HTTP `409`.
+- `/health` reported enabled RC2 with `chainEvidenceSource: "pnn"`.
+- The PNN canary, supported profiles, and public unpaid exact/batch offers passed.
+- Hosted native exact returned HTTP `200`, its retry reused the settlement,
+  and cross-resource replay returned HTTP `409`.
+- Hosted batch deposit, voucher, and duplicate retry returned HTTP `200`.
+- Three browser hash-chain payments and their retries passed across an accepted
+  owner rotation; wallet and browser-storage cleanup passed.
+- Native, batch, and hash-chain retries recovered the same settlements after
+  gateway redeployment.
+- The exact release candidate passed all 18 fresh funded exact/batch/recovery/
+  refund flows, `validate:release`, and Linux/Windows CI.
 
-### Exact Tagged-Source Funded Run
-
-An operator launched a separate fresh-state funded run from a clean checkout of
-the exact tagged commit `040b1ec8335abadbb3c69cf1ea720ae45816b0f7` with the
-reference live adapter. The sanitized report was generated at
-`2026-09-13T14:27:25.308Z`; it recorded status `complete`, no findings, and all
-18 required exact and batch flow statuses as passed.
-
-The run's gateway integration exercised a local Worker built from that exact
-checkout at `http://localhost:8788`, not the public gateway deployment:
-
-- the initial batch deposit returned HTTP `200`, opened channel
-  `d963aa4eed7dab963977ba363d99f99ccef3548824d369944780ae1a88bbe0f8`,
-  charged `500` sompi, and settled transaction
-  `81af41d91b376230a056bdab9995d67707c08e43f8eb224a8701e3d921e500a0`;
-- the lifetime-voucher request returned HTTP `200`, kept the channel open,
-  raised the cumulative charge to `1000` sompi, and settled transaction
-  `df48f0991b819b21acbdc14cf2a7bea1f9bbb10c0fcb8a2274a751f019ee93ef`;
-  and
-- replaying the initial payment returned HTTP `200` with the original deposit
-  transaction id, confirming the tagged Worker's hosted-batch idempotency.
-
-The operator command was
-`npm run proof:live:check -- --live --write-report`, using
-`scripts/live-adapter-reference.mjs` and a new recovery directory. Reproduction
-requires an isolated funded Testnet wallet and the live-run environment
-described in [Live Testnet Proof](live-testnet-proof.md).
-
-The final raw report and signing material remain in the operator's ignored
-local evidence directory; the record above is the sanitized public evidence
-for the exact tagged-source run.
-
-This is bounded Testnet evidence, not a production or mainnet-readiness claim.
+Transaction IDs, archive checksums, source pins, and full sanitized evidence
+are attached to the [RC2 prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
+See the [RC2 release reference](rc2-release.md) for the current public surface.
+These proofs use configured public Testnet-10 nodes, without independent-node
+corroboration or mainnet proof. The
+[RC1 gateway record](https://github.com/elldeeone/kaspa-x402/blob/v1.0.0-rc.1/docs/testnet-gateway.md)
+is historical evidence for an earlier deployment.
 
 ## Current Payment Terms
 

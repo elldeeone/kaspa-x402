@@ -1,6 +1,6 @@
 # Kaspa x402 Batch Settlement Binding v3
 
-Status: v1 RC2, Testnet-10-only interoperability candidate
+Status: published in `1.0.0-rc.2`; Testnet-10-only interoperability candidate.
 
 This document defines the active Kaspa network binding for x402 v2
 `batch-settlement`.
@@ -755,5 +755,5 @@ partial/direct claims, provider-co-signed top-up, refund, old-domain rejection,
 client-only top-up rejection, and positive/negative execution against the
 pinned Rusty-Kaspa consensus checkout.
 
-Testnet-10 or local consensus evidence is alpha validation only. It is not
-mainnet or production proof.
+Testnet-10 or local consensus evidence is Testnet release-candidate validation
+only. It is not mainnet or production proof.

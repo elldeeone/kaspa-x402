@@ -11,14 +11,17 @@ and settle each payment on the Kaspa network.
 
 ## Release status
 
-Kaspa x402 `1.0.0-rc.2` is a v1 release candidate. All components use `kaspa:testnet-10`.
+Kaspa x402 [`1.0.0-rc.2`](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2)
+is published. All four public npm packages are available under the `rc` tag;
+the standards site and PNN-based hosted gateway serve Testnet-10. See the
+[RC2 release reference](docs/rc2-release.md) for profiles and validation evidence.
 
 The project blocks mainnet use until it completes the gates in
 [docs/mainnet-readiness.md](docs/mainnet-readiness.md). The reference runtimes
 use mainnet only if the operator sets `allowMainnet` to true.
 
 Package names, schemas, and field names can change before the stable `1.0.0`
-release. RC1 replaces all earlier versions. Current runtimes do not read or migrate
+release. The RC series replaces the earlier alpha state model. Current runtimes do not read or migrate
 channel state from a pre-RC version.
 
 ## Payment schemes
@@ -46,7 +49,7 @@ The `exact` scheme makes one native KAS transfer for a fixed price.
 }
 ```
 
-RC2 provides three exact profiles. Both advertise x402 v2's
+RC2 provides three exact profiles. All advertise x402 v2's
 `paymentFlow: "upfront"` because the payment settles before protected work.
 
 #### `standard-native`
@@ -62,7 +65,7 @@ The successor value increases by the advertised `amount`. This increase is the
 only payment to the merchant. An unpaid offer does not reserve or retire a
 KIP-10 head.
 
-#### `hash-chain-additive` (candidate)
+#### `hash-chain-additive` (optional RC2 profile)
 
 This optional native-KAS profile applies KCC20 `hash-chain/v1`'s one-use
 borrow authorization to a KIP-20 covenant head. A payer privately claims the
@@ -175,8 +178,8 @@ about Kaspa consensus finality.
   facilitator, and a CLI.
 - The [`examples/`](examples/) directory contains mock examples for paid HTTP,
   paid MCP tools, facilitator settlement, and recovery.
-- The [`contracts/`](contracts/) directory contains the SilverScript escrow
-  covenant source and its fixtures.
+- The [`contracts/`](contracts/) directory contains the SilverScript escrow,
+  additive-head, and hash-chain covenant sources and their fixtures.
 - The [`site/`](site/) directory contains the source for the standards website.
 - The [`packages/demo-gateway/`](packages/demo-gateway/) directory contains the
   private Cloudflare Worker for the hosted Testnet gateway.

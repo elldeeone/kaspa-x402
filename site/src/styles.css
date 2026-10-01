@@ -117,6 +117,20 @@ th {
   color: var(--muted);
 }
 
+.release-status {
+  padding: 0.6rem 0.75rem;
+  border: 1px solid var(--line);
+  background: var(--panel);
+  font-size: 0.875rem;
+}
+
+blockquote {
+  margin: 0 0 0.9rem;
+  padding-left: 1rem;
+  border-left: 3px solid var(--line);
+  color: var(--muted);
+}
+
 footer {
   margin-top: 3rem;
   padding-top: 1rem;

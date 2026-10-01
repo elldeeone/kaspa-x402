@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: active v1 RC2 exact binding
+Status: exact binding included in the published `1.0.0-rc.2` Testnet-10 release.
 
 This document defines the active Kaspa network binding for x402 v2 `exact`.
 
@@ -87,7 +87,7 @@ Both profiles include:
 | `extra.transactionEncoding`  | MUST equal `kaspa-sdk-safe-json-v2.0.0` in this draft.                                             |
 | `extra.payToScriptPublicKey` | MUST be the canonical serialized script public key derived independently from `payTo`.             |
 
-`mempool` is not sufficient hosted settlement finality for this alpha. It may
+`mempool` is not sufficient hosted settlement finality for this RC2 profile. It may
 remain an internal diagnostic state, but a successful protected request MUST
 use `accepted` or stronger finality.
 
@@ -772,7 +772,7 @@ Implementations MUST configure and test limits for:
 
 Bounds MUST be checked as early as possible and failures MUST be fail-closed.
 
-## Current alpha exclusions
+## Exclusions From This Exact Binding
 
 - fungible tokens or non-native assets;
 - arbitrary input scripts;

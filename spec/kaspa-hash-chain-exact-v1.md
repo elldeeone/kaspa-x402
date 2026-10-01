@@ -1,6 +1,9 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **implemented candidate on Testnet-10; not a published release profile**.
+Status: **published in `1.0.0-rc.2` as an optional Testnet-10 profile**.
+It is included in the public packages and hosted browser demo. The binding
+remains an interoperability candidate; mainnet and stable-release gates still
+apply. See the [RC2 release reference](../docs/rc2-release.md).
 
 This document specifies a native-KAS x402 v2 `exact` mechanism derived from
 KCC20's `hash-chain/v1` borrowed-receive authorization. It is a separate,
@@ -8,7 +11,7 @@ optional binding. It does not change the active
 [`kaspa-exact-v2`](kaspa-exact-v2.md) `standard-native` or `additive` profiles,
 and it is not a KCC20 token transfer.
 
-Normative sources read for this draft:
+Normative sources for this binding:
 [KCC20 borrowed-receive design](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0020/borrowed-receive-authorization.md),
 [KCC20 §5](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0020.md#L314-L365),
 [KIP-20 covenant IDs](https://github.com/kaspanet/kips/blob/e4ae2332117b5cb68bd6188e065ef885b6d17939/kip-0020.md),
@@ -441,9 +444,10 @@ that the transaction is in accepted chain state, not merely the mempool.
 `confirmed` may be offered only with a documented stronger policy. On node
 disagreement, absent historical input evidence, uncertain acceptance or a
 reorg, settlement and grant issuance fail closed and retain recovery state.
-The current reference server offers `accepted` only. Its selected-chain REST
-adapter cannot establish the stronger `confirmed` policy. The issuer checks
-the current head in the virtual UTXO set both before advertising a challenge
+The hosted RC2 gateway offers `accepted` only, using configured PNN/WSS
+selected-chain evidence and durable pre-spend snapshots. It does not advertise
+the stronger `confirmed` policy or depend on a public REST transaction index.
+The issuer checks the current head in the virtual UTXO set before advertising a challenge
 and again before delivering the private grant.
 
 Successful x402 response uses the standard transaction ID, network, payer
@@ -455,7 +459,7 @@ returned.
 ## Compatibility and release gates
 
 The active `standard-native`, KIP-10 `additive`, and batch-settlement wire
-profiles remain unchanged by this draft. Old clients skip this new binding;
+profiles retain their separate bindings. Old clients skip this new binding;
 new clients must opt in to its grant claim and `upfront` proof flow. An
 implementation MUST retain the existing x402 `payment-identifier` extension:
 the server advertises it, the payer echoes it, and settlement binds it to
@@ -465,14 +469,13 @@ negative vectors, client/server/facilitator/CLI coverage, transaction-v1
 consensus vectors, durable grant recovery and funded Testnet-10 evidence
 meet the [native-profile readiness bar](../docs/native-profile-boundary.md#readiness-expectations).
 
-The current upstream x402 `paymentFlow` rule also calls for explicitly
-advertising `upfront` on existing Kaspa exact offers that settle before the
-handler. That is a separate RC2 compatibility change; this draft does not
-change the shipped offers. The successor `payTo` net-gain interpretation
+RC2 also advertises `paymentFlow: "upfront"` on existing Kaspa exact offers
+that settle before the handler. The successor `payTo` net-gain interpretation
 requires upstream exact interoperability review before general advertising.
 Mainnet and stable release remain under their own readiness gates.
 
 No cryptographic property here implies on-chain price or time enforcement.
 No private grant should be represented as revoked until a conflicting owner
 transition is accepted. The actual contract and network evidence must prove
-the specified behavior before the binding is promoted from draft.
+the specified behavior before the binding is promoted beyond its RC2
+Testnet-10 interoperability candidate status.

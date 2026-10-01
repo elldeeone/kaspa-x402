@@ -3,10 +3,12 @@
 Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
 not a production readiness claim.
 
-The active v1 RC2 native profiles are:
+The published v1 RC2 native payment surface includes:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
-  `additive` head profile); and
+  `additive` head profile);
+- optional `hash-chain-additive` exact with `kaspa-hash-chain-exact-v1` and
+  `kaspa-x402-hash-chain-head-v1`; and
 - `batch-settlement` with `kaspa-escrow-v3` and
   `kaspa-x402-escrow-v4`.
 
@@ -21,6 +23,8 @@ opt-in and disabled by default until every gate below is closed.
 Audit scope must include:
 
 - exact transaction verification, replay protection, and finality policy;
+- hash-chain grant confidentiality and assignment, one-time key exposure,
+  abandoned grants, accepted owner rotation, and reorg recovery;
 - singleton KIP-20 genesis, stable covenant-id derivation, current-outpoint
   tracking, and pruning-safe genesis evidence;
 - batch voucher, claim, top-up, and refund paths, including A/S/T/V/R

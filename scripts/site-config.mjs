@@ -103,6 +103,7 @@ export const CONTRACT_FILES = [
 ];
 
 export const PUBLIC_DOC_FILES = [
+  "docs/rc2-release.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
   "docs/demo-operations.md",
@@ -141,7 +142,7 @@ export const ARTIFACT_NOTES = {
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-hash-chain-exact-v1.md":
-    "Candidate exact profile: native-KAS hash-chain grants, payer broadcast, and accepted payment proof.",
+    "Released RC2 optional exact profile: native-KAS one-time hash-chain grants, payer broadcast, and accepted payment proof.",
   "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
@@ -163,15 +164,17 @@ export const ARTIFACT_NOTES = {
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
   "docs/testnet-gateway.md":
-    "Hosted `kaspa:testnet-10` gateway for exact and batch-settlement integration tests.",
+    "Deployed RC2 Testnet-10 PNN gateway for native exact, hash-chain, and batch integration tests.",
+  "docs/rc2-release.md":
+    "Published RC2 packages, payment profiles, PNN gateway, browser demo, and validation evidence.",
   "docs/demo-operations.md":
     "Operator runbook for the hosted testnet gateway: deploy, rollback, disable, canary, state, and incident notes.",
   "docs/demo-implementer-guide.md":
     "Third-party implementer guide for schemas, vectors, exact and batch gateway calls, and error handling.",
   "docs/hash-chain-live-proof.md":
-    "Funded candidate Testnet-10 hash-chain evidence and its limits.",
+    "RC2 hosted-browser hash-chain evidence and historical Testnet-10 proof records.",
   "docs/live-testnet-report.md":
-    "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
+    "RC2 funded Testnet-10 evidence, with the earlier RC1 run retained as history.",
   "docs/live-testnet-proof.md":
     "How exact and full v1 RC2 batch-lifecycle proof artifacts are produced and independently validated.",
   "docs/security-threat-model.md":
@@ -190,6 +193,7 @@ export const ARTIFACT_NOTES = {
 
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
+  { title: "Current Release", files: ["docs/rc2-release.md"] },
   { title: "Adoption", files: ["docs/adoption-examples.md"] },
   {
     title: "Implementation",

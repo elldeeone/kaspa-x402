@@ -1,6 +1,8 @@
 # Live Testnet Proof
 
-Status: release-candidate proof definition for `kaspa:testnet-10`.
+Status: proof definition used for the published RC2 `kaspa:testnet-10` release.
+The completed 18-flow run and additional hosted hash-chain/browser checks
+are recorded in the [RC2 release evidence](rc2-release.md#release-validation).
 
 The live proof runner is `scripts/proof-live-testnet.mjs`. It validates a live
 adapter result and writes ignored operational artifacts under

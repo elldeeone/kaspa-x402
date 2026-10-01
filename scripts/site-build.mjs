@@ -3,6 +3,7 @@ import { execFileSync } from "node:child_process";
 import fs from "node:fs";
 import path from "node:path";
 import { isPublishableDirtyPath } from "./site-inputs.mjs";
+import { createSiteMarkdown } from "./site-markdown.mjs";
 import { fileURLToPath } from "node:url";
 import { buildBrowserHashChain } from "./build-browser-hash-chain.mjs";
 
@@ -46,6 +47,7 @@ const publishedArtifactFiles = new Set([
 ]);
 const siteScriptFiles = [
   "scripts/site-build.mjs",
+  "scripts/site-markdown.mjs",
   "scripts/site-check.mjs",
   "scripts/site-config.mjs",
   "scripts/site-inputs.mjs",
@@ -67,6 +69,7 @@ const commit = git(["rev-parse", "HEAD"]);
 const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
 const sourceState = dirtyInputs.length > 0 ? "working-tree-dirty" : "git-head";
+const siteMarkdown = createSiteMarkdown(rewriteMarkdownHref);
 
 if (requireClean && dirtyInputs.length > 0) {
   throw new Error(
@@ -126,7 +129,8 @@ function writeHomePage() {
   "amount": "<sompi>",
   "extra": {
     "binding": "kaspa-exact-v2",
-    "profile": "standard-native"
+    "profile": "standard-native",
+    "paymentFlow": "upfront"
   }
 }`;
   const batchSnippet = `{
@@ -150,9 +154,9 @@ function writeHomePage() {
 
     <h2 id="status">Status</h2>
     <ul>
-      <li>Current recommended Testnet release: <code>${escapeHtml(releaseVersion)}</code>, with draft specs, JSON schemas, conformance vectors, and TypeScript packages under the <code>rc</code> npm tag.</li>
+      <li>Released Testnet candidate: <a href="${repositoryUrl}/releases/tag/v${escapeHtml(releaseVersion)}"><code>${escapeHtml(releaseVersion)}</code></a>. All four public npm packages are published under the <code>rc</code> tag, with specifications, JSON schemas, and conformance vectors.</li>
       <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> on Testnet-10. The release completed a fresh funded 18-flow exact and batch run; the deployed gateway also passed a funded exact canary and its scheduled health checks. See the <a href="/docs/testnet-gateway/">gateway reference</a> for current evidence.</li>
+      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> using Testnet-10 PNN nodes for native exact, batch, and hash-chain payments. Release validation covered all 18 funded exact/batch flows, hosted payments, browser payments, owner rotation, and retries after redeployment. See the <a href="/docs/rc2-release/">RC2 release and evidence</a>.</li>
       <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
       <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
       <li>Stability: package names, schemas, and field names may change before stable <code>1.0.0</code>. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
@@ -177,7 +181,7 @@ function writeHomePage() {
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
-    <p>The candidate <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile uses one-use merchant grants. The payer broadcasts a payment that increases the head and advances its hash guard. Try it in the <a href="/demo/#demo-hash-chain">browser demo</a> when the hosted issuer is available.</p>
+    <p>RC2 also ships the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. Try it in the <a href="/demo/#demo-hash-chain">browser demo</a> when the hosted issuer is available.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated requests with a payer-approved fixed charge per invocation against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -594,6 +598,7 @@ function writePnnSpikeJson() {
         "node info",
         "DAA score",
         "transaction status lookup missing-entry path",
+        "hash-chain grant claim, signing, broadcast, and identical retry",
       ],
       constraints: [
         "testnet-only",
@@ -603,14 +608,17 @@ function writePnnSpikeJson() {
     },
     worker: {
       status:
-        "v1 RC2 is deployed at https://demo.kaspa-x402.org; funded exact and fresh-state batch validation completed, and the scheduled canary passes",
+        "1.0.0-rc.2 is released at https://demo.kaspa-x402.org with PNN-only chain evidence; funded native, batch, and browser hash-chain validation completed",
       verifiedCapabilities: [
-        "REST chain health",
+        "PNN chain health and selected-chain evidence",
         "Durable Object state",
         "exact 402 offers",
         "standard-native exact settlement and idempotent replay",
         "cross-resource exact replay rejection",
         "batch-settlement 402 offers",
+        "batch deposit, voucher, and duplicate retry",
+        "hash-chain payments across owner rotation",
+        "native, batch, and hash-chain retry recovery after redeployment",
         "unsupported-scheme rejection",
       ],
       constraints: [
@@ -635,7 +643,7 @@ function writePnnSpikeJson() {
 }
 
 function statusLine() {
-  return `<p class="muted">Status: v1 release candidate targeting <code>kaspa:testnet-10</code>. Mainnet use remains blocked by the documented readiness gates.</p>`;
+  return `<p class="muted">Published release: <code>${escapeHtml(releaseVersion)}</code> for <code>kaspa:testnet-10</code>. See the <a href="/docs/rc2-release/">release details</a>. Mainnet use remains blocked by the documented readiness gates.</p>`;
 }
 
 function annotatedRow(href, label, note, sha256) {
@@ -797,10 +805,10 @@ function layout(title, body, options = {}) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(fullTitle)}</title>
-  <meta name="description" content="Proposed native Kaspa bindings for x402 payments: schemas, specs, conformance vectors, and docs.">
+  <meta name="description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: released Testnet-10 packages, payment profiles, schemas, and PNN gateway.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="${escapeHtml(fullTitle)}">
-  <meta property="og:description" content="Proposed native Kaspa bindings for x402 payments: schemas, specs, conformance vectors, and docs.">
+  <meta property="og:description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: released Testnet-10 packages, payment profiles, schemas, and PNN gateway.">
   <meta property="og:image" content="${SITE_BASE_URL}/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="/assets/styles.css">
@@ -818,135 +826,19 @@ ${options.head ?? ""}
       <a href="${repositoryUrl}">GitHub</a>
     </nav>
   </header>
+  <p class="release-status"><strong>${escapeHtml(releaseVersion)} released</strong> · Testnet-10 · <a href="/docs/rc2-release/">Release details</a></p>
   ${body}
-  <footer>Prerelease standards reference for the Kaspa x402 binding. This domain does not host a custodial wallet, hosted signer, facilitator, or payment API.</footer>
+  <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/rc2-release/">Published release and validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>
 </body>
 </html>`;
 }
 
 function markdownToHtml(markdown, sourceDir) {
-  const lines = markdown.split(/\r?\n/);
-  const out = [];
-  let inCode = false;
-  let inList = false;
-  let inTable = false;
-  let tableLines = [];
-  let paragraphLines = [];
-  let codeLines = [];
-
-  const closeList = () => {
-    if (inList) {
-      out.push("</ul>");
-      inList = false;
-    }
-  };
-  const closeTable = () => {
-    if (inTable) {
-      out.push(markdownTableToHtml(tableLines));
-      tableLines = [];
-      inTable = false;
-    }
-  };
-  const closeParagraph = () => {
-    if (paragraphLines.length > 0) {
-      out.push(`<p>${paragraphLines.join(" ")}</p>`);
-      paragraphLines = [];
-    }
-  };
-
-  for (const line of lines) {
-    if (line.startsWith("```")) {
-      closeList();
-      closeTable();
-      closeParagraph();
-      if (inCode) {
-        out.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
-        codeLines = [];
-        inCode = false;
-      } else {
-        inCode = true;
-      }
-      continue;
-    }
-    if (inCode) {
-      codeLines.push(escapeHtml(line));
-      continue;
-    }
-    if (/^\|.*\|$/.test(line.trim())) {
-      closeList();
-      closeParagraph();
-      inTable = true;
-      tableLines.push(line);
-      continue;
-    }
-    closeTable();
-    if (line.trim() === "") {
-      closeList();
-      closeParagraph();
-      continue;
-    }
-    const heading = /^(#{1,4})\s+(.+)$/.exec(line);
-    if (heading) {
-      closeList();
-      closeParagraph();
-      const level = heading[1].length;
-      out.push(
-        `<h${level}>${inlineMarkdown(heading[2], sourceDir)}</h${level}>`,
-      );
-      continue;
-    }
-    const bullet = /^-\s+(.+)$/.exec(line);
-    if (bullet) {
-      closeParagraph();
-      if (!inList) {
-        out.push("<ul>");
-        inList = true;
-      }
-      out.push(`<li>${inlineMarkdown(bullet[1], sourceDir)}</li>`);
-      continue;
-    }
-    if (inList) {
-      out[out.length - 1] = out[out.length - 1].replace(
-        /<\/li>$/,
-        ` ${inlineMarkdown(line.trim(), sourceDir)}</li>`,
-      );
-      continue;
-    }
-    paragraphLines.push(inlineMarkdown(line, sourceDir));
-  }
-
-  closeList();
-  closeTable();
-  closeParagraph();
-  if (inCode) out.push(`<pre><code>${codeLines.join("\n")}</code></pre>`);
-  return out.join("\n");
-}
-
-function markdownTableToHtml(lines) {
-  const rows = lines
-    .filter((line) => !/^\|\s*-/.test(line))
-    .map((line) =>
-      line
-        .trim()
-        .slice(1, -1)
-        .split("|")
-        .map((cell) => inlineMarkdown(cell.trim(), "")),
-    );
-  if (rows.length === 0) return "";
-  const [head, ...body] = rows;
-  const thead = `<thead><tr>${head.map((cell) => `<th>${cell}</th>`).join("")}</tr></thead>`;
-  const tbody = `<tbody>${body.map((row) => `<tr>${row.map((cell) => `<td>${cell}</td>`).join("")}</tr>`).join("")}</tbody>`;
-  return `<div class="table-wrap"><table>${thead}${tbody}</table></div>`;
+  return siteMarkdown.render(markdown, sourceDir);
 }
 
 function inlineMarkdown(value, sourceDir) {
-  return escapeHtml(value)
-    .replace(/`([^`]+)`/g, "<code>$1</code>")
-    .replace(
-      /\[([^\]]+)\]\(([^)]+)\)/g,
-      (_match, label, href) =>
-        `<a href="${escapeAttribute(rewriteMarkdownHref(href, sourceDir))}">${label}</a>`,
-    );
+  return siteMarkdown.renderInline(value, sourceDir);
 }
 
 function rewriteMarkdownHref(href, sourceDir) {

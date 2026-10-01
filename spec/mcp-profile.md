@@ -1,6 +1,6 @@
 # MCP Profile
 
-Status: draft
+Status: specification included in the published RC2 release; interoperability draft.
 
 Kaspa x402 treats MCP as a first-class transport for paid tools using `exact` and `batch-settlement`.
 

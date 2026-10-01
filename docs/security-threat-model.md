@@ -1,6 +1,6 @@
 # Security Threat Model
 
-Status: release-candidate threat model for the Testnet-10 exact and batch-settlement
+Status: threat model for the published RC2 Testnet-10 exact and batch-settlement
 profiles. v1 RC2 uses `kaspa-escrow-v3` and template
 `kaspa-x402-escrow-v4`; pre-RC runtime profiles are not supported.
 
@@ -10,6 +10,7 @@ profiles. v1 RC2 uses `kaspa-escrow-v3` and template
 - server revenue outputs and claim authority;
 - client top-up and timeout-refund authority for batch channels;
 - signing keys for exact payments, vouchers, claims, top-ups, and refunds;
+- confidential hash-chain one-time signing grants and owner recovery authority;
 - durable payment-identifier, replay, current-outpoint, and channel accounting
   state;
 - protected HTTP resources and MCP tool results.
@@ -18,7 +19,7 @@ profiles. v1 RC2 uses `kaspa-escrow-v3` and template
 
 - client wallet, funding, signing, and address-codec adapters;
 - server verification, settlement, and state-store adapters;
-- Kaspa Testnet-10 RPC/node/indexer finality observations;
+- configured Kaspa Testnet-10 PNN/WSS node evidence for the hosted gateway;
 - optional self-hosted facilitator endpoints;
 - operator live-testnet adapters and recovery journals.
 
@@ -83,6 +84,22 @@ Required checks include:
   while default standard-native exact remains usable;
 - the transaction/output identity has not already been consumed;
 - finality satisfies the server policy before protected content is released.
+
+## Hash-Chain Exact Profile
+
+RC2 includes `hash-chain-additive` with `kaspa-hash-chain-exact-v1`. Its
+one-time signing grant authorizes one accepted head spend, while the x402
+verifier separately enforces the exact quoted increase and payer/request
+binding. A key holder can construct competing transactions or consume the
+grant with an underpayment that does not buy a resource.
+
+The issuer encrypts grants at rest, assigns each grant durably to one payer
+and request before disclosure, and checks current-head PNN evidence. Private
+grant keys must stay out of public offers, headers, logs, and URLs. A disclosed
+key remains usable on-chain after off-chain expiry until an accepted head
+transition invalidates it. Abandonment requires owner rotation; uncertain
+broadcasts and reorgs require durable reconciliation before a new grant can
+be issued. See the [hash-chain binding](../spec/kaspa-hash-chain-exact-v1.md).
 
 ## Batch-Settlement Profile
 

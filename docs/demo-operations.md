@@ -1,22 +1,19 @@
 # Demo Gateway Operations
 
-Status: release-candidate operations runbook for the hosted `kaspa:testnet-10` gateway.
+Status: operations runbook for the deployed RC2 `kaspa:testnet-10` gateway.
 This runbook describes the public demo service at:
 
 ```text
 https://demo.kaspa-x402.org
 ```
 
-Recorded RC1 deployment evidence: Worker version
-`f9ef62e0-17b4-45c4-8765-e3c1789efb99`, built from tagged commit
-`040b1ec8335abadbb3c69cf1ea720ae45816b0f7`. Funded exact transaction
-`a502fc42046dd18b8ac7712e9b13ebe90f70c9d5094a86a73c4300e625943575`
-settled at accepted finality; its identical retry returned the stored success,
-and cross-resource reuse was rejected. The fresh funded release run also
-completed all 18 required flows. Its batch deposit, voucher, and
-idempotent-retry checks ran against a local Worker built from the exact RC
-source, not the public gateway; the sanitized transaction record is in
-[Testnet Gateway](testnet-gateway.md#exact-tagged-source-funded-run).
+RC2 was published and deployed on 2026-10-01. The hosted gateway uses
+PNN/WSS evidence for native exact, batch, and hash-chain payments. Release
+validation covered all 18 funded flows, hosted native/batch payments, three
+browser hash-chain payments across rotation, and retries after redeployment.
+The [RC2 release reference](rc2-release.md) and
+[gateway deployment record](testnet-gateway.md#recorded-rc2-deployment-evidence)
+link to the published evidence and identify the release source.
 
 The gateway is an integration target, not a wallet, custodian, faucet,
 facilitator, mainnet service, or availability commitment.
@@ -340,7 +337,7 @@ does not return protected content.
 
 ## Hash-chain Demo
 
-The hash-chain candidate can run in the existing `GatewayState` Durable
+The RC2 hash-chain demo runs in the existing `GatewayState` Durable
 Object. Grant tables use its SQLite storage; payment responses use the existing
 gateway ledger. Pages, the Worker, its binding, and the standard exact and batch
 routes remain the same. One funded head and manual resets are sufficient for
@@ -416,6 +413,8 @@ the proxy bearer token and a 64-character lowercase hex caller header.
 
 For a separate Node host, the Worker can proxy the same resource and grant
 routes under the public origin. Use this option instead of Cloudflare hosting.
+This optional Node adapter still uses a REST index for selected-chain reads;
+it is not the PNN-only configuration deployed by the RC2 public gateway.
 
 Build the workspaces first (`npm run build`). Use Node 22.13 or newer and the
 pinned Rusty-Kaspa 2.0.0 Node WASM SDK, including its `websocket` dependency.

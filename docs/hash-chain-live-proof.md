@@ -1,10 +1,21 @@
 # Native-KAS hash-chain Testnet-10 proof
 
-Fresh RC2 funded and hosted-browser evidence is published with the
-[`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
-The runs below record earlier candidate validation of the `hash-chain-additive`
-x402 profile. They are Testnet-10 evidence, not mainnet evidence.
-The latest run recorded below used committed runtime code `6d02163` on 2026-09-26.
+## RC2 — Current Published Evidence
+
+The published [`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2)
+includes the optional native-KAS `hash-chain-additive` profile and hosted
+browser demo. Release checks on 2026-10-01 passed three funded browser
+payments and identical retries across owner rotation, including a retry
+after Worker redeployment. The gateway uses PNN/WSS evidence throughout.
+See the [RC2 release reference](rc2-release.md#release-validation) and its
+attached transaction evidence and checksums.
+
+## Historical Candidate Evidence
+
+The runs below record earlier Testnet-10 candidate validation and retain
+their original evidence-source boundaries. They do not describe the current
+RC2 hosted deployment. The latest historical run below used committed runtime
+code `6d02163` on 2026-09-26.
 Its detailed report is ignored by Git at
 `.kaspa-x402-live/hash-chain-security-6d02163-20260926-run1/report.json`;
 signing keys and the encrypted grant database remain in that private directory.

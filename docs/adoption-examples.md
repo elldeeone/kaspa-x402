@@ -1,6 +1,6 @@
 # Adoption Examples
 
-Status: release-candidate examples for local and testnet-oriented review.
+Status: examples shipped with the published RC2 Testnet-10 release.
 
 The repository examples run in mock mode by default. They do not require wallet
 secrets, RPC credentials, or a live node.
@@ -58,8 +58,9 @@ node examples/self-hosted-facilitator/index.mjs
 ```
 
 The facilitator example shows compatibility endpoints over the direct-mode
-server verification and settlement path. This package is not part of the initial
-alpha publish set.
+server verification and settlement path. The facilitator is available from
+repository source; the four public RC2 npm packages are core, covenant, client,
+and server.
 
 ## Inspect Recovery Behavior
 

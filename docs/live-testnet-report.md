@@ -1,9 +1,29 @@
 # Live Testnet Report
 
-The fresh RC2 proof is published with the
-[`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2),
-including the exact candidate commit and sanitized Testnet-10 evidence.
-The report below records the earlier successful `1.0.0-rc.1` run.
+## RC2 — Current Published Release
+
+`1.0.0-rc.2` was published on 2026-10-01 from
+`724c5fff22de500fcf729c43b59d25036fbffa9c`. Its fresh funded proof completed
+at `2026-10-01T03:29:38.675Z` with all 18 exact, batch, recovery, and refund
+flow statuses passed. Separate public gateway checks passed native exact,
+batch deposit/voucher/retry, and three browser hash-chain payments across
+owner rotation. Native, batch, and hash-chain retries returned the same
+settlements after redeployment. Linux/Windows CI and `validate:release`
+passed on the exact source commit.
+
+The hosted RC2 gateway uses configured Testnet-10 PNN/WSS nodes for its chain
+evidence. It does not depend on the public REST transaction index. The proofs
+use configured public nodes, without independent-node corroboration or mainnet
+proof.
+
+See the [RC2 release reference](rc2-release.md) and
+[published evidence and checksums](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2)
+for the current report, source pins, package bytes, and funded transaction IDs.
+
+## Historical RC1 Run — 2026-09-13
+
+The record below describes `1.0.0-rc.1`. Its source, node, compiler, and
+transaction IDs belong to that earlier run and are retained as history.
 
 Generated: `2026-09-13T12:32:38.284Z`
 
@@ -36,7 +56,7 @@ The raw report and signing material remain in an ignored owner-only local
 directory; this file contains only sanitized public evidence.
 Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 
-## Controlled Funding Split
+### Controlled Funding Split
 
 - Transaction id:
   `77af9219fb9fe5ab70506ac7443c43901436157bff8204c02909a60c0c00a77e`
@@ -46,9 +66,9 @@ Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
 The split supplied independent funding inputs for conflict and recovery tests.
 It did not disclose or copy wallet key material.
 
-## Standard-Native Exact
+### Standard-Native Exact
 
-### Tiny payment
+#### Tiny payment
 
 - Transaction id:
   `b46de1e1ffc502c69003043e81f7f3c98e49b402a836eb0012300487b2b77b7c`
@@ -64,7 +84,7 @@ It did not disclose or copy wallet key material.
 - Re-authorized cross-request replay: HTTP `409`,
   `invalid_transaction_state`
 
-### Normal payment
+#### Normal payment
 
 - Transaction id:
   `850a5a61a2fba4d0db75488d0e568c9411a7736adbc53aa60836445c11e51508`
@@ -83,7 +103,7 @@ In both cases the merchant output equalled the advertised amount exactly. The
 tiny run records the accepted TN10 result and SDK policy calculation
 separately; it does not claim a universal Kaspa minimum payment or fee.
 
-## KIP-10 Additive Exact
+### KIP-10 Additive Exact
 
 Two independent head UTXOs were funded:
 
@@ -113,7 +133,7 @@ The primary additive payment proved:
 There was no separate merchant payment output. The KIP-10 successor delta was
 the payment.
 
-## Concurrent Head Conflict And Retry
+### Concurrent Head Conflict And Retry
 
 Two different signed transactions raced the same version-0 head:
 
@@ -126,7 +146,7 @@ Exactly one request returned `200`; the loser received a corrective `402` and
 remained durably pending until authoritative reconciliation. No replacement
 was admitted and protected work ran once.
 
-## Verification And Recovery
+### Verification And Recovery
 
 - Mutated and expired request authorizations each returned a corrective `402`
   `invalid_payload`; protected work ran zero times and no transaction was
@@ -143,12 +163,12 @@ was admitted and protected work ran once.
   externally advanced a head. Trusted candidate evidence reconciled the
   durable head from version `1` to `2`; no address-only inference was used.
 
-## KIP-20 Batch Lifecycle
+### KIP-20 Batch Lifecycle
 
 Stable covenant ID:
 `a3d8472d6e2854190078ab420ecf7e7ca3ef99d79980080d062d5ddfd256065d`
 
-### Singleton genesis and vouchers
+#### Singleton genesis and vouchers
 
 - Deposit transaction:
   `0ea2a1b1ae8344101fe62b9006b3191b9da230c47512a48eddf83167f7cec4b0`
@@ -159,7 +179,7 @@ Stable covenant ID:
 - Voucher-only second charge and new lifetime ceiling: `200000000` sompi
 - Finality: `accepted`
 
-### Two partial claims against one voucher
+#### Two partial claims against one voucher
 
 - First claim transaction:
   `12afb363911621ecb7c1132f207c534927901a8000fc17c5aa84dbf0238eeb11`
@@ -180,7 +200,7 @@ Both claims preserved the covenant ID while advancing the active outpoint,
 state script, and derived P2SH address. The second claim reused the same
 cumulative voucher without exceeding its ceiling.
 
-### Same-lineage top-up and restart reload
+#### Same-lineage top-up and restart reload
 
 - Top-up transaction:
   `88def5fa31056610167781874a2a05439f804eed8d48320a01211bf40b357fd9`
@@ -196,7 +216,7 @@ client/server runtime reloaded the genesis evidence, top-up evidence, active
 outpoint, channel state, and the exact pre-broadcast claim artifact. No open
 claim attempt survived the accepted top-up.
 
-### Stale-head rejection and terminal refund
+#### Stale-head rejection and terminal refund
 
 - A stale claim transaction against the spent genesis outpoint was submitted
   to TN10 and definitively rejected while the current continuation remained
@@ -221,7 +241,7 @@ The harness authenticated the version-1 batch transactions against selected
 chain evidence and required the configured confirmation threshold before
 reporting confirmed finality.
 
-## Required Flow Status
+### Required Flow Status
 
 All 18 required flows passed:
 
@@ -235,7 +255,7 @@ All 18 required flows passed:
 
 The funding wallet retained `58689925100` sompi after the run.
 
-## Mainnet Read-Only And Offline Check
+### Mainnet Read-Only And Offline Check
 
 The latest separate mainnet read-only check reported a synced Rusty Kaspa
 `2.0.1` node with UTXO index enabled beyond the recorded Toccata activation

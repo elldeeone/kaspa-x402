@@ -1,6 +1,6 @@
 # Facilitator Profile
 
-Status: draft
+Status: specification included in the published RC2 release; interoperability draft.
 
 Kaspa x402 supports facilitators for `exact` and `batch-settlement`, but must not require a third-party hosted facilitator.
 

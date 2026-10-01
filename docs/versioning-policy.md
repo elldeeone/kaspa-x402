@@ -1,7 +1,7 @@
 # Versioning Policy
 
-Status: release-candidate policy. This file describes how changes are labeled
-before the stable `1.0.0` release.
+Status: policy for the published RC2 release. This file describes how changes
+are labeled before the stable `1.0.0` release.
 
 ## Spec Versions
 
@@ -44,6 +44,7 @@ Template IDs identify covenant families. The current template ids are:
 ```text
 kaspa-x402-escrow-v4
 kaspa-x402-kip10-additive-v1
+kaspa-x402-hash-chain-head-v1
 ```
 
 Change the template id when the script source, argument layout, successor-output

@@ -27,6 +27,7 @@ const errors = [];
 const requireClean = process.argv.includes("--require-clean");
 const siteScriptFiles = [
   "scripts/site-build.mjs",
+  "scripts/site-markdown.mjs",
   "scripts/site-check.mjs",
   "scripts/site-config.mjs",
   "scripts/site-inputs.mjs",
@@ -295,6 +296,22 @@ function checkContent() {
       if (pattern.test(text))
         fail(`mainnet/production readiness claim in ${relative}`);
     }
+  }
+
+  const { releaseVersion } = readJson(path.join(outDir, "site-manifest.json"));
+  for (const file of textFiles.filter((file) => file.endsWith(".html"))) {
+    assertContains(
+      file,
+      `<strong>${releaseVersion} released</strong>`,
+      "shared published-release status",
+    );
+  }
+  for (const source of [...SPEC_FILES, ...PUBLIC_DOC_FILES]) {
+    const file = path.join(outDir, source.replace(/\.md$/, "/index.html"));
+    const prose = fs.readFileSync(file, "utf8")
+      .replace(/<(pre|code)\b[^>]*>[\s\S]*?<\/\1>/gi, "")
+      .replace(/<[^>]*>/g, "");
+    if (prose.includes("**")) fail(`unrendered Markdown emphasis in ${source}`);
   }
 
   const home = path.join(outDir, "index.html");

@@ -1,8 +1,8 @@
 # Native Profile Boundary
 
-Status: active v1 RC2 boundary for the shipped Testnet-10 package surface.
+Status: boundary for the published `1.0.0-rc.2` Testnet-10 package surface.
 
-The current native Kaspa x402 surface ships two profiles:
+The current native Kaspa x402 surface ships two x402 schemes:
 
 - `exact` with `kaspa-exact-v2` for fixed-price one-shot transfers. Its
   default `standard-native` profile is an ordinary native-KAS transfer; its
@@ -11,7 +11,14 @@ The current native Kaspa x402 surface ships two profiles:
 - `batch-settlement` with `kaspa-escrow-v3` for repeated fixed-price
   requests backed by a funded escrow/channel.
 
-Both profiles are represented in schemas, vectors, examples, public specs,
+RC2 also ships the optional `hash-chain-additive` exact profile under the
+separate `kaspa-hash-chain-exact-v1` binding. A privately assigned one-time
+signing grant lets the payer increase a merchant KIP-20 head and advance its
+hash guard without merchant co-signing. This is native KAS, not KCC20 token
+settlement. See its [specification](../spec/kaspa-hash-chain-exact-v1.md) and
+the [RC2 release reference](rc2-release.md).
+
+Both schemes are represented in schemas, vectors, examples, public specs,
 runtime packages, and the live proof harness. Other x402 schemes are outside
 the shipped compatibility contract until they can be expressed with native
 Kaspa validation and covered by the same level of schemas, vectors, tests, and
@@ -26,6 +33,10 @@ to the advertised recipient. Optional `additive` requires a signed transaction
 that spends the advertised current KIP-10 head and recreates its same-script
 successor with an exact delta equal to the advertised amount. The head challenge
 is not an exclusive reservation and there is no second merchant payment output.
+`kaspa-hash-chain-exact-v1` similarly checks an exact successor increase,
+but its one-use grant changes the successor guard and script. The x402 layer
+binds the payment to its payer and request. Grant expiry does not revoke a
+disclosed on-chain key; accepted head advancement or owner rotation does.
 `kaspa-escrow-v3` settles native KAS from a funded
 `kaspa-x402-escrow-v4` channel. Buyer vouchers sign lifetime cumulative
 ceilings, so the provider may make partial claims without resetting the
@@ -80,10 +91,10 @@ must clear the full readiness bar below before it can ship.
 - Public schemas accept only `exact` and `batch-settlement`.
 - Payment payloads accept only `exact-transaction`, `deposit-voucher`, `voucher`,
   `claim`, and `refund`.
-- Kaspa requirements extras accept only `kaspa-exact-v2` and
-  `kaspa-escrow-v3`.
-- Covenant helpers expose only the escrow template and batch deposit, partial
-  claim, top-up, and refund transaction builders.
+- Kaspa requirements extras accept `kaspa-exact-v2`,
+  `kaspa-hash-chain-exact-v1`, and `kaspa-escrow-v3`.
+- Covenant helpers include escrow deposit/claim/top-up/refund, KIP-10 additive,
+  and hash-chain head, borrow, owner-rotation, and owner-sweep support.
 - Client, server, facilitator, and CLI packages must not advertise or accept
   unsupported schemes.
 - The boundary is enforced at different points on the two sides of the wire:
