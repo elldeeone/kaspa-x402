@@ -56,6 +56,11 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   #candidate?: SafeTransaction;
   #candidateRecord?: PnnEvidenceRecord;
   #origins: PnnUtxo[] = [];
+  #paymentOutput?: { address: string; index: number };
+  #verified = new Map<
+    string,
+    { transaction: RestTransaction; evidence: AcceptedTransactionEvidence }
+  >();
   #snapshot?: Awaited<ReturnType<KaspaPnnClient["snapshotHashChainUtxos"]>>;
 
   constructor(
@@ -66,7 +71,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   ) {}
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest) {
-    this.#candidate = parseSafeTransactionArtifact(request.transaction);
+    this.#resetVerification(request);
     // Signature/envelope validation in the shared verifier precedes node I/O.
     const result = await new VerifiedExactTransactionVerifier(
       this,
@@ -89,8 +94,22 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     return result;
   }
 
+  #resetVerification(request: ExactTransactionVerificationRequest): void {
+    this.#verified.clear();
+    this.#candidateRecord = undefined;
+    this.#origins = [];
+    this.#snapshot = undefined;
+    this.#paymentOutput = {
+      address: request.payTo,
+      index: request.paymentOutputIndex,
+    };
+    this.#candidate = parseSafeTransactionArtifact(request.transaction);
+  }
+
   async getTransaction(transactionId: string): Promise<RestTransaction | null> {
     const id = hashValue(transactionId, "PNN transaction id");
+    const verified = this.#verified.get(id);
+    if (verified) return verified.transaction;
     if (this.#candidate?.id === id) return this.#candidateTransaction();
     const origins = this.#origins.filter(
       (origin) => origin.outpoint.txid === id,
@@ -107,11 +126,11 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       };
     const cached = await this.store.loadPnnEvidence(id);
     if (cached?.transaction && cached.evidence) {
-      await this.pnn.confirmAcceptedTransaction(
+      const evidence = await this.pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
       );
-      return cached.transaction;
+      return this.#remember(id, cached.transaction, evidence);
     }
     const snapshot = await this.pnn.snapshotHashChainUtxos(
       this.book.addresses(),
@@ -141,7 +160,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       evidence,
       ...(cached?.origins ? { origins: cached.origins } : {}),
     });
-    return transaction;
+    return this.#remember(id, transaction, evidence);
   }
 
   async #candidateTransaction(): Promise<RestTransaction | null> {
@@ -150,12 +169,13 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     this.#candidateRecord = cached;
     if (cached?.origins) this.#origins = cached.origins;
     if (cached?.transaction && cached.evidence) {
-      await this.pnn.confirmAcceptedTransaction(
+      const evidence = await this.pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
       );
       assertChainTransactionMatchesSafe(cached.transaction, candidate);
-      return cached.transaction;
+      this.#candidateRecord = { ...cached, evidence };
+      return this.#remember(candidate.id, cached.transaction, evidence);
     }
     const addresses = [
       ...new Set(
@@ -182,9 +202,27 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       this.#origins = currentOrigins.map((matches) => matches[0]!);
       return null;
     }
+    let from = cached?.checkpoint;
+    if (!cached) {
+      const snapshot = await this.pnn.snapshotHashChainUtxos([
+        this.#paymentOutput!.address,
+      ]);
+      const output = snapshot.utxos.find((item) =>
+        sameOutpoint(item.outpoint, {
+          txid: candidate.id,
+          index: this.#paymentOutput!.index,
+        }),
+      );
+      if (!output)
+        throw unavailable(
+          "spent payment inputs have no accepted candidate output or durable receipt",
+        );
+      if (output.blockDaaScore)
+        from = await this.store.findPnnCheckpointBefore(output.blockDaaScore);
+    }
     const accepted = await this.pnn.findAcceptedTransaction(
       candidate.id,
-      cached ? { from: cached.checkpoint } : {},
+      from ? { from } : {},
     );
     if (!accepted)
       throw unavailable(
@@ -208,7 +246,10 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       transaction,
       evidence,
     };
-    return transaction;
+    // A pending receipt's origins were authenticated before broadcast. Commit
+    // its accepted readback before the settlement reconciler asks for evidence.
+    if (cached) await this.store.savePnnEvidence(this.#candidateRecord);
+    return this.#remember(candidate.id, transaction, evidence);
   }
 
   async getUtxosForAddress(address: string): Promise<RestObservedUtxo[]> {
@@ -255,13 +296,18 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     transactionId: string,
   ): Promise<AcceptedTransactionEvidence> {
     await this.getTransaction(transactionId);
-    const record = await this.store.loadPnnEvidence(transactionId);
-    if (!record?.evidence)
-      throw unavailable("PNN accepted receipt is unavailable");
-    return this.pnn.confirmAcceptedTransaction(
-      record.evidence,
-      this.confirmations,
-    );
+    const verified = this.#verified.get(transactionId);
+    if (!verified) throw unavailable("PNN accepted receipt is unavailable");
+    return structuredClone(verified.evidence);
+  }
+
+  #remember(
+    id: string,
+    transaction: RestTransaction,
+    evidence: AcceptedTransactionEvidence,
+  ) {
+    this.#verified.set(id, { transaction, evidence });
+    return transaction;
   }
 
   async submitTransaction(transaction: string): Promise<string> {

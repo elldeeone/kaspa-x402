@@ -1650,13 +1650,21 @@ describe("VerifiedExactTransactionVerifier", () => {
     snapshotSpy.mockResolvedValue({ utxos: [{ ...origin, amount: String(BigInt(origin.amount) + 1n) }], checkpoint });
     await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("does not match trusted chain state");
     snapshotSpy.mockResolvedValue({ utxos: [], checkpoint });
+    await expect(nodeVerifier.getTransaction(standard.transactionId)).resolves.toMatchObject({ transaction_id: standard.transactionId });
+    await expect(nodeVerifier.acceptedTransactionEvidence(standard.transactionId)).resolves.toEqual(receipt);
+    expect(confirmSpy).toHaveBeenCalledTimes(1);
+    expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
     const restarted = new PnnChainEvidence(pnn, book, durable);
     await expect(restarted.verifyExactPayment(request)).resolves.toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
     expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint });
     expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
     confirmSpy.mockRejectedValue(new Error("accepting block left the selected chain"));
-    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("left the selected chain");
+    await expect(restarted.verifyExactPayment(request)).rejects.toThrow("left the selected chain");
     confirmSpy.mockResolvedValue(receipt);
+    findSpy.mockClear();
+    await expect(new PnnChainEvidence(pnn, book, new GatewayLedger(new FakeStorage())).verifyExactPayment(request))
+      .rejects.toThrow("no accepted candidate output or durable receipt");
+    expect(findSpy).not.toHaveBeenCalled();
     const saveSpy = vi.spyOn(durable, "savePnnEvidence");
     await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment({ ...request,
       authorization: { ...request.authorization, signature: "00".repeat(64) } })).rejects.toThrow();
