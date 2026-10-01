@@ -1,7 +1,7 @@
 {
   "kind": "negative",
   "name": "batch-mainnet",
-  "description": "v1 RC1 batch settlement is restricted to kaspa:testnet-10 even when exact mainnet use is explicitly enabled.",
+  "description": "v1 RC2 batch settlement is restricted to kaspa:testnet-10 even when exact mainnet use is explicitly enabled.",
   "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
   "expectedError": "invalid_kaspa_x402_network",
   "value": {

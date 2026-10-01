@@ -1,12 +1,12 @@
 # Demo Implementer Guide
 
-Status: v1 RC1 release candidate, Testnet-10 only. The hosted gateway is an
+Status: v1 RC2 release candidate, Testnet-10 only. The hosted gateway is an
 integration target, not a production or mainnet service.
 
-This guide describes the published v1 RC1 source and deployed public gateway.
-The npm `rc` tag and `demo.kaspa-x402.org` both serve `1.0.0-rc.1`.
+This guide describes the published v1 RC2 source and deployed public gateway.
+The npm `rc` tag and `demo.kaspa-x402.org` both serve `1.0.0-rc.2`.
 
-v1 RC1 uses `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` for batch settlement.
+v1 RC2 uses `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` for batch settlement.
 Pre-RC batch payloads are not accepted.
 
 ## Start With The Artifacts
@@ -28,11 +28,11 @@ Useful entry points:
 Install the current recommended Testnet release explicitly:
 
 ```sh
-npm install @kaspa-x402/core@1.0.0-rc.1 @kaspa-x402/client@1.0.0-rc.1
+npm install @kaspa-x402/core@1.0.0-rc.2 @kaspa-x402/client@1.0.0-rc.2
 ```
 
-Use `@rc` or exact version `1.0.0-rc.1`; `@rc` is the npm channel for release
-candidates. v1 RC1 remains prerelease software and does not imply a stable API,
+Use `@rc` or exact version `1.0.0-rc.2`; `@rc` is the npm channel for release
+candidates. v1 RC2 remains prerelease software and does not imply a stable API,
 frozen wire format, or mainnet readiness. The hosted gateway package is not
 published.
 
@@ -60,7 +60,7 @@ transaction-specific mass and reserve analysis.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Before submitting a v1 RC1 payment, confirm the response advertises the
+Before submitting a v1 RC2 payment, confirm the response advertises the
 expected release and capability. The current public gateway advertises:
 
 - `network: "kaspa:testnet-10"`;
@@ -136,9 +136,9 @@ KIP-10 broadcast because it does not preserve tx-v1 `computeBudget`.
 
 ## Hash-chain Browser Demo
 
-The candidate `hash-chain-additive` flow is available from the browser demo
-when the operator enables its Node issuer behind the gateway. It is not part
-of the currently published npm RC1. Check `/supported` for
+The RC2 `hash-chain-additive` flow is available from the browser demo
+when the operator enables its gateway Durable Object issuer and registers a
+funded head. Check `/supported` for
 `extra.profile: "hash-chain-additive"` before expecting a live quote.
 
 1. Open `https://kaspa-x402.org/demo/`, load the SDK, and generate or import a

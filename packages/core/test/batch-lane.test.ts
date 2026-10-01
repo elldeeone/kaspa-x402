@@ -20,7 +20,7 @@ const state: BatchLaneState = {
   signedMaxClaimable: "4000000",
 };
 
-describe("v1 RC1 batch lane accounting", () => {
+describe("v1 RC2 batch lane accounting", () => {
   it("derives unsettled charges and remaining lifetime authorization", () => {
     expect(batchLaneAccounting(state)).toMatchObject({
       activeChargedAmount: 1_500_000n,
@@ -141,7 +141,7 @@ describe("v1 RC1 batch lane accounting", () => {
   });
 });
 
-describe("v1 RC1 voucher identity", () => {
+describe("v1 RC2 voucher identity", () => {
   const input = {
     network: "kaspa:testnet-10" as const,
     covenantId: "11".repeat(32),

@@ -1,6 +1,6 @@
 {
   "kind": "channel-id",
-  "description": "v1 RC1 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
+  "description": "v1 RC2 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
   "context": {
     "x402Version": 2,
     "scheme": "batch-settlement",

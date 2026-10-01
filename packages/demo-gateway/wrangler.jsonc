@@ -51,7 +51,7 @@
     "KASPA_X402_GLOBAL_CONCURRENCY": "64",
     "KASPA_X402_CORS_ORIGIN": "https://kaspa-x402.org",
     "KASPA_X402_SITE_BASE_URL": "https://kaspa-x402.org",
-    "KASPA_X402_RELEASE_VERSION": "1.0.0-rc.1",
+    "KASPA_X402_RELEASE_VERSION": "1.0.0-rc.2",
     "KASPA_X402_GATEWAY_BASE_URL": "https://demo.kaspa-x402.org",
     "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED": "true",
     "KASPA_X402_CHAIN_BROADCAST_MODE": "pnn",

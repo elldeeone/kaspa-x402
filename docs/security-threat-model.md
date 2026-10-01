@@ -1,7 +1,7 @@
 # Security Threat Model
 
 Status: release-candidate threat model for the Testnet-10 exact and batch-settlement
-profiles. v1 RC1 uses `kaspa-escrow-v3` and template
+profiles. v1 RC2 uses `kaspa-escrow-v3` and template
 `kaspa-x402-escrow-v4`; pre-RC runtime profiles are not supported.
 
 ## Assets
@@ -22,7 +22,7 @@ profiles. v1 RC1 uses `kaspa-escrow-v3` and template
 - optional self-hosted facilitator endpoints;
 - operator live-testnet adapters and recovery journals.
 
-The v1 RC1 reference gateway trusts one configured Testnet-10 evidence source
+The v1 RC2 reference gateway trusts one configured Testnet-10 evidence source
 at a time. Multiple endpoint URLs are availability failover, not independent
 corroboration. This accepted test boundary must not be treated as Byzantine-safe
 or used to enable mainnet.
@@ -86,7 +86,7 @@ Required checks include:
 
 ## Batch-Settlement Profile
 
-The v1 RC1 batch profile uses one singleton KIP-20 covenant lineage and
+The v1 RC2 batch profile uses one singleton KIP-20 covenant lineage and
 lifetime cumulative vouchers. Define:
 
 - A: lifetime fixed charges durably committed by the application;

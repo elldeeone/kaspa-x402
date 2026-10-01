@@ -1,6 +1,6 @@
 # Native Profile Boundary
 
-Status: active v1 RC1 boundary for the shipped Testnet-10 package surface.
+Status: active v1 RC2 boundary for the shipped Testnet-10 package surface.
 
 The current native Kaspa x402 surface ships two profiles:
 
@@ -35,7 +35,7 @@ channel's `covenantId` stable across successors and enforces its lineage. The
 runtime separately persists the current outpoint because a `covenantId` does
 not provide reverse lookup of the live UTXO.
 
-v1 RC1 uses a clean batch binding and state model. No runtime compatibility
+v1 RC2 uses a clean batch binding and state model. No runtime compatibility
 reader or migration exists for pre-RC channels. Both active schemes are
 Testnet-10 only.
 

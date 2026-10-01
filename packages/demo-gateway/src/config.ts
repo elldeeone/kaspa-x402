@@ -182,7 +182,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_SITE_BASE_URL",
     ),
     releaseVersion: releaseVersion(
-      env.KASPA_X402_RELEASE_VERSION ?? "1.0.0-rc.1",
+      env.KASPA_X402_RELEASE_VERSION ?? "1.0.0-rc.2",
     ),
     gatewayBaseUrl: baseUrl(
       env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org",
@@ -223,9 +223,9 @@ function hashChainOrigin(value: string): string {
 
 function releaseVersion(value: string): string {
   const normalized = value.trim();
-  if (normalized !== "1.0.0-rc.1") {
+  if (normalized !== "1.0.0-rc.2") {
     throw new Error(
-      "KASPA_X402_RELEASE_VERSION must be 1.0.0-rc.1",
+      "KASPA_X402_RELEASE_VERSION must be 1.0.0-rc.2",
     );
   }
   return normalized;

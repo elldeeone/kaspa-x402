@@ -153,7 +153,7 @@ export const ARTIFACT_NOTES = {
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
   "contracts/kaspa-x402-escrow-v4.sil":
-    "Normative SilverScript source for the v1 RC1 stateful batch escrow covenant.",
+    "Normative SilverScript source for the v1 RC2 stateful batch escrow covenant.",
   "contracts/fixtures/kaspa-x402-escrow-v4.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "contracts/kaspa-x402-hash-chain-head-v1.sil":
@@ -173,7 +173,7 @@ export const ARTIFACT_NOTES = {
   "docs/live-testnet-report.md":
     "Live `kaspa:testnet-10` run: executed flows, transaction ids, and observed behavior.",
   "docs/live-testnet-proof.md":
-    "How exact and full v1 RC1 batch-lifecycle proof artifacts are produced and independently validated.",
+    "How exact and full v1 RC2 batch-lifecycle proof artifacts are produced and independently validated.",
   "docs/security-threat-model.md":
     "Threat model: trust boundaries, attacker capabilities, and mitigations.",
   "docs/mainnet-readiness.md":

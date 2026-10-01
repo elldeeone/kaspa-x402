@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: active v1 RC1 exact binding
+Status: active v1 RC2 exact binding
 
 This document defines the active Kaspa network binding for x402 v2 `exact`.
 
@@ -46,7 +46,7 @@ kaspa:testnet-10
 ```
 
 The `kaspa` CAIP namespace is proposed, not registered. `kaspa:testnet-10` is
-the v1 RC1 validation target. `kaspa:mainnet` is a reserved profile name and
+the v1 RC2 validation target. `kaspa:mainnet` is a reserved profile name and
 does not imply mainnet, custody, or production readiness.
 
 The binding settles native KAS only.
@@ -594,7 +594,7 @@ referenced by the bounded result.
 ## Retry and signer policy
 
 A corrective 402 is a new offer, not permission for a wallet to sign another
-payment automatically. The v1 RC1 clients accept `maxPaymentRetries: 0` only.
+payment automatically. The v1 RC2 clients accept `maxPaymentRetries: 0` only.
 Every replacement exact transaction requires a fresh explicit caller or wallet
 authorization. Each logical payment has a stable attempt ID derived from its
 stable payment identifier; when the caller omits that identifier, the client
@@ -687,7 +687,7 @@ the affected standard transaction or additive head for reconciliation, and
 MUST NOT treat the payment as reusable merely because one node stopped
 reporting it.
 
-The v1 RC1 reference deployment trusts one configured Testnet-10 evidence
+The v1 RC2 reference deployment trusts one configured Testnet-10 evidence
 source at a time. Endpoint failover improves availability but is not
 independent corroboration and does not make a faulty source Byzantine-safe.
 Mainnet enablement requires independently corroborated chain evidence or

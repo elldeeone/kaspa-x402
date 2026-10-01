@@ -1,6 +1,6 @@
 {
   "kind": "batch-interop-v3",
-  "description": "Language-independent v1 RC1 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
+  "description": "Language-independent v1 RC2 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
   "scope": {
     "transactionEvidenceIncluded": false,
     "reason": "KIP-20 genesis and successor transaction evidence is maintained in transaction-v1 vectors; this vector covers the non-transaction protocol layer."

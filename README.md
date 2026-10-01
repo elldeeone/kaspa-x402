@@ -11,14 +11,14 @@ and settle each payment on the Kaspa network.
 
 ## Release status
 
-Kaspa x402 is a v1 release candidate. All components use `kaspa:testnet-10`.
+Kaspa x402 `1.0.0-rc.2` is a v1 release candidate. All components use `kaspa:testnet-10`.
 
 The project blocks mainnet use until it completes the gates in
 [docs/mainnet-readiness.md](docs/mainnet-readiness.md). The reference runtimes
 use mainnet only if the operator sets `allowMainnet` to true.
 
 Package names, schemas, and field names can change before the stable `1.0.0`
-release. RC1 replaces all earlier versions. RC1 runtimes do not read or migrate
+release. RC1 replaces all earlier versions. Current runtimes do not read or migrate
 channel state from a pre-RC version.
 
 ## Payment schemes
@@ -46,7 +46,7 @@ The `exact` scheme makes one native KAS transfer for a fixed price.
 }
 ```
 
-The RC1 scheme has two released profiles. Both advertise x402 v2's
+RC2 provides three exact profiles. Both advertise x402 v2's
 `paymentFlow: "upfront"` because the payment settles before protected work.
 
 #### `standard-native`
@@ -72,8 +72,7 @@ exact quoted increase and selected-chain successor before serving the request.
 An abandoned grant requires an accepted owner rotation; expiry alone does not
 revoke its on-chain key. See the [binding](spec/kaspa-hash-chain-exact-v1.md),
 [conformance vector](vectors/x402-http/hash-chain-exact.json), and
-[funded Testnet-10 evidence](docs/hash-chain-live-proof.md). This candidate is
-not part of the published RC1 packages or hosted gateway configuration.
+[funded Testnet-10 evidence](docs/hash-chain-live-proof.md). This profile is included in RC2 packages and the hosted Testnet-10 gateway.
 
 ### `batch-settlement`
 

@@ -65,7 +65,7 @@ function claimInput() {
   };
 }
 
-describe("v1 RC1 KIP-20 transaction-v1 builders", () => {
+describe("v1 RC2 KIP-20 transaction-v1 builders", () => {
   it("builds one deterministic multi-input singleton genesis head", () => {
     const artifact = buildBatchGenesisTxV1Artifact({
       fundingInputs: [fundingInput("01", 0, "60000000"), fundingInput("02", 1, "30001000", P2PK_B)],

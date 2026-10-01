@@ -137,14 +137,14 @@ describe("gateway config", () => {
       enabled: false,
       siteBaseUrl: "https://kaspa-x402.org",
       gatewayBaseUrl: "https://demo.kaspa-x402.org",
-      releaseVersion: "1.0.0-rc.1",
+      releaseVersion: "1.0.0-rc.2",
     });
   });
 
   it("rejects an invalid release canary version", () => {
     expect(() =>
       readGatewayConfig({ ...BASE_ENV, KASPA_X402_RELEASE_VERSION: "latest" }),
-    ).toThrow("KASPA_X402_RELEASE_VERSION must be 1.0.0-rc.1");
+    ).toThrow("KASPA_X402_RELEASE_VERSION must be 1.0.0-rc.2");
   });
 
   it("rejects invalid operator switch values", () => {

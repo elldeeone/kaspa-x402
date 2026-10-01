@@ -1,6 +1,6 @@
 {
   "kind": "x402-http",
-  "description": "v1 RC1 semantic HTTP header vector for a batch-settlement voucher request.",
+  "description": "v1 RC2 semantic HTTP header vector for a batch-settlement voucher request.",
   "verificationContext": {
     "channelConfig": {
       "network": "kaspa:testnet-10",

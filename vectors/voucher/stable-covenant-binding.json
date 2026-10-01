@@ -1,6 +1,6 @@
 {
   "kind": "voucher-digest",
-  "description": "v1 RC1 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+  "description": "v1 RC2 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   "context": {
     "domain": "kaspa:x402:escrow-voucher:v3",
     "signedFields": [

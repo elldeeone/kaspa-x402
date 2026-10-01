@@ -4,8 +4,8 @@ The reference `MemoryServerChannelStore` is for tests and examples. Production
 servers need a durable implementation of `ServerStateStore` with the semantics
 below.
 
-v1 RC1 supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` as the active
-batch profile. Pre-RC stores are not migrated or read by the v1 RC1 runtime.
+v1 RC2 supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` as the active
+batch profile. Pre-RC stores are not migrated or read by the v1 RC2 runtime.
 
 ## Required Guarantees
 
@@ -114,7 +114,7 @@ Adapters report objective evidence; they do not declare policy finality. An
 accepted record contains the transaction id, accepting-block hash and blue
 score, numeric confirmation count, and a durable selected-chain checkpoint.
 The runtime derives `confirmed` by applying its configured threshold. The
-v1 RC1 Testnet-10 deployment profile uses 30 confirmations. `absent` requires
+v1 RC2 Testnet-10 deployment profile uses 30 confirmations. `absent` requires
 a confirmed conflicting spend or a stable consensus-rejection proof. Anything
 else is `unknown` and keeps the owning attempt reserved.
 

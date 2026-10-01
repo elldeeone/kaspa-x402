@@ -66,7 +66,7 @@ current outpoint separately.
 
 The current outpoint, remaining funding, committed-charge lifetime total, settled
 lifetime total, and latest buyer-signed lifetime ceiling for one batch covenant
-identity. v1 RC1 uses a clean state model; runtimes do not import or interpret
+identity. v1 RC2 uses a clean state model; runtimes do not import or interpret
 pre-RC channel state.
 
 The accounting shorthand is A for lifetime committed fixed charges, S for

@@ -2610,7 +2610,7 @@ function batchComputeProfile(operation) {
   );
   if (!fs.existsSync(vectorPath)) {
     throw new Error(
-      `missing v1 RC1 consensus vector ${path.relative(REPO_ROOT, vectorPath)}`,
+      `missing v1 RC2 consensus vector ${path.relative(REPO_ROOT, vectorPath)}`,
     );
   }
   const vector = JSON.parse(fs.readFileSync(vectorPath, "utf8"));
@@ -2627,7 +2627,7 @@ function batchComputeProfile(operation) {
     scriptUnitsEstimate < 0 ||
     vector.expected?.compute?.scriptUnitAllowance !== scriptUnitAllowanceValue
   ) {
-    throw new Error(`invalid v1 RC1 ${operation} compute evidence`);
+    throw new Error(`invalid v1 RC2 ${operation} compute evidence`);
   }
   const profile = {
     computeBudget,
@@ -4984,14 +4984,14 @@ export function referenceTransactionToSdk(sdk, reference) {
     payload: reference.payload,
     // Toccata renamed the JavaScript transaction commitment to storageMass.
     // `mass` remains only as a deprecated SDK alias and must not be the
-    // canonical v1 RC1 adapter shape.
+    // canonical v1 RC2 adapter shape.
     storageMass: BigInt(reference.mass),
   };
   try {
     return new sdk.Transaction(shape);
   } catch (error) {
     throw new Error(
-      `configured Kaspa SDK cannot construct v1 RC1 KIP-20 transaction-v1: ${error instanceof Error ? error.message : String(error)}`,
+      `configured Kaspa SDK cannot construct v1 RC2 KIP-20 transaction-v1: ${error instanceof Error ? error.message : String(error)}`,
     );
   }
 }
@@ -5154,7 +5154,7 @@ function loadPersistedBatchArtifacts({
       artifact.format !== "kaspa-x402-tx-v1-reference-v3" ||
       !/^[0-9a-f]{64}$/.test(artifact.transactionId ?? "")
     ) {
-      throw new Error(`invalid v1 RC1 persisted batch artifact ${name}`);
+      throw new Error(`invalid v1 RC2 persisted batch artifact ${name}`);
     }
     batchArtifactsByTxid.set(artifact.transactionId, artifact);
     if (artifact.kind === "batch-genesis") {
@@ -5165,7 +5165,7 @@ function loadPersistedBatchArtifacts({
       ).length;
       const totalOutputCount = artifact.transaction.outputs.length;
       if (authorizedOutputCount !== 1 || totalOutputCount !== 1) {
-        throw new Error(`invalid v1 RC1 singleton genesis artifact ${name}`);
+        throw new Error(`invalid v1 RC2 singleton genesis artifact ${name}`);
       }
       const evidence = {
         covenantId: artifact.covenantId,

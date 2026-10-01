@@ -3,14 +3,14 @@
 Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
 not a production readiness claim.
 
-The active v1 RC1 native profiles are:
+The active v1 RC2 native profiles are:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile); and
 - `batch-settlement` with `kaspa-escrow-v3` and
   `kaspa-x402-escrow-v4`.
 
-`kaspa:testnet-10` is the only validation target. v1 RC1 does not provide
+`kaspa:testnet-10` is the only validation target. v1 RC2 does not provide
 compatibility or state migration for pre-RC runtimes. Mainnet must remain
 opt-in and disabled by default until every gate below is closed.
 

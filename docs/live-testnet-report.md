@@ -1,6 +1,9 @@
 # Live Testnet Report
 
-Status: successful `1.0.0-rc.1` funded live harness run.
+The fresh RC2 proof is published with the
+[`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2),
+including the exact candidate commit and sanitized Testnet-10 evidence.
+The report below records the earlier successful `1.0.0-rc.1` run.
 
 Generated: `2026-09-13T12:32:38.284Z`
 

@@ -1,8 +1,10 @@
 # Native-KAS hash-chain Testnet-10 proof
 
-Status: candidate validation, latest funded run 2026-09-26. These are funded Testnet-10 runs of
-the unreleased `hash-chain-additive` x402 profile, not mainnet evidence or a
-release designation. The latest run used committed runtime code `6d02163`.
+Fresh RC2 funded and hosted-browser evidence is published with the
+[`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
+The runs below record earlier candidate validation of the `hash-chain-additive`
+x402 profile. They are Testnet-10 evidence, not mainnet evidence.
+The latest run recorded below used committed runtime code `6d02163` on 2026-09-26.
 Its detailed report is ignored by Git at
 `.kaspa-x402-live/hash-chain-security-6d02163-20260926-run1/report.json`;
 signing keys and the encrypted grant database remain in that private directory.

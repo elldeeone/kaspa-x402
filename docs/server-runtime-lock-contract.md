@@ -33,7 +33,7 @@ The direct-mode server uses the lock manager for:
 - exact payments after verification, keyed by the verifier-derived transaction
   id.
 
-All access paths that can mutate one v1 RC1 batch lane must resolve to the same
+All access paths that can mutate one v1 RC2 batch lane must resolve to the same
 stable lineage key. The rotating current outpoint is persisted and compared,
 but must not be used as the only lock key because claim and top-up transactions
 replace it.

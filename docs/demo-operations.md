@@ -7,7 +7,7 @@ This runbook describes the public demo service at:
 https://demo.kaspa-x402.org
 ```
 
-Current repository-backed deployment evidence: v1 RC1 Worker version
+Recorded RC1 deployment evidence: Worker version
 `f9ef62e0-17b4-45c4-8765-e3c1789efb99`, built from tagged commit
 `040b1ec8335abadbb3c69cf1ea720ae45816b0f7`. Funded exact transaction
 `a502fc42046dd18b8ac7712e9b13ebe90f70c9d5094a86a73c4300e625943575`
@@ -35,9 +35,9 @@ Important non-secret variables:
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
 | `KASPA_X402_EXACT_PROFILE`                   | Exact profile: `standard-native` (default) or optional `additive`.                                                                                             |
-| `KASPA_X402_BATCH_AMOUNT`                    | Fixed per-request v1 RC1 batch charge in sompi.                                                                                                                |
+| `KASPA_X402_BATCH_AMOUNT`                    | Fixed per-request v1 RC2 batch charge in sompi.                                                                                                                |
 | `KASPA_X402_MIN_DEPOSIT_SOMPI`               | Batch escrow deposit floor. Must be at least `10000000`.                                                                                                       |
-| `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised v1 RC1 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.     |
+| `KASPA_X402_CLAIM_RESERVE_SOMPI`             | Advertised v1 RC2 minimum successor reserve R. Must be at least `10000000`; the advertised deposit floor must cover the request ceiling plus this reserve.     |
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
 | `KASPA_X402_GLOBAL_CONCURRENCY`              | Deployment-wide cap for in-flight protected requests. Enforced by renewable leases in the gateway Durable Object; default `64`, maximum `256`.                 |
@@ -59,15 +59,15 @@ Secret variables:
 | ------------------------ | ----------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_ADMIN_TOKEN` | Bearer token for additive exact-head registration, reconciliation, and stats endpoints. Set with `wrangler secret put`; do not commit it. |
 
-## v1 RC1 State
+## v1 RC2 State
 
 The Worker resolves `GATEWAY_STATE` with the logical object name
-`demo-gateway-v1.0.0-rc.1`. It uses a clean RC state model and must not import
+`demo-gateway-v1.0.0-rc.2`. It uses a clean RC state model and must not import
 pre-RC channel or replay state.
 
 ## Deploy
 
-Do not deploy the v1 RC1 Worker until the v1 RC1 static site is live.
+Do not deploy the v1 RC2 Worker until the v1 RC2 static site is live.
 The Worker canary reads `KASPA_X402_RELEASE_VERSION`, so Worker-first deployment
 would fail its current-release check.
 
@@ -489,7 +489,7 @@ The hosted gateway uses one SQLite-backed Durable Object. It stores exact
 replay records, payment identifiers, batch channels, settlement commitments,
 locks, rate counters, metrics, and the latest canary report.
 
-Each v1 RC1 batch row also owns its immutable covenant launch manifest,
+Each v1 RC2 batch row also owns its immutable covenant launch manifest,
 append-only accepted/removed lineage journal, durable selected-chain checkpoint,
 and atomically derived current head. Those fields must be committed together.
 
@@ -504,7 +504,7 @@ Policy for the public release candidate:
 - production operators should design their own backup and state-partitioning
   policy before using this code outside the hosted demo.
 
-For v1 RC1, `demo-gateway-v1.0.0-rc.1` is the authoritative Testnet state.
+For v1 RC2, `demo-gateway-v1.0.0-rc.2` is the authoritative Testnet state.
 Re-register only independently verified, still-unspent additive heads after a
 deliberate reset, and require batch clients to create new v1 RC lanes.
 

@@ -1,6 +1,6 @@
 # Kaspa x402 Batch Settlement Binding v3
 
-Status: v1 RC1, Testnet-10-only interoperability candidate
+Status: v1 RC2, Testnet-10-only interoperability candidate
 
 This document defines the active Kaspa network binding for x402 v2
 `batch-settlement`.
@@ -18,7 +18,7 @@ the payer presents an invocation, `accepted.amount` is its non-refundable
 fixed charge. A successful HTTP response, an application error, and a
 chargeable MCP `isError` result do not silently change that amount.
 
-v1 RC1 is a clean cutover. Binding v2, escrow-v3, v2 vouchers, client-only
+v1 RC2 is a clean cutover. Binding v2, escrow-v3, v2 vouchers, client-only
 top-ups, and batch payloads without a v1 presentation authorization are
 invalid. There is no compatibility reader, migration path, or dual runtime.
 
@@ -35,7 +35,7 @@ network      kaspa:testnet-10
 asset        KAS
 ```
 
-`kaspa:testnet-10` is the only v1 RC1 validation target. This profile MUST
+`kaspa:testnet-10` is the only v1 RC2 validation target. This profile MUST
 NOT be enabled on mainnet.
 
 The signature and commitment domains are:
@@ -325,7 +325,7 @@ blue score, and DAA score). The confirmation count is the authoritative
 selected-parent distance from the selected-chain tip, including the accepting
 block. Blue-score difference MUST NOT be used as selected-chain depth.
 
-The runtime applies deployment policy to that count. v1 RC1's reference
+The runtime applies deployment policy to that count. v1 RC2's reference
 `kaspa:testnet-10` deployment requires 30 confirmations for covenant genesis,
 claim, top-up, refund, and recovered lineage. This is not a universal Kaspa
 consensus-finality constant. Accepted evidence below the threshold remains
@@ -336,7 +336,7 @@ The reference adapter proves the threshold through
 selected-chain accepting block prove only a conservative lower bound of one;
 REST evidence alone cannot authorize 30-confirmation batch lineage.
 
-The v1 RC1 reference deployment trusts one configured Testnet-10 evidence
+The v1 RC2 reference deployment trusts one configured Testnet-10 evidence
 source at a time. Multiple configured endpoints provide failover, not
 independent corroboration. Mainnet requires independently corroborated chain
 evidence or another audited Byzantine-resilient design; unavailable or

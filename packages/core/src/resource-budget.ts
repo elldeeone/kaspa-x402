@@ -19,7 +19,7 @@ export interface ResourceBudgetProfile {
 }
 
 /**
- * v1 RC1's single structural admission profile. Embedding transports must
+ * v1 RC2's single structural admission profile. Embedding transports must
  * enforce these limits or stricter limits before materializing request data.
  */
 export const KASPA_X402_RESOURCE_BUDGET: ResourceBudgetProfile =

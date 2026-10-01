@@ -250,7 +250,7 @@ const baseChannelConfig = {
 const channelVector = {
   kind: "channel-id",
   description:
-    "v1 RC1 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
+    "v1 RC2 channel ID vector for immutable batch lane configuration on kaspa:testnet-10.",
   context: {
     x402Version: 2,
     scheme: "batch-settlement",
@@ -279,7 +279,7 @@ const voucherCases = [
 const voucherVector = {
   kind: "voucher-digest",
   description:
-    "v1 RC1 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
+    "v1 RC2 voucher digest vectors proving network, stable covenant id, and lifetime cumulative ceiling binding.",
   context: {
     domain: "kaspa:x402:escrow-voucher:v3",
     signedFields: ["network", "covenantId", "authorizedCumulativeAmount"],
@@ -291,7 +291,7 @@ const voucherVector = {
 const httpVector = {
   kind: "x402-http",
   description:
-    "v1 RC1 semantic HTTP header vector for a batch-settlement voucher request.",
+    "v1 RC2 semantic HTTP header vector for a batch-settlement voucher request.",
   verificationContext: {
     channelConfig,
     channelStateBefore,
@@ -310,7 +310,7 @@ const httpVector = {
 const interopVector = {
   kind: "batch-interop-v3",
   description:
-    "Language-independent v1 RC1 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
+    "Language-independent v1 RC2 channel, KIP-20 lineage, voucher, request commitment, lifetime accounting, expiry, and finality evidence.",
   scope: {
     transactionEvidenceIncluded: false,
     reason:

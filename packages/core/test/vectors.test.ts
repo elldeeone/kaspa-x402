@@ -798,7 +798,7 @@ describe("exact v2 profile schemas", () => {
   });
 });
 
-describe("v1 RC1 batch network boundary", () => {
+describe("v1 RC2 batch network boundary", () => {
   it("classifies mainnet batch requirements and payloads as network errors", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const paymentRequired = structuredClone(vector.paymentRequired);

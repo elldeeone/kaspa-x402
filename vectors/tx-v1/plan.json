@@ -1,6 +1,6 @@
 {
   "kind": "tx-v1-plan",
-  "description": "v1 RC1 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
+  "description": "v1 RC2 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   "mainnetReadiness": {},
   "invariant": {
     "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",

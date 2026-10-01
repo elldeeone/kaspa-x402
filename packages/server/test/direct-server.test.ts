@@ -248,7 +248,7 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.amount).toBe("75");
   });
 
-  it("keeps opted-in exact mainnet support while rejecting v1 RC1 batch", async () => {
+  it("keeps opted-in exact mainnet support while rejecting v1 RC2 batch", async () => {
     expect(() => makeServer({ network: "kaspa:mainnet" })).toThrow(
       "allowMainnet",
     );

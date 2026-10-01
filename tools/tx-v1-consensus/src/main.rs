@@ -233,7 +233,7 @@ fn main() -> Result<()> {
 
 fn validate_batch_chain(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Value> {
     if vectors.len() != 5 {
-        return Err(anyhow!("v1 RC1 batch chain must contain five vectors"));
+        return Err(anyhow!("v1 RC2 batch chain must contain five vectors"));
     }
     let stable_id = vectors[0].1.sequence.covenant_id.as_str();
     if stable_id == "00".repeat(32) {

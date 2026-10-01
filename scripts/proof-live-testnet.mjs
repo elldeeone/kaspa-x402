@@ -401,13 +401,13 @@ function validateLiveProofResult(result, flows) {
     restartReload?.snapshotFormat ===
       "kaspa-x402-v1-rc1-batch-recovery-v1",
     "batch.restartReload.snapshotFormat",
-    "must use the v1 RC1 recovery snapshot",
+    "must use the v1 RC2 recovery snapshot",
   );
   require(
     restartReload?.preBroadcastSnapshotFormat ===
       "kaspa-x402-v1-rc1-claim-before-broadcast-v1",
     "batch.restartReload.preBroadcastSnapshotFormat",
-    "must reload the exact pre-broadcast v1 RC1 claim snapshot",
+    "must reload the exact pre-broadcast v1 RC2 claim snapshot",
   );
   require(
     restartReload?.preBroadcastClaimAttemptStatus === "pending",

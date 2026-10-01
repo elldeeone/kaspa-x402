@@ -9,8 +9,10 @@ The umbrella Kaspa x402 proposal is `v1`; bindings, signed domains, and
 covenant templates are versioned independently. Breaking changes must update
 the affected identifiers, schemas, vectors, packages, and docs together.
 
-The current `1.0.0-rc.1` surface uses `kaspa-exact-v2`,
-`kaspa-escrow-v3`, and `kaspa-x402-escrow-v4`. The covenant was compiled with
+The current `1.0.0-rc.2` surface uses `kaspa-exact-v2`,
+`kaspa-escrow-v3`, and `kaspa-x402-escrow-v4`. RC2 also includes
+`kaspa-hash-chain-exact-v1` and `kaspa-x402-hash-chain-head-v1`. The covenant was
+compiled with
 SilverScript v1.0.0 commit `3ed973335b59269293564805cc2c58a14595ec03`
 (the portable artifact reports compiler version `0.1.0`). It uses explicit DAA
 lock semantics and four-byte KCC-01 dispatch tags.

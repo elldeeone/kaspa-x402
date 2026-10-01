@@ -131,7 +131,7 @@ type DurableBudgetRecord = {
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
 const MAX_PUBLIC_ADMISSION_LEASES = 256;
 const MAX_PUBLIC_ADMISSION_TTL_MS = 10 * 60 * 1_000;
-export const GATEWAY_COORDINATION_DOMAIN = "demo-gateway-state:v1.0.0-rc.1";
+export const GATEWAY_COORDINATION_DOMAIN = "demo-gateway-state:v1.0.0-rc.2";
 const DEFAULT_DURABLE_STATE_LIMITS: GatewayDurableStateLimits = {
   maxRecords: 10_000,
   maxBytes: 512 * 1024 * 1024,

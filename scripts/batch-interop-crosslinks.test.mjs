@@ -27,7 +27,7 @@ const vector = JSON.parse(
   fs.readFileSync(path.join(root, "vectors/batch/interop-v3.json"), "utf8"),
 );
 
-test("accepts the canonical v1 RC1 batch core cross-links", () => {
+test("accepts the canonical v1 RC2 batch core cross-links", () => {
   assert.doesNotThrow(() => assertBatchCoreCrossLinks(vector));
 });
 

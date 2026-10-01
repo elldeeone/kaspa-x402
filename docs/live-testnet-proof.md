@@ -73,7 +73,7 @@ both while the outpoint and `V` advance.
 The sanitized committed report must identify the chain-evidence source class
 and number of independently operated sources used for acceptance, confirmation,
 UTXO, and selected-chain lineage decisions. Endpoint failover is not independent
-corroboration. The v1 RC1 funded run may use one configured Testnet-10 source,
+corroboration. The v1 RC2 funded run may use one configured Testnet-10 source,
 but the public report must state that boundary and must not present it as
 mainnet or Byzantine-resilient evidence.
 

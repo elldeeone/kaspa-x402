@@ -363,7 +363,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or v1 RC1 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> on Testnet-10 with recorded funded and scheduled canary evidence. See the <a href="/docs/testnet-gateway/">gateway reference</a> for current evidence.</p>
+    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or v1 RC2 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> on Testnet-10 with recorded funded and scheduled canary evidence. See the <a href="/docs/testnet-gateway/">gateway reference</a> for current evidence.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -455,7 +455,7 @@ function writeDemoPage() {
       <label for="demo-pay-to">Pay-to address</label>
       <input id="demo-pay-to" type="text" spellcheck="false" placeholder="kaspatest:...">
       <div id="demo-batch-fields" hidden>
-        <h3>v1 RC1 Batch Requirements</h3>
+        <h3>v1 RC2 Batch Requirements</h3>
         <label for="demo-server-public-key">Server public key</label>
         <input id="demo-server-public-key" type="text" spellcheck="false" value="22222222222222222222222222222222222222222222222222222222222222bb">
         <label for="demo-min-deposit">Minimum deposit (sompi)</label>
@@ -587,7 +587,7 @@ function writePnnSpikeJson() {
         "sdk initialization",
         "throwaway testnet key generation",
         "exact header generation",
-        "v1 RC1 batch voucher header generation",
+        "v1 RC2 batch voucher header generation",
         "batch A/S/T/V/R invariant checks",
         "batch partial-claim successor preview",
         "mixed-offer narrowing",
@@ -603,7 +603,7 @@ function writePnnSpikeJson() {
     },
     worker: {
       status:
-        "v1 RC1 is deployed at https://demo.kaspa-x402.org; funded exact and fresh-state batch validation completed, and the scheduled canary passes",
+        "v1 RC2 is deployed at https://demo.kaspa-x402.org; funded exact and fresh-state batch validation completed, and the scheduled canary passes",
       verifiedCapabilities: [
         "REST chain health",
         "Durable Object state",

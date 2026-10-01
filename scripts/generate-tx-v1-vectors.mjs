@@ -165,7 +165,7 @@ const vectors = [
 const plan = {
   kind: "tx-v1-plan",
   description:
-    "v1 RC1 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
+    "v1 RC2 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   mainnetReadiness: {},
   invariant: {
     covenantId,

@@ -1,21 +1,21 @@
 # Testnet Gateway
 
-The branch also includes an optional native-KAS `hash-chain-additive` demo.
-It is advertised only when its separately hosted Node issuer is configured
-and has an available head. Use `/hash-chain/report` for the protected resource,
+RC2 includes an optional native-KAS `hash-chain-additive` demo in the gateway
+Durable Object. It is advertised when the operator enables it and registers an
+available funded head. Use `/hash-chain/report` for the protected resource,
 `/hash-chain/grant` for signed private grant claims, and `/hash-chain/status`
 for availability. See the [browser walkthrough](demo-implementer-guide.md#hash-chain-browser-demo)
 and [operator setup](demo-operations.md#hash-chain-demo). This candidate is
 not deployed merely by merging the source or updating the static website.
 
-Status: v1 RC1 is live on `kaspa:testnet-10` as the current recommended Testnet
-release, with funded deployment and fresh-state release evidence recorded.
+Status: v1 RC2 release candidate for `kaspa:testnet-10`. Fresh candidate and
+deployment evidence is published with the matching GitHub prerelease.
 
 The hosted gateway is a public integration target for implementers exercising
 the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
 mainnet service, or availability commitment.
 
-The deployed v1 RC1 gateway uses `kaspa-exact-v2` with the default
+The RC2 gateway uses `kaspa-exact-v2` with the default
 `standard-native` profile and also supports `batch-settlement`. The optional
 `additive` exact profile is implemented but is advertised only when a current
 KIP-10 head is available.
@@ -70,9 +70,9 @@ origin and resource pins strict and point them at this same local origin.
 Funded tests still require the isolated wallet and environment described in
 [Live Testnet Proof](live-testnet-proof.md).
 
-## Current Deployment Evidence
+## Recorded RC1 Deployment Evidence
 
-The current gateway deployment is Worker version
+The recorded RC1 gateway deployment was Worker version
 `f9ef62e0-17b4-45c4-8765-e3c1789efb99`, built from tagged commit
 `040b1ec8335abadbb3c69cf1ea720ae45816b0f7` with fresh
 `demo-gateway-v1.0.0-rc.1` durable state.
@@ -141,7 +141,7 @@ mass depends on the complete transaction shape. The reference Worker uses
 `10000000` sompi as a conservative application policy for on-chain outputs,
 including the advertised batch successor reserve.
 
-The v1 RC1 Worker emits batch offers with binding `kaspa-escrow-v3`, template
+The v1 RC2 Worker emits batch offers with binding `kaspa-escrow-v3`, template
 `kaspa-x402-escrow-v4`, and a `10000000` sompi claim reserve. Its exact offers
 carry binding `kaspa-exact-v2` and an explicit profile:
 

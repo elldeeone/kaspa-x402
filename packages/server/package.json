@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/server",
-  "version": "1.0.0-rc.1",
+  "version": "1.0.0-rc.2",
   "description": "Server SDK for Kaspa x402.",
   "license": "MIT",
   "type": "module",
@@ -35,8 +35,8 @@
     "test:self": "vitest run"
   },
   "dependencies": {
-    "@kaspa-x402/core": "1.0.0-rc.1",
-    "@kaspa-x402/covenant": "1.0.0-rc.1",
+    "@kaspa-x402/core": "1.0.0-rc.2",
+    "@kaspa-x402/covenant": "1.0.0-rc.2",
     "@noble/curves": "^2.2.0"
   }
 }

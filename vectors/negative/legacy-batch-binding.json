@@ -1,7 +1,7 @@
 {
   "kind": "negative",
   "name": "legacy-batch-binding",
-  "description": "The v1 RC1 clean cutover rejects the former batch binding and escrow template.",
+  "description": "The v1 RC2 clean cutover rejects the former batch binding and escrow template.",
   "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
   "expectedError": "invalid_kaspa_x402_binding",
   "value": {

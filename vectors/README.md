@@ -13,7 +13,7 @@ This directory holds implementation-independent vectors for:
 
 Vectors should be consumable without importing the TypeScript SDK.
 
-v1 RC1 also publishes the normative batch covenant source at
+v1 RC2 also publishes the normative batch covenant source at
 `contracts/kaspa-x402-escrow-v4.sil` and its language-neutral constructor and
 byte fixture at `contracts/fixtures/kaspa-x402-escrow-v4.json`. Together with
 this directory, those artifacts are sufficient to reconstruct and verify the
@@ -25,11 +25,11 @@ batch-v3 contract without importing the TypeScript SDK.
 vectors/
   voucher/              Voucher preimages and digests.
   channel-id/           Channel ID canonical input and digest fixtures.
-  batch/                v1 RC1 non-transaction batch interoperability evidence.
+  batch/                v1 RC2 non-transaction batch interoperability evidence.
   x402-http/            HTTP header base64 fixtures.
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
   negative/             Schema and semantic rejection fixtures.
-  tx-v1/                Full v1 RC1 batch transaction-v1 lifecycle fixtures.
+  tx-v1/                Full v1 RC2 batch transaction-v1 lifecycle fixtures.
   exact/                Full-consensus standard-native and additive exact fixtures.
 ```
 
@@ -39,7 +39,7 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
-- `batch-interop-v3`: reconstruct the v1 RC1 channel, KIP-20 lineage id,
+- `batch-interop-v3`: reconstruct the v1 RC2 channel, KIP-20 lineage id,
   v3 voucher, request presentation and commitment, fixed-charge accounting,
   DAA expiry boundaries, and finality ordering. Transaction evidence remains
   in `tx-v1/`.
@@ -67,7 +67,7 @@ Regenerate the exact consensus vector with `npm run vectors:exact-consensus`.
 The generator uses fixed public test keys and deterministic Schnorr signatures;
 it contains no wallet or deployment secret.
 
-Regenerate the v1 RC1 channel, voucher, HTTP, and batch core vectors with
+Regenerate the v1 RC2 channel, voucher, HTTP, and batch core vectors with
 `npm run vectors:batch-interop`. The generator derives `covenantId` from its
 canonical KIP-20 genesis input and ordered authorized output; it does not treat
 that derivation input as accepted transaction evidence.
