@@ -305,6 +305,8 @@ function checkContent() {
       `<strong>${releaseVersion} released</strong>`,
       "shared published-release status",
     );
+    assertContains(file, "<!--email_off-->", "protect technical examples from email rewriting");
+    assertContains(file, "<!--/email_off-->", "close email rewriting exclusion");
   }
   for (const source of [...SPEC_FILES, ...PUBLIC_DOC_FILES]) {
     const file = path.join(outDir, source.replace(/\.md$/, "/index.html"));

@@ -827,7 +827,9 @@ ${options.head ?? ""}
     </nav>
   </header>
   <p class="release-status"><strong>${escapeHtml(releaseVersion)} released</strong> · Testnet-10 · <a href="/docs/rc2-release/">Release details</a></p>
+  <!--email_off-->
   ${body}
+  <!--/email_off-->
   <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/rc2-release/">Published release and validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>
 </body>
 </html>`;
