@@ -59,6 +59,8 @@ import {
   verifyKaspaSchnorrDigest,
 } from "./kaspa-native.js";
 
+export type ChainEvidenceClient = Pick<KaspaRestClient, "getTransaction" | "getUtxosForAddress" | "getVirtualDaaScore" | "observeAcceptedUtxo" | "acceptedTransactionEvidence" | "submitTransaction" | "waitForTransactionAccepted">;
+
 type FetchLike = typeof fetch;
 type SleepLike = (ms: number) => Promise<void>;
 
@@ -94,7 +96,7 @@ type PnnRpc = {
   getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
   getVirtualChainFromBlockV2?(request: {
     startHash: string;
-    dataVerbosityLevel: "Low" | "High";
+    dataVerbosityLevel: "Low" | "High" | "Full";
     minConfirmationCount: number;
   }): Promise<unknown>;
   getVirtualChainFromBlock?(request: {
@@ -171,15 +173,15 @@ export class NativeAddressCodec implements AddressCodec {
   }
 }
 
-export class RestKaspaChainProvider
+export class VerifiedKaspaChainProvider
   implements ServerChainProvider, TopUpVerifier
 {
-  readonly #client: KaspaRestClient;
+  readonly #client: ChainEvidenceClient;
   readonly #book: ScriptAddressBook;
   readonly #claimFeeSompi: SompiString;
 
   constructor(
-    client: KaspaRestClient,
+    client: ChainEvidenceClient,
     book: ScriptAddressBook,
     claimFeeSompi: SompiString,
   ) {
@@ -453,10 +455,10 @@ export class RestKaspaChainProvider
   }
 }
 
-export class RestExactHeadReconciler implements ExactHeadReconciler {
-  readonly #client: KaspaRestClient;
+export class VerifiedExactHeadReconciler implements ExactHeadReconciler {
+  readonly #client: ChainEvidenceClient;
 
-  constructor(client: KaspaRestClient) {
+  constructor(client: ChainEvidenceClient) {
     this.#client = client;
   }
 
@@ -573,12 +575,12 @@ export class RestExactHeadReconciler implements ExactHeadReconciler {
   }
 }
 
-export class RestExactSettlementReconciler
+export class VerifiedExactSettlementReconciler
   implements ExactSettlementReconciler
 {
-  readonly #client: KaspaRestClient;
+  readonly #client: ChainEvidenceClient;
 
-  constructor(client: KaspaRestClient) {
+  constructor(client: ChainEvidenceClient) {
     this.#client = client;
   }
 
@@ -667,13 +669,13 @@ export class RestExactSettlementReconciler
 export class PnnBroadcastChainProvider
   implements ServerChainProvider, TopUpVerifier
 {
-  readonly #reads: RestKaspaChainProvider;
+  readonly #reads: VerifiedKaspaChainProvider;
   readonly #book: ScriptAddressBook;
   readonly #pnn: KaspaPnnClient;
   readonly #requiredConfirmations: number;
 
   constructor(
-    reads: RestKaspaChainProvider,
+    reads: VerifiedKaspaChainProvider,
     book: ScriptAddressBook,
     pnn: KaspaPnnClient,
     requiredConfirmations: number,
@@ -789,6 +791,62 @@ export class KaspaPnnClient {
     });
   }
 
+  /** Read full accepted data from the same node and selected-chain checkpoint. */
+  async findAcceptedTransaction(transactionId: string, options: {
+    from?: ChainCheckpoint;
+    originDaaScore?: string;
+  } = {}): Promise<{ raw: unknown; evidence: AcceptedTransactionEvidence } | null> {
+    return this.#withRpc(async ({ rpc, endpoint }) => {
+      await this.#checkedServerInfo(rpc, endpoint);
+      if (!rpc.getBlock || !rpc.getBlockDagInfo || !rpc.getVirtualChainFromBlock || !rpc.getVirtualChainFromBlockV2) {
+        throw invalidTransaction("PNN selected-chain methods are required");
+      }
+      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      let from = options.from;
+      if (!from) {
+        let hash = before.blockHash;
+        const deadline = Date.now() + this.#timeoutMs;
+        for (let count = 0; count < 1024; count++) {
+          if (Date.now() > deadline) throw invalidTransaction("PNN origin discovery deadline exceeded");
+          const block = unwrapRecord(await withTimeout(rpc.getBlock({ hash, includeTransactions: false }),
+            this.#timeoutMs, "pnn origin checkpoint"), "block");
+          const checkpoint = pnnSelectedBlockCheckpoint({ block }, hash, "origin discovery");
+          if (count > 0 && (options.originDaaScore !== undefined
+            ? BigInt(checkpoint.daaScore!) < BigInt(options.originDaaScore)
+            : count >= 64)) {
+            from = checkpoint;
+            break;
+          }
+          hash = hashValue(requiredRecord(block.verboseData, "PNN origin block data").selectedParentHash,
+            "PNN origin selected parent");
+        }
+        if (!from) throw invalidTransaction("PNN origin discovery exceeded the bounded history window");
+      }
+      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs);
+      if (!acceptingHash) return null;
+      const acceptingRaw = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
+        this.#timeoutMs, "pnn accepting block");
+      const accepting = pnnSelectedBlockCheckpoint(acceptingRaw, acceptingHash, "accepting block");
+      const parent = hashValue(requiredRecord(unwrapRecord(acceptingRaw, "block").verboseData,
+        "PNN accepting block data").selectedParentHash, "PNN accepting block parent");
+      const distance = BigInt(before.blueScore) - BigInt(accepting.blueScore);
+      if (distance <= 1n) return null;
+      if (distance > BigInt(Number.MAX_SAFE_INTEGER)) throw invalidTransaction("PNN acceptance distance exceeds the safe bound");
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n),
+        this.#timeoutMs, "Full", acceptingHash);
+      if (selected.removedChainBlockHashes.includes(from.blockHash)) throw invalidTransaction("PNN origin checkpoint left the selected chain");
+      const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
+        this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
+      if (!sameChainCheckpoint(before, verified)) throw invalidTransaction("PNN acceptance checkpoint changed");
+      const raw = selected.addedChainBlocks.find(block => block.blockHash === acceptingHash)?.transactions
+        .find(transaction => pnnAcceptedTransactionId(transaction) === transactionId.toLowerCase());
+      if (!raw) return null;
+      return { raw, evidence: { status: "accepted", transactionId: transactionId.toLowerCase(),
+        acceptingBlockHash: acceptingHash, acceptingBlockBlueScore: accepting.blueScore,
+        confirmationCount: 1, checkpoint: before } };
+    });
+  }
+
   /** Read the accepted transaction itself, including its covenant successor. */
   async findHashChainPayment(transactionId: string, from: ChainCheckpoint): Promise<{
     transaction: HashChainSelectedTransaction;
@@ -892,6 +950,9 @@ export class KaspaPnnClient {
     request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
   ): Promise<CovenantSelectedChainUpdate> {
     assertTestnet(request.network);
+    if (!Number.isSafeInteger(request.minConfirmationCount) || request.minConfirmationCount < 1) {
+      throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
+    }
     return this.#withRpc(async ({ rpc, endpoint }) => {
       await this.#checkedServerInfo(rpc, endpoint);
       if (
@@ -908,9 +969,10 @@ export class KaspaPnnClient {
         const selected = await pnnSelectedChainFromCheckpoint(
           rpc,
           request.lineage.checkpoint.blockHash,
-          request.minConfirmationCount,
+          0,
           this.#timeoutMs,
           "High",
+          before.blockHash,
         );
         const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
         const rawVerifiedCheckpoint = await withTimeout(
@@ -928,7 +990,7 @@ export class KaspaPnnClient {
           BigInt(after.blueScore) >= BigInt(before.blueScore) &&
           BigInt(after.daaScore) >= BigInt(before.daaScore)
         ) {
-          return covenantUpdateFromPnnSelection(request, selected, after);
+          return covenantUpdateFromPnnSelection(request, selected, before);
         }
       }
       throw invalidTransaction(
@@ -1312,7 +1374,7 @@ class JsonPnnRpc implements PnnRpc {
 
   getVirtualChainFromBlockV2(request: {
     startHash: string;
-    dataVerbosityLevel: "Low" | "High";
+    dataVerbosityLevel: "Low" | "High" | "Full";
     minConfirmationCount: number;
   }): Promise<unknown> {
     return this.#request("getVirtualChainFromBlockV2", request);
@@ -1405,12 +1467,12 @@ function pnnEndpointLabel(endpoint: string): string {
   }
 }
 
-export class RestExactTransactionVerifier implements ExactTransactionVerifier {
-  readonly #client: KaspaRestClient;
+export class VerifiedExactTransactionVerifier implements ExactTransactionVerifier {
+  readonly #client: ChainEvidenceClient;
   readonly #maxFeeSompi: bigint;
 
   constructor(
-    client: KaspaRestClient,
+    client: ChainEvidenceClient,
     options: { maxFeeSompi?: bigint | string } = {},
   ) {
     this.#client = client;
@@ -2314,7 +2376,7 @@ type RestBlock = {
   };
 };
 
-type RestObservedUtxo = {
+export type RestObservedUtxo = {
   outpoint: FundingOutpoint;
   amount: SompiString;
   scriptPublicKey: string;
@@ -2346,7 +2408,7 @@ type RestTxAcceptanceResponse = {
   accepted: boolean;
 };
 
-type RestTransaction = {
+export type RestTransaction = {
   transaction_id?: string;
   version?: number;
   lock_time?: string | number | null;
@@ -2360,7 +2422,7 @@ type RestTransaction = {
   outputs?: RestTransactionOutput[];
 };
 
-type RestTransactionInput = {
+export type RestTransactionInput = {
   previous_outpoint_hash?: string;
   previous_outpoint_index?: string | number;
   signature_script?: string;
@@ -2371,7 +2433,7 @@ type RestTransactionInput = {
   covenantId?: string | null;
 };
 
-type RestTransactionOutput = {
+export type RestTransactionOutput = {
   index?: number;
   amount?: string | number;
   script_public_key?: string;
@@ -2383,7 +2445,7 @@ type RestTransactionOutput = {
   } | null;
 };
 
-type SafeTransaction = {
+export type SafeTransaction = {
   id: string;
   version: number;
   inputs: SafeTransactionInput[];
@@ -2395,7 +2457,7 @@ type SafeTransaction = {
   storageMass?: string;
 };
 
-type SafeTransactionInput = {
+export type SafeTransactionInput = {
   transactionId: string;
   index: number;
   sequence: string;
@@ -2421,11 +2483,12 @@ type PnnPaymentEvidence = {
   scriptPublicKey: string;
 };
 
-type PnnUtxo = {
+export type PnnUtxo = {
   outpoint: FundingOutpoint;
   amount: string;
   scriptPublicKey: string;
   covenantId: string | null;
+  blockDaaScore?: string;
 };
 
 type PnnSelectedChain = {
@@ -2491,6 +2554,7 @@ function pnnUtxo(entry: unknown): PnnUtxo {
       utxoEntry.scriptPublicKey ?? raw.scriptPublicKey ?? entry.scriptPublicKey,
     ),
     covenantId: normalizeOptionalCovenantId(utxoEntry.covenantId ?? utxoEntry.covenant_id) ?? null,
+    ...(utxoEntry.blockDaaScore !== undefined ? { blockDaaScore: uintStringValue(utxoEntry.blockDaaScore, "PNN UTXO DAA score") } : {}),
   };
 }
 
@@ -2582,12 +2646,15 @@ async function pnnSelectedChainFromCheckpoint(
   initialHash: Hash32Hex,
   minConfirmationCount: number,
   timeoutMs: number,
-  dataVerbosityLevel: "Low" | "High",
+  dataVerbosityLevel: "Low" | "High" | "Full",
   stopAfterBlockHash?: Hash32Hex,
 ): Promise<PnnSelectedChain> {
+  if (initialHash === stopAfterBlockHash) {
+    return { removedChainBlockHashes: [], addedChainBlocks: [] };
+  }
   if (
     !Number.isSafeInteger(minConfirmationCount) ||
-    minConfirmationCount < 1
+    minConfirmationCount < 0
   ) {
     throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
   }
@@ -2686,6 +2753,11 @@ async function pnnSelectedChainFromCheckpoint(
           "Kaspa PNN accepted transactions",
         ),
       });
+      if (stopAfterBlockHash === blockHash) {
+        removedChainBlockHashes.push(...pageRemoved);
+        addedChainBlocks.push(...pageAdded);
+        return { removedChainBlockHashes, addedChainBlocks };
+      }
     }
     removedChainBlockHashes.push(...pageRemoved);
     addedChainBlocks.push(...pageAdded);
@@ -2693,6 +2765,9 @@ async function pnnSelectedChainFromCheckpoint(
       return { removedChainBlockHashes, addedChainBlocks };
     }
     if (added.length === 0) {
+      if (stopAfterBlockHash && !seenAdded.has(stopAfterBlockHash)) {
+        throw invalidTransaction("PNN selected-chain data ended before the pinned checkpoint");
+      }
       return { removedChainBlockHashes, addedChainBlocks };
     }
     if (addedChainBlocks.length > 4_096) {
@@ -2771,13 +2846,13 @@ function covenantUpdateFromPnnSelection(
         transactionId ===
         request.lineage.manifest.genesis.transactionId.toLowerCase()
       ) {
+        assertPnnLineageDepth(checkpoint, acceptingBlockBlueScore, request.minConfirmationCount);
         genesisAcceptance = {
           status: "accepted",
           transactionId,
           acceptingBlockHash: block.blockHash,
           acceptingBlockBlueScore,
-          // GetVirtualChainFromBlockV2 includes this block only after the
-          // requested selected-chain minimum has been reached.
+          // Depth was checked against the fixed selected-chain checkpoint.
           confirmationCount: request.minConfirmationCount,
           checkpoint: structuredClone(checkpoint),
         };
@@ -2794,6 +2869,7 @@ function covenantUpdateFromPnnSelection(
         checkpoint,
       );
       if (!transition) continue;
+      assertPnnLineageDepth(checkpoint, acceptingBlockBlueScore, request.minConfirmationCount);
       transitions.push(transition);
       head = transition.successor
         ? {
@@ -2827,6 +2903,12 @@ function covenantUpdateFromPnnSelection(
     removedChainBlockHashes: selected.removedChainBlockHashes,
     addedChainBlocks,
   };
+}
+
+function assertPnnLineageDepth(checkpoint: ChainCheckpoint, acceptingBlueScore: string, confirmations: number): void {
+  if (BigInt(checkpoint.blueScore) - BigInt(acceptingBlueScore) <= BigInt(confirmations)) {
+    throw invalidTransaction("PNN covenant transition has not reached the required selected-chain depth");
+  }
 }
 
 function pnnCovenantTransition(
@@ -2995,7 +3077,7 @@ function pnnCovenantTransition(
   };
 }
 
-function pnnAcceptedTransactionId(rawTransaction: unknown): Hash32Hex {
+export function pnnAcceptedTransactionId(rawTransaction: unknown): Hash32Hex {
   const transaction = unwrapRecord(rawTransaction, "transaction");
   const verbose = isRecord(transaction.verboseData)
     ? transaction.verboseData
@@ -3012,7 +3094,7 @@ function pnnAcceptedTransactionId(rawTransaction: unknown): Hash32Hex {
   );
 }
 
-function pnnInputCovenantId(
+export function pnnInputCovenantId(
   input: Record<string, unknown>,
 ): Hash32Hex | undefined {
   const verbose = isRecord(input.verboseData)
@@ -3039,7 +3121,7 @@ function pnnInputCovenantId(
   return nested ?? flattened;
 }
 
-function pnnInputOutpoint(input: Record<string, unknown>): FundingOutpoint {
+export function pnnInputOutpoint(input: Record<string, unknown>): FundingOutpoint {
   const outpoint = requiredRecord(
     input.previousOutpoint ?? input.previous_outpoint,
     "Kaspa PNN covenant input outpoint",
@@ -3064,7 +3146,7 @@ function pnnOptionalInputOutpoint(
   return pnnInputOutpoint(input);
 }
 
-function pnnOutputCovenant(
+export function pnnOutputCovenant(
   output: Record<string, unknown>,
 ): { covenantId: Hash32Hex; authorizingInput: number } | undefined {
   const nested = isRecord(output.covenant) ? output.covenant : undefined;
@@ -3081,17 +3163,17 @@ function pnnOutputCovenant(
   return { covenantId, authorizingInput };
 }
 
-function unwrapRecord(value: unknown, wrapper: string): Record<string, unknown> {
+export function unwrapRecord(value: unknown, wrapper: string): Record<string, unknown> {
   const record = requiredRecord(value, `Kaspa PNN ${wrapper} response`);
   return isRecord(record[wrapper]) ? record[wrapper] : record;
 }
 
-function requiredRecord(value: unknown, label: string): Record<string, unknown> {
+export function requiredRecord(value: unknown, label: string): Record<string, unknown> {
   if (!isRecord(value)) throw invalidTransaction(`${label} is not an object`);
   return value;
 }
 
-function optionalArray(value: unknown, label: string): unknown[] {
+export function optionalArray(value: unknown, label: string): unknown[] {
   if (value === undefined || value === null) return [];
   if (!Array.isArray(value)) throw invalidTransaction(`${label} is not an array`);
   return value;
@@ -3108,7 +3190,7 @@ function sameChainCheckpoint(
   );
 }
 
-function serializeSdkScriptPublicKey(value: unknown): string {
+export function serializeSdkScriptPublicKey(value: unknown): string {
   if (typeof value === "string")
     return serializedScriptValue(value, "Kaspa PNN UTXO scriptPublicKey");
   if (!isRecord(value))
@@ -3285,14 +3367,14 @@ function outpointKey(outpoint: FundingOutpoint): string {
   return `${outpoint.txid.toLowerCase()}:${outpoint.index}`;
 }
 
-function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
+export function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
   return (
     left.txid.toLowerCase() === right.txid.toLowerCase() &&
     left.index === right.index
   );
 }
 
-function parseSafeTransactionArtifact(
+export function parseSafeTransactionArtifact(
   transaction: PreparedTransaction,
 ): SafeTransaction {
   if (transaction.length > MAX_SAFE_TRANSACTION_ARTIFACT_CHARS) {
@@ -3826,7 +3908,7 @@ function restScriptPublicKey(serialized: string): {
   };
 }
 
-function assertChainTransactionMatchesSafe(
+export function assertChainTransactionMatchesSafe(
   chain: RestTransaction,
   safe: SafeTransaction,
 ): void {
@@ -3974,7 +4056,7 @@ function arrayValue(value: unknown, label: string): unknown[] {
   return value;
 }
 
-function hashValue(value: unknown, label: string): string {
+export function hashValue(value: unknown, label: string): string {
   if (typeof value !== "string" || !/^[0-9a-fA-F]{64}$/.test(value))
     throw invalidTransaction(`${label} must be 32-byte hex`);
   return value.toLowerCase();
@@ -4001,7 +4083,7 @@ function uint32Value(value: unknown, label: string): number {
   return Number(bigint);
 }
 
-function uintStringValue(value: unknown, label: string): string {
+export function uintStringValue(value: unknown, label: string): string {
   if (typeof value === "number") {
     if (!Number.isSafeInteger(value) || value < 0)
       throw invalidTransaction(`${label} must be a safe unsigned integer`);

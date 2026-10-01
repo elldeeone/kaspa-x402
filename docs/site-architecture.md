@@ -99,7 +99,7 @@ its own `packages/demo-gateway/wrangler.jsonc`. It uses:
 - Worker name: `kaspa-x402-demo-gateway`;
 - Durable Object class: `GatewayState`;
 - network: `kaspa:testnet-10`;
-- chain evidence source: `https://api-tn10.kaspa.org`;
+- chain evidence source: configured Testnet-10 PNN/WSS nodes;
 - custom domain: `demo.kaspa-x402.org`.
 
 The gateway package is private and is not part of the public npm release

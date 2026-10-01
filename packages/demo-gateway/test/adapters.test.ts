@@ -1,3 +1,6 @@
+import { PnnChainEvidence } from "../src/pnn-chain-evidence.js";
+import { GatewayLedger } from "../src/state.js";
+import { FakeStorage } from "./fake-storage.js";
 import fs from "node:fs";
 import { fileURLToPath } from "node:url";
 import { afterEach, describe, expect, it, vi } from "vitest";
@@ -19,10 +22,10 @@ import {
   KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
-  RestExactHeadReconciler,
-  RestExactSettlementReconciler,
-  RestExactTransactionVerifier,
-  RestKaspaChainProvider,
+  VerifiedExactHeadReconciler,
+  VerifiedExactSettlementReconciler,
+  VerifiedExactTransactionVerifier,
+  VerifiedKaspaChainProvider,
   ScriptAddressBook,
 } from "../src/adapters.js";
 import {
@@ -173,7 +176,7 @@ describe("KaspaRestClient", () => {
   });
 });
 
-describe("RestKaspaChainProvider", () => {
+describe("VerifiedKaspaChainProvider", () => {
   const address =
     "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh";
   const scriptPublicKey =
@@ -248,7 +251,7 @@ describe("RestKaspaChainProvider", () => {
     const book = new ScriptAddressBook();
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
-    const utxo = await new RestKaspaChainProvider(
+    const utxo = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       book,
       "100",
@@ -347,7 +350,7 @@ describe("RestKaspaChainProvider", () => {
     const book = new ScriptAddressBook();
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
-    const utxo = await new RestKaspaChainProvider(
+    const utxo = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       book,
       "100",
@@ -393,7 +396,7 @@ describe("RestKaspaChainProvider", () => {
     const book = new ScriptAddressBook();
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
-    const utxo = await new RestKaspaChainProvider(
+    const utxo = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       book,
       "100",
@@ -469,7 +472,7 @@ describe("RestKaspaChainProvider", () => {
     book.record(scriptPublicKey, address);
     book.record("0000aa", "kaspatest:qother");
 
-    const utxo = await new RestKaspaChainProvider(
+    const utxo = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       book,
       "100",
@@ -516,7 +519,7 @@ describe("RestKaspaChainProvider", () => {
         }),
       );
     }) as typeof fetch;
-    const provider = new RestKaspaChainProvider(
+    const provider = new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       new ScriptAddressBook(),
       "100",
@@ -544,6 +547,35 @@ describe("RestKaspaChainProvider", () => {
       authorizedOutputCount: 1,
       acceptance: acceptedEvidence(txid),
     });
+  });
+
+  it("uses full PNN transaction data for singleton genesis and rejects a removed receipt", async () => {
+    const covenantId = transactionV1CovenantId({ txid: authorizingTxid, index: 1 }, [
+      { index: 0, output: { amount: "1000", scriptPublicKey, covenant: null } },
+    ]);
+    const evidence = acceptedEvidence(txid);
+    const pnn = new KaspaPnnClient({ endpoints: ["wss://pnn.example.test/wrpc/json"] });
+    vi.spyOn(pnn, "snapshotHashChainUtxos").mockResolvedValue({ checkpoint: evidence.checkpoint!, utxos: [{
+      outpoint: { txid, index: 0 }, amount: "1000", scriptPublicKey, covenantId, blockDaaScore: "900",
+    }] });
+    const find = vi.spyOn(pnn, "findAcceptedTransaction").mockResolvedValue({ evidence, raw: {
+      version: 1, lockTime: "0", inputs: [{ previousOutpoint: { transactionId: authorizingTxid, index: 1 } }],
+      outputs: [{ value: "1000", scriptPublicKey: { version: 0, script: scriptPublicKey.slice(4) },
+        covenant: { authorizingInput: 0, covenantId } }],
+    } });
+    const confirm = vi.spyOn(pnn, "confirmAcceptedTransaction").mockResolvedValue(evidence);
+    const book = new ScriptAddressBook();
+    book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
+    const store = new GatewayLedger(new FakeStorage());
+    const provider = () => new VerifiedKaspaChainProvider(new PnnChainEvidence(pnn, book, store), book, "100");
+    const utxo = await provider().getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
+    expect(utxo?.covenantId).toBe(covenantId);
+    expect(find).toHaveBeenCalledWith(txid, { originDaaScore: "900" });
+    const genesis = await provider().verifyCovenantGenesis({ utxo: utxo!, payment: {} as never });
+    expect(genesis?.authorizingInput).toEqual({ txid: authorizingTxid, index: 1 });
+    expect(genesis?.totalOutputCount).toBe(1);
+    confirm.mockRejectedValueOnce(new Error("accepting block removed"));
+    await expect(provider().getUtxo({ txid, index: 0 }, "kaspa:testnet-10")).rejects.toThrow("accepting block removed");
   });
 
   it("rejects covenant genesis with an extra unauthorized output", async () => {
@@ -587,7 +619,7 @@ describe("RestKaspaChainProvider", () => {
         }),
       ),
     ) as typeof fetch;
-    const provider = new RestKaspaChainProvider(
+    const provider = new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       new ScriptAddressBook(),
       "100",
@@ -654,7 +686,7 @@ describe("RestKaspaChainProvider", () => {
         }),
       ),
     ) as typeof fetch;
-    const provider = new RestKaspaChainProvider(
+    const provider = new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       new ScriptAddressBook(),
       "100",
@@ -714,7 +746,7 @@ describe("RestKaspaChainProvider", () => {
       },
     ) as typeof fetch;
 
-    const result = await new RestKaspaChainProvider(
+    const result = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", {
         fetch: fetchMock,
         acceptancePollMs: 0,
@@ -749,7 +781,7 @@ describe("RestKaspaChainProvider", () => {
   });
 });
 
-describe("RestExactHeadReconciler", () => {
+describe("VerifiedExactHeadReconciler", () => {
   it("proves an unchanged current head from the address UTXO set", async () => {
     const exact = exactTransactionFixture();
     const head = exactHeadFixture(exact);
@@ -772,7 +804,7 @@ describe("RestExactHeadReconciler", () => {
     }) as typeof fetch;
 
     await expect(
-      new RestExactHeadReconciler(
+      new VerifiedExactHeadReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactHead(head),
     ).resolves.toEqual({
@@ -808,7 +840,7 @@ describe("RestExactHeadReconciler", () => {
     }) as typeof fetch;
 
     await expect(
-      new RestExactHeadReconciler(
+      new VerifiedExactHeadReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactHead(head, [exact.txid]),
     ).resolves.toEqual({
@@ -849,7 +881,7 @@ describe("RestExactHeadReconciler", () => {
     }) as typeof fetch;
 
     await expect(
-      new RestExactHeadReconciler(
+      new VerifiedExactHeadReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactHead(head, [exact.txid]),
     ).resolves.toMatchObject({
@@ -860,14 +892,14 @@ describe("RestExactHeadReconciler", () => {
   });
 });
 
-describe("RestExactSettlementReconciler", () => {
+describe("VerifiedExactSettlementReconciler", () => {
   it("accepts only the persisted additive artifact and returns its charged delta", async () => {
     const exact = exactTransactionFixture();
     const fetchMock = vi.fn(async () => Response.json(exact.restTransaction)) as typeof fetch;
     const attempt = exactSettlementAttemptFixture(exact);
 
     await expect(
-      new RestExactSettlementReconciler(
+      new VerifiedExactSettlementReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactSettlement(attempt),
     ).resolves.toEqual({
@@ -887,7 +919,7 @@ describe("RestExactSettlementReconciler", () => {
     const fetchMock = vi.fn(async () => new Response("missing", { status: 404 })) as typeof fetch;
 
     await expect(
-      new RestExactSettlementReconciler(
+      new VerifiedExactSettlementReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
     ).resolves.toMatchObject({
@@ -908,7 +940,7 @@ describe("RestExactSettlementReconciler", () => {
     ) as typeof fetch;
 
     await expect(
-      new RestExactSettlementReconciler(
+      new VerifiedExactSettlementReconciler(
         new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
       ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
     ).rejects.toThrow(
@@ -1225,6 +1257,16 @@ describe("KaspaPnnClient", () => {
     ).rejects.toThrow("ambiguous covenant successors");
   });
 
+  it("holds an observed covenant transition until its selected-chain depth is sufficient", async () => {
+    const current = batchChannel({});
+    const fixture = pnnLineageFixture(current);
+    await expect(new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test/wrpc/json"], rpcFactory: mockPnnRpcFactory(() => fixture.rpc),
+    }).discoverCovenantLineage({ network: "kaspa:testnet-10", covenantId: current.covenantId,
+      templateId: current.channelConfig.templateId, lineage: current.lineage, minConfirmationCount: 50,
+    })).rejects.toThrow("required selected-chain depth");
+  });
+
   it("rejects a durable-head spend carrying the wrong covenant identity", async () => {
     const current = batchChannel({});
     const fixture = pnnLineageFixture(current, false, "f4".repeat(32));
@@ -1395,7 +1437,7 @@ describe("KaspaPnnClient", () => {
   });
 });
 
-describe("RestExactTransactionVerifier", () => {
+describe("VerifiedExactTransactionVerifier", () => {
   it("verifies the Rust-consensus standard-native vector from trusted UTXOs and Schnorr signatures", async () => {
     const vector = JSON.parse(
       await fs.promises.readFile(
@@ -1546,7 +1588,7 @@ describe("RestExactTransactionVerifier", () => {
       }
       throw new Error(`unexpected REST request ${url.pathname}`);
     });
-    const verifier = new RestExactTransactionVerifier(
+    const verifier = new VerifiedExactTransactionVerifier(
       new KaspaRestClient("https://api.example.test", {
         fetch: fetchMock as typeof fetch,
       }),
@@ -1584,6 +1626,41 @@ describe("RestExactTransactionVerifier", () => {
         address: payTo,
       },
     });
+
+    // The gateway verifies this same canonical vector with the REST service unavailable.
+    const pnn = new KaspaPnnClient({ endpoints: ["wss://pnn.example.test"] });
+    const origin = { outpoint: { txid: input.previousOutpoint.txid, index: input.previousOutpoint.index },
+      amount: input.utxo.amount, scriptPublicKey: input.utxo.scriptPublicKey, covenantId: null };
+    const checkpoint = { blockHash: "ee".repeat(32), blueScore: "1000", daaScore: "1000" };
+    const snapshotSpy = vi.spyOn(pnn, "snapshotHashChainUtxos").mockResolvedValue({ utxos: [origin], checkpoint });
+    const receipt = acceptedEvidence(standard.transactionId);
+    const findSpy = vi.spyOn(pnn, "findAcceptedTransaction").mockResolvedValue({
+      raw: { ...safeArtifact,
+        outputs: safeArtifact.outputs.map(output => ({ ...output, scriptPublicKey: { version: 0, script: output.scriptPublicKey.slice(4) } })),
+      }, evidence: receipt,
+    });
+    const confirmSpy = vi.spyOn(pnn, "confirmAcceptedTransaction").mockResolvedValue(receipt);
+    const durable = new GatewayLedger(new FakeStorage());
+    const book = new ScriptAddressBook();
+    const nodeVerifier = new PnnChainEvidence(pnn, book, durable);
+    await expect(nodeVerifier.verifyExactPayment(request)).resolves.toMatchObject({ transactionId: standard.transactionId });
+    expect(findSpy).not.toHaveBeenCalled();
+    expect((await durable.loadPnnEvidence(standard.transactionId))?.origins).toEqual([origin]);
+
+    snapshotSpy.mockResolvedValue({ utxos: [{ ...origin, amount: String(BigInt(origin.amount) + 1n) }], checkpoint });
+    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("does not match trusted chain state");
+    snapshotSpy.mockResolvedValue({ utxos: [], checkpoint });
+    const restarted = new PnnChainEvidence(pnn, book, durable);
+    await expect(restarted.verifyExactPayment(request)).resolves.toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
+    expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint });
+    expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
+    confirmSpy.mockRejectedValue(new Error("accepting block left the selected chain"));
+    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("left the selected chain");
+    confirmSpy.mockResolvedValue(receipt);
+    const saveSpy = vi.spyOn(durable, "savePnnEvidence");
+    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment({ ...request,
+      authorization: { ...request.authorization, signature: "00".repeat(64) } })).rejects.toThrow();
+    expect(saveSpy).not.toHaveBeenCalled();
 
     const sdkSafeArtifact = JSON.parse(artifact) as {
       inputs: Array<{ computeBudget?: number }>;
@@ -1875,7 +1952,7 @@ describe("RestExactTransactionVerifier", () => {
       }
       throw new Error(`unexpected REST request ${url.pathname}`);
     }) as typeof fetch;
-    const verifier = new RestExactTransactionVerifier(
+    const verifier = new VerifiedExactTransactionVerifier(
       new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
     );
     const headInput = additive.transaction.inputs[0]!;
@@ -2393,7 +2470,7 @@ function pnnLineageFixture(
     },
     async getVirtualChainFromBlockV2(request) {
       expect(request.dataVerbosityLevel).toBe("High");
-      expect(request.minConfirmationCount).toBe(30);
+      expect(request.minConfirmationCount).toBe(0);
       selectedCalls += 1;
       if (selectedCalls > 1) {
         expect(request.startHash).toBe(acceptingBlockHash);
@@ -2406,12 +2483,12 @@ function pnnLineageFixture(
       expect(request.startHash).toBe(current.lineage.checkpoint.blockHash);
       return {
         removedChainBlockHashes: [],
-        addedChainBlockHashes: [acceptingBlockHash],
+        addedChainBlockHashes: [acceptingBlockHash, proofCheckpoint.blockHash],
         chainBlockAcceptedTransactions: [{
           chainBlockHeader: {
             ...(headerHash ? { hash: headerHash } : {}),
-            blueScore: "1071",
-            daaScore: "1071",
+            blueScore: "1060",
+            daaScore: "1060",
           },
           acceptedTransactions: [{
             transactionId,
@@ -2429,11 +2506,11 @@ function pnnLineageFixture(
             }],
             outputs: branching ? [successor, { ...successor }] : [successor],
           }],
-        }],
+        }, { chainBlockHeader: { hash: proofCheckpoint.blockHash, blueScore: "1100", daaScore: "1100" }, acceptedTransactions: [] }],
       };
     },
   };
-  return { rpc, checkpoint, acceptingBlockHash, transactionId };
+  return { rpc, checkpoint: proofCheckpoint, acceptingBlockHash, transactionId };
 }
 
 function exactTransactionFixture() {
@@ -2666,8 +2743,8 @@ function refreshAdditiveArtifact(artifact: AdditiveSafeArtifact): void {
   artifact.id = transactionV1Id(reference);
 }
 
-function offlineExactVerifier(): RestExactTransactionVerifier {
-  return new RestExactTransactionVerifier(
+function offlineExactVerifier(): VerifiedExactTransactionVerifier {
+  return new VerifiedExactTransactionVerifier(
     new KaspaRestClient("https://api.example.test", {
       fetch: vi.fn(
         async () =>

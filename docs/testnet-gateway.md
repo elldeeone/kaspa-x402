@@ -185,20 +185,19 @@ head. A same-address output without that lineage is never adopted.
 
 ## Verification And Chain Evidence
 
-The Worker uses `https://api-tn10.kaspa.org` for read-side evidence:
+The Worker uses configured public Testnet-10 PNN/WSS nodes for all chain
+reads and transaction submission. The public REST index is not required.
+Current funding outputs are read from the node UTXO set. Before exact
+submission, the gateway persists the verified input snapshot and selected-chain
+checkpoint. Accepted transaction receipts are retained for retries and restart
+recovery, and rechecked against the selected chain.
 
-- `/info/blockdag` for network and virtual DAA health;
-- `/addresses/{address}/utxos` for accepted UTXO evidence;
-- `/transactions/{transaction_id}` and `/transactions/acceptance` for accepted
-  finality;
-- derived escrow-address UTXOs for batch funding.
-
-Exact transaction artifacts are submitted through configured public TN10
-PNN/WSS endpoints. The REST submit fallback must not be cited as KIP-10
-broadcast evidence because it does not preserve the v1 compute-budget field.
-The same PNN connection supplies complete `GetVirtualChainFromBlockV2` deltas
-for batch lineage recovery. REST UTXO presence does not prove removed-chain
-continuity or authorize a recovered batch head.
+Batch admission reads the complete accepted genesis transaction, verifies the
+singleton covenant and current UTXO, and obtains 30-confirmation selected-chain
+evidence. Top-ups use the same complete transaction checks. Batch lineage
+recovery processes `GetVirtualChainFromBlockV2` removals and additions from its
+durable cursor. Missing or pruned historical evidence remains unavailable;
+it is never replaced with client-supplied UTXO claims.
 
 The gateway fails closed when it cannot establish chain health, transaction
 validity, accepted finality, or required durable state. Protected content is

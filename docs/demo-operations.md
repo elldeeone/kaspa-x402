@@ -30,7 +30,6 @@ Important non-secret variables:
 | Variable                                     | Purpose                                                                                                                                                        |
 | -------------------------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------- |
 | `KASPA_X402_GATEWAY_ENABLED`                 | Set to `false` to stop protected exact and batch endpoints with HTTP `503`. `/health`, `/canary`, `/metrics`, and `/supported` remain visible.                 |
-| `KASPA_X402_CHAIN_API_BASE`                  | REST chain evidence source. Current value: `https://api-tn10.kaspa.org`.                                                                                       |
 | `KASPA_X402_PAY_TO`                          | Testnet address receiving exact payments.                                                                                                                      |
 | `KASPA_X402_SERVER_PUBLIC_KEY`               | Testnet server public key advertised in batch escrow terms.                                                                                                    |
 | `KASPA_X402_EXACT_AMOUNT`                    | Exact-payment price in sompi. Must be at least `10000000`.                                                                                                     |
@@ -45,7 +44,7 @@ Important non-secret variables:
 | `KASPA_X402_RELEASE_VERSION`                 | Current release version checked against the standards site's `/release.json`.                                                                                   |
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
-| `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for hosted KIP-10 exact submission and authoritative batch selected-chain lineage. REST mode cannot prove batch lineage continuity.                      |
+| `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for all hosted chain reads, transaction submission, and selected-chain recovery. REST mode is rejected.                      |
 | `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used for exact submission and `GetVirtualChainFromBlockV2` batch lineage recovery.                                   |
 | `KASPA_X402_HASH_CHAIN_ENABLED`             | Enable hash-chain exact in the existing gateway Durable Object after registering a funded Testnet head. Default: `false`. |
 
@@ -220,24 +219,34 @@ KASPA_X402_GATEWAY_ENABLED=true
 
 ## Chain Evidence Or PNN Outage
 
-The Worker uses REST for accepted-UTXO and DAA reads. In `pnn` mode it uses
-public TN10 PNN/WSS both for exact submission and authoritative batch
-`GetVirtualChainFromBlockV2` lineage deltas. The reference policy requires 30
-confirmations proven by that selected-chain traversal; blue-score difference is
-not selected-chain depth.
-`/health` is shallow and does not probe either dependency. If chain evidence
-fails:
+The Worker uses the configured Testnet-10 PNN/WSS nodes for all funding,
+UTXO, DAA, transaction, and selected-chain evidence. It does not depend on the
+public REST transaction index. The reference batch policy still requires 30
+confirmations proven by selected-chain traversal; blue-score difference alone
+is insufficient. `/health` shows configuration; `/canary` probes the node.
 
-1. Confirm whether `https://api-tn10.kaspa.org/info/blockdag` is reachable.
-2. If the REST endpoint is down or stale, disable the gateway.
-3. Do not point the public gateway at mainnet or an unreviewed private node.
-4. If moving to a different `kaspa:testnet-10` REST endpoint, deploy only after
-   unpaid offers and a manual paid exact check pass.
-5. If PNN or selected-chain V2 is failing, disable hosted exact and batch (or
-   the full gateway). REST UTXO presence alone cannot authorize lineage reuse.
-6. Re-enable only after `/health`, a fresh successful `/canary`, batch deposit,
-   replay rejection, and exact payment checks pass when hosted exact settlement
-   is enabled.
+1. If node evidence is unavailable, disable the gateway.
+2. Switch only to reviewed `kaspa:testnet-10` PNN endpoints; never to mainnet.
+3. Unknown, removed-chain, or incomplete evidence fails closed. Never discard a
+   stored pre-broadcast checkpoint to manufacture a successful retry.
+4. Re-enable after a fresh `/canary`, batch deposit and replay rejection, and
+   exact payment checks pass.
+
+The gateway persists PNN funding snapshots before exact submission and stores
+accepted transaction receipts for recovery. Offers also preserve a bounded
+ring of 128 node checkpoints, with one per 300 DAA scores, so a new batch
+deposit can be located from a checkpoint before its creation. Without a stored
+checkpoint, historical transactions use a bounded selected-parent traversal
+(at most 1,024 blocks, subject to the node timeout). A missing
+or pruned origin is unavailable evidence, not permission to weaken admission.
+Existing channels retain their verified genesis evidence and lineage cursor.
+Each batch lineage read stops at a fixed selected-chain checkpoint, including
+the recent chain data so its cursor cannot skip an unconfirmed transition.
+Covenant transitions still need the configured 30-block depth; a recent
+transition keeps the lane pending until that evidence is available.
+PNN receipts have separate limits of 4,096 records, 64 MiB total, and 64 KiB per
+record. Capacity exhaustion fails closed and requires operator maintenance;
+uncertain or active evidence is not automatically discarded.
 
 On restart, resume every batch observer from its stored checkpoint. Process
 removed blocks before additions. If history is pruned, branching, or otherwise
@@ -251,7 +260,7 @@ The Worker runs a non-spending scheduled canary every 15 minutes.
 
 The canary checks:
 
-- `kaspa:testnet-10` REST health and virtual DAA evidence;
+- `kaspa:testnet-10` PNN health and virtual DAA evidence;
 - the public `payment-required` schema URL;
 - the current release metadata with a cache-busted request;
 - the public docs index and expected page marker;
@@ -478,8 +487,8 @@ submission, `recover --config <private-config>` checks the saved transaction
 and records its accepted result without broadcasting again. Resolve a pending
 setup before another init/rotation. Keep the pending setup file private.
 
-The service reuses the selected-chain REST verifier and a fresh PNN UTXO read
-for the current head. If those public Testnet sources lag or fail, it stays
+The service uses selected-chain PNN evidence and fresh PNN UTXO reads for the
+current head. If the configured Testnet nodes fail, it stays
 unavailable/pending. Local simulation checks do not establish live payment
 acceptance. Enable the public flow only after the deployed paid browser check.
 

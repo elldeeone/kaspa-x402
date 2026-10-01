@@ -46,7 +46,7 @@ const options = {
   resourcePersistencePath: folder,
   bindings: {
     KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HASH_CHAIN_ENABLED: 'true',
-    KASPA_X402_ADMIN_TOKEN: admin, KASPA_X402_CHAIN_API_BASE: 'https://chain.demo.invalid',
+    KASPA_X402_ADMIN_TOKEN: admin,
     KASPA_X402_PAY_TO: addressForScriptPublicKey(payerScript, 'kaspa:testnet-10'),
     KASPA_X402_SERVER_PUBLIC_KEY: owner, KASPA_X402_GATEWAY_BASE_URL: base,
     KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: 'true',
@@ -69,21 +69,7 @@ const options = {
       });
       return new WorkerResponse(null, { status: 101, webSocket: client });
     }
-    if (url.pathname === '/info/blockdag') return Response.json({ networkName: 'kaspa-testnet-10', virtualDaaScore: '1000000' });
-    if (url.pathname.startsWith('/addresses/')) {
-      const address = decodeURIComponent(url.pathname.split('/')[2]);
-      return Response.json([...utxos.values()].filter((item) => item.address === address));
-    }
-    if (url.pathname === '/transactions/search') {
-      const body = await request.json();
-      return Response.json(body.transactionIds.map((id) => transactions.get(id)).filter(Boolean));
-    }
-    if (url.pathname.startsWith('/transactions/')) {
-      const found = transactions.get(url.pathname.split('/')[2]);
-      return found ? Response.json(found) : Response.json({}, { status: 404 });
-    }
-    if (url.pathname.startsWith('/blocks/')) return Response.json({ verboseData: { hash: blockHash, isChainBlock: true } });
-    throw new Error(`Unexpected simulated chain request: ${url.pathname}`);
+    throw new Error(`REST is unavailable in the PNN-only Worker check: ${url.pathname}`);
   },
 };
 const createWorker = () => new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);

@@ -1,9 +1,10 @@
+import { PnnChainEvidence } from "./pnn-chain-evidence.js";
 import {
   DirectModeServer,
   handleHashChainGrantClaimHttp,
 } from "@kaspa-x402/server";
 import type { HashChainGrantIssuer } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient, KaspaRestClient, NativeAddressCodec, RestKaspaChainProvider, ScriptAddressBook } from "./adapters.js";
+import { KaspaPnnClient, NativeAddressCodec, VerifiedKaspaChainProvider, ScriptAddressBook } from "./adapters.js";
 import type { GatewayConfig } from "./config.js";
 import { HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
 import { addressForScriptPublicKey } from "./kaspa-native.js";
@@ -17,7 +18,7 @@ export type HashChainHeadRegistration = Parameters<HashChainGrantIssuer["install
 export class HashChainDemoService {
   readonly issuer: HashChainGrantIssuer;
   readonly #chain: HashChainPnnView;
-  readonly #rest: KaspaRestClient;
+  readonly #pnn: KaspaPnnClient;
   readonly #lock: DurableGatewayLockManager;
 
   constructor(
@@ -26,9 +27,9 @@ export class HashChainDemoService {
     private readonly config: GatewayConfig,
   ) {
     this.issuer = openDurableHashChainIssuer(storage);
-    this.#chain = new HashChainPnnView(new KaspaPnnClient({ endpoints: config.pnnEndpoints,
-      timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }), storage);
-    this.#rest = new KaspaRestClient(config.chainApiBase);
+    this.#pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints,
+      timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
+    this.#chain = new HashChainPnnView(this.#pnn, storage);
     this.#lock = new DurableGatewayLockManager(state);
   }
 
@@ -78,7 +79,7 @@ export class HashChainDemoService {
       refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
       maxTimeoutSeconds: 150, acceptedFinality: "accepted", store: this.state, lockManager: this.#lock,
       publicBoundaryPolicy: { adapterTimeoutMs: 60_000 },
-      chainProvider: new RestKaspaChainProvider(this.#rest, book, this.config.claimFeeSompi),
+      chainProvider: new VerifiedKaspaChainProvider(new PnnChainEvidence(this.#pnn, book, this.state), book, this.config.claimFeeSompi),
       addressCodec: new NativeAddressCodec(book),
       voucherVerifier: { verifyVoucher: () => false }, batchPresentationVerifier: { verifyPresentation: () => false },
       exactProfile: "hash-chain-additive", hashChainIssuer: this.issuer, hashChainHeadId: current.headId,

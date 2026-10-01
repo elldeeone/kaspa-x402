@@ -1,3 +1,5 @@
+import type { PnnEvidenceRecord } from "./pnn-chain-evidence.js";
+import type { ChainCheckpoint } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
   BatchSettlementAttemptRecord,
@@ -366,6 +368,22 @@ export class RemoteGatewayState implements GatewayStateClient {
     windowMs: number,
   ): Promise<{ allowed: boolean; count: number; resetAt: number }> {
     return this.#call("checkRateLimit", { scope, nowMs, limit, windowMs });
+  }
+
+  loadPnnEvidence(transactionId: string): Promise<PnnEvidenceRecord | undefined> {
+    return this.#call("loadPnnEvidence", { transactionId });
+  }
+
+  savePnnEvidence(record: PnnEvidenceRecord): Promise<void> {
+    return this.#call("savePnnEvidence", { record });
+  }
+
+  recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void> {
+    return this.#call("recordPnnCheckpoint", { checkpoint });
+  }
+
+  findPnnCheckpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {
+    return this.#call("findPnnCheckpointBefore", { daaScore });
   }
 
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined> {

@@ -1,3 +1,4 @@
+import { PnnChainEvidence } from "./pnn-chain-evidence.js";
 import {
   KASPA_X402_RESOURCE_BUDGET,
   assertJsonResourceBudget,
@@ -26,14 +27,12 @@ import {
 } from "@kaspa-x402/server";
 import {
   KaspaPnnClient,
-  KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
   PnnBroadcastChainProvider,
-  RestExactHeadReconciler,
-  RestExactSettlementReconciler,
-  RestExactTransactionVerifier,
-  RestKaspaChainProvider,
+  VerifiedExactHeadReconciler,
+  VerifiedExactSettlementReconciler,
+  VerifiedKaspaChainProvider,
   ScriptAddressBook,
 } from "./adapters.js";
 import {
@@ -429,10 +428,10 @@ export async function runGatewayCanary(
   }
 
   checks.push(
-    await checked("kaspa-rest", async () => {
-      const chain = await new KaspaRestClient(config.chainApiBase).health();
+    await checked("kaspa-chain", async () => {
+      const chain = await new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }).health();
       return {
-        detail: "REST chain health returned testnet-10 evidence",
+        detail: "PNN chain health returned testnet-10 evidence",
         evidence: chain,
       };
     }),
@@ -600,8 +599,9 @@ async function createGateway(
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
-  const rest = new KaspaRestClient(config.chainApiBase);
-  const currentDaa = BigInt(await rest.getVirtualDaaScore());
+  const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
+  const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
+  const currentDaa = BigInt(await evidence.getVirtualDaaScore());
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -622,8 +622,8 @@ async function createGateway(
       "computed refund DAA crosses the consensus timestamp boundary",
     );
   }
-  const restChainProvider = new RestKaspaChainProvider(
-    rest,
+  const verifiedReads = new VerifiedKaspaChainProvider(
+    evidence,
     book,
     config.claimFeeSompi,
   );
@@ -643,26 +643,16 @@ async function createGateway(
     maximumRefundHorizonDaa: config.refundTimeoutDaaDelta,
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     store,
-    chainProvider:
-      config.chainBroadcastMode === "pnn"
-        ? new PnnBroadcastChainProvider(
-            restChainProvider,
-            book,
-            new KaspaPnnClient({
-              endpoints: config.pnnEndpoints,
-              timeoutMs: config.pnnTimeoutMs,
-              attempts: config.pnnAttempts,
-            }),
-            TESTNET_10_CONFIRMATION_THRESHOLD,
-          )
-        : restChainProvider,
+    chainProvider: new PnnBroadcastChainProvider(
+      verifiedReads, book, pnn, TESTNET_10_CONFIRMATION_THRESHOLD,
+    ),
     addressCodec,
     voucherVerifier: new NativeVoucherVerifier(),
     batchPresentationVerifier: new NativeVoucherVerifier(),
-    exactTransactionVerifier: new RestExactTransactionVerifier(rest),
-    exactSettlementReconciler: new RestExactSettlementReconciler(rest),
-    exactHeadReconciler: new RestExactHeadReconciler(rest),
-    topUpVerifier: restChainProvider,
+    exactTransactionVerifier: evidence,
+    exactSettlementReconciler: new VerifiedExactSettlementReconciler(evidence),
+    exactHeadReconciler: new VerifiedExactHeadReconciler(evidence),
+    topUpVerifier: verifiedReads,
     reconcileExactHeadOnOffer: true,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
@@ -955,6 +945,7 @@ function healthResponse(config: GatewayConfig): Response {
       hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
       exactProfile: config.exactProfile,
       chainBroadcastMode: config.chainBroadcastMode,
+        chainEvidenceSource: "pnn",
     },
     { headers: corsHeaders(config) },
   );

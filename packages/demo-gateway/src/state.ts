@@ -4,6 +4,7 @@ import {
   parseBatchLaneAmount,
   parseSompiString,
   sha256Hex,
+  type ChainCheckpoint,
 } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
@@ -30,6 +31,7 @@ import type {
   ServerStateStore,
   SettlementCommit,
 } from "@kaspa-x402/server";
+import type { PnnEvidenceRecord, PnnEvidenceStore } from "./pnn-chain-evidence.js";
 import {
   durableByteLength,
   durableOpenRecordBytes,
@@ -208,14 +210,18 @@ export type GatewayStateMethod =
   | "loadCanaryReport"
   | "saveCanaryReport"
   | "incrementMetric"
-  | "metrics";
+  | "metrics"
+  | "loadPnnEvidence"
+  | "savePnnEvidence"
+  | "recordPnnCheckpoint"
+  | "findPnnCheckpointBefore";
 
 export interface GatewayStateRequest {
   method: GatewayStateMethod;
   payload?: unknown;
 }
 
-export class GatewayLedger implements ServerStateStore {
+export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
   readonly coordinationScope = "deployment-wide" as const;
   readonly coordinationDomain = GATEWAY_COORDINATION_DOMAIN;
   readonly #storage: GatewayStorage;
@@ -227,6 +233,51 @@ export class GatewayLedger implements ServerStateStore {
     this.#limits = { ...DEFAULT_DURABLE_STATE_LIMITS, ...options.limits };
     this.#now = options.now ?? Date.now;
     assertDurableStateLimits(this.#limits);
+  }
+
+  async loadPnnEvidence(transactionId: string): Promise<PnnEvidenceRecord | undefined> {
+    assertPnnTransactionId(transactionId);
+    return cloneOrUndefined(await this.#storage.get<PnnEvidenceRecord>(`pnn-evidence:${transactionId}`));
+  }
+
+  async recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void> {
+    assertPnnTransactionId(checkpoint.blockHash);
+    const bucket = BigInt(checkpoint.daaScore) / 300n;
+    await this.#storage.transaction(async txn => {
+      const checkpoints = await txn.get<ChainCheckpoint[]>("pnn-discovery-checkpoints") ?? [];
+      // Keep the earliest observation in each roughly 30-second DAA bucket.
+      // A bounded ring covers quote delivery and delayed deposit retries.
+      const index = checkpoints.findIndex(item => BigInt(item.daaScore) / 300n === bucket);
+      if (index >= 0) {
+        if (BigInt(checkpoints[index]!.daaScore) <= BigInt(checkpoint.daaScore)) return;
+        checkpoints[index] = checkpoint;
+      } else checkpoints.push(checkpoint);
+      checkpoints.sort((a, b) => BigInt(a.daaScore) < BigInt(b.daaScore) ? -1 : 1);
+      await txn.put("pnn-discovery-checkpoints", checkpoints.slice(-128));
+    });
+  }
+
+  async findPnnCheckpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {
+    const checkpoints = await this.#storage.get<ChainCheckpoint[]>("pnn-discovery-checkpoints") ?? [];
+    return cloneOrUndefined(checkpoints.reverse().find(item => BigInt(item.daaScore) < BigInt(daaScore)));
+  }
+
+  async savePnnEvidence(record: PnnEvidenceRecord): Promise<void> {
+    assertPnnTransactionId(record.transactionId);
+    const bytes = durableByteLength(record);
+    if (bytes > 64 * 1024) throw new Error("PNN evidence exceeds the record byte limit");
+    await this.#storage.transaction(async txn => {
+      const key = `pnn-evidence:${record.transactionId}`;
+      const current = await txn.get<PnnEvidenceRecord>(key);
+      if (current?.origins && JSON.stringify(current.origins) !== JSON.stringify(record.origins)) {
+        throw new Error("PNN receipt conflicts with its durable funding snapshot");
+      }
+      const budget = await txn.get<{ records: number; bytes: number }>("pnn-evidence:budget") ?? { records: 0, bytes: 0 };
+      const next = { records: budget.records + (current ? 0 : 1), bytes: budget.bytes - (current ? durableByteLength(current) : 0) + bytes };
+      if (next.records > 4096 || next.bytes > 64 * 1024 * 1024) throw new Error("PNN evidence capacity exhausted");
+      await txn.put(key, record);
+      await txn.put("pnn-evidence:budget", next);
+    });
   }
 
   async loadChannel(
@@ -1322,7 +1373,7 @@ export class DurableGatewayLockManager implements ChannelLockManager {
   }
 }
 
-export type GatewayStateClient = ServerStateStore & {
+export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
   exactHeadStats(): Promise<ExactHeadStats>;
   acquireLock(
     key: string,
@@ -1360,6 +1411,10 @@ export async function dispatchGatewayState(
   request: GatewayStateRequest,
 ): Promise<unknown> {
   switch (request.method) {
+    case "loadPnnEvidence": return ledger.loadPnnEvidence(readPayload<{ transactionId: string }>(request).transactionId);
+    case "savePnnEvidence": return ledger.savePnnEvidence(readPayload<{ record: PnnEvidenceRecord }>(request).record);
+    case "recordPnnCheckpoint": return ledger.recordPnnCheckpoint(readPayload<{ checkpoint: ChainCheckpoint }>(request).checkpoint);
+    case "findPnnCheckpointBefore": return ledger.findPnnCheckpointBefore(readPayload<{ daaScore: string }>(request).daaScore);
     case "loadChannel":
       return ledger.loadChannel(
         readPayload<{ channelId: string }>(request).channelId,
@@ -2483,4 +2538,8 @@ function isLowerHash32(value: string): boolean {
 
 function isNonzeroLowerHash32(value: string): boolean {
   return isLowerHash32(value) && !/^0{64}$/.test(value);
+}
+
+function assertPnnTransactionId(value: string): void {
+  if (!/^[0-9a-f]{64}$/.test(value)) throw new Error("invalid PNN evidence transaction id");
 }

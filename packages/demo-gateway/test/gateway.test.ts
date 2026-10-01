@@ -1,4 +1,6 @@
-import { afterEach, describe, expect, it, vi } from "vitest";
+import { KaspaPnnClient } from "../src/adapters.js";
+import { PnnChainEvidence } from "../src/pnn-chain-evidence.js";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodePaymentRequiredHeader } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
@@ -41,7 +43,8 @@ const KIP10_ADDRESS = addressForScriptPublicKey(
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_GATEWAY_ENABLED: "true",
   KASPA_X402_NETWORK: "kaspa:testnet-10",
-  KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
+  KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+  KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
   KASPA_X402_PAY_TO:
     "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
   KASPA_X402_SERVER_PUBLIC_KEY:
@@ -52,6 +55,10 @@ const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
 };
 
 describe("gateway canary", () => {
+  beforeEach(() => {
+    vi.spyOn(KaspaPnnClient.prototype, "health").mockResolvedValue({ ok: true, networkId: "testnet-10", endpoint: "pnn.example.test", virtualDaaScore: "507000000" });
+    vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore").mockResolvedValue("507000000");
+  });
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
@@ -71,7 +78,7 @@ describe("gateway canary", () => {
     expect(
       report.checks.map((check) => `${check.name}:${check.status}`),
     ).toEqual([
-      "kaspa-rest:ok",
+      "kaspa-chain:ok",
       "schema-url:ok",
       "current-release:ok",
       "docs-index:ok",
@@ -131,7 +138,7 @@ describe("gateway canary", () => {
     expect(
       report.checks.map((check) => `${check.name}:${check.status}`),
     ).toEqual([
-      "kaspa-rest:ok",
+      "kaspa-chain:ok",
       "schema-url:ok",
       "current-release:ok",
       "docs-index:ok",
@@ -270,6 +277,7 @@ describe("gateway canary", () => {
       fakeContext(),
     );
     const fetchesAfterAllowedRequest = fetchMock.mock.calls.length;
+    const chainReadsAfterAllowedRequest = vi.mocked(PnnChainEvidence.prototype.getVirtualDaaScore).mock.calls.length;
     const limitedResponse = await handleGatewayRequest(
       new Request("https://demo.kaspa-x402.org/batch", {
         headers: { "cf-connecting-ip": "203.0.113.10" },
@@ -292,7 +300,9 @@ describe("gateway canary", () => {
       error: "method_not_allowed",
     });
     expect(firstResponse.status).toBe(402);
-    expect(fetchesAfterAllowedRequest).toBeGreaterThan(0);
+    expect(chainReadsAfterAllowedRequest).toBeGreaterThan(0);
+    expect(PnnChainEvidence.prototype.getVirtualDaaScore).toHaveBeenCalledTimes(chainReadsAfterAllowedRequest);
+    expect(fetchesAfterAllowedRequest).toBe(0);
     expect(limited).toMatchObject({
       status: 429,
       body: { ok: false, error: "rate_limited" },
@@ -316,24 +326,10 @@ describe("gateway canary", () => {
       releaseFirst = resolve;
     });
     let blockdagCalls = 0;
-    vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
-      const url =
-        typeof input === "string"
-          ? input
-          : input instanceof URL
-            ? input.toString()
-            : input.url;
-      if (url !== "https://api-tn10.kaspa.org/info/blockdag")
-        throw new Error(`unexpected fetch ${url}`);
+    vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore").mockImplementation(async () => {
       blockdagCalls += 1;
-      if (blockdagCalls === 1) {
-        markFirstStarted();
-        await firstMayFinish;
-      }
-      return Response.json({
-        networkName: "kaspa-testnet-10",
-        virtualDaaScore: "507000000",
-      });
+      if (blockdagCalls === 1) { markFirstStarted(); await firstMayFinish; }
+      return "507000000";
     });
 
     const first = handleGatewayRequest(
@@ -729,6 +725,15 @@ function stubCanaryFetches(): void {
 function stubAdditiveHeadFetches(
   state: "current" | "missing" | "advanced",
 ): void {
+  vi.spyOn(PnnChainEvidence.prototype, "getUtxosForAddress").mockResolvedValue(state === "missing" ? [] : [{
+    outpoint: { txid: state === "advanced" ? "11".repeat(32) : FUNDING_TX, index: 0 },
+    amount: state === "advanced" ? "120000000" : "100000000", scriptPublicKey: KIP10_SCRIPT_PUBLIC_KEY,
+  }]);
+  vi.spyOn(PnnChainEvidence.prototype, "getTransaction").mockResolvedValue(state === "advanced" ? {
+    transaction_id: "11".repeat(32), is_accepted: true,
+    inputs: [{ previous_outpoint_hash: FUNDING_TX, previous_outpoint_index: 0 }],
+    outputs: [{ index: 0, amount: "120000000", script_public_key: KIP10_SCRIPT_PUBLIC_KEY.slice(4) }],
+  } : null);
   vi.stubGlobal("fetch", async (input: RequestInfo | URL) => {
     const url = new URL(
       typeof input === "string"

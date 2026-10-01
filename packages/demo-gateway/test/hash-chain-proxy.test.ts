@@ -5,7 +5,8 @@ import { handleGatewayRequest } from "../src/gateway.js";
 
 const env: GatewayEnv = {
   KASPA_X402_GATEWAY_ENABLED: "true",
-  KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
+  KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+  KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
   KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",
   KASPA_X402_HASH_CHAIN_PROXY_TOKEN: "proxy-test-value",
   KASPA_X402_PAY_TO: "kaspatest:merchant",

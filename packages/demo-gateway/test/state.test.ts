@@ -46,6 +46,50 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("keeps bounded discovery checkpoints before a deposit and survives restart", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const first = { blockHash: TX, blueScore: "100", daaScore: "300" };
+    await ledger.recordPnnCheckpoint(first);
+    await ledger.recordPnnCheckpoint({ ...first, blockHash: OTHER_TX, daaScore: "599" });
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.findPnnCheckpointBefore("450")).resolves.toEqual(first);
+    await expect(ledger.findPnnCheckpointBefore("300")).resolves.toBeUndefined();
+    for (let index = 2; index <= 130; index++) {
+      await ledger.recordPnnCheckpoint({ ...first, daaScore: String(index * 300) });
+    }
+    await expect(storage.get("pnn-discovery-checkpoints")).resolves.toHaveLength(128);
+    await expect(ledger.findPnnCheckpointBefore("450")).resolves.toBeUndefined();
+  });
+
+  it("preserves PNN funding receipts across restarts and rejects conflicting origins", async () => {
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+      origins: [{ outpoint: { txid: FUNDING_TX, index: 0 }, amount: "1000", scriptPublicKey: SCRIPT, covenantId: null }] };
+    await ledger.savePnnEvidence(record);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toEqual(record);
+    const before = storage.snapshot();
+    await expect(ledger.savePnnEvidence({ ...record, origins: [{ ...record.origins[0]!, amount: "2000" }] }))
+      .rejects.toThrow("conflicts with its durable funding snapshot");
+    expect(storage.snapshot()).toEqual(before);
+  });
+
+  it("rolls back a PNN receipt when its budget write fails and refuses excess capacity", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" } };
+    storage.failWriteAt(2);
+    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("injected storage write failure");
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(storage.get("pnn-evidence:budget")).resolves.toBeUndefined();
+    await storage.put("pnn-evidence:budget", { records: 4096, bytes: 0 });
+    const before = storage.snapshot();
+    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("capacity exhausted");
+    expect(storage.snapshot()).toEqual(before);
+  });
+
   it("rejects independently provisioned additive heads at max plus one", async () => {
     const ledger = new GatewayLedger(new FakeStorage(), {
       limits: { maxExactHeads: 2 },

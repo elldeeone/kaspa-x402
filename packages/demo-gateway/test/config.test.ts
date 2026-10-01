@@ -8,7 +8,8 @@ import {
 const BASE_ENV: GatewayEnv = {
   GATEWAY_STATE: {} as GatewayEnv["GATEWAY_STATE"],
   KASPA_X402_NETWORK: "kaspa:testnet-10",
-  KASPA_X402_CHAIN_API_BASE: "https://api-tn10.kaspa.org",
+  KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+  KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
   KASPA_X402_PAY_TO:
     "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
   KASPA_X402_SERVER_PUBLIC_KEY:
@@ -182,6 +183,7 @@ describe("gateway config", () => {
       readGatewayConfig({
         ...BASE_ENV,
         KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+        KASPA_X402_PNN_ENDPOINTS: "",
       }),
     ).toThrow(
       "KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn",
@@ -218,8 +220,8 @@ describe("gateway config", () => {
     expect(() =>
       readGatewayConfig({
         ...BASE_ENV,
-        KASPA_X402_CHAIN_API_BASE: "https://user:secret@api.example.test",
+        KASPA_X402_PNN_ENDPOINTS: "wss://user:secret@pnn.example.test",
       }),
-    ).toThrow("KASPA_X402_CHAIN_API_BASE must not contain credentials");
+    ).toThrow("KASPA_X402_PNN_ENDPOINTS must not contain credentials");
   });
 });

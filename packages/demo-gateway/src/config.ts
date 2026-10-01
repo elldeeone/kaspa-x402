@@ -24,7 +24,6 @@ export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
 export interface GatewayConfig {
   enabled: boolean;
   network: NetworkId;
-  chainApiBase: string;
   payTo: string;
   serverPublicKey: string;
   exactAmount: SompiString;
@@ -44,7 +43,7 @@ export interface GatewayConfig {
   gatewayBaseUrl: string;
   adminToken?: string;
   hostedExactSettlementEnabled: boolean;
-  chainBroadcastMode: "rest" | "pnn";
+  chainBroadcastMode: "pnn";
   pnnEndpoints: string[];
   pnnTimeoutMs: number;
   pnnAttempts: number;
@@ -107,7 +106,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     );
   }
   const chainBroadcastMode = broadcastMode(
-    env.KASPA_X402_CHAIN_BROADCAST_MODE ?? "rest",
+    env.KASPA_X402_CHAIN_BROADCAST_MODE ?? "pnn",
   );
   const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "");
   if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
@@ -139,10 +138,6 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_GATEWAY_ENABLED",
     ),
     network,
-    chainApiBase: baseUrl(
-      required(env.KASPA_X402_CHAIN_API_BASE, "KASPA_X402_CHAIN_API_BASE"),
-      "KASPA_X402_CHAIN_API_BASE",
-    ),
     payTo,
     serverPublicKey,
     exactAmount,
@@ -270,10 +265,10 @@ function bool(value: string, name: string): boolean {
   throw new Error(`${name} must be true or false`);
 }
 
-function broadcastMode(value: string): "rest" | "pnn" {
+function broadcastMode(value: string): "pnn" {
   const normalized = value.trim().toLowerCase();
-  if (normalized === "rest" || normalized === "pnn") return normalized;
-  throw new Error("KASPA_X402_CHAIN_BROADCAST_MODE must be rest or pnn");
+  if (normalized === "pnn") return normalized;
+  throw new Error("KASPA_X402_CHAIN_BROADCAST_MODE must be pnn");
 }
 
 function pnnEndpoints(value: string): string[] {
