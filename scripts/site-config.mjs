@@ -142,7 +142,7 @@ export const ARTIFACT_NOTES = {
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-hash-chain-exact-v1.md":
-    "Released RC2 optional exact profile: native-KAS one-time hash-chain grants, payer broadcast, and accepted payment proof.",
+    "Released RC2 optional exact profile: native-KAS OTP-style one-time hash-chain grants, payer broadcast, and accepted payment proof.",
   "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":

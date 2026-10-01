@@ -35,9 +35,10 @@ RC2 ships two x402 schemes: `exact` and `batch-settlement`.
 - **KIP-10 additive exact:** an optional merchant-head payment whose successor
   increases by the exact quoted amount.
 - **Hash-chain additive exact:** an optional native-KAS profile using a privately
-  assigned one-time signing grant. The payer signs and broadcasts independently;
+  assigned OTP-style one-time signing grant. The payer signs and broadcasts
+  independently;
   the head advances its hash-chain guard after an accepted spend. See the
-  [hash-chain specification](../spec/kaspa-hash-chain-exact-v1.md).
+  [OTP-style authorization section](../spec/kaspa-hash-chain-exact-v1.md#otp-style-one-time-authorization).
 - **Batch settlement:** a funded KIP-20 escrow channel supporting cumulative
   vouchers, partial claims, top-ups, refund, and durable recovery.
 

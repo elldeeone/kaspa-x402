@@ -6,8 +6,9 @@ remains an interoperability candidate; mainnet and stable-release gates still
 apply. See the [RC2 release reference](../docs/rc2-release.md).
 
 This document specifies a native-KAS x402 v2 `exact` mechanism derived from
-KCC20's `hash-chain/v1` borrowed-receive authorization. It is a separate,
-optional binding. It does not change the active
+KCC20's `hash-chain/v1` borrowed-receive authorization, using **OTP-style
+one-time spending grants**. It is a separate, optional binding. It does not
+change the active
 [`kaspa-exact-v2`](kaspa-exact-v2.md) `standard-native` or `additive` profiles,
 and it is not a KCC20 token transfer.
 
@@ -17,6 +18,25 @@ Normative sources for this binding:
 [KIP-20 covenant IDs](https://github.com/kaspanet/kips/blob/e4ae2332117b5cb68bd6188e065ef885b6d17939/kip-0020.md),
 [x402 v2](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/x402-specification-v2.md), and
 [x402 `exact`](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/schemes/exact/scheme_exact.md).
+
+## OTP-style one-time authorization
+
+The OTP-style feature is the **one-time borrowing grant**: a hash-chain
+link and its corresponding confidential Schnorr signing key. It lets a payer
+make a native-KAS payment without the merchant co-signing that transaction.
+
+1. The merchant privately assigns the current link and key to one payer's
+   request through the [grant claim](#private-grant-claim).
+2. The payer uses that key to sign the head spend, adds its own funding, and
+   independently broadcasts the payment.
+3. Once the spend is accepted, the successor head has a new hash-chain guard.
+   The consumed grant cannot authorize another spend against that successor.
+
+Here, “OTP-style” means one accepted head transition, rather than a login
+code. The key can sign competing transaction attempts before one is accepted.
+Grant expiry is off-chain policy; an unused disclosed grant remains usable
+until accepted head advancement or owner rotation invalidates it. Reorgs
+require reconciliation before further grants are issued.
 
 ## Purpose and trust model
 
