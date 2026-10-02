@@ -41,7 +41,7 @@ function assertBatchCoreCrossLinks(item) {
   const covenantId = item.lineage.covenantId;
 
   assert.notEqual(covenantId, "00".repeat(32), "covenant id is unbound sentinel");
-  assert.equal(config.templateId, "kaspa-x402-escrow-v4");
+  assert.equal(config.templateId, "kaspa-x402-escrow-v5");
   assert.equal(accepted.extra.binding, "kaspa-escrow-v3");
   assert.equal(accepted.extra.templateId, config.templateId);
   assert.equal(accepted.network, config.network);

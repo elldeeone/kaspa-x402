@@ -11,11 +11,11 @@ import {
 } from "../src/hash-chain.js";
 import { payToScriptHashScript, serializedScriptPublicKey } from "../src/template.js";
 import {
-  HASH_CHAIN_HEAD_V1_COMPILED_BASE,
-  HASH_CHAIN_HEAD_V1_SAMPLE_GUARD,
-  HASH_CHAIN_HEAD_V1_SAMPLE_OWNER,
-  HASH_CHAIN_HEAD_V1_SAMPLE_TEMPLATE_HASH,
-} from "../src/generated/hash-chain-head-v1.js";
+  HASH_CHAIN_HEAD_V2_COMPILED_BASE,
+  HASH_CHAIN_HEAD_V2_SAMPLE_GUARD,
+  HASH_CHAIN_HEAD_V2_SAMPLE_OWNER,
+  HASH_CHAIN_HEAD_V2_SAMPLE_TEMPLATE_HASH,
+} from "../src/generated/hash-chain-head-v2.js";
 
 describe("hash-chain borrower authorization", () => {
   it("advances exactly once per released link, in reverse generation order", () => {
@@ -56,29 +56,29 @@ describe("hash-chain borrower authorization", () => {
 
   it("instantiates the pinned SilverScript ABI and derives distinct successor scripts", () => {
     expect(buildHashChainHeadRedeemScript({
-      ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER,
-      guard: HASH_CHAIN_HEAD_V1_SAMPLE_GUARD,
-    })).toBe(HASH_CHAIN_HEAD_V1_COMPILED_BASE);
-    const next = { ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER, guard: "23".repeat(32) };
+      ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER,
+      guard: HASH_CHAIN_HEAD_V2_SAMPLE_GUARD,
+    })).toBe(HASH_CHAIN_HEAD_V2_COMPILED_BASE);
+    const next = { ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER, guard: "23".repeat(32) };
     const redeemScript = buildHashChainHeadRedeemScript(next);
-    expect(redeemScript).not.toBe(HASH_CHAIN_HEAD_V1_COMPILED_BASE);
+    expect(redeemScript).not.toBe(HASH_CHAIN_HEAD_V2_COMPILED_BASE);
     expect(hashChainHeadScriptPublicKey(next))
       .toBe(serializedScriptPublicKey(payToScriptHashScript(redeemScript)));
     expect(hashChainHeadScriptPublicKey(next)).not.toBe(hashChainHeadScriptPublicKey({
-      ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER,
-      guard: HASH_CHAIN_HEAD_V1_SAMPLE_GUARD,
+      ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER,
+      guard: HASH_CHAIN_HEAD_V2_SAMPLE_GUARD,
     }));
-    expect(hashChainHeadTemplateHash(HASH_CHAIN_HEAD_V1_SAMPLE_OWNER)).toBe(HASH_CHAIN_HEAD_V1_SAMPLE_TEMPLATE_HASH);
+    expect(hashChainHeadTemplateHash(HASH_CHAIN_HEAD_V2_SAMPLE_OWNER)).toBe(HASH_CHAIN_HEAD_V2_SAMPLE_TEMPLATE_HASH);
   });
 
   it("derives the same head scripts as the independent Rusty-Kaspa consensus vector", () => {
     const vector = JSON.parse(readFileSync(new URL("../../../vectors/hash-chain/consensus-v1.json", import.meta.url), "utf8"));
     const expected = vector.expected;
-    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER, guard: expected.chain.initialGuard }))
+    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER, guard: expected.chain.initialGuard }))
       .toBe(expected.transactions.genesis.transaction.outputs[0].scriptPublicKey);
-    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER, guard: expected.chain.firstRevealedGuard }))
+    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER, guard: expected.chain.firstRevealedGuard }))
       .toBe(expected.transactions.borrow1.transaction.outputs[0].scriptPublicKey);
-    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V1_SAMPLE_OWNER, guard: expected.chain.secondRevealedGuard }))
+    expect(hashChainHeadScriptPublicKey({ ownerPublicKey: HASH_CHAIN_HEAD_V2_SAMPLE_OWNER, guard: expected.chain.secondRevealedGuard }))
       .toBe(expected.transactions.borrow2.transaction.outputs[0].scriptPublicKey);
   });
 });

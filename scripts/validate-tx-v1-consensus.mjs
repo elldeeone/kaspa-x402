@@ -134,6 +134,10 @@ try {
     path.join(root, "tools/tx-v1-consensus/src/hash_chain.rs"),
     path.join(srcDir, "hash_chain.rs"),
   );
+  fs.copyFileSync(
+    path.join(root, "tools/tx-v1-consensus/src/sighash_scopes.rs"),
+    path.join(srcDir, "sighash_scopes.rs"),
+  );
   fs.writeFileSync(path.join(tempDir, "Cargo.toml"), cargoToml(kaspaRoot));
   if (options.refreshLock) {
     const lock = spawnSync(

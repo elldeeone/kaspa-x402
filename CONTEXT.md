@@ -2,6 +2,16 @@
 
 This glossary names the protocol concepts used by the active Kaspa x402 source.
 
+## Transaction signature scope
+
+Wallets and reference signers default to `SIGHASH_ALL`. The development
+escrow-v5 and hash-chain-head-v2 covenants validate signatures using their
+encoded consensus-supported sighash types, alongside independent spend-path
+guards. Signers choose the scope; verifiers reproduce it and reject invalid
+flags. Off-chain message signatures retain their existing domains. Published
+RC2 uses the earlier ALL-only templates; see the
+[signature policy and template transition](docs/versioning-policy.md#sighash-template-transition).
+
 ## Exact payment
 
 A payment for one request whose price is known before protected work begins. An
@@ -57,7 +67,7 @@ on `kaspa:testnet-10` only.
 
 ## Batch covenant identity
 
-The KIP-20 `covenantId` that identifies one `kaspa-x402-escrow-v4` channel and
+The KIP-20 `covenantId` that identifies one `kaspa-x402-escrow-v5` channel and
 enforces its successor lineage. The ID is stable across claims and top-ups, but
 it does not locate the live UTXO; the runtime must persist and reconcile the
 current outpoint separately.

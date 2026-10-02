@@ -1,5 +1,9 @@
 # Kaspa x402
 
+Development note: this checkout uses escrow-v5 and hash-chain-head-v2 with
+signer-chosen sighash types. Published RC2 retains escrow-v4 and head-v1.
+See [template migration](docs/versioning-policy.md#sighash-template-transition).
+
 Kaspa x402 defines proposed x402 v2 network bindings for native Kaspa payments.
 HTTP APIs and MCP tools can charge native KAS for each request. Servers verify
 and settle each payment on the Kaspa network.
@@ -34,6 +38,12 @@ The binding defines two x402 schemes:
 ### `exact`
 
 The `exact` scheme makes one native KAS transfer for a fixed price.
+
+Reference transaction signing defaults to `SIGHASH_ALL`. Development escrow
+and hash-chain covenants validate the consensus-supported type encoded in each
+signature; choosing another scope is a signer decision. Exact payment terms
+and all covenant guards still apply. Off-chain message signatures retain their
+existing domains. See the [signature policy](docs/versioning-policy.md#sighash-template-transition).
 
 ```json
 {
@@ -75,12 +85,14 @@ exact quoted increase and selected-chain successor before serving the request.
 An abandoned grant requires an accepted owner rotation; expiry alone does not
 revoke its on-chain key. See the [binding](spec/kaspa-hash-chain-exact-v1.md),
 [conformance vector](vectors/x402-http/hash-chain-exact.json), and
-[funded Testnet-10 evidence](docs/hash-chain-live-proof.md). This profile is included in RC2 packages and the hosted Testnet-10 gateway.
+[funded Testnet-10 evidence](docs/hash-chain-live-proof.md). Published RC2
+packages and the hosted gateway use head-v1. Current development examples and
+vectors use head-v2; RC2 funded evidence applies to the original head-v1 script.
 
 ### `batch-settlement`
 
 The `batch-settlement` scheme charges a fixed price for each request. The buyer
-funds a `kaspa-x402-escrow-v4` covenant and signs vouchers for the requests.
+funds a `kaspa-x402-escrow-v5` covenant and signs vouchers for the requests.
 
 ```json
 {
@@ -90,7 +102,7 @@ funds a `kaspa-x402-escrow-v4` covenant and signs vouchers for the requests.
   "amount": "<fixed per-request sompi>",
   "extra": {
     "binding": "kaspa-escrow-v3",
-    "templateId": "kaspa-x402-escrow-v4"
+    "templateId": "kaspa-x402-escrow-v5"
   }
 }
 ```

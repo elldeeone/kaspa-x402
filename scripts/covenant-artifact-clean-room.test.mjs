@@ -3,9 +3,9 @@ import crypto from "node:crypto";
 import fs from "node:fs";
 import test from "node:test";
 
-const source = fs.readFileSync("contracts/kaspa-x402-escrow-v4.sil");
+const source = fs.readFileSync("contracts/kaspa-x402-escrow-v5.sil");
 const fixture = JSON.parse(
-  fs.readFileSync("contracts/fixtures/kaspa-x402-escrow-v4.json", "utf8"),
+  fs.readFileSync("contracts/fixtures/kaspa-x402-escrow-v5.json", "utf8"),
 );
 
 test("published artifacts reconstruct genesis and successor without project packages", () => {

@@ -140,7 +140,7 @@ function writeHomePage() {
   "amount": "<fixed per-request sompi>",
   "extra": {
     "binding": "kaspa-escrow-v3",
-    "templateId": "kaspa-x402-escrow-v4"
+    "templateId": "kaspa-x402-escrow-v5"
   }
 }`;
   writeHtml(
@@ -367,7 +367,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or v1 RC2 batch payment headers. The hosted gateway at <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> on Testnet-10 with recorded funded and scheduled canary evidence. See the <a href="/docs/testnet-gateway/">gateway reference</a> for current evidence.</p>
+    <p class="muted">Testnet-only development browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or batch payment headers. Current source uses escrow-v5 and head-v2; testing those templates requires a matching development server and fresh heads/channels. The published RC2 gateway uses the earlier templates. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -459,7 +459,7 @@ function writeDemoPage() {
       <label for="demo-pay-to">Pay-to address</label>
       <input id="demo-pay-to" type="text" spellcheck="false" placeholder="kaspatest:...">
       <div id="demo-batch-fields" hidden>
-        <h3>v1 RC2 Batch Requirements</h3>
+        <h3>Development Batch Requirements</h3>
         <label for="demo-server-public-key">Server public key</label>
         <input id="demo-server-public-key" type="text" spellcheck="false" value="22222222222222222222222222222222222222222222222222222222222222bb">
         <label for="demo-min-deposit">Minimum deposit (sompi)</label>
@@ -591,7 +591,7 @@ function writePnnSpikeJson() {
         "sdk initialization",
         "throwaway testnet key generation",
         "exact header generation",
-        "v1 RC2 batch voucher header generation",
+        "development batch voucher header generation",
         "batch A/S/T/V/R invariant checks",
         "batch partial-claim successor preview",
         "mixed-offer narrowing",
@@ -828,6 +828,7 @@ ${options.head ?? ""}
   </header>
   <p class="release-status"><strong>${escapeHtml(releaseVersion)} released</strong> · Testnet-10 · <a href="/docs/rc2-release/">Release details</a></p>
   <!--email_off-->
+  <p class="muted">Development reference: escrow-v5 and head-v2 accept signer-chosen sighash types; reference signing defaults to ALL. Published RC2 packages and gateway use escrow-v4 and head-v1. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a>.</p>
   ${body}
   <!--/email_off-->
   <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/rc2-release/">Published release and validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>

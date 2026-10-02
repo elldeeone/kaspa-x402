@@ -1,5 +1,12 @@
 # Testnet Gateway
 
+Development source uses escrow-v5 and head-v2 with signer-chosen sighash
+types; reference signing still defaults to ALL. The published/deployed RC2
+service described below uses escrow-v4 and head-v1. Follow the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+for a development integration or operator cutover; the existing hosted RC2
+service is not evidence of deployment of the new templates.
+
 RC2 includes an optional native-KAS `hash-chain-additive` demo in the gateway
 Durable Object. It is advertised when the operator enables it and registers an
 available funded head. Use `/hash-chain/report` for the protected resource,

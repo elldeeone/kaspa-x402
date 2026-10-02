@@ -1,5 +1,12 @@
 # Live Testnet Proof
 
+Development runs of the current source exercise escrow-v5/head-v2, whose
+transaction signatures permit signer-chosen scopes while reference signers
+default to ALL. The RC2 proof linked below exercised escrow-v4/head-v1. Run
+a fresh funded proof for the replacement templates; do not attribute RC2
+transactions to them. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+
 Status: proof definition used for the published RC2 `kaspa:testnet-10` release.
 The completed 18-flow run and additional hosted hash-chain/browser checks
 are recorded in the [RC2 release evidence](rc2-release.md#release-validation).

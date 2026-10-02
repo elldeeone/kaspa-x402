@@ -5,13 +5,13 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
-  ESCROW_V4_COMPILED_BASE,
-  ESCROW_V4_COMPILED_BASE_SHA256,
-  ESCROW_V4_CONSTRUCTOR_SLOTS,
-  ESCROW_V4_LAUNCH_IDENTITY,
-  ESCROW_V4_SELECTORS,
-  ESCROW_V4_SOURCE_PATH,
-  ESCROW_V4_SOURCE_SHA256,
+  ESCROW_V5_COMPILED_BASE,
+  ESCROW_V5_COMPILED_BASE_SHA256,
+  ESCROW_V5_CONSTRUCTOR_SLOTS,
+  ESCROW_V5_LAUNCH_IDENTITY,
+  ESCROW_V5_SELECTORS,
+  ESCROW_V5_SOURCE_PATH,
+  ESCROW_V5_SOURCE_SHA256,
   ESCROW_TEMPLATE_ID,
   ESCROW_VOUCHER_DOMAIN,
   ESCROW_VOUCHER_DOMAIN_TAG,
@@ -37,7 +37,7 @@ import type { EscrowFixture } from "../src/index.js";
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../../..");
 
 function fixture(): EscrowFixture {
-  return JSON.parse(fs.readFileSync(path.join(repoRoot, "contracts/fixtures/kaspa-x402-escrow-v4.json"), "utf8")) as EscrowFixture;
+  return JSON.parse(fs.readFileSync(path.join(repoRoot, "contracts/fixtures/kaspa-x402-escrow-v5.json"), "utf8")) as EscrowFixture;
 }
 
 function withoutState(redeemScript: string, stateLayout: { start: number; len: number }): string {
@@ -46,29 +46,29 @@ function withoutState(redeemScript: string, stateLayout: { start: number; len: n
 }
 
 describe("stateful escrow covenant template", () => {
-  it("exposes only the active escrow-v4 template", () => {
-    expect(ESCROW_TEMPLATE_ID).toBe("kaspa-x402-escrow-v4");
+  it("exposes only the active escrow-v5 template", () => {
+    expect(ESCROW_TEMPLATE_ID).toBe("kaspa-x402-escrow-v5");
     expect(ESCROW_VOUCHER_DOMAIN).toBe("kaspa:x402:escrow-voucher:v3");
     expect(crypto.createHash("sha256").update(ESCROW_VOUCHER_DOMAIN).digest("hex")).toBe(ESCROW_VOUCHER_DOMAIN_TAG);
   });
 
   it("binds the launch identity to the checked source and compiled base", () => {
     const source = fs.readFileSync(
-      path.join(repoRoot, ESCROW_V4_SOURCE_PATH),
+      path.join(repoRoot, ESCROW_V5_SOURCE_PATH),
     );
     const sourceHash = crypto.createHash("sha256").update(source).digest("hex");
     const compiledBaseHash = crypto
       .createHash("sha256")
-      .update(Buffer.from(ESCROW_V4_COMPILED_BASE, "hex"))
+      .update(Buffer.from(ESCROW_V5_COMPILED_BASE, "hex"))
       .digest("hex");
 
-    expect(sourceHash).toBe(ESCROW_V4_SOURCE_SHA256);
-    expect(compiledBaseHash).toBe(ESCROW_V4_COMPILED_BASE_SHA256);
-    expect(ESCROW_V4_LAUNCH_IDENTITY.source).toEqual({
-      path: ESCROW_V4_SOURCE_PATH,
+    expect(sourceHash).toBe(ESCROW_V5_SOURCE_SHA256);
+    expect(compiledBaseHash).toBe(ESCROW_V5_COMPILED_BASE_SHA256);
+    expect(ESCROW_V5_LAUNCH_IDENTITY.source).toEqual({
+      path: ESCROW_V5_SOURCE_PATH,
       sha256: sourceHash,
     });
-    expect(ESCROW_V4_LAUNCH_IDENTITY.bytecode).toEqual({
+    expect(ESCROW_V5_LAUNCH_IDENTITY.bytecode).toEqual({
       templateId: ESCROW_TEMPLATE_ID,
       compiledBaseSha256: compiledBaseHash,
     });
@@ -158,22 +158,22 @@ describe("stateful escrow covenant template", () => {
     };
     const before = buildClaimArgs(claimInput);
 
-    expect(Object.isFrozen(ESCROW_V4_SELECTORS)).toBe(true);
-    expect(Object.isFrozen(ESCROW_V4_CONSTRUCTOR_SLOTS)).toBe(true);
+    expect(Object.isFrozen(ESCROW_V5_SELECTORS)).toBe(true);
+    expect(Object.isFrozen(ESCROW_V5_CONSTRUCTOR_SLOTS)).toBe(true);
     expect(
-      Object.isFrozen(ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey.offsets),
+      Object.isFrozen(ESCROW_V5_CONSTRUCTOR_SLOTS.serverPublicKey.offsets),
     ).toBe(true);
     expect(() => {
-      (ESCROW_V4_SELECTORS as unknown as Record<string, string>).claim =
+      (ESCROW_V5_SELECTORS as unknown as Record<string, string>).claim =
         "00000000";
     }).toThrow();
     expect(() => {
-      (ESCROW_V4_CONSTRUCTOR_SLOTS.serverPublicKey.offsets as unknown as number[]).push(
+      (ESCROW_V5_CONSTRUCTOR_SLOTS.serverPublicKey.offsets as unknown as number[]).push(
         999,
       );
     }).toThrow();
     expect(buildClaimArgs(claimInput)).toBe(before);
-    expect(ESCROW_V4_LAUNCH_IDENTITY.identitySha256).toMatch(/^[0-9a-f]{64}$/);
+    expect(ESCROW_V5_LAUNCH_IDENTITY.identitySha256).toMatch(/^[0-9a-f]{64}$/);
   });
 
   it("rejects malformed ABI values and unsigned-64 overflow", () => {

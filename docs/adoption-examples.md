@@ -1,6 +1,10 @@
 # Adoption Examples
 
-Status: examples shipped with the published RC2 Testnet-10 release.
+Status: examples for the development Testnet-10 source after RC2.
+Current builds use escrow-v5/head-v2; published RC2 uses escrow-v4/head-v1.
+Reference transaction signing defaults to ALL, while the new covenants accept
+signer-chosen scopes. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
 The repository examples run in mock mode by default. They do not require wallet
 secrets, RPC credentials, or a live node.

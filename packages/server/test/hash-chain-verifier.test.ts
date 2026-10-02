@@ -13,12 +13,11 @@ import type { ExactTransactionVerificationRequest } from "../src/types.js";
 const root = fileURLToPath(new URL("../../../vectors/hash-chain/consensus-v1.json", import.meta.url));
 const vector = JSON.parse(readFileSync(root, "utf8")).expected;
 
-function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"): {
+function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid", step = vector.transactions.borrow1): {
   request: ExactTransactionVerificationRequest;
   verifier: HashChainExactTransactionVerifier;
   originReads: () => number;
 } {
-  const step = vector.transactions.borrow1;
   const tx = structuredClone(step.transaction);
   tx.id = step.transactionId;
   const first = tx.inputs[0];
@@ -95,6 +94,23 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
 }
 
 describe("hash-chain exact selected-chain verifier", () => {
+  it.each(vector.sighashModes)("accepts independently consensus-validated head=$headSighashType, funding=$fundingSighashType", async (step) => {
+    const { request, verifier } = fixture("valid", step);
+    await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({ finality: "accepted" });
+  });
+
+  it("rejects invalid flags and changed flags without matching signatures before chain reads", async () => {
+    for (const flag of [0, 2, 128, 255]) {
+      const { request, verifier, originReads } = fixture();
+      const artifact = JSON.parse(request.transaction);
+      const witness = Buffer.from(artifact.inputs[0].signatureScript, "hex");
+      witness[131] = flag;
+      artifact.inputs[0].signatureScript = witness.toString("hex");
+      await expect(verifier.verifyExactPayment({ ...request, transaction: JSON.stringify(artifact) })).rejects.toThrow();
+      expect(originReads()).toBe(0);
+    }
+  });
+
   it("accepts the fully signed Rusty-Kaspa consensus borrow and exact successor", async () => {
     const { request, verifier, originReads } = fixture();
     await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({

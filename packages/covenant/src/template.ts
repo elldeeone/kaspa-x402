@@ -1,13 +1,13 @@
 import crypto from "node:crypto";
 import { blake2b } from "blakejs";
 import {
-  ESCROW_V4_COMPILED_BASE,
-  ESCROW_V4_CONSTRUCTOR_SLOTS as GENERATED_CONSTRUCTOR_SLOTS,
-  ESCROW_V4_GENERATED_DECLARATIONS as GENERATED_DECLARATIONS,
-  ESCROW_V4_SELECTORS as GENERATED_SELECTORS,
-} from "./generated/escrow-v4-template.js";
+  ESCROW_V5_COMPILED_BASE,
+  ESCROW_V5_CONSTRUCTOR_SLOTS as GENERATED_CONSTRUCTOR_SLOTS,
+  ESCROW_V5_GENERATED_DECLARATIONS as GENERATED_DECLARATIONS,
+  ESCROW_V5_SELECTORS as GENERATED_SELECTORS,
+} from "./generated/escrow-v5-template.js";
 
-export { ESCROW_V4_COMPILED_BASE } from "./generated/escrow-v4-template.js";
+export { ESCROW_V5_COMPILED_BASE } from "./generated/escrow-v5-template.js";
 
 export type NetworkId = "kaspa:mainnet" | "kaspa:testnet-10";
 
@@ -71,7 +71,7 @@ export interface ParsedKip10AdditiveRedeemScript {
   amount: string;
 }
 
-export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v4";
+export const ESCROW_TEMPLATE_ID = "kaspa-x402-escrow-v5";
 export const ESCROW_VOUCHER_DOMAIN = "kaspa:x402:escrow-voucher:v3";
 export const ESCROW_VOUCHER_DOMAIN_TAG = "cb645ce99ebb74afb1f1e3a73e0462249ee42cd9edfcd55723e7291af0292570";
 export const SCRIPT_INT64_MAX = 0x7fff_ffff_ffff_ffffn;
@@ -80,11 +80,11 @@ export const KIP10_EXACT_TRANSACTION_ENCODING = "kaspa-sdk-safe-json-v2.0.0";
 export const KASPA_LOCK_TIME_THRESHOLD = 500_000_000_000n;
 export const SCRIPT_UNITS_PER_COMPUTE_BUDGET = 10_000;
 export const FREE_SCRIPT_UNITS_PER_INPUT = 9_999;
-export const ESCROW_V4_SOURCE_PATH = "contracts/kaspa-x402-escrow-v4.sil";
-export const ESCROW_V4_SOURCE_SHA256 =
-  "065dff5d0d02f3a09f56bab977a33d4e047f2ccec64c0d066a318d342797fcb0";
-export const ESCROW_V4_COMPILED_BASE_SHA256 =
-  "49e6d7da1c59afc51949ba43c2682047aa0c487a586e143bc9addc62e08e3df3";
+export const ESCROW_V5_SOURCE_PATH = "contracts/kaspa-x402-escrow-v5.sil";
+export const ESCROW_V5_SOURCE_SHA256 =
+  "9f25f3f788ffb3da2afe1a27517a63c7377978c290b62b81890acc9e97df44c4";
+export const ESCROW_V5_COMPILED_BASE_SHA256 =
+  "2ee869bc844736a851a4ff938e1a3ce00ef39fd46cf4b23b38405511fc4557e1";
 
 // Runtime construction uses private recursively-frozen copies. Public metadata
 // is a separate frozen copy so consumer mutation can never alter generated
@@ -97,30 +97,30 @@ const INTERNAL_DECLARATIONS = deepFreeze(
 );
 const INTERNAL_SELECTORS = deepFreeze(structuredClone(GENERATED_SELECTORS));
 
-export const ESCROW_V4_CONSTRUCTOR_SLOTS = deepFreeze(
+export const ESCROW_V5_CONSTRUCTOR_SLOTS = deepFreeze(
   structuredClone(INTERNAL_CONSTRUCTOR_SLOTS),
 );
-export const ESCROW_V4_GENERATED_DECLARATIONS = deepFreeze(
+export const ESCROW_V5_GENERATED_DECLARATIONS = deepFreeze(
   structuredClone(INTERNAL_DECLARATIONS),
 );
-export const ESCROW_V4_SELECTORS = deepFreeze(
+export const ESCROW_V5_SELECTORS = deepFreeze(
   structuredClone(INTERNAL_SELECTORS),
 );
 
-const ESCROW_V4_IDENTITY_MATERIAL = {
+const ESCROW_V5_IDENTITY_MATERIAL = {
   compiler: {
     name: "silverc",
     checkedCommit: "3ed973335b59269293564805cc2c58a14595ec03",
     command:
-      "cd <silverscript-checkout> && cargo run --quiet -p silverscript-lang --bin silverc -- <kaspa-x402-root>/contracts/kaspa-x402-escrow-v4.sil --constructor-args <args.json> -c > <out.json>",
+      "cd <silverscript-checkout> && cargo run --quiet -p silverscript-lang --bin silverc -- <kaspa-x402-root>/contracts/kaspa-x402-escrow-v5.sil --constructor-args <args.json> -c > <out.json>",
   },
   source: {
-    path: ESCROW_V4_SOURCE_PATH,
-    sha256: ESCROW_V4_SOURCE_SHA256,
+    path: ESCROW_V5_SOURCE_PATH,
+    sha256: ESCROW_V5_SOURCE_SHA256,
   },
   bytecode: {
     templateId: ESCROW_TEMPLATE_ID,
-    compiledBaseSha256: ESCROW_V4_COMPILED_BASE_SHA256,
+    compiledBaseSha256: ESCROW_V5_COMPILED_BASE_SHA256,
   },
   constructorSlots: INTERNAL_CONSTRUCTOR_SLOTS,
   abi: INTERNAL_DECLARATIONS,
@@ -128,11 +128,11 @@ const ESCROW_V4_IDENTITY_MATERIAL = {
 };
 
 /** Immutable build identity copied into every runtime covenant launch manifest. */
-export const ESCROW_V4_LAUNCH_IDENTITY = deepFreeze({
-  ...structuredClone(ESCROW_V4_IDENTITY_MATERIAL),
+export const ESCROW_V5_LAUNCH_IDENTITY = deepFreeze({
+  ...structuredClone(ESCROW_V5_IDENTITY_MATERIAL),
   identitySha256: crypto
     .createHash("sha256")
-    .update(stableJson(ESCROW_V4_IDENTITY_MATERIAL))
+    .update(stableJson(ESCROW_V5_IDENTITY_MATERIAL))
     .digest("hex"),
 });
 
@@ -157,9 +157,9 @@ export function buildEscrowRedeemScript(params: EscrowTemplateParams): string {
   const network = networkHash(params.network);
 
   const script = hexToBytes(
-    ESCROW_V4_COMPILED_BASE,
+    ESCROW_V5_COMPILED_BASE,
     undefined,
-    "ESCROW_V4_COMPILED_BASE",
+    "ESCROW_V5_COMPILED_BASE",
   );
   patchConstructorSlot(
     script,

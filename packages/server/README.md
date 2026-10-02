@@ -70,6 +70,18 @@ but no longer consume active-attempt record, byte, or per-payer admission
 capacity. Production stores must keep those tombstones in a scalable, monitored
 index; replay history must not permanently prevent admission of new payments.
 
+## Transaction signature verification
+
+For development escrow-v5 and hash-chain-head-v2 transactions, verifiers derive
+each signature's digest using its encoded consensus-supported sighash type and
+reject invalid flags. A non-ALL type alone is not a covenant validation error.
+Signers default to ALL and decide whether another scope is appropriate; server
+verification still enforces exact payment terms, voucher authority, payout and
+refund destinations, and valid covenant transitions. Off-chain message
+signatures keep their existing domains. See the
+[signature policy and template transition](../../docs/versioning-policy.md#sighash-template-transition)
+for the distinction from published RC2.
+
 ## Native-KAS hash-chain grant issuer (local implementation)
 
 `@kaspa-x402/server/hash-chain-grants` is a separate Node-only entry point

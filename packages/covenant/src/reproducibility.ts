@@ -22,7 +22,7 @@ import type { EscrowTemplateParams, ScriptPublicKey } from "./template.js";
 export const ESCROW_FIXTURE_COMPILER_NAME = "silverc";
 export const ESCROW_FIXTURE_COMPILER_CHECKED_COMMIT = "3ed973335b59269293564805cc2c58a14595ec03";
 export const ESCROW_FIXTURE_COMPILER_COMMAND =
-  "cd <silverscript-checkout> && cargo run --quiet -p silverscript-lang --bin silverc -- <kaspa-x402-root>/contracts/kaspa-x402-escrow-v4.sil --constructor-args <args.json> -c > <out.json>";
+  "cd <silverscript-checkout> && cargo run --quiet -p silverscript-lang --bin silverc -- <kaspa-x402-root>/contracts/kaspa-x402-escrow-v5.sil --constructor-args <args.json> -c > <out.json>";
 
 export interface EscrowFixture {
   format: string;
@@ -187,7 +187,7 @@ export function checkEscrowFixtureReproducibility(
 
   function check(value: boolean, label: string): void {
     if (!value) {
-      throw new Error(`escrow-v4 fixture reproducibility check failed: ${label}`);
+      throw new Error(`escrow-v5 fixture reproducibility check failed: ${label}`);
     }
     checks.push(label);
   }
@@ -202,12 +202,12 @@ function checkEscrowConstructorLayout(fixture: EscrowFixture, checks: string[]):
 
   const expected = new Map<string, { encoding: string; offsets: number[]; bytes: number; value: Uint8Array }>([
     ["claimedCumulativeAmount", { encoding: "signed-int64-le", offsets: [2], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.claimedCumulativeAmount)) }],
-    ["serverPublicKey", { encoding: "hex", offsets: [114, 635], bytes: 32, value: hexToBytes(fixture.sample.params.serverPublicKey) }],
-    ["networkHash", { encoding: "hex", offsets: [247], bytes: 32, value: networkHash(fixture.sample.params.network) }],
-    ["clientPublicKey", { encoding: "hex", offsets: [290, 589, 943], bytes: 32, value: hexToBytes(fixture.sample.params.clientPublicKey) }],
-    ["payoutScriptPublicKeyHash", { encoding: "hex", offsets: [372], bytes: 32, value: hexToBytes(fixture.sample.params.payoutScriptPublicKeyHash) }],
-    ["refundScriptPublicKeyHash", { encoding: "hex", offsets: [758, 1046], bytes: 32, value: hexToBytes(fixture.sample.params.refundScriptPublicKeyHash) }],
-    ["timeoutDaa", { encoding: "signed-int64-le", offsets: [912], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.timeoutDaa)) }],
+    ["serverPublicKey", { encoding: "hex", offsets: [103, 604], bytes: 32, value: hexToBytes(fixture.sample.params.serverPublicKey) }],
+    ["networkHash", { encoding: "hex", offsets: [236], bytes: 32, value: networkHash(fixture.sample.params.network) }],
+    ["clientPublicKey", { encoding: "hex", offsets: [279, 568, 902], bytes: 32, value: hexToBytes(fixture.sample.params.clientPublicKey) }],
+    ["payoutScriptPublicKeyHash", { encoding: "hex", offsets: [361], bytes: 32, value: hexToBytes(fixture.sample.params.payoutScriptPublicKeyHash) }],
+    ["refundScriptPublicKeyHash", { encoding: "hex", offsets: [727, 1005], bytes: 32, value: hexToBytes(fixture.sample.params.refundScriptPublicKeyHash) }],
+    ["timeoutDaa", { encoding: "signed-int64-le", offsets: [881], bytes: 8, value: signedInt64Le(BigInt(fixture.sample.params.timeoutDaa)) }],
   ]);
   check(layout.slots.length === expected.size, "constructorLayout.slots.length");
   for (const slot of layout.slots) {
@@ -223,7 +223,7 @@ function checkEscrowConstructorLayout(fixture: EscrowFixture, checks: string[]):
   }
 
   function check(value: boolean, label: string): void {
-    if (!value) throw new Error(`escrow-v4 fixture reproducibility check failed: ${label}`);
+    if (!value) throw new Error(`escrow-v5 fixture reproducibility check failed: ${label}`);
     checks.push(label);
   }
 }
@@ -260,7 +260,7 @@ function sha256Hex(value: Uint8Array): string {
 function withoutEscrowState(redeemScript: string, layout: { start: number; len: number }): Uint8Array {
   const bytes = hexToBytes(redeemScript, undefined, "redeemScript");
   if (layout.start < 0 || layout.len <= 0 || layout.start + layout.len > bytes.byteLength) {
-    throw new Error("escrow-v4 state layout is outside redeem script");
+    throw new Error("escrow-v5 state layout is outside redeem script");
   }
   return Uint8Array.from([...bytes.subarray(0, layout.start), ...bytes.subarray(layout.start + layout.len)]);
 }

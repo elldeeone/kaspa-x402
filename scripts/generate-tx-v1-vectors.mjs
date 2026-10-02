@@ -34,10 +34,10 @@ const PAYOUT_SCRIPT_PUBLIC_KEY = `000020${PAYOUT_PUBLIC_KEY}ac`;
 // These values are the exact execution measurements returned by the pinned
 // full Rusty Kaspa TransactionValidator harness. During a contract change the
 // harness rejects stale values and reports the newly measured units.
-const FIRST_CLAIM_SCRIPT_UNITS = 208_362;
-const SECOND_CLAIM_SCRIPT_UNITS = 208_366;
-const TOP_UP_SCRIPT_UNITS = 207_737;
-const REFUND_SCRIPT_UNITS = 102_700;
+const FIRST_CLAIM_SCRIPT_UNITS = 208049;
+const SECOND_CLAIM_SCRIPT_UNITS = 208053;
+const TOP_UP_SCRIPT_UNITS = 207357;
+const REFUND_SCRIPT_UNITS = 102551;
 
 const escrowBaseParams = {
   clientPublicKey: CLIENT_PUBLIC_KEY,

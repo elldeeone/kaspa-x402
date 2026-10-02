@@ -49,7 +49,7 @@ export interface ExactRequirementsExtra extends JsonRecord {
   paymentFlow?: "upfront";
   finality?: "mempool" | "accepted" | "confirmed";
   payToScriptPublicKey?: ByteHex;
-  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v1";
+  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v2";
   assetTransferMethod?: "kaspa-v1-hash-chain-proof";
   transactionEncoding?: ExactTransactionEncoding;
   headId?: Hash32Hex;
@@ -80,7 +80,7 @@ export interface ClaimPolicy extends JsonRecord {
 
 export interface BatchRequirementsExtra extends JsonRecord {
   binding: "kaspa-escrow-v3";
-  templateId: "kaspa-x402-escrow-v4";
+  templateId: "kaspa-x402-escrow-v5";
   serverPublicKey: PublicKeyHex;
   minDepositSompi: SompiString;
   claimReserveSompi: SompiString;
@@ -210,7 +210,7 @@ export interface BatchPaymentAuthorizationPolicy {
 export interface ChannelConfig extends JsonRecord {
   network: NetworkId;
   asset: "KAS";
-  templateId: "kaspa-x402-escrow-v4";
+  templateId: "kaspa-x402-escrow-v5";
   clientPublicKey: PublicKeyHex;
   serverPublicKey: PublicKeyHex;
   payTo: string;
@@ -305,7 +305,7 @@ export interface SettlementResponseExtra extends JsonRecord {
   requestHash?: Hash32Hex;
   transactionEncoding?: ExactTransactionEncoding;
   exactProfile?: ExactProfile;
-  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v1";
+  templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v2";
   headId?: Hash32Hex;
   headVersion?: SompiString;
   headOutpoint?: FundingOutpoint;

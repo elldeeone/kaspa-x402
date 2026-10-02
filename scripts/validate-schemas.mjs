@@ -389,8 +389,8 @@ function assertTxV1Vector(file, vector, expectedKind) {
     sighashInputIndexes.add(sighash.inputIndex);
     assertHexBytes(sighash.preimage, `${file}:sighashes[${index}].preimage`);
     assertHash32(sighash.digest, `${file}:sighashes[${index}].digest`);
-    if (sighash.hashType !== "all") {
-      throw new Error(`${file}: only sighash-all vectors are supported`);
+    if (!["all", "none", "single", "all-anyonecanpay", "none-anyonecanpay", "single-anyonecanpay"].includes(sighash.hashType)) {
+      throw new Error(`${file}: invalid sighash type`);
     }
   }
   if (artifact.compute !== undefined) {
@@ -981,6 +981,18 @@ function validateVector(ajv, file, vector, rootDir = root) {
       assertExactConsensusProfiles(file, vector);
       break;
     }
+    case "kaspa-sighash-consensus-v1": {
+      if (vector.status !== "full-consensus-cross-validated" || !Array.isArray(vector.transactions) || vector.transactions.length !== 38 || vector.mixedTopUps?.length !== 36) {
+        throw new Error(`${file}: incomplete sighash consensus evidence`);
+      }
+      for (const step of vector.transactions) {
+        if (![1, 2, 4, 129, 130, 132].includes(step.hashType) || step.digests.length !== step.transaction.inputs.length) {
+          throw new Error(`${file}: invalid sighash evidence`);
+        }
+        for (const digest of step.digests) assertHash32(digest, `${file}:sighash digest`);
+      }
+      break;
+    }
     case "native-kas-hash-chain-consensus-v1": {
       assertHashChainConsensusVector(file, vector);
       break;
@@ -1162,7 +1174,7 @@ export function assertBatchInteropCrossLinks(file, vector, rootDir = root) {
   assertCovenantId(lineage?.covenantId, `${file}: lineage covenant id`);
   assertEqual(
     config.templateId,
-    "kaspa-x402-escrow-v4",
+    "kaspa-x402-escrow-v5",
     `${file}: channel template id`,
   );
   assertEqual(

@@ -96,10 +96,10 @@ export const SPEC_FILES = [
 ];
 
 export const CONTRACT_FILES = [
-  "contracts/kaspa-x402-escrow-v4.sil",
-  "contracts/fixtures/kaspa-x402-escrow-v4.json",
-  "contracts/kaspa-x402-hash-chain-head-v1.sil",
-  "contracts/fixtures/kaspa-x402-hash-chain-head-v1.json",
+  "contracts/kaspa-x402-escrow-v5.sil",
+  "contracts/fixtures/kaspa-x402-escrow-v5.json",
+  "contracts/kaspa-x402-hash-chain-head-v2.sil",
+  "contracts/fixtures/kaspa-x402-hash-chain-head-v2.json",
 ];
 
 export const PUBLIC_DOC_FILES = [
@@ -142,7 +142,7 @@ export const ARTIFACT_NOTES = {
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-hash-chain-exact-v1.md":
-    "Released RC2 optional exact profile: native-KAS OTP-style one-time hash-chain grants, payer broadcast, and accepted payment proof.",
+    "Development head-v2 exact profile: OTP-style grants, signer-chosen sighash, payer broadcast, and accepted payment proof.",
   "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
@@ -153,13 +153,13 @@ export const ARTIFACT_NOTES = {
     "Optional self-hosted facilitator: `/supported`, `/verify`, `/settle` compatibility surface.",
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
-  "contracts/kaspa-x402-escrow-v4.sil":
-    "Normative SilverScript source for the v1 RC2 stateful batch escrow covenant.",
-  "contracts/fixtures/kaspa-x402-escrow-v4.json":
+  "contracts/kaspa-x402-escrow-v5.sil":
+    "Development escrow-v5 SilverScript source with signer-chosen transaction sighash types.",
+  "contracts/fixtures/kaspa-x402-escrow-v5.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
-  "contracts/kaspa-x402-hash-chain-head-v1.sil":
-    "SilverScript source for the native-KAS one-use hash-chain head.",
-  "contracts/fixtures/kaspa-x402-hash-chain-head-v1.json":
+  "contracts/kaspa-x402-hash-chain-head-v2.sil":
+    "Development head-v2 SilverScript source with signer-chosen transaction sighash types.",
+  "contracts/fixtures/kaspa-x402-hash-chain-head-v2.json":
     "Hash-chain constructor layout, compiled bytes, and borrow/owner selectors.",
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
@@ -227,6 +227,7 @@ export const DOC_GROUPS = [
 
 // Grouping for the /vectors/ index page, in display order.
 export const VECTOR_GROUPS = [
+  { dir: "sighash", note: "All six consensus signature scopes and mixed client/provider top-up signatures." },
   { dir: "hash-chain", note: "Native-KAS hash-chain consensus borrow, rotation, and guard vectors." },
   { dir: "x402-http", note: "End-to-end HTTP envelope fixtures." },
   {

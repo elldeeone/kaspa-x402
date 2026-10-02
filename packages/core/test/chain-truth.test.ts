@@ -278,7 +278,7 @@ describe("covenant selected-chain state", () => {
               {
                 kind: "refund",
                 covenantId: COVENANT_ID,
-                templateId: "kaspa-x402-escrow-v4",
+                templateId: "kaspa-x402-escrow-v5",
                 consumedOutpoint: initial.currentHead!.outpoint,
                 transactionId: CLAIM_TX,
                 authorizedSuccessorCount: 0,
@@ -378,11 +378,11 @@ function manifest(): CovenantLaunchManifest {
       command: "silverc contract.sil",
     },
     source: {
-      path: "contracts/kaspa-x402-escrow-v4.sil",
+      path: "contracts/kaspa-x402-escrow-v5.sil",
       sha256: "66".repeat(32),
     },
     bytecode: {
-      templateId: "kaspa-x402-escrow-v4",
+      templateId: "kaspa-x402-escrow-v5",
       compiledBaseSha256: "77".repeat(32),
     },
     constructorSlots: { claimedCumulativeAmount: { offsets: [2], bytes: 8 } },
@@ -412,7 +412,7 @@ function claimTransition(): CovenantLineageTransition {
   return {
     kind: "claim",
     covenantId: COVENANT_ID,
-    templateId: "kaspa-x402-escrow-v4",
+    templateId: "kaspa-x402-escrow-v5",
     consumedOutpoint: { txid: GENESIS_TX, index: 0 },
     transactionId: CLAIM_TX,
     authorizedSuccessorCount: 1,
@@ -444,7 +444,7 @@ function topUpTransition(input: {
   return {
     kind: "top-up",
     covenantId: COVENANT_ID,
-    templateId: "kaspa-x402-escrow-v4",
+    templateId: "kaspa-x402-escrow-v5",
     consumedOutpoint: input.consumedOutpoint,
     transactionId: input.transactionId,
     authorizedSuccessorCount: 1,

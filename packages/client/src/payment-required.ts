@@ -102,7 +102,7 @@ export function selectBatchPaymentRequired(
         supportedNetworks.includes(requirement.network) &&
         requirement.asset === "KAS" &&
         requirement.extra.binding === "kaspa-escrow-v3" &&
-        requirement.extra.templateId === "kaspa-x402-escrow-v4"
+        requirement.extra.templateId === "kaspa-x402-escrow-v5"
       );
     },
   );
@@ -152,7 +152,7 @@ function isSupportedKaspaRequirement(
   return (
     requirement.scheme === "batch-settlement" &&
     requirement.extra.binding === "kaspa-escrow-v3" &&
-    requirement.extra.templateId === "kaspa-x402-escrow-v4"
+    requirement.extra.templateId === "kaspa-x402-escrow-v5"
   );
 }
 
@@ -301,7 +301,7 @@ function validateHashChainTerms(accepted: ExactPaymentRequirements): void {
   const extra = accepted.extra;
   if (accepted.network !== "kaspa:testnet-10" || extra.binding !== "kaspa-hash-chain-exact-v1" ||
     extra.paymentFlow !== "upfront" || extra.assetTransferMethod !== "kaspa-v1-hash-chain-proof" ||
-    extra.templateId !== "kaspa-x402-hash-chain-head-v1" || extra.paymentOutputIndex !== 0 ||
+    extra.templateId !== "kaspa-x402-hash-chain-head-v2" || extra.paymentOutputIndex !== 0 ||
     !extra.expectedHeadOutpoint || extra.expectedHeadOutpoint.index !== 0 ||
     !extra.headId || !extra.headVersion || !extra.covenantId || !extra.headAmount ||
     !extra.headRedeemScript || !extra.headScriptPublicKey || !extra.currentGuard ||

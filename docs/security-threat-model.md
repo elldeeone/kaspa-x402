@@ -1,8 +1,10 @@
 # Security Threat Model
 
-Status: threat model for the published RC2 Testnet-10 exact and batch-settlement
-profiles. v1 RC2 uses `kaspa-escrow-v3` and template
-`kaspa-x402-escrow-v4`; pre-RC runtime profiles are not supported.
+Status: threat model for the development Testnet-10 exact and batch-settlement
+profiles. Development source uses escrow-v5 and hash-chain-head-v2; published
+RC2 uses escrow-v4 and head-v1. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+Pre-RC runtime profiles are not supported.
 
 ## Assets
 
@@ -87,7 +89,8 @@ Required checks include:
 
 ## Hash-Chain Exact Profile
 
-RC2 includes `hash-chain-additive` with `kaspa-hash-chain-exact-v1`. Its
+The development surface includes `hash-chain-additive` with
+`kaspa-hash-chain-exact-v1` and head-v2. Its
 one-time signing grant authorizes one accepted head spend, while the x402
 verifier separately enforces the exact quoted increase and payer/request
 binding. A key holder can construct competing transactions or consume the
@@ -101,9 +104,26 @@ transition invalidates it. Abandonment requires owner rotation; uncertain
 broadcasts and reorgs require durable reconciliation before a new grant can
 be issued. See the [hash-chain binding](../spec/kaspa-hash-chain-exact-v1.md).
 
+## Transaction Signature Scope
+
+Escrow-v5 and head-v2 check signature validity using the encoded
+consensus-supported sighash type. Wallets and reference signers default to
+`SIGHASH_ALL`; selecting another scope is the signer's responsibility.
+Verifiers reproduce that scope and reject invalid flags. A signature can
+remain valid after fields outside its scope change. Before choosing NONE,
+SINGLE, or ANYONECANPAY, signers must assess the remaining constraints supplied
+by other signatures and script guards; covenant acceptance is not a wallet
+safety recommendation.
+
+Exact quoted payment, voucher ceilings, configured payout/refund scripts,
+singleton lineage, and permitted successor state remain independently checked.
+The contract's guards need not express every wallet preference, such as a
+particular change amount. Off-chain vouchers and request authorizations keep
+their existing message domains and have no transaction sighash byte.
+
 ## Batch-Settlement Profile
 
-The v1 RC2 batch profile uses one singleton KIP-20 covenant lineage and
+The batch-v3 profile uses one singleton KIP-20 covenant lineage and
 lifetime cumulative vouchers. Define:
 
 - A: lifetime fixed charges durably committed by the application;

@@ -13,11 +13,15 @@ This directory holds implementation-independent vectors for:
 
 Vectors should be consumable without importing the TypeScript SDK.
 
-v1 RC2 also publishes the normative batch covenant source at
-`contracts/kaspa-x402-escrow-v4.sil` and its language-neutral constructor and
-byte fixture at `contracts/fixtures/kaspa-x402-escrow-v4.json`. Together with
+The development checkout includes the normative batch covenant source at
+`contracts/kaspa-x402-escrow-v5.sil` and its language-neutral constructor and
+byte fixture at `contracts/fixtures/kaspa-x402-escrow-v5.json`. Together with
 this directory, those artifacts are sufficient to reconstruct and verify the
 batch-v3 contract without importing the TypeScript SDK.
+
+These artifacts use escrow-v5 and hash-chain-head-v2. Published RC2 used
+escrow-v4 and head-v1; its funded proof applies to those original scripts.
+See the [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition).
 
 ## Layout
 
@@ -25,12 +29,14 @@ batch-v3 contract without importing the TypeScript SDK.
 vectors/
   voucher/              Voucher preimages and digests.
   channel-id/           Channel ID canonical input and digest fixtures.
-  batch/                v1 RC2 non-transaction batch interoperability evidence.
+  batch/                Current non-transaction batch interoperability evidence.
   x402-http/            HTTP header base64 fixtures.
   settlement-response/  SettlementResponse success, failure, and corrective fixtures.
   negative/             Schema and semantic rejection fixtures.
-  tx-v1/                Full v1 RC2 batch transaction-v1 lifecycle fixtures.
+  tx-v1/                Current batch transaction-v1 lifecycle fixtures.
   exact/                Full-consensus standard-native and additive exact fixtures.
+  hash-chain/           Head-v2 borrow, owner paths, and signature-scope evidence.
+  sighash/              Consensus signature-scope and mixed top-up evidence.
 ```
 
 ## Vector Kinds
@@ -39,7 +45,7 @@ Every JSON vector has a `kind` field:
 
 - `voucher-digest`: recompute each voucher preimage and digest.
 - `channel-id`: recompute the canonical channel ID preimage and digest.
-- `batch-interop-v3`: reconstruct the v1 RC2 channel, KIP-20 lineage id,
+- `batch-interop-v3`: reconstruct the current channel, KIP-20 lineage id,
   v3 voucher, request presentation and commitment, fixed-charge accounting,
   DAA expiry boundaries, and finality ordering. Transaction evidence remains
   in `tx-v1/`.
@@ -62,12 +68,39 @@ Every JSON vector has a `kind` field:
   consensus-hash preimages, the canonical payment-requirements and request-
   authorization SHA-256 preimages, the payer signature, expiry decisions, and
   finality ordering without depending on TypeScript.
+- `kaspa-sighash-consensus-v1`: reproduce all six supported transaction
+  sighash types for batch lifecycle and native-v0 transactions, including
+  SINGLE without a corresponding output and mixed client/provider top-up
+  scopes. Funding signatures in the mixed top-up cases remain ALL.
+
+## Signature-scope consensus evidence
+
+`sighash/consensus.json` records full-consensus acceptance and per-input digests
+from the pinned Rusty-Kaspa oracle. `hash-chain/consensus-v1.json` separately
+records all head/funding scope combinations, owner rotation and sweep for all
+six types, and rejection of invalid flags and changed flags without re-signing.
+The covenant tests compare TypeScript digests with the independent oracle and
+check which input/output changes preserve or invalidate each scope.
+
+Generate or check the signature-scope vector with:
+
+```sh
+npm run vectors:sighash-consensus
+npm run check:sighash-consensus-vector
+```
+
+These commands require Rust and a clean Rusty-Kaspa checkout at the vector's
+`source.commit`; set `KASPA_X402_KASPA_CONSENSUS_ROOT` to that checkout.
+This is local consensus evidence, not a fresh funded Testnet-10 run or hosted
+deployment proof for the replacement templates.
+
+## Regeneration and encoding
 
 Regenerate the exact consensus vector with `npm run vectors:exact-consensus`.
 The generator uses fixed public test keys and deterministic Schnorr signatures;
 it contains no wallet or deployment secret.
 
-Regenerate the v1 RC2 channel, voucher, HTTP, and batch core vectors with
+Regenerate the current channel, voucher, HTTP, and batch core vectors with
 `npm run vectors:batch-interop`. The generator derives `covenantId` from its
 canonical KIP-20 genesis input and ordered authorized output; it does not treat
 that derivation input as accepted transaction evidence.

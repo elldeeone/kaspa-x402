@@ -1,6 +1,14 @@
 # Kaspa x402 Exact Binding v2
 
-Status: exact binding included in the published `1.0.0-rc.2` Testnet-10 release.
+Status: development revision after the published `1.0.0-rc.2` Testnet-10 release.
+
+Transaction signature verification honors each signature's encoded
+consensus-supported sighash type; reference signers default to `SIGHASH_ALL`.
+The signer chooses its scope, while exact output amounts, recipient scripts,
+accepted profiles, and request authorization remain mandatory. Off-chain
+request-authorization signatures have no transaction sighash flag. See the
+[signature policy](../docs/versioning-policy.md#sighash-template-transition)
+for the related development covenant changes after RC2.
 
 This document defines the active Kaspa network binding for x402 v2 `exact`.
 

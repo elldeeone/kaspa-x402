@@ -1,8 +1,12 @@
 # Native Profile Boundary
 
-Status: boundary for the published `1.0.0-rc.2` Testnet-10 package surface.
+Status: boundary for the development Testnet-10 package surface after RC2.
+Development uses escrow-v5 and head-v2 with signer-chosen transaction sighash
+types and ALL as the reference signing default. Published RC2 uses escrow-v4
+and head-v1. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
-The current native Kaspa x402 surface ships two x402 schemes:
+The current native Kaspa x402 surface implements two x402 schemes:
 
 - `exact` with `kaspa-exact-v2` for fixed-price one-shot transfers. Its
   default `standard-native` profile is an ordinary native-KAS transfer; its
@@ -38,7 +42,7 @@ but its one-use grant changes the successor guard and script. The x402 layer
 binds the payment to its payer and request. Grant expiry does not revoke a
 disclosed on-chain key; accepted head advancement or owner rotation does.
 `kaspa-escrow-v3` settles native KAS from a funded
-`kaspa-x402-escrow-v4` channel. Buyer vouchers sign lifetime cumulative
+`kaspa-x402-escrow-v5` channel. Buyer vouchers sign lifetime cumulative
 ceilings, so the provider may make partial claims without resetting the
 authorization history. Top-ups add capacity while preserving the settled
 lifetime total, and the buyer retains a timed refund path. KIP-20 keeps the

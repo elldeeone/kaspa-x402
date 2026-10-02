@@ -9,6 +9,12 @@ stable `1.0.0` release. It is not published on the standards site.
    dependency together.
 2. Update the current specs, schemas, vectors, docs, site, and gateway release
    version. Do not add repository copies of old releases.
+   For the sighash-policy change, verify that active artifacts use escrow-v5
+   and head-v2, wallets still default to ALL, and all six supported scopes pass
+   local consensus checks. Follow the
+   [template transition](versioning-policy.md#sighash-template-transition)
+   for outstanding RC2 heads/channels; an existing script cannot be upgraded
+   in place. Keep published RC2 evidence identified with its original scripts.
 3. Prepare clean source checkouts of Rusty-Kaspa at
    `01b532e8b553523216471682649693af92f0fd16` (v2.1.0) and SilverScript at
    `3ed973335b59269293564805cc2c58a14595ec03`. The consensus and
@@ -24,6 +30,7 @@ stable `1.0.0` release. It is not published on the standards site.
 
 4. Run a fresh funded Testnet-10 proof against that exact commit. Keep secrets
    and raw wallet state outside Git.
+   RC2 funded and hosted proof cannot stand in for a run of escrow-v5/head-v2.
 5. Pack the four public packages and inspect their contents and hashes.
 6. Publish the packages with the `rc` dist-tag. Never overwrite a published
    version.
