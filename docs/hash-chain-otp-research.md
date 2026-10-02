@@ -1,5 +1,12 @@
 # Hash-chain borrow authorization research for native-KAS x402
 
+Current policy: development head-v2 accepts consensus-supported sighash
+types on borrow, owner rotation, and owner sweep; reference signing defaults
+to ALL. The September research and prototype checkpoints below concern the
+earlier head-v1 and retain their historical proof limits. See the
+[signature policy](versioning-policy.md#sighash-template-transition) and
+[current binding](../spec/kaspa-hash-chain-exact-v1.md).
+
 **Target clarified 2026-09-22:** reproduce the useful part of Michael
 Sutton's KCC20 suggestion: release a hash-chain link and its one-time signing
 key to a sender, who can independently make **one** authorized additive head
@@ -103,7 +110,8 @@ monitoring the successor and withholding the next link until needed.
 [KCC20 design note](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0020/borrowed-receive-authorization.md#L96-L115),
 [KCC20 rules](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0020.md#L268-L289).
 
-The reusable Schnorr scheme already makes each signature transaction-specific,
+The reusable Schnorr scheme binds each signature to the transaction fields
+covered by its chosen sighash type,
 but a disclosed reusable borrow key could approve many future transactions.
 The hash chain limits each disclosed link/key to one accepted guard transition,
 then requires the next separate key. **The intended x402 mode gives the sender
@@ -129,8 +137,8 @@ the **guard** uses unkeyed BLAKE3 under KCC1; the P2SH script public key uses
 the redeem-script BLAKE2b commitment under KCC1; the **covenant ID genesis**
 uses domain-separated BLAKE2b-256 over an authorizing outpoint and ordered
 initial output indices, amounts and script public keys. KIP-20's output
-binding is signed by transaction signatures and included in the transaction
-ID. An ID labels lineage; it does not independently prove the amount, program
+binding is committed by transaction signatures whose selected scope covers
+that output, and is included in the transaction ID. An ID labels lineage; it does not independently prove the amount, program
 or state transition.
 [KCC1 hash/P2SH](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0001.md#L103-L122),
 [KCC1 P2SH](https://github.com/kaspanet/kccs/blob/c0bb8f3babbb6a93dbddac900121e5046c1ec388/kcc-0001.md#L420-L442),
@@ -210,22 +218,24 @@ KIP-20 data model and the borrowed-receive note's outpoint-churn warning.
 
 ### Prototype check against the upstream rules
 
-The local [contract](../contracts/kaspa-x402-hash-chain-head-v1.sil) uses
+The historical [head-v1 contract](https://github.com/elldeeone/kaspa-x402/blob/724c5fff22de500fcf729c43b59d25036fbffa9c/contracts/kaspa-x402-hash-chain-head-v1.sil) uses
 `blake3(revealedGuard || oneTimeKey)` and `checkSig`, matching the essential
-KCC20 cryptographic check. It requires a `0x01` signature-hash flag and
-positive native-KAS head value gain; these are *our* narrower transaction
-choices. It uses KIP-20 input/output cardinality and an owner sweep. The
+KCC20 cryptographic check. The prototype required a `0x01` signature-hash flag,
+an ALL-only signing
+restriction subsequently removed in head-v2. The positive native-KAS head
+value gain remains a mandatory payment guard. It uses KIP-20 input/output
+cardinality and an owner sweep. The
 contract itself checks a signature, not who held the key before signing; its
 comments now state the delegated-grant target. The local
 [helper](../packages/covenant/src/hash-chain.ts) computes unkeyed BLAKE3 over
 32+32 bytes and returns reverse-order releases. These observations are from
-the current uncommitted branch, not independent consensus proof.
+the September prototype snapshot, not independent consensus proof.
 
 Before relying on that contract, inspect the **compiled** successor-validation
 code for the complete new P2SH script and exact output binding, then validate
 two consecutive delegated spends under Rusty-Kaspa consensus. The source
 decorator may generate this, but compilation alone has not established it. Also test a
-wrong/missing link, wrong key, signature with altered outputs, stale guard,
+wrong/missing link, wrong key, an ALL signature with altered outputs, stale guard,
 second covenant input/output, unauthorized owner path, and exhausted chain.
 The server must independently reject underpayment *and overpayment* as well as
 reused request/transaction evidence. This is the minimum concrete proof needed
@@ -363,7 +373,7 @@ controls.
 
 ## Implementation checkpoint (2026-09-22)
 
-The [native-KAS contract](../contracts/kaspa-x402-hash-chain-head-v1.sil)
+The historical [head-v1 contract](https://github.com/elldeeone/kaspa-x402/blob/724c5fff22de500fcf729c43b59d25036fbffa9c/contracts/kaspa-x402-hash-chain-head-v1.sil)
 implements the KCC20-derived BLAKE3 link and one-time Schnorr signature,
 same-ID successor, owner guard rotation and owner sweep. Its SilverScript
 artifact is reproducibly pinned to compiler commit `3ed9733` by
@@ -412,3 +422,7 @@ remain later implementation steps.
    exact candidate commit, inspect package contents, and review audit/mainnet
    gates. This feature can be one RC2 component; the research and local
    prototype do not themselves make the branch or project RC2-ready.
+
+The current head-v2 removes the forced sighash flag while keeping signature
+verification and covenant guards. The September implementation and proof
+checkpoints above describe head-v1, not fresh evidence for head-v2.

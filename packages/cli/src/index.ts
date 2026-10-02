@@ -575,7 +575,7 @@ function assertDryRun(parsed: ParsedArgs, command: string): void {
 async function verifyCovenantFixture(
   root: string,
 ): Promise<{ checks: number }> {
-  const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v4.json");
+  const escrowFixture = readCovenantFixture(root, "kaspa-x402-escrow-v5.json");
   const module = (await import("@kaspa-x402/covenant")) as {
     checkEscrowFixtureReproducibility: (
       fixture: unknown,

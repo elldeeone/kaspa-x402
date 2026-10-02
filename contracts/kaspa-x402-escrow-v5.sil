@@ -12,7 +12,7 @@ pragma silverscript ^0.1.0;
 // Voucher message:
 //
 //   sha256(domain32 || network32 || covenant_id32 || authorized_cumulative_le64)
-contract KaspaX402EscrowV4(
+contract KaspaX402EscrowV5(
     pubkey client,
     pubkey server,
     byte[32] networkHash,
@@ -46,8 +46,6 @@ contract KaspaX402EscrowV4(
         require(tx.outputs.length == 2);
         require(this.activeInputIndex == 0);
         require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
-
-        require(byte[1](serverSig.slice(64, 65)) == byte[1](0x01));
         require(checkSig(serverSig, server));
 
         byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);
@@ -89,8 +87,8 @@ contract KaspaX402EscrowV4(
     }
 
     // A client-and-provider-authorized top-up preserves cumulative state while
-    // adding value to the singleton successor. Both signatures use
-    // SIGHASH_ALL, so neither party can authorize a partial transaction view.
+    // adding value to the singleton successor. Signers choose their
+    // sighash scope; the covenant verifies signatures and transition guards.
     #[covenant(binding = auth, from = 1, to = 1, mode = transition, groups = single)]
     function topUp(State previous, sig clientSig, sig providerSig) : State {
         require(tx.version == 1);
@@ -100,10 +98,7 @@ contract KaspaX402EscrowV4(
         require(tx.outputs.length <= 2);
         require(this.activeInputIndex == 0);
         require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
-
-        require(byte[1](clientSig.slice(64, 65)) == byte[1](0x01));
         require(checkSig(clientSig, client));
-        require(byte[1](providerSig.slice(64, 65)) == byte[1](0x01));
         require(checkSig(providerSig, server));
 
         byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);
@@ -135,8 +130,6 @@ contract KaspaX402EscrowV4(
         require(this.activeInputIndex == 0);
         require(OpTxInputSeq(this.activeInputIndex) == byte[8](0x0000000000000000));
         require(tx.daa >= int(timeoutLe));
-
-        require(byte[1](clientSig.slice(64, 65)) == byte[1](0x01));
         require(checkSig(clientSig, client));
 
         byte[32] covenantId = OpInputCovenantId(this.activeInputIndex);

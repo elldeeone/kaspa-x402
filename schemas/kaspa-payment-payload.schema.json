@@ -99,7 +99,7 @@
           "const": "KAS"
         },
         "templateId": {
-          "const": "kaspa-x402-escrow-v4"
+          "const": "kaspa-x402-escrow-v5"
         },
         "clientPublicKey": {
           "$ref": "#/$defs/pubkey32"

@@ -1278,7 +1278,7 @@ export class DirectModeClient {
     const channelConfig: ChannelConfig = {
       network: accepted.network,
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v4",
+      templateId: "kaspa-x402-escrow-v5",
       clientPublicKey: channelKey.publicKey,
       serverPublicKey: accepted.extra.serverPublicKey,
       payTo: accepted.payTo,

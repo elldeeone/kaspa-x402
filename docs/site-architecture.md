@@ -60,6 +60,13 @@ and always states the prerelease/testnet-only status.
 
 ## Published Content
 
+The development build includes escrow-v5/head-v2 artifacts and a matching
+browser bundle. Pages identify these as unpublished changes and link to the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+Published RC2 gateway and funded-proof references retain their original
+escrow-v4/head-v1 scope. Release metadata alone does not establish that a
+development template is published or live-tested.
+
 The apex site publishes:
 
 - schema files under `/schemas/`;

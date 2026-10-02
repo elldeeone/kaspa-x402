@@ -10,7 +10,7 @@ use kaspa_consensus_core::{
             SigHashReusedValuesUnsync, calc_schnorr_signature_hash, outputs_hash, payload_hash,
             previous_outputs_hash, sequences_hash, sig_op_counts_hash,
         },
-        sighash_type::SIG_HASH_ALL,
+        sighash_type::{SIG_HASH_ALL, SigHashType},
         tx as tx_hashing,
     },
     mass::{ComputeBudget, Gram, MassCalculator, transaction_estimated_serialized_size},
@@ -41,6 +41,7 @@ use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
 
 mod hash_chain;
+mod sighash_scopes;
 
 const SOURCE_COMMIT: &str = env!("KASPA_X402_CONSENSUS_SOURCE_COMMIT");
 const SOURCE_VERSION: &str = env!("KASPA_X402_CONSENSUS_SOURCE_VERSION");
@@ -198,6 +199,7 @@ fn main() -> Result<()> {
         }));
         batch_vectors.push((relative_path, vector));
     }
+    let sighash_scopes = sighash_scopes::validate(&batch_vectors)?;
     let batch_chain = validate_batch_chain(&batch_vectors)?;
     let batch_negative = validate_batch_negative_cases(&batch_vectors)?;
     let exact_profiles = validate_exact_consensus_profiles()?;
@@ -219,6 +221,7 @@ fn main() -> Result<()> {
             },
             "vectors": checked,
             "batchChain": batch_chain,
+            "sighashScopes": sighash_scopes,
             "batchNegative": batch_negative,
             "kip10Exact": kip10,
             "exactProfiles": exact_profiles,
@@ -798,7 +801,7 @@ fn validate_batch_interop_vector(repo_root: &Path) -> Result<serde_json::Value> 
     )?;
     expect_eq(
         json_string(config, "templateId")?,
-        "kaspa-x402-escrow-v4",
+        "kaspa-x402-escrow-v5",
         "batch template",
     )?;
 
@@ -1559,10 +1562,16 @@ fn deterministic_signature(
     input_index: usize,
     private_key: &[u8; 32],
 ) -> Result<Vec<u8>> {
+    deterministic_signature_with_type(tx, input_index, private_key, SIG_HASH_ALL)
+}
+
+fn deterministic_signature_with_type(
+    tx: &impl VerifiableTransaction, input_index: usize, private_key: &[u8; 32], hash_type: SigHashType,
+) -> Result<Vec<u8>> {
     let hash = calc_schnorr_signature_hash(
         tx,
         input_index,
-        SIG_HASH_ALL,
+        hash_type,
         &SigHashReusedValuesUnsync::new(),
     );
     let message = Message::from_digest_slice(hash.as_bytes().as_slice())
@@ -1572,7 +1581,7 @@ fn deterministic_signature(
     let signature = SECP256K1.sign_schnorr_no_aux_rand(&message, &key);
     Ok(std::iter::once(65_u8)
         .chain(signature.as_ref().iter().copied())
-        .chain(std::iter::once(SIG_HASH_ALL.to_u8()))
+        .chain(std::iter::once(hash_type.to_u8()))
         .collect())
 }
 

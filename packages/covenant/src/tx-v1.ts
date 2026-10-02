@@ -1,3 +1,4 @@
+import { kaspaSighashType, KASPA_SIGHASH_NAMES, type KaspaSighashType } from "./sighash.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { blake2b } from "blakejs";
 
@@ -35,8 +36,9 @@ export interface TxV1FundingInputPlan {
   previousOutpoint: FundingOutpoint;
   amount: Uint64Value;
   scriptPublicKey: string;
-  /** Raw 64-byte Schnorr signature. SIGHASH_ALL is appended canonically. */
+  /** Raw 64-byte Schnorr signature. The selected sighash byte is appended canonically (ALL by default). */
   signature: string | Uint8Array;
+  sighashType?: KaspaSighashType;
   sequence?: Uint64Value;
   computeBudget: number;
 }
@@ -180,13 +182,13 @@ export interface TxV1IdDebug {
 
 export interface TxV1SighashDebug extends TxV1DigestDebug {
   inputIndex: number;
-  hashType: "all";
+  hashType: typeof KASPA_SIGHASH_NAMES[KaspaSighashType];
 }
 
 export interface TxV1SignatureEvidence {
   publicKey: string;
   signature: string;
-  hashType: 1;
+  hashType: KaspaSighashType;
   digest: string;
 }
 
@@ -306,19 +308,19 @@ export function transactionV1Id(transaction: TxV1ReferenceTransaction): string {
   return buildDigestDebug(transaction).txid.digest;
 }
 
-/** Recomputes one version-1 SIGHASH_ALL preimage without assuming its script type. */
-export function transactionV1Sighash(transaction: TxV1ReferenceTransaction, inputIndex: number): TxV1SighashDebug {
+/** Recomputes one version-1 signature preimage (ALL by default) without assuming its script type. */
+export function transactionV1Sighash(transaction: TxV1ReferenceTransaction, inputIndex: number, sighashType: KaspaSighashType = SIG_HASH_ALL): TxV1SighashDebug {
   if (!transaction.inputs[inputIndex]) throw new Error("sighash input index is out of range");
-  const preimage = writeSighashAllPreimage(transaction, inputIndex);
+  const preimage = writeSighashPreimage(transaction, inputIndex, kaspaSighashType(sighashType));
   return {
     inputIndex,
-    hashType: "all",
+    hashType: KASPA_SIGHASH_NAMES[sighashType],
     preimage: bytesToHex(preimage),
     digest: blake2bKeyed("TransactionSigningHash", preimage),
   };
 }
 
-/** Recomputes the version-1 Schnorr SIGHASH_ALL evidence for a P2PK input. */
+/** Recomputes the version-1 Schnorr evidence using its encoded sighash for a P2PK input. */
 export function transactionV1SchnorrSignatureEvidence(
   transaction: TxV1ReferenceTransaction,
   inputIndex: number,
@@ -326,22 +328,23 @@ export function transactionV1SchnorrSignatureEvidence(
   const input = transaction.inputs[inputIndex];
   if (!input) throw new Error("sighash input index is out of range");
   const signatureScript = hexToBytes(input.signatureScript, undefined, "signatureScript");
-  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65 || signatureScript[65] !== SIG_HASH_ALL) {
-    throw new Error("transaction-v1 P2PK input must use a canonical 65-byte Schnorr SIGHASH_ALL push");
+  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65) {
+    throw new Error("transaction-v1 P2PK input must use a canonical 65-byte Schnorr push");
   }
+  const hashType = kaspaSighashType(signatureScript[65]!);
   const publicKey = p2pkPublicKey(input.utxo.scriptPublicKey, "inputScriptPublicKey");
   return {
     publicKey,
     signature: bytesToHex(signatureScript.slice(1, 65)),
-    hashType: SIG_HASH_ALL,
-    digest: transactionV1Sighash(transaction, inputIndex).digest,
+    hashType,
+    digest: transactionV1Sighash(transaction, inputIndex, hashType).digest,
   };
 }
 
-/** Canonically pushes a raw 64-byte Schnorr signature with SIGHASH_ALL. */
-export function buildTxV1P2pkSignatureScript(signature: string | Uint8Array): string {
+/** Canonically pushes a raw 64-byte Schnorr signature (ALL by default). */
+export function buildTxV1P2pkSignatureScript(signature: string | Uint8Array, sighashType: KaspaSighashType = SIG_HASH_ALL): string {
   const raw = bytesFromHexOrBytes(signature, 64, "signature");
-  return bytesToHex(concatBytes([Uint8Array.of(65), raw, Uint8Array.of(SIG_HASH_ALL)]));
+  return bytesToHex(concatBytes([Uint8Array.of(65), raw, Uint8Array.of(kaspaSighashType(sighashType))]));
 }
 
 /**
@@ -807,7 +810,7 @@ function normalizeFundingInput(input: TxV1FundingInputPlan, index: number): TxV1
     previousOutpoint: input.previousOutpoint,
     amount: input.amount,
     scriptPublicKey,
-    signatureScript: buildTxV1P2pkSignatureScript(input.signature),
+    signatureScript: buildTxV1P2pkSignatureScript(input.signature, input.sighashType),
     sequence: input.sequence ?? "0",
     computeBudget: TX_V1_P2PK_COMPUTE_BUDGET,
     covenantId: null,
@@ -834,7 +837,13 @@ function buildDigestDebug(transaction: TxV1ReferenceTransaction): {
       digest: txidDigest,
     },
     hash: { preimage: bytesToHex(hashPreimage), digest: hashDigest },
-    sighashes: transaction.inputs.map((_, index) => transactionV1Sighash(transaction, index)),
+    sighashes: transaction.inputs.map((input, index) => {
+      // Batch/P2PK witnesses begin with their primary transaction signature.
+      const witness = hexToBytes(input.signatureScript, undefined, "signatureScript");
+      const flag = witness[0] === 65 && witness.length >= 66 && Object.hasOwn(KASPA_SIGHASH_NAMES, witness[65]!)
+        ? kaspaSighashType(witness[65]!) : SIG_HASH_ALL;
+      return transactionV1Sighash(transaction, index, flag);
+    }),
   };
 }
 
@@ -855,21 +864,28 @@ function writeTransaction(
   return writer.finish();
 }
 
-function writeSighashAllPreimage(transaction: TxV1ReferenceTransaction, inputIndex: number): Uint8Array {
+function writeSighashPreimage(transaction: TxV1ReferenceTransaction, inputIndex: number, hashType: KaspaSighashType): Uint8Array {
   const input = transaction.inputs[inputIndex];
   if (!input) throw new Error("sighash input index is out of range");
-  const writer = new ByteWriter().u16(transaction.version).bytes(hashPreviousOutputs(transaction)).bytes(hashSequences(transaction));
+  const baseType = hashType & 7;
+  const anyoneCanPay = (hashType & 0x80) !== 0;
+  const outputsHash = baseType === 2 ? ZERO_HASH : baseType === 4
+    ? (transaction.outputs[inputIndex] ? hashSingleOutput(transaction, inputIndex) : ZERO_HASH)
+    : hashOutputs(transaction);
+  const writer = new ByteWriter().u16(transaction.version)
+    .bytes(anyoneCanPay ? ZERO_HASH : hashPreviousOutputs(transaction))
+    .bytes(anyoneCanPay || baseType !== 1 ? ZERO_HASH : hashSequences(transaction));
   writeOutpoint(writer, input.previousOutpoint);
   writeScriptPublicKey(writer, parseSerializedScriptPublicKey(input.utxo.scriptPublicKey, "inputScriptPublicKey"));
   writer
     .u64(input.utxo.amount)
     .u64(input.sequence)
-    .bytes(hashOutputs(transaction))
+    .bytes(outputsHash)
     .u64(transaction.lockTime)
     .bytes(transaction.subnetworkId)
     .u64(transaction.gas)
     .bytes(hashPayload(transaction))
-    .u8(SIG_HASH_ALL);
+    .u8(hashType);
   return writer.finish();
 }
 
@@ -882,6 +898,12 @@ function hashPreviousOutputs(transaction: TxV1ReferenceTransaction): string {
 function hashSequences(transaction: TxV1ReferenceTransaction): string {
   const writer = new ByteWriter();
   for (const input of transaction.inputs) writer.u64(input.sequence);
+  return blake2bKeyed("TransactionSigningHash", writer.finish());
+}
+
+function hashSingleOutput(transaction: TxV1ReferenceTransaction, inputIndex: number): string {
+  const writer = new ByteWriter();
+  writeOutput(writer, transaction.outputs[inputIndex]!, transaction.version);
   return blake2bKeyed("TransactionSigningHash", writer.finish());
 }
 

@@ -15,3 +15,11 @@ and require the full consensus validator to reject it. First accept re-signed
 claim, top-up, and refund controls so a broken signing helper cannot make every
 negative case pass. These checks execute the pinned compiled contract; fixture
 reproducibility separately binds that bytecode to the checked source.
+
+Escrow-v5 accepts all six consensus-supported sighash types. Signature-scope
+checks separately accept each type before rejecting re-signed claim/refund
+destination changes, and accept mixed client/provider top-up scopes. A valid
+NONE signature cannot replace an independent payout/refund guard. Reference
+signers remain ALL by default; see the
+[signature policy](../../docs/versioning-policy.md#sighash-template-transition)
+and [consensus vectors](../../vectors/README.md#signature-scope-consensus-evidence).

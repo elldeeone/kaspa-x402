@@ -237,7 +237,7 @@
           "enum": ["standard-native", "additive", "hash-chain-additive"]
         },
         "templateId": {
-          "enum": ["kaspa-x402-kip10-additive-v1", "kaspa-x402-hash-chain-head-v1"]
+          "enum": ["kaspa-x402-kip10-additive-v1", "kaspa-x402-hash-chain-head-v2"]
         },
         "headId": {
           "$ref": "#/$defs/hash32"

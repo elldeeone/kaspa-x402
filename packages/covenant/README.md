@@ -7,13 +7,27 @@ fixture checks; they are not audited for production mainnet funds.
 
 This package builds deterministic redeem scripts, signature-script argument
 blobs, fixture checks, and transaction-v1 reference artifacts for
-`kaspa-x402-escrow-v4`. The stateful KIP-20 template binds the client key,
+`kaspa-x402-escrow-v5`. The stateful KIP-20 template binds the client key,
 server key, network hash, payout script-public-key hash, refund
 script-public-key hash, timeout, and lifetime settled total. It does not
 hold private keys, broadcast transactions, or encode wallet addresses. Address
 text encoding is supplied by the caller through a Kaspa runtime codec.
 
 The amount unit in this package is sompi.
+
+## Transaction signature policy
+
+Development source uses escrow-v5 and hash-chain-head-v2. Their transaction
+signature checks accept the six consensus-supported sighash types. Wallets and
+reference signers default to `SIGHASH_ALL`; callers choosing another type are
+responsible for the fields left unsigned. Helpers derive digests and encode
+witnesses using the selected type, and verifiers honor each encoded type.
+Covenant payout, state, lineage, and refund guards remain mandatory.
+
+Off-chain voucher and request signatures retain their message-signing domains.
+Published RC2 uses the earlier ALL-only templates. See the
+[signature policy and template transition](../../docs/versioning-policy.md#sighash-template-transition)
+and [consensus vectors](../../vectors/README.md#signature-scope-consensus-evidence).
 
 ## Transaction V1 Artifacts
 

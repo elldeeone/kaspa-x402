@@ -1925,7 +1925,7 @@ async function runHostedBatchCanary(input) {
     accepted.amount !== input.expected.amount ||
     accepted.payTo !== input.expected.payTo ||
     accepted.extra.binding !== "kaspa-escrow-v3" ||
-    accepted.extra.templateId !== "kaspa-x402-escrow-v4" ||
+    accepted.extra.templateId !== "kaspa-x402-escrow-v5" ||
     accepted.extra.minDepositSompi !== input.expected.minDepositSompi ||
     accepted.extra.serverPublicKey !== input.expected.serverPublicKey
   ) {

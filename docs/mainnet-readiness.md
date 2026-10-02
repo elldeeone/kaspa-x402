@@ -3,14 +3,19 @@
 Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
 not a production readiness claim.
 
-The published v1 RC2 native payment surface includes:
+The development native payment surface includes:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile);
 - optional `hash-chain-additive` exact with `kaspa-hash-chain-exact-v1` and
-  `kaspa-x402-hash-chain-head-v1`; and
+  `kaspa-x402-hash-chain-head-v2`; and
 - `batch-settlement` with `kaspa-escrow-v3` and
-  `kaspa-x402-escrow-v4`.
+  `kaspa-x402-escrow-v5`.
+
+These replacement templates use signer-chosen transaction sighash types with
+ALL as the reference signing default. Published RC2 remains on head-v1 and
+escrow-v4; its funded and hosted evidence does not validate the new templates.
+See the [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
 `kaspa:testnet-10` is the only validation target. v1 RC2 does not provide
 compatibility or state migration for pre-RC runtimes. Mainnet must remain
@@ -21,6 +26,9 @@ opt-in and disabled by default until every gate below is closed.
 ### Independent Audit
 
 Audit scope must include:
+
+- transaction signature scope selection, per-signature digest verification,
+  and protection of unsigned fields by other signatures and covenant guards;
 
 - exact transaction verification, replay protection, and finality policy;
 - hash-chain grant confidentiality and assignment, one-time key exposure,

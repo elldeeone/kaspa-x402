@@ -4,3 +4,4 @@ export * from "./tx-v1.js";
 export * from "./exact-v0.js";
 export * from "./storage-mass.js";
 export * from "./hash-chain.js";
+export * from "./sighash.js";

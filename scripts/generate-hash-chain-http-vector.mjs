@@ -29,7 +29,7 @@ const expiresAt = "2099-01-01T00:00:00.000Z";
 const extra = {
   binding: "kaspa-hash-chain-exact-v1", profile: "hash-chain-additive",
   assetTransferMethod: "kaspa-v1-hash-chain-proof", paymentFlow: "upfront",
-  templateId: "kaspa-x402-hash-chain-head-v1", finality: "accepted",
+  templateId: "kaspa-x402-hash-chain-head-v2", finality: "accepted",
   transactionEncoding: "kaspa-sdk-safe-json-v2.0.0", payToScriptPublicKey: nextScript,
   headId, headVersion: "0", covenantId: oracle.covenantId,
   expectedHeadOutpoint: headInput.previousOutpoint,

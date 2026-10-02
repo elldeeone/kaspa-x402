@@ -4,7 +4,7 @@ import {
   stableStringify,
   type CovenantLineageState,
 } from "@kaspa-x402/core";
-import { ESCROW_V4_LAUNCH_IDENTITY } from "@kaspa-x402/covenant";
+import { ESCROW_V5_LAUNCH_IDENTITY } from "@kaspa-x402/covenant";
 import type { ServerChannelRecord } from "./types.js";
 
 export function assertServerChannelLineageConsistency(
@@ -17,19 +17,19 @@ export function assertServerChannelLineageConsistency(
   if (
     manifest.network !== channel.channelConfig.network ||
     stableStringify(manifest.compiler) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.compiler) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.compiler) ||
     stableStringify(manifest.source) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.source) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.source) ||
     stableStringify(manifest.bytecode) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.bytecode) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.bytecode) ||
     stableStringify(manifest.constructorSlots) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.constructorSlots) ||
     stableStringify(manifest.abi) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.abi) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.abi) ||
     stableStringify(manifest.selectors) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.selectors) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.selectors) ||
     manifest.identitySha256.toLowerCase() !==
-      ESCROW_V4_LAUNCH_IDENTITY.identitySha256.toLowerCase() ||
+      ESCROW_V5_LAUNCH_IDENTITY.identitySha256.toLowerCase() ||
     manifest.genesis.covenantId.toLowerCase() !==
       channel.covenantId.toLowerCase() ||
     manifest.genesis.transactionId.toLowerCase() !==

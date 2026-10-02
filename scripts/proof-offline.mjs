@@ -661,10 +661,10 @@ async function runBatchProof() {
 }
 
 function runTxV1Proof() {
-  const fixture = readJson("contracts/fixtures/kaspa-x402-escrow-v4.json");
+  const fixture = readJson("contracts/fixtures/kaspa-x402-escrow-v5.json");
   const source = fs.readFileSync(path.join(root, fixture.source));
   const fixtureReport = checkEscrowFixtureReproducibility(fixture, source);
-  assert.equal(fixture.templateId, "kaspa-x402-escrow-v4");
+  assert.equal(fixture.templateId, "kaspa-x402-escrow-v5");
   check("v1 RC2 escrow fixture reproducibility", {
     checks: fixtureReport.checks.length,
     compilerCommit: fixture.compiler?.checkedCommit,

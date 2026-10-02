@@ -12,7 +12,7 @@ import {
   type CovenantLineageState,
   type FundingOutpoint,
 } from "@kaspa-x402/core";
-import { ESCROW_V4_LAUNCH_IDENTITY } from "@kaspa-x402/covenant";
+import { ESCROW_V5_LAUNCH_IDENTITY } from "@kaspa-x402/covenant";
 import type {
   ChannelLookupScope,
   ChannelStore,
@@ -1191,15 +1191,15 @@ function channelFromGenesisAttempt(
   const manifest: CovenantLaunchManifest = {
     format: "kaspa-x402-covenant-launch-v1",
     network: attempt.intent.config.network,
-    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
-    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
-    bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+    compiler: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.compiler),
+    source: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.source),
+    bytecode: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.bytecode),
     constructorSlots: structuredClone(
-      ESCROW_V4_LAUNCH_IDENTITY.constructorSlots,
+      ESCROW_V5_LAUNCH_IDENTITY.constructorSlots,
     ),
-    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
-    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
-    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+    abi: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.abi),
+    selectors: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.selectors),
+    identitySha256: ESCROW_V5_LAUNCH_IDENTITY.identitySha256,
     genesis: {
       derivation: "kip20-covenant-id-v1",
       covenantId: evidence.covenantId,
@@ -1528,19 +1528,19 @@ function assertChannelLineageConsistency(channel: DirectModeChannel): void {
     manifest.network !== channel.config.network ||
     manifest.bytecode.templateId !== channel.templateId ||
     stableStringify(manifest.compiler) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.compiler) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.compiler) ||
     stableStringify(manifest.source) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.source) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.source) ||
     stableStringify(manifest.bytecode) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.bytecode) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.bytecode) ||
     stableStringify(manifest.constructorSlots) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.constructorSlots) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.constructorSlots) ||
     stableStringify(manifest.abi) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.abi) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.abi) ||
     stableStringify(manifest.selectors) !==
-      stableStringify(ESCROW_V4_LAUNCH_IDENTITY.selectors) ||
+      stableStringify(ESCROW_V5_LAUNCH_IDENTITY.selectors) ||
     manifest.identitySha256.toLowerCase() !==
-      ESCROW_V4_LAUNCH_IDENTITY.identitySha256.toLowerCase() ||
+      ESCROW_V5_LAUNCH_IDENTITY.identitySha256.toLowerCase() ||
     !sameHex(manifest.genesis.covenantId, channel.covenantId) ||
     !sameHex(
       manifest.genesis.transactionId,

@@ -2917,7 +2917,7 @@ function pnnCovenantTransition(
     Parameters<ServerChainProvider["discoverCovenantLineage"]>[0]["lineage"]["currentHead"]
   > | null,
   covenantId: Hash32Hex,
-  templateId: "kaspa-x402-escrow-v4",
+  templateId: "kaspa-x402-escrow-v5",
   acceptingBlockHash: Hash32Hex,
   acceptingBlockBlueScore: string,
   confirmationCount: number,

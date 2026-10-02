@@ -55,6 +55,18 @@ must provide explicit funding, signer, node, custody, and review controls.
 
 Wallet, node, address-codec, and transaction-builder behavior is injected through typed adapters. Amounts on the wire remain decimal sompi strings.
 
+## Transaction signing policy
+
+Reference transaction signing defaults to `SIGHASH_ALL`. Development covenants
+accept other consensus-supported types, but selecting one is a wallet/signer
+decision. A signer must inspect the intended transaction and the fields its
+chosen scope leaves unsigned, including protections supplied by other
+signatures and covenant guards. Preparing and persisting one immutable payment
+artifact remains required even if its signatures permit some field changes.
+Off-chain voucher and request authorizations retain their existing domains.
+See the [signature policy and template transition](../../docs/versioning-policy.md#sighash-template-transition)
+before using development templates with a published RC2 server or channel.
+
 ## Durable Exact Attempts
 
 Every exact payment uses a stable payment identifier and attempt ID. The

@@ -57,6 +57,13 @@ Answer these in the PR description:
 Changes to schemas, specs, vectors, or published package behavior require a new
 version before publication; see `docs/versioning-policy.md`.
 
+Development escrow-v5 and hash-chain-head-v2 validate all consensus-supported
+transaction sighash types; wallet and reference signing defaults remain ALL.
+Changes must preserve per-signature digest verification and independent
+covenant guards. Keep documentation, fixtures, and signature-scope vectors in
+agreement with the [signature policy](docs/versioning-policy.md#sighash-template-transition).
+Label older release and live-proof records with their original template scope.
+
 ## Reporting Issues
 
 Use the issue templates. For interoperability reports against the hosted

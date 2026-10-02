@@ -110,14 +110,28 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
         Authorization::Borrow { revealed: first_guard, pubkey: second_pubkey, signing_key: REPLACEMENT_LINK_KEY })?;
     expect_consensus_rejection(&wrong_signature, &first_entries, "wrong one-time signature")?;
 
-    let mut wrong_sighash_flag = first_tx.clone();
-    let signature_script = &mut wrong_sighash_flag.inputs[0].signature_script;
-    if signature_script.get(66) != Some(&65) || signature_script.get(131) != Some(&1) {
-        return Err(anyhow!("unexpected borrower witness layout for SIGHASH_ALL negative"));
+    let mut sighash_modes = Vec::new();
+    for head_flag in [1, 2, 4, 129, 130, 132] {
+        for funding_flag in [1, 2, 4, 129, 130, 132] {
+            let mut candidate = first_tx.clone();
+            sign_head_with_types(&mut candidate, &first_entries, &fixture, &genesis_head.redeem,
+                first_auth, SigHashType::from_u8(head_flag).unwrap(), SigHashType::from_u8(funding_flag).unwrap())?;
+            validate_full_consensus(&candidate, &first_entries)
+                .with_context(|| format!("borrow sighash head={head_flag}, funding={funding_flag}"))?;
+            let mut item = evidence("hash-chain-sighash-borrow", &candidate, &first_entries, PAYMENT)?;
+            item["headSighashType"] = json!(head_flag);
+            item["fundingSighashType"] = json!(funding_flag);
+            sighash_modes.push(item);
+        }
     }
-    signature_script[131] = 0;
+    let mut wrong_sighash_flag = first_tx.clone();
+    wrong_sighash_flag.inputs[0].signature_script[131] = 0;
     wrong_sighash_flag.finalize();
-    expect_consensus_rejection(&wrong_sighash_flag, &first_entries, "wrong borrower sighash flag")?;
+    expect_consensus_rejection(&wrong_sighash_flag, &first_entries, "invalid borrower sighash flag")?;
+    let mut changed_flag = first_tx.clone();
+    changed_flag.inputs[0].signature_script[131] = 2;
+    changed_flag.finalize();
+    expect_consensus_rejection(&changed_flag, &first_entries, "valid flag with wrong digest")?;
 
     let mut wrong_successor = first_tx.clone();
     wrong_successor.outputs[0].script_public_key = genesis_head.script.clone();
@@ -204,6 +218,17 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
         Authorization::Sweep { signing_key: FIRST_LINK_KEY })?;
     expect_consensus_rejection(&unauthorized_sweep, &sweep_entries, "unauthorized owner sweep")?;
 
+    for flag in [1, 2, 4, 129, 130, 132] {
+        let hash_type = SigHashType::from_u8(flag).unwrap();
+        let mut rotation = rotate_tx.clone();
+        sign_head_with_types(&mut rotation, &rotate_entries, &fixture, &first_head.redeem,
+            Authorization::Rotate { new_guard: replacement_guard, signing_key: OWNER_KEY }, hash_type, SIG_HASH_ALL)?;
+        validate_full_consensus(&rotation, &rotate_entries).context("owner rotation sighash mode")?;
+        let mut sweep = sweep_tx.clone();
+        sign_head_with_types(&mut sweep, &sweep_entries, &fixture, &second_head.redeem,
+            Authorization::Sweep { signing_key: OWNER_KEY }, hash_type, SIG_HASH_ALL)?;
+        validate_full_consensus(&sweep, &sweep_entries).context("owner sweep sighash mode")?;
+    }
     let result = json!({
         "status": "full-consensus-cross-validated",
         "source": {
@@ -221,6 +246,7 @@ pub(super) fn validate_hash_chain(root: &Path) -> Result<serde_json::Value> {
             "firstOneTimePublicKey": hex::encode(second_pubkey),
             "secondOneTimePublicKey": hex::encode(first_pubkey),
         },
+        "sighashModes": sighash_modes,
         "transactions": {
             "genesis": evidence("hash-chain-genesis", &genesis_tx, &genesis_entries, 0)?,
             "borrow1": evidence("hash-chain-borrow-1", &first_tx, &first_entries, PAYMENT)?,
@@ -269,7 +295,7 @@ fn fixture_compiler_commit() -> &'static str {
 }
 
 fn load_fixture(root: &Path) -> Result<Fixture> {
-    let file = root.join("contracts/fixtures/kaspa-x402-hash-chain-head-v1.json");
+    let file = root.join("contracts/fixtures/kaspa-x402-hash-chain-head-v2.json");
     let value: serde_json::Value = serde_json::from_str(&fs::read_to_string(&file)?)?;
     if value["compiler"]["checkedCommit"].as_str() != Some(fixture_compiler_commit()) {
         return Err(anyhow!("hash-chain SilverScript compiler commit is not pinned"));
@@ -279,7 +305,7 @@ fn load_fixture(root: &Path) -> Result<Fixture> {
     if hex::encode(Sha256::digest(fs::read(source)?)) != source_hash {
         return Err(anyhow!("hash-chain SilverScript source hash differs from artifact"));
     }
-    let contract = &value["artifact"]["contracts"]["KaspaX402HashChainHeadV1"];
+    let contract = &value["artifact"]["contracts"]["KaspaX402HashChainHeadV2"];
     let base: Vec<u8> = serde_json::from_value(contract["compiled"]["bytecode"].clone())?;
     let compiled_hash = json_string(&value, "compiledBaseSha256")?.to_owned();
     if hex::encode(Sha256::digest(&base)) != compiled_hash {
@@ -424,6 +450,11 @@ fn build_sweep(fixture: &Fixture, head: &Head) -> Result<(Transaction, Vec<UtxoE
 }
 
 fn sign_head(tx: &mut Transaction, entries: &[UtxoEntry], fixture: &Fixture, redeem: &[u8], authorization: Authorization) -> Result<()> {
+    sign_head_with_types(tx, entries, fixture, redeem, authorization, SIG_HASH_ALL, SIG_HASH_ALL)
+}
+
+fn sign_head_with_types(tx: &mut Transaction, entries: &[UtxoEntry], fixture: &Fixture, redeem: &[u8], authorization: Authorization,
+    head_type: SigHashType, funding_type: SigHashType) -> Result<()> {
     for input in &mut tx.inputs { input.signature_script.clear(); }
     set_storage_mass(tx, entries)?;
     tx.finalize();
@@ -433,7 +464,7 @@ fn sign_head(tx: &mut Transaction, entries: &[UtxoEntry], fixture: &Fixture, red
         Authorization::Sweep { signing_key } => signing_key,
     };
     let populated = PopulatedTransaction::new(tx, entries.to_vec());
-    let signature_push = deterministic_signature(&populated, 0, &signer)?;
+    let signature_push = deterministic_signature_with_type(&populated, 0, &signer, head_type)?;
     let signature = &signature_push[1..];
     let mut builder = ScriptBuilder::new();
     match authorization {
@@ -451,7 +482,7 @@ fn sign_head(tx: &mut Transaction, entries: &[UtxoEntry], fixture: &Fixture, red
     tx.inputs[0].signature_script = builder.add_data(redeem)?.drain();
     if tx.inputs.len() > 1 {
         let populated = PopulatedTransaction::new(tx, entries.to_vec());
-        tx.inputs[1].signature_script = deterministic_signature(&populated, 1, &PAYER_KEY)?;
+        tx.inputs[1].signature_script = deterministic_signature_with_type(&populated, 1, &PAYER_KEY, funding_type)?;
     }
     tx.finalize();
     Ok(())

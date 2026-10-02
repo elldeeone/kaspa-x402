@@ -1,6 +1,9 @@
 # Kaspa x402 Binding v1
 
-Status: specification included in the published RC2 release; interoperability draft.
+Status: development revision after the published RC2 release; interoperability
+draft. Examples use the unpublished escrow-v5 template. See the
+[signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition)
+for the distinction from published RC2.
 
 This document defines common rules for x402 v2 payments on Kaspa. Active
 scheme-specific behavior is defined in sibling documents:
@@ -187,7 +190,7 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "maxTimeoutSeconds": 60,
       "extra": {
         "binding": "kaspa-escrow-v3",
-        "templateId": "kaspa-x402-escrow-v4",
+        "templateId": "kaspa-x402-escrow-v5",
         "serverPublicKey": "<32-byte x-only hex>",
         "minDepositSompi": "100000000",
         "claimReserveSompi": "2000000",

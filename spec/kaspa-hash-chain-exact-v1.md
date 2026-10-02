@@ -1,9 +1,11 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **published in `1.0.0-rc.2` as an optional Testnet-10 profile**.
-It is included in the public packages and hosted browser demo. The binding
-remains an interoperability candidate; mainnet and stable-release gates still
-apply. See the [RC2 release reference](../docs/rc2-release.md).
+Status: **development revision after `1.0.0-rc.2`, Testnet-10 only**.
+This revision uses head-v2 with signer-chosen transaction sighash types. The
+published RC2 packages and hosted demo use head-v1. The binding remains an
+interoperability candidate; mainnet and stable-release gates still apply. See
+the [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition)
+and [RC2 release reference](../docs/rc2-release.md).
 
 This document specifies a native-KAS x402 v2 `exact` mechanism derived from
 KCC20's `hash-chain/v1` borrowed-receive authorization, using **OTP-style
@@ -64,7 +66,7 @@ not described as a failed on-chain payment.
 | `asset` | `KAS` (sompi, 8 decimals) |
 | `extra.binding` | `kaspa-hash-chain-exact-v1` |
 | `extra.profile` | `hash-chain-additive` |
-| `extra.templateId` | `kaspa-x402-hash-chain-head-v1` |
+| `extra.templateId` | `kaspa-x402-hash-chain-head-v2` |
 | `extra.assetTransferMethod` | `kaspa-v1-hash-chain-proof` |
 | `extra.paymentFlow` | `upfront` |
 
@@ -93,8 +95,7 @@ The merchant creates random `x_0` and one-time Schnorr keypairs
 `x_n`. For a current guard `x_i`, a borrower supplies
 `revealedGuard = x_(i-1)`, the 32-byte x-only `pubkey_i`, and a 65-byte Schnorr
 transaction signature made with `private_key_i`. The borrow branch MUST check
-the exact 64-byte concatenation hash, the transaction signature with
-`SIGHASH_ALL`, and a positive native-KAS increase. Its successor state guard
+the exact 64-byte concatenation hash, the transaction signature using its encoded consensus-supported sighash type, and a positive native-KAS increase. Its successor state guard
 MUST equal `revealedGuard`. Links are released in reverse generation order.
 
 The initial head is a version-1 KIP-20 covenant output with a stable
@@ -105,14 +106,14 @@ new guard, independently reconstructed and compared with output 0. The head
 principal MUST remain in that successor. KIP-20 identity does not locate the
 live outpoint; the merchant must persist and reconcile it.
 
-The pinned [SilverScript contract](../contracts/kaspa-x402-hash-chain-head-v1.sil)
+The pinned [SilverScript contract](../contracts/kaspa-x402-hash-chain-head-v2.sil)
 has two separate owner paths, both covered by the
 [local consensus vector](../vectors/hash-chain/consensus-v1.json):
 
-- `ownerRotate`: owner SIGHASH_ALL authorization, one same-ID successor with a
+- `ownerRotate`: owner signature authorization, one same-ID successor with a
   newly committed guard and head value at least the old head value. The owner
   funds any fee separately. Rotation replaces an abandoned or exhausted chain.
-- `ownerSweep`: owner SIGHASH_ALL authorization with no same-ID successor;
+- `ownerSweep`: owner signature authorization with no same-ID successor;
   this terminates the head. A new head requires new genesis and a new offer.
 
 An owner rotation and a released borrow are competing spends of the same
@@ -136,7 +137,7 @@ This illustrative offer uses placeholders, not a conformance vector:
     "profile": "hash-chain-additive",
     "assetTransferMethod": "kaspa-v1-hash-chain-proof",
     "paymentFlow": "upfront",
-    "templateId": "kaspa-x402-hash-chain-head-v1",
+    "templateId": "kaspa-x402-hash-chain-head-v2",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "payToScriptPublicKey": "<successor serialized script public key>",
@@ -321,7 +322,7 @@ output[1] = optional payer-controlled change
 
 The complete signed transaction MUST spend `expectedHeadOutpoint` at input
 0, use the borrow entrypoint with the advertised `nextGuard` and
-`oneTimePublicKey`, verify the one-time SIGHASH_ALL signature, and produce
+`oneTimePublicKey`, verify the one-time signature using its encoded sighash type, and produce
 exactly one KIP-20 same-ID authorized output at index 0. It MUST match the
 trusted current head value, script, covenant ID and pinned template. Output
 0 MUST match the independently reconstructed successor script, covenant
@@ -499,3 +500,20 @@ No private grant should be represented as revoked until a conflicting owner
 transition is accepted. The actual contract and network evidence must prove
 the specified behavior before the binding is promoted beyond its RC2
 Testnet-10 interoperability candidate status.
+
+## Signature scope
+
+Wallets and reference signers default to `SIGHASH_ALL`. The head covenant does
+not restrict signature scope; it checks signature validity and its independent
+transition guards. Verifiers MUST honor the encoded consensus-supported sighash
+type and reject invalid flags. A signer choosing another mode is responsible
+for the fields it leaves unsigned, including protection supplied by other
+signatures or script guards. Acceptance does not imply that every mode is safe
+for every signing workflow.
+
+The same policy applies to owner-rotation and owner-sweep signatures, and to
+verification of payer funding signatures. The head and funding signatures may
+use different supported types. Request-authorization signatures remain
+message signatures without a transaction sighash byte. Supported flags and
+existing-head cutover are defined in the
+[signature policy](../docs/versioning-policy.md#sighash-template-transition).

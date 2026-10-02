@@ -3,6 +3,12 @@
 This directory contains source assets for the static standards reference site.
 The generated output lives in `site/dist/` and is ignored.
 
+Development artifacts and the browser bundle use escrow-v5/head-v2 with
+signer-chosen transaction sighash types and ALL as the signing default.
+Published RC2 and its hosted gateway still use escrow-v4/head-v1. Use a matching
+development server and fresh covenant state when testing the new templates;
+see the [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition).
+
 Build locally:
 
 ```sh
