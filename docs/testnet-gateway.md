@@ -3,7 +3,7 @@
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2
 service described below uses escrow-v4 and head-v1. Follow the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+[signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
 for a development integration or operator cutover; the existing hosted RC2
 service is not evidence of deployment of the new templates.
 
@@ -11,8 +11,8 @@ RC2 includes an optional native-KAS `hash-chain-additive` demo in the gateway
 Durable Object. It is advertised when the operator enables it and registers an
 available funded head. Use `/hash-chain/report` for the protected resource,
 `/hash-chain/grant` for signed private grant claims, and `/hash-chain/status`
-for availability. See the [browser walkthrough](demo-implementer-guide.md#hash-chain-browser-demo)
-and [operator setup](demo-operations.md#hash-chain-demo). The RC2 public
+for availability. See the [browser walkthrough](./demo-implementer-guide.md#hash-chain-browser-demo)
+and [operator setup](./demo-operations.md#hash-chain-demo). The RC2 public
 gateway has this profile enabled with a registered head; its live status may
 change if a grant is abandoned or operator recovery is required.
 
@@ -76,7 +76,7 @@ setting `KASPA_X402_GATEWAY_BASE_URL` alone does not change the request origin.
 `npm run check:demo-gateway` checks both resource URLs. Keep the funded client's
 origin and resource pins strict and point them at this same local origin.
 Funded tests still require the isolated wallet and environment described in
-[Live Testnet Proof](live-testnet-proof.md).
+[Live Testnet Proof](../protocol/docs/live-testnet-proof.md).
 
 ## Recorded RC2 Deployment Evidence
 
@@ -100,7 +100,7 @@ record; subsequent operator redeployments can have different version IDs.
 
 Transaction IDs, archive checksums, source pins, and full sanitized evidence
 are attached to the [RC2 prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
-See the [RC2 release reference](rc2-release.md) for the current public surface.
+See the [RC2 release reference](../protocol/docs/rc2-release.md) for the current public surface.
 These proofs use configured public Testnet-10 nodes, without independent-node
 corroboration or mainnet proof. The
 [RC1 gateway record](https://github.com/elldeeone/kaspa-x402/blob/v1.0.0-rc.1/docs/testnet-gateway.md)

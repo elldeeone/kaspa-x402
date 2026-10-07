@@ -1,5 +1,10 @@
 # Contributing
 
+Start at [protocol/README.md](protocol/README.md). Protocol-only changes can use
+`cd protocol && npm ci && npm run verify`. Run the host checks below from the
+repository root when changing shared dependencies, paths or gateway integration.
+Run `npm run check:protocol-isolation` before submitting changes to the boundary.
+
 Kaspa x402 is a release-candidate standard and reference implementation targeting
 `kaspa:testnet-10`. Nothing here is mainnet-ready, and package names, schemas,
 and field names may change until the first tagged spec release. Contributions
@@ -55,13 +60,13 @@ Answer these in the PR description:
 - What vectors or tests changed with it?
 
 Changes to schemas, specs, vectors, or published package behavior require a new
-version before publication; see `docs/versioning-policy.md`.
+version before publication; see `protocol/docs/versioning-policy.md`.
 
 Development escrow-v5 and hash-chain-head-v2 validate all consensus-supported
 transaction sighash types; wallet and reference signing defaults remain ALL.
 Changes must preserve per-signature digest verification and independent
 covenant guards. Keep documentation, fixtures, and signature-scope vectors in
-agreement with the [signature policy](docs/versioning-policy.md#sighash-template-transition).
+agreement with the [signature policy](./protocol/docs/versioning-policy.md#sighash-template-transition).
 Label older release and live-proof records with their original template scope.
 
 ## Reporting Issues
@@ -78,7 +83,7 @@ Testnet evidence only.
 ## Safety Boundaries
 
 - All work targets `kaspa:testnet-10`. Mainnet use is blocked by the gates in
-  `docs/mainnet-readiness.md`; do not submit changes that enable mainnet
+  `protocol/docs/mainnet-readiness.md`; do not submit changes that enable mainnet
   paths without those gates.
 - The apex site is a static standards reference. It must not gain a hosted
   wallet, signer, facilitator, or payment API.

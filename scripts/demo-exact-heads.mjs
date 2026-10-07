@@ -3,7 +3,7 @@ import fs from "node:fs";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { readBoundedResponseText } from "./read-bounded-response.mjs";
+import { readBoundedResponseText } from "../protocol/scripts/read-bounded-response.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const MAX_RESPONSE_BYTES = 256 * 1024;

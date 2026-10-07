@@ -1,0 +1,40 @@
+# Examples
+
+Current examples:
+
+- `paid-http-api`
+- `paid-mcp-tool`
+- `self-hosted-facilitator`
+- `recovery`
+
+All examples run in mock mode. They do not require wallet secrets, RPC credentials, or a live node.
+
+Run from the `protocol/` workspace. Build the packages first:
+
+```sh
+npm run build
+```
+
+Run the examples:
+
+```sh
+node examples/paid-http-api/index.mjs
+node examples/paid-mcp-tool/index.mjs
+node examples/self-hosted-facilitator/index.mjs
+node examples/recovery/index.mjs
+```
+
+`paid-http-api` demonstrates exact and batch-settlement HTTP retries. `paid-mcp-tool` demonstrates an agent-native paid MCP tool call. `self-hosted-facilitator` demonstrates optional facilitator discovery, verification, and settlement. `recovery` demonstrates the failure and recovery cases operators need to understand before live deployments.
+
+The facilitator reader rejects oversized, structurally excessive, stalled, or
+aborted request bodies before verification or settlement. Recovery examples
+never treat a blind handler rerun as a safe payment retry.
+
+For a broader offline proof that also checks exact replay rejection, batch
+corrective 402 state, idempotency, restart recovery, and the tx-v1 singleton
+genesis -> repeated partial claims -> top-up -> refund sequence, run:
+
+```sh
+npm run build
+npm run proof:offline
+```

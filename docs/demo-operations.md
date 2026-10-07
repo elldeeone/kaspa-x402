@@ -3,7 +3,7 @@
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2
 service described below uses escrow-v4 and head-v1. Follow the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+[signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
 for a development integration or operator cutover; the existing hosted RC2
 service is not evidence of deployment of the new templates.
 
@@ -18,8 +18,8 @@ RC2 was published and deployed on 2026-10-01. The hosted gateway uses
 PNN/WSS evidence for native exact, batch, and hash-chain payments. Release
 validation covered all 18 funded flows, hosted native/batch payments, three
 browser hash-chain payments across rotation, and retries after redeployment.
-The [RC2 release reference](rc2-release.md) and
-[gateway deployment record](testnet-gateway.md#recorded-rc2-deployment-evidence)
+The [RC2 release reference](../protocol/docs/rc2-release.md) and
+[gateway deployment record](./testnet-gateway.md#recorded-rc2-deployment-evidence)
 link to the published evidence and identify the release source.
 
 The gateway is an integration target, not a wallet, custodian, faucet,

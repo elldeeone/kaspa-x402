@@ -7,8 +7,8 @@ import {
   type HashChainTrustedOrigin,
 } from "@kaspa-x402/server";
 import type { HashChainGrantClaim } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient } from "./adapters.js";
-import { addressForScriptPublicKey } from "./kaspa-native.js";
+import { KaspaPnnClient } from "@kaspa-x402/adapters";
+import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import type { HashChainStorage } from "./hash-chain-storage.js";
 
 type Origin = HashChainTrustedOrigin & { outpoint: FundingOutpoint };

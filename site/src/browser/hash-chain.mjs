@@ -5,7 +5,7 @@ import {
   claimHashChainGrantViaHttp, signHashChainExactTransaction,
 } from '@kaspa-x402/client';
 import { decodePaymentRequiredHeader, validateKaspaPaymentRequirement } from '@kaspa-x402/core';
-import { scriptPublicKeyForAddress, addressForScriptPublicKey } from '../../../packages/demo-gateway/src/kaspa-native.ts';
+import { scriptPublicKeyForAddress, addressForScriptPublicKey } from '@kaspa-x402/adapters/native';
 import { HASH_CHAIN_CALLER_HEADER } from '../../../packages/demo-gateway/src/hash-chain-proxy.ts';
 export { addressForScriptPublicKey, scriptPublicKeyForAddress };
 

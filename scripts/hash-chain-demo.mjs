@@ -13,7 +13,7 @@ import {
   hashChainHeadScriptPublicKey, transactionV1CovenantId, transactionV1Id, transactionV1Sighash,
 } from '@kaspa-x402/covenant';
 import { getAddressUtxos, liveChainCheckpoint, referenceTransactionToSdk,
-  waitForAcceptedTransactionEvidence } from './live-adapter-reference.mjs';
+  waitForAcceptedTransactionEvidence } from '../protocol/scripts/live-adapter-reference.mjs';
 import { createHashChainDemoHandler } from './hash-chain-demo-service.mjs';
 import { openHashChainDemoStore } from './hash-chain-demo-store.mjs';
 

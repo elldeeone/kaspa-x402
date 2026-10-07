@@ -1,4 +1,4 @@
-import { PnnChainEvidence } from "./pnn-chain-evidence.js";
+import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import {
   KASPA_X402_RESOURCE_BUDGET,
   assertJsonResourceBudget,
@@ -34,7 +34,7 @@ import {
   VerifiedExactSettlementReconciler,
   VerifiedKaspaChainProvider,
   ScriptAddressBook,
-} from "./adapters.js";
+} from "@kaspa-x402/adapters";
 import {
   readGatewayConfig,
   type GatewayConfig,

@@ -3,7 +3,7 @@
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2
 service described below uses escrow-v4 and head-v1. Follow the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+[signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
 for a development integration or operator cutover; the existing hosted RC2
 service is not evidence of deployment of the new templates.
 
@@ -169,8 +169,8 @@ reset; keep the page open while a payment is pending.
 A busy/unavailable message is normal for this small demo. An abandoned claimed
 grant can require a manual operator rotation before the head is available again.
 Expiry alone does not revoke its signing key on-chain. See the
-[profile](../spec/kaspa-hash-chain-exact-v1.md) and
-[operator instructions](demo-operations.md#hash-chain-demo).
+[profile](../protocol/spec/kaspa-hash-chain-exact-v1.md) and
+[operator instructions](./demo-operations.md#hash-chain-demo).
 
 ## Batch Flow
 

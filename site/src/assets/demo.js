@@ -403,6 +403,7 @@ function exactExtra(payTo) {
   return {
     binding: "kaspa-exact-v2",
     profile: "standard-native",
+    paymentFlow: "upfront",
     finality: ui.finality.value,
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     payToScriptPublicKey,

@@ -1,13 +1,13 @@
-import { PnnChainEvidence } from "./pnn-chain-evidence.js";
+import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import {
   DirectModeServer,
   handleHashChainGrantClaimHttp,
 } from "@kaspa-x402/server";
 import type { HashChainGrantIssuer } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient, NativeAddressCodec, VerifiedKaspaChainProvider, ScriptAddressBook } from "./adapters.js";
+import { KaspaPnnClient, NativeAddressCodec, VerifiedKaspaChainProvider, ScriptAddressBook } from "@kaspa-x402/adapters";
 import type { GatewayConfig } from "./config.js";
 import { HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
-import { addressForScriptPublicKey } from "./kaspa-native.js";
+import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import { DurableGatewayLockManager, type GatewayStateClient } from "./state.js";
 import { openDurableHashChainIssuer, type HashChainStorage } from "./hash-chain-storage.js";
 import { HashChainPnnView } from "./hash-chain-pnn-view.js";

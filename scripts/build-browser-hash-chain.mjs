@@ -16,10 +16,11 @@ export async function buildBrowserHashChain(outDir) {
     minify: true,
     inject: [path.join(root, 'site/src/browser/buffer.mjs')],
     alias: {
+      '@kaspa-x402/adapters/native': path.join(root, 'protocol/packages/adapters/src/kaspa-native.ts'),
       'node:crypto': path.join(root, 'site/src/browser/crypto.mjs'),
-      '@kaspa-x402/core': path.join(root, 'packages/core/src/index.ts'),
-      '@kaspa-x402/covenant': path.join(root, 'packages/covenant/src/index.ts'),
-      '@kaspa-x402/client': path.join(root, 'packages/client/src/index.ts'),
+      '@kaspa-x402/core': path.join(root, 'protocol/packages/core/src/index.ts'),
+      '@kaspa-x402/covenant': path.join(root, 'protocol/packages/covenant/src/index.ts'),
+      '@kaspa-x402/client': path.join(root, 'protocol/packages/client/src/index.ts'),
     },
     logLevel: 'silent',
   });

@@ -6,6 +6,8 @@ import { isPublishableDirtyPath } from "./site-inputs.mjs";
 import { fileURLToPath } from "node:url";
 
 import {
+  artifactSource,
+  artifactRoute,
   BROWSER_BUNDLE_INPUTS,
   GENERATED_SITE_ASSETS,
   CONTRACT_FILES,
@@ -66,7 +68,7 @@ function checkSchemaInventory() {
     );
   }
   for (const source of SCHEMA_FILES) {
-    const schema = readJson(path.join(root, source));
+    const schema = readJson(path.join(root, artifactSource(source)));
     const expectedPath = new URL(schema.$id).pathname.slice(1);
     if (expectedPath !== source) {
       fail(`${source} $id path mismatch: ${schema.$id}`);
@@ -92,7 +94,7 @@ function checkCopiedArtifacts() {
     ...vectors,
   ];
   for (const source of activeFiles) {
-    assertSameBytes(path.join(root, source), path.join(outDir, source), source);
+    assertSameBytes(path.join(root, artifactSource(source)), path.join(outDir, source), source);
   }
 }
 
@@ -144,9 +146,10 @@ function checkUntrackedPublishableFiles() {
     "ls-files",
     "--others",
     "--exclude-standard",
-    "vectors",
+    "protocol/vectors",
   ])
     .split(/\r?\n/)
+    .map(artifactRoute)
     .filter((file) => /\.(?:json|md)$/.test(file));
   for (const file of untrackedVectors) {
     if (!fs.existsSync(path.join(outDir, file)))
@@ -179,7 +182,7 @@ function checkAssetAllowlist() {
   );
   for (const source of SITE_ASSET_FILES) {
     const target = path.relative(SITE_SRC, source).replaceAll(path.sep, "/");
-    assertSameBytes(path.join(root, source), path.join(outDir, target), target);
+    assertSameBytes(path.join(root, artifactSource(source)), path.join(outDir, target), target);
   }
   const vendorPackageJson = readJson(
     path.join(root, "site/src/vendor/kaspa-wasm/2.0.0/kaspa-core/package.json"),
@@ -455,7 +458,7 @@ function readJson(file) {
 function readPackages() {
   const packagesByName = new Map(
     trackedPackageFiles().map((file) => {
-      const pkg = JSON.parse(fs.readFileSync(path.join(root, file), "utf8"));
+      const pkg = JSON.parse(fs.readFileSync(path.join(root, artifactSource(file)), "utf8"));
       return [
         pkg.name,
         {
@@ -485,11 +488,11 @@ function dirtyPublishableInputs() {
     "package.json",
     "wrangler.jsonc",
     "site/README.md",
-    ...SCHEMA_FILES,
-    ...SPEC_FILES,
-    ...CONTRACT_FILES,
-    ...PUBLIC_DOC_FILES,
-    ...vectors,
+    ...SCHEMA_FILES.map(artifactSource),
+    ...SPEC_FILES.map(artifactSource),
+    ...CONTRACT_FILES.map(artifactSource),
+    ...PUBLIC_DOC_FILES.map(artifactSource),
+    ...vectors.map(artifactSource),
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
@@ -505,7 +508,7 @@ function dirtyPublishableInputs() {
 }
 
 function trackedPackageFiles() {
-  return trackedFiles("packages").filter((file) =>
+  return [...trackedFiles("packages"), ...trackedFiles("protocol/packages")].filter((file) =>
     file.endsWith("package.json"),
   );
 }
@@ -513,7 +516,7 @@ function trackedPackageFiles() {
 function sitePackageFiles() {
   const sitePackages = new Set(SITE_PACKAGE_NAMES);
   return trackedPackageFiles().filter((file) =>
-    sitePackages.has(readJson(path.join(root, file)).name),
+    sitePackages.has(readJson(path.join(root, artifactSource(file))).name),
   );
 }
 
@@ -522,14 +525,16 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
+  const physicalDir = artifactSource(`${relativeDir}/`).replace(/\/$/, "");
   const files = new Set([
-    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
-    ...listFiles(path.join(root, relativeDir)).map((file) =>
+    ...git(["ls-files", physicalDir]).split(/\r?\n/).filter(Boolean),
+    ...listFiles(path.join(root, physicalDir)).map((file) =>
       path.relative(root, file).replaceAll(path.sep, "/"),
     ),
   ]);
   return [...files]
-    .filter((file) => fs.existsSync(path.join(root, file)))
+    .map(file => /^(schemas|vectors|spec|contracts)$/.test(relativeDir) ? artifactRoute(file) : file)
+    .filter((file) => fs.existsSync(path.join(root, artifactSource(file))))
     .sort();
 }
 
@@ -542,6 +547,7 @@ function listFiles(dir) {
   return fs
     .readdirSync(dir, { withFileTypes: true })
     .flatMap((entry) => {
+      if (["node_modules", "dist"].includes(entry.name)) return [];
       const full = path.join(dir, entry.name);
       if (entry.isDirectory()) return listFiles(full);
       return entry.isFile() ? [full] : [];
