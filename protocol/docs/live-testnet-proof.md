@@ -5,14 +5,15 @@ Use explicit paths for existing recovery files when changing working directories
 
 Development runs of the current source exercise escrow-v5/head-v2, whose
 transaction signatures permit signer-chosen scopes while reference signers
-default to ALL. The RC2 proof linked below exercised escrow-v4/head-v1. Run
-a fresh funded proof for the replacement templates; do not attribute RC2
-transactions to them. See the
+default to ALL. The [development verification record](verification-2026-10-07.md)
+documents completed runs for these templates. The RC2 proof exercised
+escrow-v4/head-v1; do not attribute its transactions to the new templates.
+A release still requires a funded proof of the exact release candidate. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
-Status: proof definition used for the published RC2 `kaspa:testnet-10` release.
-The completed 18-flow run and additional hosted hash-chain/browser checks
-are recorded in the [RC2 release evidence](rc2-release.md#release-validation).
+Status: reproduction guide for the current development `kaspa:testnet-10` proof.
+The historical RC2 18-flow run and hosted hash-chain/browser checks are recorded
+separately in the [RC2 release evidence](rc2-release.md#release-validation).
 
 The live proof runner is `scripts/proof-live-testnet.mjs`. It validates a live
 adapter result and writes ignored operational artifacts under

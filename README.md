@@ -9,8 +9,9 @@ examples and verification tools. It installs and verifies independently of the
 website and hosted gateway.
 
 This remains a Testnet-10 release candidate. Current source uses escrow-v5 and
-head-v2; historical RC2 evidence does not establish funded proof of these
-newer templates. See [readiness gates](protocol/docs/mainnet-readiness.md).
+head-v2. The [evidence index](protocol/docs/evidence.md) separates the completed
+development Testnet proofs from historical RC2 evidence. See
+[readiness gates](protocol/docs/mainnet-readiness.md) before deployment claims.
 
 | Folder | Responsibility |
 | --- | --- |

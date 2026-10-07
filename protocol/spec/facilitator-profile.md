@@ -1,6 +1,7 @@
 # Facilitator Profile
 
-Status: specification included in the published RC2 release; interoperability draft.
+Status: development clarification of the local RC2 facilitator API;
+interoperability draft.
 
 Kaspa x402 supports facilitators for `exact` and `batch-settlement`, but must not require a third-party hosted facilitator.
 
@@ -92,6 +93,10 @@ request identity only from the payment payload.
 
 These top-level additions belong to the local reference API; upstream x402's
 standard facilitator request does not carry them.
+The [compatibility experiment](../prototypes/x402-exact/README.md) exercises
+that standard request shape with an experimental signed server binding and
+simulated settlement. It does not replace this API or establish upstream SDK
+implementation readiness.
 
 Successful `/verify` returns x402 v2 `VerifyResponse`:
 

@@ -82,7 +82,7 @@ The apex site publishes:
 Ignored operational or planning files must not be published. This includes
 private live-run artifacts, local adapter files, review drafts, findings
 drafts, announcement drafts, and internal planning files.
-`docs/release-publish.md` and this document are internal and excluded from
+`protocol/docs/release-publish.md` and this document are internal and excluded from
 publication.
 
 ## Deployment Model

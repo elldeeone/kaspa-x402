@@ -1,6 +1,6 @@
 ---
 name: Interoperability report
-about: Report a wire-level or gateway interoperability problem found while testing a client, server, or facilitator against the alpha surface.
+about: Report a wire-level or gateway interoperability problem found while testing a client, server, or facilitator against the release-candidate surface.
 labels: ["area:demo", "kind:test"]
 ---
 

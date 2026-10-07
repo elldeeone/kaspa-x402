@@ -7,8 +7,10 @@ The website and hosted gateway are consumers outside this folder.
 
 This is a Testnet-10 reference implementation. The public SDK version remains
 `1.0.0-rc.2`; current source uses escrow-v5/head-v2. Historical RC2 funded evidence
-must not be treated as proof of these newer covenant templates. See
-[readiness gates](docs/mainnet-readiness.md) before making deployment claims.
+must not be treated as proof of these newer covenant templates. The
+[evidence index](docs/evidence.md) links the completed development Testnet runs
+and their limits. See [readiness gates](docs/mainnet-readiness.md) before making
+deployment claims.
 
 ## Install and verify
 
@@ -33,7 +35,8 @@ checks after a build. After a build, use
 That command type-checks the adapter sources and tests before running Vitest.
 To check the folder boundary itself, run `npm run check:protocol-isolation` from
 the repository root. That copies only this folder to a temporary directory,
-installs its own lockfile and runs `verify` there.
+installs its own lockfile, runs client tests before other packages are built,
+then runs the full `verify` command there.
 
 ## Read and integrate
 

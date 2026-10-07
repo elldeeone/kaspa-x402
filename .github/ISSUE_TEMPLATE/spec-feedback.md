@@ -5,13 +5,13 @@ labels: ["area:spec", "kind:decision"]
 ---
 
 <!--
-The wire format is alpha and not frozen. Breaking-change proposals are
+The wire format is a release candidate and not frozen. Breaking-change proposals are
 welcome now; they get harder after the first tagged spec release.
 -->
 
 ## Document and section
 
-<!-- e.g. spec/kaspa-exact-v2.md, "Payment Requirements" table -->
+<!-- e.g. protocol/spec/kaspa-exact-v2.md, "Payment Requirements" table -->
 
 ## Concern or proposal
 

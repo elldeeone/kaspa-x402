@@ -61,10 +61,13 @@ bind the observation but do not derive selected-chain depth. Removed blocks are
 reconciled before additions, current heads are derived from unique verified
 transaction lineage, and incomplete or pruned continuity fails closed.
 
-Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Production deployments should back the state store with durable transactional storage that follows [the server store contract](../../docs/server-store-contract.md). Amounts on the wire remain decimal sompi strings.
+Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Exact-only hosts implement `ExactServerStateStore`; enabling batch requires the full `ServerStateStore`. Both need durable transactional storage following [the server store contract](../../docs/server-store-contract.md). Amounts on the wire remain decimal sompi strings.
 
-Protected handlers run after payment verification and before the durable payment
-commit. Handlers with non-repeatable side effects should require the
+Exact handlers run after accepted chain settlement and durable settlement
+reservation. The handler result and final response are persisted afterward.
+Batch handlers run after verified authorization and durable ownership reservation,
+before the charge and response commit. Handlers with non-repeatable side effects
+should require the
 `payment-identifier` extension and keep their own idempotency or outbox record
 keyed by payment identifier and request fingerprint.
 
