@@ -69,7 +69,8 @@ chain state immediately before the batch flow.
 The run executed all 18 required v1 RC1 flows against fresh recovery state.
 The raw report and signing material remain in an ignored owner-only local
 directory; this file contains only sanitized public evidence.
-Hosted-gateway evidence is tracked separately in `docs/testnet-gateway.md`.
+Hosted-gateway evidence is tracked separately in the
+[gateway reference](../../docs/testnet-gateway.md).
 
 ### Controlled Funding Split
 

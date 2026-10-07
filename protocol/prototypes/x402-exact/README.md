@@ -90,7 +90,7 @@ interoperability, live-network acceptance or mainnet readiness.
 
 The published DirectMode facilitator API still requires its independent
 top-level `requestHash`. This experiment does not silently weaken or replace
-that API. The production schema change in this branch is requiring
+that API. The development schema requires
 `extra.paymentFlow: "upfront"`; signed vectors already carrying it are intact.
 
 Upstream primary sources checked for this experiment:

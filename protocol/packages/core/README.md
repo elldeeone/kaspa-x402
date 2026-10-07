@@ -15,8 +15,9 @@ Implemented:
 - MCP `_meta` key constants, payment-required result helpers, payment metadata
   readers, and deterministic tool-call fingerprints bound to a canonical
   server audience;
-- x402 v2 facilitator request, response, and supported-kind TypeScript types,
-  including mandatory independent `requestHash` binding for exact requests;
+- x402 v2 facilitator response and supported-kind TypeScript types, plus the
+  local facilitator request type with mandatory independent `requestHash`
+  binding for exact requests; see the [local API boundary](../facilitator/README.md);
 - stable-covenant-ID voucher preimage and digest helpers;
 - channel ID preimage and digest helpers;
 - signed-int64 A/S/T/V/R accounting and partial-claim transition helpers;
@@ -26,12 +27,11 @@ Implemented:
 
 ## Development
 
-From the repo root:
+From the `protocol/` workspace:
 
 ```sh
-npm install
-npm test
-npm run build
+npm ci
+npm --workspace @kaspa-x402/core test
 ```
 
 The package tests consume `vectors/` directly. Any implementation change that changes header bytes, voucher digests, channel IDs, settlement response validity, or stable error identifiers should update the vectors and spec in the same change.

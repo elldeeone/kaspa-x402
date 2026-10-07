@@ -301,7 +301,13 @@ selectable.
 [current Kaspa exact binding](../../spec/kaspa-exact-v2.md),
 [current profile boundary](.././native-profile-boundary.md).
 
-**Payment flow is an RC2 compatibility item even without the new covenant.**
+**Historical payment-flow finding (2026-09-22).** Current development schemas
+require `paymentFlow: "upfront"` for exact, and the
+[upstream compatibility experiment](../../prototypes/x402-exact/README.md)
+tests the request-binding path. The paragraph below records the original
+finding against the September snapshot.
+
+**Payment flow was an RC2 compatibility item even without the new covenant.**
 The current x402 v2 spec says that a non-`authorization` flow must advertise
 `extra.paymentFlow`. `upfront` is `settle → resource → respond`; `/verify` is
 read-only and is not part of that ordering. Our exact server broadcasts and

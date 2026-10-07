@@ -35,9 +35,10 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
 - persists an immutable covenant launch manifest and append-only selected-chain
   journal, deriving the live head locally from verified lineage.
 
-The client exposes and selects `batch-settlement` only when its funding
-provider implements authoritative `discoverCovenantLineage` recovery and
-`authorizeBatchPayment`, and `FundingPolicy.batchPayment` supplies every
+The client exposes and selects `batch-settlement` only when `batch` is
+configured, its funding provider implements authoritative
+`discoverCovenantLineage` recovery and `authorizeBatchPayment`, and
+`FundingPolicy.batchPayment` supplies every
 payer-owned cap. The authorization callback receives the complete immutable
 open, voucher-increase, or top-up intent and must return its exact digest.
 Missing policy, missing approval, a changed digest, or a cap violation fails
@@ -162,6 +163,7 @@ blocks before additions; if a confirmed refund is removed, the applied attempt
 and terminal status roll back atomically to `refundable`, never `active`, before
 a newly built refund is allowed.
 
-`MemoryChannelStore` demonstrates both transition contracts for tests and
-examples. A live deployment needs a durable `ChannelStore` implementation and
-trusted funding and refund chain-reconciliation adapters.
+`MemoryChannelStore` demonstrates these contracts for tests and examples.
+An exact-only deployment needs a durable `ExactPaymentAttemptStore` and trusted
+exact reconciliation. Enabling batch also requires the full `ChannelStore`,
+funding-transition and refund reconciliation adapters.

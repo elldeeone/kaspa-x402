@@ -1,6 +1,8 @@
 # @kaspa-x402/covenant
 
-Covenant helpers for the Kaspa x402 `batch-settlement` binding.
+Transaction and covenant helpers for Kaspa x402 `exact` and `batch-settlement`.
+
+Commands and repository paths below are relative to the `protocol/` workspace.
 
 Status: release candidate. The current artifacts support testnet review and deterministic
 fixture checks; they are not audited for production mainnet funds.
@@ -12,6 +14,10 @@ server key, network hash, payout script-public-key hash, refund
 script-public-key hash, timeout, and lifetime settled total. It does not
 hold private keys, broadcast transactions, or encode wallet addresses. Address
 text encoding is supplied by the caller through a Kaspa runtime codec.
+
+Exact helpers cover standard-native transactions, KIP-10 additive heads and
+head-v2 hash-chain borrow/owner paths. See the
+[profile map](../../docs/native-profile-boundary.md) for their separate bindings.
 
 The amount unit in this package is sompi.
 

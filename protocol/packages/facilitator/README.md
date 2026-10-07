@@ -5,7 +5,12 @@ Optional self-hosted facilitator endpoints for `/supported`, `/verify`, and `/se
 Status: workspace-private alpha tooling. It is not published on npm and should
 not be treated as a hosted production facilitator or settlement service.
 
-This package wraps a configured `DirectModeServer` and exposes the x402 v2 facilitator shape without requiring a hosted third-party service.
+This package wraps a configured `DirectModeServer` with x402 v2 response shapes
+and a local request API that adds `resource` and `requestHash`. It is not a
+drop-in upstream `SchemeNetworkFacilitator`. The separate
+[compatibility experiment](../../prototypes/x402-exact/README.md) exercises the
+standard three-field upstream request with experimental signed server binding
+and simulated chain settlement.
 
 `/supported` is capability-aware: exact is omitted when the wrapped server lacks its transaction verifier, and action modes such as `claim` and `refund` are only advertised when explicit action settlers are configured.
 
@@ -23,8 +28,9 @@ Implemented:
 Every exact `/verify` or `/settle` request must include the resource server's
 independently computed `requestHash`. The facilitator never substitutes the
 hash embedded in the payment artifact, because doing so would let the artifact
-authorize itself for a different resource. Batch requests may retain the
-documented deterministic local fallback.
+authorize itself for a different resource. The local batch API retains a
+deterministic fallback, but integrations must supply the independent request
+fingerprint required by the [batch binding](../../spec/kaspa-batch-settlement-v3.md).
 
 ```ts
 import { DirectModeFacilitator, handleFacilitatorRequest } from "@kaspa-x402/facilitator";

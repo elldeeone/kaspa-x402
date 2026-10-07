@@ -1,10 +1,10 @@
 # Protocol verification — 2026-10-07
 
-Source base: `6d0690f6a957cda1179f74db9e22a921ef08cee8` with the verification changes in this working tree. Protocol SDK runtime source, contracts, schemas and signed vectors are unchanged from that commit. Proof scripts now accept explicit external SDK and bounded fee inputs; this is not a tagged release.
+The verification work was merged in [PR #26](https://github.com/elldeeone/kaspa-x402/pull/26) as `ae5f7fe7a36560af3f30a8bfe7229ef4f2df4ef1`, based on `6d0690f6a957cda1179f74db9e22a921ef08cee8`. Protocol SDK runtime source, contracts, schemas and signed vectors are unchanged between those commits. Proof scripts accept explicit external SDK and bounded fee inputs; this is not a tagged release.
 
 The funded-run source snapshot digest (sorted relative source paths and SHA-256 values) is `fcc8b4058a8ac9de991bf0f9e56446689927dde17264dc1ca6fd4e211edc2f7c`. The complete private source/runtime manifest and reports are retained under `.kaspa-x402-live/protocol-verification-20261007T122111Z/` at the repository root. Signing and recovery keys stay there.
 
-After these runs, review fixes capped the exact/batch proof fee at 40,000,000 sompi, separated client/server test helpers and included covenant tests in type checking. The recorded 40,000,000-sompi run remains within that cap. The source digest and proof-script fingerprints below identify the files used for the funded runs, before those fixes; they are not hashes of the final working tree. No funded run was repeated for the review fixes.
+After these runs, review fixes capped the exact/batch proof fee at 40,000,000 sompi, separated client/server test helpers and included covenant tests in type checking. The recorded 40,000,000-sompi run remains within that cap. The source digest and proof-script fingerprints below identify the files used for the funded runs, before those fixes; they are not hashes of the final merged tree. No funded run was repeated for the review fixes.
 
 ## Local checks
 
@@ -16,6 +16,8 @@ After these runs, review fixes capped the exact/batch proof fee at 40,000,000 so
 After the review fixes, standalone installation and `verify` passed again under Node 24.15.0. The isolation check now runs the client-only test command before building other packages: all 134 client tests and its type check passed without server declarations. Fee regression checks accepted the exact/batch default and 40,000,000-sompi cap, and rejected larger values before SDK or wallet access. The earlier Node 22, website and gateway checks above were not repeated for these fixes.
 
 The covenant type-check follow-up includes all five test files and represents the additive fixture's absent covenant binding as `covenantId: null`. Enabling the checks first detected the fixture error; after correction, the covenant build, all 70 covenant tests and all seven package source/test type checks passed under Node 24.15.0. Committed vectors and SDK runtime source remain unchanged. The full standalone verification above predates this follow-up.
+
+The final [PR CI run](https://github.com/elldeeone/kaspa-x402/actions/runs/37625892563) passed both Windows and Linux verification on `d011f43f2920a0dded819214526bb63a5831beab`, whose tree matches the squash merge. This includes the covenant follow-up, standalone protocol verification, independent host builds, schemas, site checks and pinned consensus validation. CI did not rerun funded transactions.
 
 ## Funded Testnet-10 checks
 

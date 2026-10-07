@@ -1,5 +1,7 @@
 # Conformance Vectors
 
+Commands and repository paths below are relative to the `protocol/` workspace.
+
 This directory holds implementation-independent vectors for:
 
 - x402 v2 `PaymentRequired`, `PaymentPayload`, and `SettlementResponse` objects;

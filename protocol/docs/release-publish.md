@@ -40,7 +40,7 @@ stable `1.0.0` release. It is not published on the standards site.
 
 ## Stable `1.0.0`
 
-Stable publication remains blocked by `docs/mainnet-readiness.md`. When every
+Stable publication remains blocked by the [mainnet readiness gates](mainnet-readiness.md). When every
 gate is closed, repeat the clean release validation and funded proof on the
 exact stable commit, publish `1.0.0`, move npm `latest`, deploy the site and
 gateway, then create the GitHub release.

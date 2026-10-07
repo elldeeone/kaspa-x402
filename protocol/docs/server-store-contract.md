@@ -1,8 +1,10 @@
 # Server Store Contract
 
 The reference `MemoryServerChannelStore` is for tests and examples. Production
-servers need a durable implementation of `ServerStateStore` with the semantics
-below.
+exact-only servers need a durable `ExactServerStateStore`. Enabling batch
+requires the full `ServerStateStore`, including the batch semantics below.
+Combined deployments share one coordination domain and payment-identifier
+ownership across both schemes; see [SDK configuration](integration.md).
 
 Development source supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v5` as the
 active batch profile; published RC2 uses escrow-v4. Pre-RC stores are not
