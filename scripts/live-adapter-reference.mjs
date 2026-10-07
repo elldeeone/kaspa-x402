@@ -4394,7 +4394,7 @@ export async function selectedChainEvidenceRemainsCanonical({ rpc, evidence, sig
     !/^[0-9]+$/.test(String(evidence.checkpoint.blueScore))) {
     throw new Error("selected-chain evidence checkpoint is invalid");
   }
-  const timeoutSignal = AbortSignal.timeout(15_000);
+  const timeoutSignal = AbortSignal.timeout(60_000);
   const activeSignal = signal
     ? AbortSignal.any([signal, timeoutSignal])
     : timeoutSignal;
@@ -4404,15 +4404,42 @@ export async function selectedChainEvidenceRemainsCanonical({ rpc, evidence, sig
 async function liveCheckpointRemainsSelected(rpc, checkpoint, signal) {
   signal?.throwIfAborted();
   const current = await liveChainCheckpoint(rpc, { signal });
-  const continuity = await liveSelectedChainFromCheckpoint(
-    rpc,
-    checkpoint.blockHash,
-    1,
-    current.blockHash,
-    current.blueScore,
-    signal,
-  );
-  return continuity.removedChainBlockHashes.length === 0;
+  let cursor = checkpoint.blockHash;
+  if (cursor === current.blockHash) return true;
+  const seen = new Set([cursor]);
+  // Acceptance was already proved with Full V2 transaction evidence. A later
+  // continuity check needs only chain hashes, not every intervening transaction.
+  for (let page = 0; page < MAX_SELECTED_CHAIN_PAGES; page += 1) {
+    signal?.throwIfAborted();
+    const request = rpc.getVirtualChainFromBlock({
+      startHash: cursor,
+      includeAcceptedTransactionIds: false,
+    });
+    const raw = signal ? await awaitWithSignal(request, signal) : await request;
+    const response = raw.virtualChainFromBlockResponse ?? raw;
+    const removed = response.removedChainBlockHashes;
+    const added = response.addedChainBlockHashes;
+    if (!Array.isArray(removed) || !Array.isArray(added)) {
+      throw new Error("selected-chain continuity response is incomplete");
+    }
+    if (removed.length > 0) return false;
+    for (const value of added) {
+      const hash = String(value).toLowerCase();
+      if (!/^[0-9a-f]{64}$/.test(hash) || seen.has(hash)) {
+        throw new Error("selected-chain continuity contains invalid or repeated hashes");
+      }
+      seen.add(hash);
+      if (seen.size > MAX_SELECTED_CHAIN_BLOCKS) {
+        throw new Error("selected-chain continuity exceeds its block bound");
+      }
+      if (hash === current.blockHash) return true;
+    }
+    if (added.length === 0) {
+      throw new Error("selected-chain continuity did not reach current checkpoint");
+    }
+    cursor = String(added.at(-1)).toLowerCase();
+  }
+  throw new Error("selected-chain continuity exceeded its page bound");
 }
 
 async function discoverLiveCovenantLineage({

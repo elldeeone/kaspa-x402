@@ -21,7 +21,7 @@ const config = {
   recoveryFile:
     env.KASPA_X402_RECOVERY_FILE || ".kaspa-x402-live/recovery.json",
   reportFile: env.KASPA_X402_REPORT_FILE || ".kaspa-x402-live/report.json",
-  timeoutDaa: env.KASPA_X402_TIMEOUT_DAA || "1800",
+  timeoutDaa: env.KASPA_X402_TIMEOUT_DAA || "6000",
   adapterModule: env.KASPA_X402_LIVE_ADAPTER_MODULE || "",
   confirmation: env.KASPA_X402_LIVE_CONFIRM || "",
 };
