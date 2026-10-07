@@ -41,7 +41,6 @@ import {
   type CovenantGenesisVerificationRequest,
   type ServerChainProvider,
   type ServerChannelRecord,
-  type SendTransactionResult,
 } from "@kaspa-x402/server";
 import {
   DirectModeFacilitator,
@@ -1562,7 +1561,7 @@ class FakeChainProvider implements ServerChainProvider {
 
   async sendTransaction(
     transaction: string,
-  ): Promise<SendTransactionResult> {
+  ): ReturnType<ServerChainProvider["sendTransaction"]> {
     const transactionId = /^[0-9a-f]{64}$/.test(transaction)
       ? transaction
       : EXACT_TX_ID;

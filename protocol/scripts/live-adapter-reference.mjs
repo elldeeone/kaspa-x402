@@ -51,6 +51,7 @@ import {
 } from "@kaspa-x402/server";
 import { sanitizeProofOutputText } from "./proof-output-security.mjs";
 import { transactionInputOutpoint } from "./transaction-input-outpoint.mjs";
+import { proofFeeSompi } from "./live-proof-fees.mjs";
 
 // Reference adapter for scripts/proof-live-testnet.mjs. It is testnet-only,
 // spends testnet funds, and writes local signing/recovery material under
@@ -61,7 +62,6 @@ const LIVE_ADAPTER_TIMEOUT_MS = DEFAULT_CONFIRMATION_TIMEOUT_MS + 15_000;
 const CONFIRMATION_THRESHOLD = 30;
 const MAX_SELECTED_CHAIN_PAGES = 32;
 const MAX_SELECTED_CHAIN_BLOCKS = 32_768;
-const DEFAULT_FEE_SOMPI = 2_000_000n;
 const EXACT_AMOUNT = "100000000";
 const EXACT_TINY_AMOUNT = "10000000";
 const EXACT_KIP10_HEAD_AMOUNT = "100000000";
@@ -69,6 +69,14 @@ const EXACT_KIP10_ADDITIVE_THRESHOLD = "10000000";
 const EXACT_KIP10_COMPUTE_BUDGET = 10;
 const P2PK_COMPUTE_BUDGET = 10;
 const BATCH_REQUEST_AMOUNT = "100000000";
+const BATCH_SECOND_CLAIM_AMOUNT = BigInt(BATCH_REQUEST_AMOUNT) / 2n;
+// Keep a 0.1 KAS payout in the smallest claim; this is a proof scenario limit.
+const BATCH_MIN_PAYOUT_AMOUNT = 10_000_000n;
+const DEFAULT_FEE_SOMPI = proofFeeSompi(
+  "KASPA_X402_PROOF_FEE_SOMPI",
+  "2000000",
+  BATCH_SECOND_CLAIM_AMOUNT - BATCH_MIN_PAYOUT_AMOUNT,
+);
 const BATCH_DEPOSIT_AMOUNT = "400000000";
 const BATCH_TOP_UP_REQUEST_AMOUNT = "298000000";
 const FUNDING_SPLIT_SHARDS = 16;
@@ -2239,7 +2247,7 @@ async function runBatch(input) {
   );
   if (!claimArtifact) throw new Error("batch claim artifact was not persisted");
 
-  const secondClaimAmount = (BigInt(BATCH_REQUEST_AMOUNT) / 2n).toString();
+  const secondClaimAmount = BATCH_SECOND_CLAIM_AMOUNT.toString();
   const replay = await attemptBatchReplay({
     channel: claimable,
     currentChannel: claim.channel,

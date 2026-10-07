@@ -20,7 +20,7 @@
   "type": "module",
   "scripts": {
     "build": "node scripts/build-packages.mjs",
-    "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/adapters run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs && npm run test:x402-compatibility",
+    "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/adapters run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs scripts/live-proof-fees.test.mjs && npm run test:x402-compatibility",
     "check:diff": "git diff --check -- .",
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
     "validate:schemas": "node scripts/validate-schemas.mjs",
@@ -51,7 +51,8 @@
     "check:sighash-consensus-vector": "node scripts/generate-sighash-consensus-vectors.mjs --check",
     "test:x402-compatibility": "tsc -p prototypes/x402-exact/tsconfig.json && vitest run prototypes/x402-exact/binding.test.ts",
     "check:x402-compatibility": "npm --workspace @kaspa-x402/core run build:self && npm run test:x402-compatibility",
-    "verify": "npm test && npm run validate:schemas && npm run check:covenant-fixtures && npm run check:hash-chain-http-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run pack:public:dry-run"
+    "verify": "npm test && npm run validate:schemas && npm run check:covenant-fixtures && npm run check:hash-chain-http-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run pack:public:dry-run",
+    "typecheck": "npm run typecheck --workspaces"
   },
   "workspaces": [
     "packages/*"

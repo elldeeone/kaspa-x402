@@ -19,7 +19,12 @@ try {
   console.log(`Verifying standalone protocol workspace in ${temporary}`);
   const env = { ...process.env };
   delete env.NODE_PATH;
-  for (const args of [["ci", "--no-audit", "--no-fund"], ["run", "verify"]]) {
+  for (const args of [
+    ["ci", "--no-audit", "--no-fund"],
+    // Run before the full build so unrelated package declarations cannot hide test dependencies.
+    ["--workspace", "@kaspa-x402/client", "test"],
+    ["run", "verify"],
+  ]) {
     const result = spawnSync("npm", args, { cwd: temporary, env, stdio: "inherit", shell: process.platform === "win32" });
     if (result.error) throw result.error;
     if (result.status !== 0) throw new Error(`Standalone npm ${args.join(" ")} failed (${result.status ?? result.signal}).`);

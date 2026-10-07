@@ -94,7 +94,7 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
 }
 
 describe("hash-chain exact selected-chain verifier", () => {
-  it.each(vector.sighashModes)("accepts independently consensus-validated head=$headSighashType, funding=$fundingSighashType", async (step) => {
+  it.each<{ headSighashType: number; fundingSighashType: number }>(vector.sighashModes)("accepts independently consensus-validated head=$headSighashType, funding=$fundingSighashType", async (step) => {
     const { request, verifier } = fixture("valid", step);
     await expect(verifier.verifyExactPayment(request)).resolves.toMatchObject({ finality: "accepted" });
   });

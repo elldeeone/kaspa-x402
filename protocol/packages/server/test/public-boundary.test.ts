@@ -106,15 +106,15 @@ describe("public boundary controller", () => {
         }),
     );
 
-    await expect(hanging).rejects.toMatchObject<Partial<PublicBoundaryError>>({
+    await expect(hanging).rejects.toMatchObject({
       reason: "adapter_timeout",
       status: 504,
-    });
+    } satisfies Partial<PublicBoundaryError>);
     await expect(
       boundary.runAdapter("chain-provider", async () => "blocked"),
-    ).rejects.toMatchObject<Partial<PublicBoundaryError>>({
+    ).rejects.toMatchObject({
       reason: "adapter_concurrency_exceeded",
-    });
+    } satisfies Partial<PublicBoundaryError>);
 
     finish();
     await new Promise<void>((resolve) => setTimeout(resolve, 0));

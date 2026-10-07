@@ -8,6 +8,10 @@ sighash types, with ALL as the reference signing default, and require fresh
 funded proof before a release claim. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
+The [2026-10-07 development verification](verification-2026-10-07.md) records a
+fresh head-v2 run: two accepted paid HTTP requests and successful owner recovery
+after an abandoned grant. Historical head-v1 records remain below.
+
 ## RC2 — Current Published Evidence
 
 The published [`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2)
@@ -35,11 +39,19 @@ private-key file and a synced Testnet-10 PNN node with a UTXO index:
 
 ```sh
 npm run build
+export KASPA_X402_KASPA_WASM_MODULE=/path/to/kaspa-wasm/kaspa.js
 node scripts/proof-hash-chain-testnet.mjs --live \
   --wallet-file /path/to/private-testnet-wallet.json \
   --rpc-url wss://your-testnet-10-node/kaspa/testnet-10/wrpc/borsh \
   --output-dir .kaspa-x402-live/hash-chain-new-run
 ```
+
+The SDK module must provide the same `RpcClient` API as the exact/batch proof;
+its Node installation must resolve `websocket`. There is no implicit SDK path
+inside this repository. Optional `KASPA_X402_PROOF_FEE_SOMPI` sets the
+genesis/rotation/funding-shard fee (default 1,000,000, maximum 100,000,000).
+`KASPA_X402_HASH_CHAIN_PAYER_FEE_SOMPI` sets the payment fee (default 1,000,000,
+maximum 10,000,000, preserving the public signer's cap). The report records both.
 
 The script creates a private funding shard if needed, generates a new owner
 and hash chain, broadcasts genesis, serves two loopback x402 resources, claims

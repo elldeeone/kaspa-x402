@@ -6,6 +6,15 @@ sighash types, with ALL as the reference signing default, and require fresh
 funded proof before a release claim. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
+## Current development verification — 2026-10-07
+
+Fresh escrow-v5/head-v2 runs passed all 18 exact/batch flows and two hash-chain
+HTTP payments followed by abandoned-grant owner recovery. The
+[verification record](verification-2026-10-07.md) contains transaction IDs,
+accounting, runtime fingerprints and reproduction inputs. It is development
+Testnet evidence from one configured PNN, separate from the published RC2
+release and hosted gateway below.
+
 ## RC2 — Current Published Release
 
 `1.0.0-rc.2` was published on 2026-10-01 from

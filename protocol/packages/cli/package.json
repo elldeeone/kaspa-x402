@@ -23,7 +23,8 @@
     "build": "node ../../scripts/build-packages.mjs @kaspa-x402/cli",
     "build:self": "tsup src/index.ts --format esm --dts --clean",
     "test": "npm --workspace @kaspa-x402/client run build && npm --workspace @kaspa-x402/server run build && npm --workspace @kaspa-x402/facilitator run build && npm run build && npm run test:self",
-    "test:self": "vitest run && node ../../examples/paid-http-api/index.mjs && node ../../examples/paid-mcp-tool/index.mjs && node ../../examples/self-hosted-facilitator/index.mjs && node ../../examples/recovery/index.mjs"
+    "test:self": "npm run typecheck && vitest run && node ../../examples/paid-http-api/index.mjs && node ../../examples/paid-mcp-tool/index.mjs && node ../../examples/self-hosted-facilitator/index.mjs && node ../../examples/recovery/index.mjs",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@kaspa-x402/core": "1.0.0-rc.2",

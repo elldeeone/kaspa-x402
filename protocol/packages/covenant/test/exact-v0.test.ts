@@ -64,7 +64,10 @@ describe("standard-native exact v0 consensus hashes", () => {
     const additive = vector.expected.additive;
     const transaction: TxV1ReferenceTransaction = {
       version: 1,
-      inputs: additive.transaction.inputs,
+      inputs: additive.transaction.inputs.map((input) => ({
+        ...input,
+        utxo: { ...input.utxo, covenantId: null },
+      })),
       outputs: additive.transaction.outputs,
       lockTime: additive.transaction.lockTime,
       subnetworkId: additive.transaction.subnetworkId,
