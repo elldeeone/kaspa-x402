@@ -88,7 +88,7 @@ export interface ServerChainProvider {
   discoverCovenantLineage(request: {
     network: NetworkId;
     covenantId: Hash32Hex;
-    templateId: "kaspa-x402-escrow-v4";
+    templateId: "kaspa-x402-escrow-v5";
     /** Complete durable state is required to derive the rollback head before additions. */
     lineage: CovenantLineageState;
     minConfirmationCount: number;
@@ -923,7 +923,7 @@ export interface DirectModeServerConfig {
   payTo: string;
   serverPublicKey: PublicKeyHex;
   serverPrivateKey?: string;
-  templateId?: "kaspa-x402-escrow-v4";
+  templateId?: "kaspa-x402-escrow-v5";
   minDepositSompi: SompiString;
   /** Deterministic reserve the client must leave beyond its signed claim ceiling. */
   claimReserveSompi: SompiString;

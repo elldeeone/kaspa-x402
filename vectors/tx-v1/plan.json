@@ -3,39 +3,39 @@
   "description": "v1 RC2 KIP-20 batch lane chain validated by the pinned full Rusty Kaspa TransactionValidator.",
   "mainnetReadiness": {},
   "invariant": {
-    "covenantId": "4457b96cc189d55545b6111ce81c405dd01e574595faafe3adc2847ba93ddf7c",
-    "voucherDigest": "b85dd980b70afc6f124fcdf4b0058a8188966f6c37ed212fe5d1105bb6034944",
+    "covenantId": "f0154292aca316533e639eccdca10e2f44ab6e4eab3a48fa9420c1b616da456e",
+    "voucherDigest": "8afb2e28f83812e9cd204f8b3a45ca04ad6ee132956e2535f17cfcab7624ae99",
     "authorizedCumulativeAmount": "30000000",
     "sequence": [
       {
         "step": 0,
         "path": "vectors/tx-v1/batch-genesis.json",
         "kind": "tx-v1-batch-genesis",
-        "transactionId": "60019816493fc1ac424a29b5c0607ce06c9a345c5c770b3507742736a73d85fc"
+        "transactionId": "7f9ec5e0de3b7460bc98fd003c9b925f3bd8fa530b391501527baa85c6ba124a"
       },
       {
         "step": 1,
         "path": "vectors/tx-v1/batch-claim.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "37775727c86c9e02479ca0a13b012f186fd84e6a10bca866b9dbbe23e45bbbcd"
+        "transactionId": "4c97547cf2711526b69cdc5a970785778a59114ac3832f490655a502503dd75c"
       },
       {
         "step": 2,
         "path": "vectors/tx-v1/batch-claim-second.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "042cca4c791505d1fcbc611736842267ad83293f77ed0e11b18a161995e5a73b"
+        "transactionId": "e160fed6433b80d8683dcc264628aeaa77297b321b53b5663232e5f84f56f56c"
       },
       {
         "step": 3,
         "path": "vectors/tx-v1/batch-top-up.json",
         "kind": "tx-v1-batch-top-up",
-        "transactionId": "9ff50c34b55cee69618571d63a0cfff49049a9be7fcb3aac1684be56cad82f03"
+        "transactionId": "415fc6a65588c38f5c3a1bd322dd1c41b082d4084e5939046e45ed1227e19016"
       },
       {
         "step": 4,
         "path": "vectors/tx-v1/batch-refund.json",
         "kind": "tx-v1-batch-refund",
-        "transactionId": "676762871a593e3a19a3c9fb128aa68caa0750ab91ca407e2f986fd60d5a6bdc"
+        "transactionId": "4bb04ca8125cc8ecd8209fbba0965f742436a17b034b5bc543d7bcfb659fecc6"
       }
     ]
   },

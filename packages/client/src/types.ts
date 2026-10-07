@@ -259,7 +259,7 @@ export interface ExactPaymentAttemptFinalizeRequest {
 export interface CovenantLineageDiscoveryRequest {
   network: NetworkId;
   covenantId: Hash32Hex;
-  templateId: "kaspa-x402-escrow-v4";
+  templateId: "kaspa-x402-escrow-v5";
   /** Complete durable state is required to derive the rollback head before additions. */
   lineage: CovenantLineageState;
   minConfirmationCount: number;
@@ -394,7 +394,7 @@ export interface DirectModeChannel {
   /** True until the current genesis/top-up head has been admitted by the server. */
   requiresDepositVoucher: boolean;
   refundTimeoutDaa: SompiString;
-  templateId: "kaspa-x402-escrow-v4";
+  templateId: "kaspa-x402-escrow-v5";
   /** Immutable launch manifest, append-only journal, and derived live head. */
   lineage: CovenantLineageState;
   status: ChannelStatus;

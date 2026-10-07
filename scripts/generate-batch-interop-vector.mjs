@@ -42,7 +42,7 @@ const successorOutpoint = { txid: "45".repeat(32), index: 1 };
 const channelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v4",
+  templateId: "kaspa-x402-escrow-v5",
   clientPublicKey,
   serverPublicKey,
   payTo,
@@ -237,7 +237,7 @@ const settlementResponse = {
 const baseChannelConfig = {
   network: "kaspa:testnet-10",
   asset: "KAS",
-  templateId: "kaspa-x402-escrow-v4",
+  templateId: "kaspa-x402-escrow-v5",
   clientPublicKey: "33".repeat(32),
   serverPublicKey: "44".repeat(32),
   payTo:

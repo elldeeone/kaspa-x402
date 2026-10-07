@@ -154,7 +154,7 @@ function assertBrowserResult(value) {
   assert(value.batchRequiredBytes > 0, "missing batch PAYMENT-REQUIRED header");
   assert(value.batchSignatureBytes > 0, "missing batch PAYMENT-SIGNATURE header");
   assert(value.batchBinding === "kaspa-escrow-v3", `unexpected batch binding: ${value.batchBinding}`);
-  assert(value.batchTemplateId === "kaspa-x402-escrow-v4", `unexpected batch template: ${value.batchTemplateId}`);
+  assert(value.batchTemplateId === "kaspa-x402-escrow-v5", `unexpected batch template: ${value.batchTemplateId}`);
   assert(value.batchCovenantId === "7".repeat(64), "batch voucher did not bind the stable covenant id");
   assert(value.batchVoucherAmount === "22500000", `unexpected batch voucher T: ${value.batchVoucherAmount}`);
   assert(value.batchCurrentTxid === "8".repeat(64), "batch payload did not carry the current outpoint");

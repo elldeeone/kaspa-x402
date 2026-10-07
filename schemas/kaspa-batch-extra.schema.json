@@ -17,7 +17,7 @@
       "const": "kaspa-escrow-v3"
     },
     "templateId": {
-      "const": "kaspa-x402-escrow-v4"
+      "const": "kaspa-x402-escrow-v5"
     },
     "serverPublicKey": {
       "type": "string",

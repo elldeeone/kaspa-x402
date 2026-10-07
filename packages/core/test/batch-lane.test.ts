@@ -89,7 +89,7 @@ describe("v1 RC2 batch lane accounting", () => {
       maxTimeoutSeconds: 60,
       extra: {
         binding: "kaspa-escrow-v3" as const,
-        templateId: "kaspa-x402-escrow-v4" as const,
+        templateId: "kaspa-x402-escrow-v5" as const,
         serverPublicKey: "22".repeat(32),
         minDepositSompi: BATCH_SCRIPT_INT_MAX.toString(),
         claimReserveSompi: claimReserve.toString(),

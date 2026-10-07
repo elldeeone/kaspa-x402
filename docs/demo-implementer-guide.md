@@ -1,5 +1,12 @@
 # Demo Implementer Guide
 
+Development source uses escrow-v5 and head-v2 with signer-chosen sighash
+types; reference signing still defaults to ALL. The published/deployed RC2
+service described below uses escrow-v4 and head-v1. Follow the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+for a development integration or operator cutover; the existing hosted RC2
+service is not evidence of deployment of the new templates.
+
 Status: published `1.0.0-rc.2`, Testnet-10 only. The hosted gateway is an
 integration target, not a production or mainnet service.
 

@@ -1,6 +1,9 @@
 # Kaspa x402 Batch Settlement Binding v3
 
-Status: published in `1.0.0-rc.2`; Testnet-10-only interoperability candidate.
+Status: development revision after `1.0.0-rc.2`; Testnet-10-only interoperability
+candidate. This revision uses escrow-v5 with signer-chosen transaction sighash
+types. Published RC2 uses escrow-v4. See the
+[signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition).
 
 This document defines the active Kaspa network binding for x402 v2
 `batch-settlement`.
@@ -30,7 +33,7 @@ not a post-priced or usage-metered scheme.
 ```text
 scheme       batch-settlement
 binding      kaspa-escrow-v3
-templateId   kaspa-x402-escrow-v4
+templateId   kaspa-x402-escrow-v5
 network      kaspa:testnet-10
 asset        KAS
 ```
@@ -49,8 +52,8 @@ kaspa:x402:batch-presentation:v1
 kaspa:x402:batch-commitment:v3
 ```
 
-Claim, top-up, and refund transaction inputs use Kaspa transaction-v1
-`SIGHASH_ALL`. They do not introduce an application transaction-signing
+Reference signers for claim, top-up, and refund use Kaspa transaction-v1
+`SIGHASH_ALL` by default. They do not introduce an application transaction-signing
 domain.
 
 ## PaymentRequirements
@@ -65,7 +68,7 @@ domain.
   "maxTimeoutSeconds": 60,
   "extra": {
     "binding": "kaspa-escrow-v3",
-    "templateId": "kaspa-x402-escrow-v4",
+    "templateId": "kaspa-x402-escrow-v5",
     "serverPublicKey": "<32-byte x-only hex>",
     "minDepositSompi": "90000000",
     "claimReserveSompi": "2000000",
@@ -88,7 +91,7 @@ domain.
 | `payTo` | yes | Provider payout address; it is not the lane address. |
 | `maxTimeoutSeconds` | yes | Maximum presentation lifetime in seconds. |
 | `extra.binding` | yes | MUST equal `kaspa-escrow-v3`. |
-| `extra.templateId` | yes | MUST equal `kaspa-x402-escrow-v4`. |
+| `extra.templateId` | yes | MUST equal `kaspa-x402-escrow-v5`. |
 | `extra.serverPublicKey` | yes | Provider claim and top-up co-authorization key. |
 | `extra.minDepositSompi` | yes | Minimum initial covenant value. |
 | `extra.claimReserveSompi` | yes | Required value beyond remaining authorization. |
@@ -230,7 +233,7 @@ any field changes.
 {
   "network": "kaspa:testnet-10",
   "asset": "KAS",
-  "templateId": "kaspa-x402-escrow-v4",
+  "templateId": "kaspa-x402-escrow-v5",
   "clientPublicKey": "<32-byte x-only hex>",
   "serverPublicKey": "<32-byte x-only hex>",
   "payTo": "kaspatest:...",
@@ -518,9 +521,9 @@ Outpoints and scripts synchronize the head but are not voucher or
 presentation authority. A verifier obtains authoritative UTXO and lineage
 facts independently.
 
-## Escrow-v4 Template
+## Escrow-v5 Template
 
-`kaspa-x402-escrow-v4` is the byte-exact stateful KIP-20 contract compiled
+`kaspa-x402-escrow-v5` is the byte-exact stateful KIP-20 contract compiled
 from the normative SilverScript source and pinned by its language-neutral byte
 fixture. Constructor material is:
 
@@ -579,7 +582,7 @@ fee = D - P
 ```
 
 It also enforces one same-id input and successor, the configured payout script
-hash, fixed output positions, and provider `SIGHASH_ALL`. Because `T` is
+hash, fixed output positions, and a valid provider transaction signature. Because `T` is
 the exact sum of payer-approved fixed charges, a direct provider claim cannot
 exceed those charges.
 
@@ -601,11 +604,10 @@ top_up_selector ||
 push(redeem_script)
 ```
 
-Both signatures MUST use `SIGHASH_ALL` and validate against the configured
-client and provider keys. Each therefore covers the complete ordered inputs,
-UTXO commitments, outputs, covenant bindings, values, scripts, lock time,
-subnetwork, gas, payload, mass, and compute commitments defined by Kaspa's
-transaction-v1 sighash.
+Reference signers default to `SIGHASH_ALL`. Both signatures MUST validate
+against the configured client and provider keys. Each signature commits to the
+transaction fields covered by its encoded sighash type under Kaspa's
+transaction-v1 sighash rules.
 
 The provider MUST derive the sighash from the fully populated intended
 transaction after verifying the authoritative current head, exact singleton
@@ -613,13 +615,14 @@ successor, unchanged state/script, increased value, optional configured change,
 fee, and funding inputs. It MUST NOT sign a digest or transaction summary
 supplied by the client without reproducing it.
 
-A client signature alone cannot satisfy escrow-v4. The provider signature is
-not optional, substitutable by a voucher, or reusable after any transaction
-field changes.
+A client signature alone cannot satisfy escrow-v5. The provider signature is
+mandatory and cannot be replaced by a voucher. Changes to fields committed to
+by its encoded sighash type invalidate that signature; changes outside that
+scope may preserve it. All covenant guards remain mandatory.
 
 ### Refund
 
-After `refundTimeoutDaa`, one client `SIGHASH_ALL` input terminates the
+After `refundTimeoutDaa`, one client-signed input terminates the
 lineage and pays the configured unbound refund script. No same-id successor is
 allowed. Refund readiness uses authoritative current DAA and requires it to be
 strictly greater than the transaction lock time.
@@ -746,7 +749,8 @@ Implementations MUST reject:
 - a payer intent with any absent cap, unapproved source, or stale/unavailable
   authoritative DAA evidence;
 - a claim above `T-S`;
-- a top-up without both valid full-transaction signatures;
+- a top-up without both valid client and provider transaction signatures under
+  their respective encoded sighash types;
 - old ABI selectors, redeem scripts, fixtures, or vectors.
 
 Interop evidence covers the v2 channel id, v3 voucher, payer intent,
@@ -757,3 +761,18 @@ pinned Rusty-Kaspa consensus checkout.
 
 Testnet-10 or local consensus evidence is Testnet release-candidate validation
 only. It is not mainnet or production proof.
+
+## Covenant signature scope
+
+The escrow verifies transaction signatures using their encoded consensus-supported
+sighash types without enforcing a wallet signing policy. Reference signers use
+`SIGHASH_ALL` by default. Other modes are a signer decision; payment, voucher,
+payout, state-transition, and refund guards remain mandatory. Off-chain voucher
+signatures are message signatures and have no transaction sighash flag.
+
+This applies to provider claim signatures, both top-up signatures, and client
+refund signatures. Verifiers MUST derive each transaction signature's digest
+from its encoded type and reject invalid flags. The two top-up signatures may
+use different supported types. See the
+[signature policy](../docs/versioning-policy.md#sighash-template-transition)
+for supported flags, signing responsibility, and existing-channel cutover.

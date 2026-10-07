@@ -75,7 +75,7 @@ import { KaspaX402Error } from "@kaspa-x402/core";
 import {
   buildHashChainHeadRedeemScript,
   deriveEscrowAddress,
-  ESCROW_V4_LAUNCH_IDENTITY,
+  ESCROW_V5_LAUNCH_IDENTITY,
   escrowScriptPublicKey,
   hashChainBorrowGuard,
   hashChainHeadScriptPublicKey,
@@ -177,7 +177,7 @@ export class DirectModeServer {
   constructor(config: DirectModeServerConfig) {
     this.#config = {
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v4",
+      templateId: "kaspa-x402-escrow-v5",
       maxTimeoutSeconds: 60,
       acceptedFinality: "accepted",
       exactProfile: "standard-native",
@@ -448,7 +448,7 @@ export class DirectModeServer {
         extra: {
           binding: "kaspa-hash-chain-exact-v1", profile: "hash-chain-additive",
           assetTransferMethod: "kaspa-v1-hash-chain-proof", paymentFlow: "upfront",
-          templateId: "kaspa-x402-hash-chain-head-v1", finality: this.#config.acceptedFinality,
+          templateId: "kaspa-x402-hash-chain-head-v2", finality: this.#config.acceptedFinality,
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0", payToScriptPublicKey: nextScript,
           headId, headVersion: String(current.headVersion), covenantId: current.head.covenantId,
           expectedHeadOutpoint: current.head.outpoint, headAmount: current.head.amount,
@@ -646,7 +646,7 @@ export class DirectModeServer {
                 templateId: "kaspa-x402-kip10-additive-v1",
               }
             : this.#config.exactProfile === "hash-chain-additive"
-              ? { templateId: "kaspa-x402-hash-chain-head-v1", assetTransferMethod: "kaspa-v1-hash-chain-proof" }
+              ? { templateId: "kaspa-x402-hash-chain-head-v2", assetTransferMethod: "kaspa-v1-hash-chain-proof" }
               : {}),
           modes: ["verify", "settle"],
         },
@@ -2630,7 +2630,7 @@ export class DirectModeServer {
     if (!issuer || !this.#config.hashChainHeadId || !this.#config.hashChainGrantClaimUrl ||
       extra.binding !== "kaspa-hash-chain-exact-v1" || extra.profile !== "hash-chain-additive" ||
       extra.paymentFlow !== "upfront" || extra.assetTransferMethod !== "kaspa-v1-hash-chain-proof" ||
-      extra.templateId !== "kaspa-x402-hash-chain-head-v1" ||
+      extra.templateId !== "kaspa-x402-hash-chain-head-v2" ||
       extra.headId !== this.#config.hashChainHeadId ||
       extra.grantClaimUrl !== this.#config.hashChainGrantClaimUrl ||
       !extra.grantId || !extra.challengeId || !extra.headVersion || !extra.covenantId ||
@@ -4022,7 +4022,7 @@ export class DirectModeServer {
           : {}),
         ...(verified.hashChainHead
           ? {
-              templateId: "kaspa-x402-hash-chain-head-v1",
+              templateId: "kaspa-x402-hash-chain-head-v2",
               headId: verified.hashChainHead.headId,
               headVersion: verified.hashChainHead.headVersion,
               headOutpoint: verified.hashChainHead.expectedHeadOutpoint,
@@ -5834,23 +5834,23 @@ function claimAttemptId(
 function covenantLaunchManifest(
   network: DirectModeServerConfig["network"],
   genesis: NonNullable<ServerChannelRecord["genesisEvidence"]>,
-  templateId: "kaspa-x402-escrow-v4",
+  templateId: "kaspa-x402-escrow-v5",
 ): CovenantLaunchManifest {
   return {
     format: "kaspa-x402-covenant-launch-v1",
     network,
-    compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
-    source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
+    compiler: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.compiler),
+    source: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.source),
     bytecode: {
-      ...structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+      ...structuredClone(ESCROW_V5_LAUNCH_IDENTITY.bytecode),
       templateId,
     },
     constructorSlots: structuredClone(
-      ESCROW_V4_LAUNCH_IDENTITY.constructorSlots,
+      ESCROW_V5_LAUNCH_IDENTITY.constructorSlots,
     ),
-    abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
-    selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
-    identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+    abi: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.abi),
+    selectors: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.selectors),
+    identitySha256: ESCROW_V5_LAUNCH_IDENTITY.identitySha256,
     genesis: {
       derivation: "kip20-covenant-id-v1",
       covenantId: genesis.covenantId,

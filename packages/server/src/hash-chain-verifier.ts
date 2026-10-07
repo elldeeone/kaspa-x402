@@ -14,6 +14,7 @@ import {
   transactionV1Id,
   transactionV1SchnorrSignatureEvidence,
   transactionV1Sighash,
+  kaspaSighashType,
   type TxV1ReferenceTransaction,
 } from "@kaspa-x402/covenant";
 import type {
@@ -215,19 +216,21 @@ function locallyValidateHashChainPayment(
     throw new Error("hash-chain transaction ID is not canonical");
   }
   const headWitness = Buffer.from(headInput.signatureScript, "hex");
-  if (headWitness[66] !== 65 || headWitness[131] !== 1) {
-    throw new Error("hash-chain head witness lacks canonical SIGHASH_ALL");
+  if (headWitness[66] !== 65) {
+    throw new Error("hash-chain head witness lacks a canonical Schnorr signature");
   }
+  const headSighashType = kaspaSighashType(headWitness[131]!);
   const headSignature = headWitness.subarray(67, 131).toString("hex");
   if (buildHashChainBorrowSignatureScript({
     revealedGuard: head.nextGuard,
     oneTimePublicKey: head.oneTimePublicKey,
     signature: headSignature,
+    sighashType: headSighashType,
     redeemScript: head.headRedeemScript,
   }) !== headInput.signatureScript ||
     !schnorr.verify(
       Buffer.from(headSignature, "hex"),
-      Buffer.from(transactionV1Sighash(reference, 0).digest, "hex"),
+      Buffer.from(transactionV1Sighash(reference, 0, headSighashType).digest, "hex"),
       Buffer.from(head.oneTimePublicKey, "hex"),
     )) {
     throw new Error("hash-chain one-time signature or borrow witness is invalid");

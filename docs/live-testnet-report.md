@@ -1,5 +1,11 @@
 # Live Testnet Report
 
+Template scope: the RC2 release and its funded/hosted evidence use escrow-v4
+and hash-chain-head-v1. Development escrow-v5/head-v2 allow signer-chosen
+sighash types, with ALL as the reference signing default, and require fresh
+funded proof before a release claim. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+
 ## RC2 — Current Published Release
 
 `1.0.0-rc.2` was published on 2026-10-01 from

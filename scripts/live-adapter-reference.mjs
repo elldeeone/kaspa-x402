@@ -1925,7 +1925,7 @@ async function runHostedBatchCanary(input) {
     accepted.amount !== input.expected.amount ||
     accepted.payTo !== input.expected.payTo ||
     accepted.extra.binding !== "kaspa-escrow-v3" ||
-    accepted.extra.templateId !== "kaspa-x402-escrow-v4" ||
+    accepted.extra.templateId !== "kaspa-x402-escrow-v5" ||
     accepted.extra.minDepositSompi !== input.expected.minDepositSompi ||
     accepted.extra.serverPublicKey !== input.expected.serverPublicKey
   ) {
@@ -2335,7 +2335,10 @@ async function runBatch(input) {
     expectedTopUpOutpoint: topUpProof.successorOutpoint,
   });
 
-  await waitForDaa(rpc, timeoutDaa + 10n);
+  await waitForDaa(rpc, timeoutDaa + 10n, async () => {
+    await client.reconcileChannel(claimable.channelId);
+    await server.reconcileChannel(claimable.channelId);
+  });
   const refundExecution = await client.refundChannel(claimable.channelId);
   if (!refundExecution.accepted) {
     throw new Error("batch refund did not reach accepted finality");
@@ -4394,25 +4397,40 @@ export async function selectedChainEvidenceRemainsCanonical({ rpc, evidence, sig
     !/^[0-9]+$/.test(String(evidence.checkpoint.blueScore))) {
     throw new Error("selected-chain evidence checkpoint is invalid");
   }
-  const timeoutSignal = AbortSignal.timeout(15_000);
+  const timeoutSignal = AbortSignal.timeout(60_000);
   const activeSignal = signal
     ? AbortSignal.any([signal, timeoutSignal])
     : timeoutSignal;
-  return liveCheckpointRemainsSelected(rpc, evidence.checkpoint, activeSignal);
+  const checkpoint = evidence.acceptingBlockHash === undefined
+    ? evidence.checkpoint
+    : { blockHash: evidence.acceptingBlockHash, blueScore: evidence.acceptingBlockBlueScore };
+  if (!/^[0-9a-f]{64}$/.test(String(checkpoint.blockHash)) ||
+    !/^[0-9]+$/.test(String(checkpoint.blueScore))) {
+    throw new Error("selected-chain accepting block is invalid");
+  }
+  return liveCheckpointRemainsSelected(rpc, checkpoint, activeSignal);
 }
 
 async function liveCheckpointRemainsSelected(rpc, checkpoint, signal) {
   signal?.throwIfAborted();
-  const current = await liveChainCheckpoint(rpc, { signal });
-  const continuity = await liveSelectedChainFromCheckpoint(
-    rpc,
-    checkpoint.blockHash,
-    1,
-    current.blockHash,
-    current.blueScore,
-    signal,
-  );
-  return continuity.removedChainBlockHashes.length === 0;
+  // The node computes the removed path from startHash to its selected chain
+  // at one RPC snapshot. An empty removed path proves startHash is on that
+  // chain, including when it is the tip or the added path is paginated.
+  // No second tip snapshot or intervening transaction bodies are needed.
+  const request = rpc.getVirtualChainFromBlock({
+    startHash: checkpoint.blockHash,
+    includeAcceptedTransactionIds: false,
+  });
+  const raw = signal ? await awaitWithSignal(request, signal) : await request;
+  signal?.throwIfAborted();
+  const response = raw.virtualChainFromBlockResponse ?? raw;
+  if (!Array.isArray(response.removedChainBlockHashes) ||
+    !Array.isArray(response.addedChainBlockHashes) ||
+    [...response.removedChainBlockHashes, ...response.addedChainBlockHashes]
+      .some((hash) => !/^[0-9a-f]{64}$/.test(String(hash)))) {
+    throw new Error("selected-chain continuity response is incomplete or invalid");
+  }
+  return response.removedChainBlockHashes.length === 0;
 }
 
 async function discoverLiveCovenantLineage({
@@ -4678,10 +4696,17 @@ async function balanceSompi(rpc, address) {
   return entries.reduce((sum, entry) => sum + BigInt(entry.balance ?? 0), 0n);
 }
 
-async function waitForDaa(rpc, target) {
+async function waitForDaa(rpc, target, reconcile) {
+  let lastReconciliation = Date.now();
   while (true) {
     const info = await rpc.getServerInfo();
     if (BigInt(info.virtualDaaScore) >= target) return;
+    // Keep both lineage checkpoints recent during the refund timelock. A
+    // single Full V2 read after a long idle wait can exhaust the SDK heap.
+    if (reconcile && Date.now() - lastReconciliation >= 30_000) {
+      await reconcile();
+      lastReconciliation = Date.now();
+    }
     await sleep(1_000);
   }
 }

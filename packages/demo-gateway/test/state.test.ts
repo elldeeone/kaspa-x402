@@ -15,7 +15,7 @@ import type {
 } from "@kaspa-x402/server";
 import {
   buildKip10AdditiveRedeemScript,
-  ESCROW_V4_LAUNCH_IDENTITY,
+  ESCROW_V5_LAUNCH_IDENTITY,
   payToScriptHashScript,
   serializedScriptPublicKey,
 } from "@kaspa-x402/covenant";
@@ -1405,7 +1405,7 @@ function channel(
     channelConfig: {
       network: "kaspa:testnet-10",
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v4",
+      templateId: "kaspa-x402-escrow-v5",
       clientPublicKey: "12".repeat(32),
       serverPublicKey: "13".repeat(32),
       payTo: "kaspatest:payout",
@@ -1431,15 +1431,15 @@ function channel(
     createCovenantLineageState({
       format: "kaspa-x402-covenant-launch-v1",
       network: merged.channelConfig.network,
-      compiler: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.compiler),
-      source: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.source),
-      bytecode: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.bytecode),
+      compiler: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.compiler),
+      source: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.source),
+      bytecode: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.bytecode),
       constructorSlots: structuredClone(
-        ESCROW_V4_LAUNCH_IDENTITY.constructorSlots,
+        ESCROW_V5_LAUNCH_IDENTITY.constructorSlots,
       ),
-      abi: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.abi),
-      selectors: structuredClone(ESCROW_V4_LAUNCH_IDENTITY.selectors),
-      identitySha256: ESCROW_V4_LAUNCH_IDENTITY.identitySha256,
+      abi: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.abi),
+      selectors: structuredClone(ESCROW_V5_LAUNCH_IDENTITY.selectors),
+      identitySha256: ESCROW_V5_LAUNCH_IDENTITY.identitySha256,
       genesis: {
         derivation: "kip20-covenant-id-v1",
         covenantId: merged.covenantId,

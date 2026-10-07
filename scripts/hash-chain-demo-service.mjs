@@ -68,7 +68,7 @@ export function createHashChainDemoHandler({ issuer, headId, publicBaseUrl, payT
       if (incoming.pathname.endsWith('/supported')) return json({ kinds: available ? [{
         x402Version: 2, scheme: 'exact', network: 'kaspa:testnet-10',
         extra: { asset: 'KAS', binding: 'kaspa-hash-chain-exact-v1', profile: 'hash-chain-additive',
-          templateId: 'kaspa-x402-hash-chain-head-v1', modes: ['verify', 'settle'],
+          templateId: 'kaspa-x402-hash-chain-head-v2', modes: ['verify', 'settle'],
           transactionEncoding: 'kaspa-sdk-safe-json-v2.0.0' },
       }] : [] });
       return json({ available, phase: current.phase, headVersion: current.headVersion,

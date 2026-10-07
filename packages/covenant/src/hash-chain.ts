@@ -1,12 +1,13 @@
+import { kaspaSighashType, type KaspaSighashType } from "./sighash.js";
 import { blake3 } from "@noble/hashes/blake3.js";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
-  HASH_CHAIN_HEAD_V1_COMPILED_BASE,
-  HASH_CHAIN_HEAD_V1_LAYOUT,
-  HASH_CHAIN_HEAD_V1_SELECTORS,
-  HASH_CHAIN_HEAD_V1_SAMPLE_OWNER,
-  HASH_CHAIN_HEAD_V1_SAMPLE_GUARD,
-} from "./generated/hash-chain-head-v1.js";
+  HASH_CHAIN_HEAD_V2_COMPILED_BASE,
+  HASH_CHAIN_HEAD_V2_LAYOUT,
+  HASH_CHAIN_HEAD_V2_SELECTORS,
+  HASH_CHAIN_HEAD_V2_SAMPLE_OWNER,
+  HASH_CHAIN_HEAD_V2_SAMPLE_GUARD,
+} from "./generated/hash-chain-head-v2.js";
 import { payToScriptHashScript, serializedScriptPublicKey } from "./template.js";
 
 export interface HashChainBorrowGrant {
@@ -82,16 +83,16 @@ export function buildHashChainHeadRedeemScript(params: HashChainHeadParams): str
   const owner = fixedBytes(params.ownerPublicKey, "ownerPublicKey");
   schnorr.utils.lift_x(BigInt(`0x${Buffer.from(owner).toString("hex")}`));
   const guard = fixedBytes(params.guard, "guard");
-  const script = Buffer.from(HASH_CHAIN_HEAD_V1_COMPILED_BASE, "hex");
-  const sampleOwner = Buffer.from(HASH_CHAIN_HEAD_V1_SAMPLE_OWNER, "hex");
-  const sampleGuard = Buffer.from(HASH_CHAIN_HEAD_V1_SAMPLE_GUARD, "hex");
-  for (const offset of HASH_CHAIN_HEAD_V1_LAYOUT.ownerOffsets) {
+  const script = Buffer.from(HASH_CHAIN_HEAD_V2_COMPILED_BASE, "hex");
+  const sampleOwner = Buffer.from(HASH_CHAIN_HEAD_V2_SAMPLE_OWNER, "hex");
+  const sampleGuard = Buffer.from(HASH_CHAIN_HEAD_V2_SAMPLE_GUARD, "hex");
+  for (const offset of HASH_CHAIN_HEAD_V2_LAYOUT.ownerOffsets) {
     if (!script.subarray(offset, offset + 32).equals(sampleOwner)) {
       throw new Error("pinned owner constructor slot changed");
     }
     script.set(owner, offset);
   }
-  const offset = HASH_CHAIN_HEAD_V1_LAYOUT.guardOffset;
+  const offset = HASH_CHAIN_HEAD_V2_LAYOUT.guardOffset;
   if (!script.subarray(offset, offset + 32).equals(sampleGuard)) {
     throw new Error("pinned guard state slot changed");
   }
@@ -107,21 +108,22 @@ export function hashChainHeadScriptPublicKey(params: HashChainHeadParams): strin
 export function parseHashChainHeadRedeemScript(redeemScript: string): HashChainHeadParams {
   if (!/^(?:[0-9a-fA-F]{2})+$/.test(redeemScript)) throw new Error("invalid hash-chain redeem script hex");
   const script = Buffer.from(redeemScript, "hex");
-  const base = Buffer.from(HASH_CHAIN_HEAD_V1_COMPILED_BASE, "hex");
+  const base = Buffer.from(HASH_CHAIN_HEAD_V2_COMPILED_BASE, "hex");
   if (script.length !== base.length) throw new Error("hash-chain redeem script has the wrong length");
-  const owner = script.subarray(HASH_CHAIN_HEAD_V1_LAYOUT.ownerOffsets[0]!, HASH_CHAIN_HEAD_V1_LAYOUT.ownerOffsets[0]! + 32).toString("hex");
-  const guard = script.subarray(HASH_CHAIN_HEAD_V1_LAYOUT.guardOffset, HASH_CHAIN_HEAD_V1_LAYOUT.guardOffset + 32).toString("hex");
+  const owner = script.subarray(HASH_CHAIN_HEAD_V2_LAYOUT.ownerOffsets[0]!, HASH_CHAIN_HEAD_V2_LAYOUT.ownerOffsets[0]! + 32).toString("hex");
+  const guard = script.subarray(HASH_CHAIN_HEAD_V2_LAYOUT.guardOffset, HASH_CHAIN_HEAD_V2_LAYOUT.guardOffset + 32).toString("hex");
   if (buildHashChainHeadRedeemScript({ ownerPublicKey: owner, guard }) !== redeemScript.toLowerCase()) {
     throw new Error("hash-chain redeem script does not match the pinned artifact");
   }
   return { ownerPublicKey: owner, guard };
 }
 
-/** Canonical SilverScript borrow witness with a 64-byte SIGHASH_ALL signature. */
+/** Canonical SilverScript borrow witness with a raw Schnorr signature (ALL by default). */
 export function buildHashChainBorrowSignatureScript(input: {
   revealedGuard: string;
   oneTimePublicKey: string;
   signature: string;
+  sighashType?: KaspaSighashType;
   redeemScript: string;
 }): string {
   parseHashChainHeadRedeemScript(input.redeemScript);
@@ -132,8 +134,8 @@ export function buildHashChainBorrowSignatureScript(input: {
   return Buffer.concat([
     pushData(fixedBytes(input.revealedGuard, "revealedGuard")),
     pushData(fixedBytes(input.oneTimePublicKey, "oneTimePublicKey")),
-    pushData(Buffer.concat([signature, Buffer.from([1])])),
-    pushData(Buffer.from(HASH_CHAIN_HEAD_V1_SELECTORS.borrow, "hex")),
+    pushData(Buffer.concat([signature, Buffer.from([kaspaSighashType(input.sighashType ?? 1)])])),
+    pushData(Buffer.from(HASH_CHAIN_HEAD_V2_SELECTORS.borrow, "hex")),
     pushData(Buffer.from(input.redeemScript, "hex")),
   ]).toString("hex");
 }
@@ -142,6 +144,7 @@ export function buildHashChainBorrowSignatureScript(input: {
 export function buildHashChainOwnerRotationSignatureScript(input: {
   newGuard: string;
   signature: string;
+  sighashType?: KaspaSighashType;
   redeemScript: string;
 }): string {
   parseHashChainHeadRedeemScript(input.redeemScript);
@@ -151,8 +154,8 @@ export function buildHashChainOwnerRotationSignatureScript(input: {
   }
   return Buffer.concat([
     pushData(fixedBytes(input.newGuard, "newGuard")),
-    pushData(Buffer.concat([signature, Buffer.from([1])])),
-    pushData(Buffer.from(HASH_CHAIN_HEAD_V1_SELECTORS.ownerRotate, "hex")),
+    pushData(Buffer.concat([signature, Buffer.from([kaspaSighashType(input.sighashType ?? 1)])])),
+    pushData(Buffer.from(HASH_CHAIN_HEAD_V2_SELECTORS.ownerRotate, "hex")),
     pushData(Buffer.from(input.redeemScript, "hex")),
   ]).toString("hex");
 }
@@ -166,8 +169,8 @@ function pushData(data: Uint8Array): Buffer {
 
 /** SilverScript's state-excluded template hash for an instantiated owner. */
 export function hashChainHeadTemplateHash(ownerPublicKey: string): string {
-  const script = Buffer.from(buildHashChainHeadRedeemScript({ ownerPublicKey, guard: HASH_CHAIN_HEAD_V1_SAMPLE_GUARD }), "hex");
-  const { offset, len } = HASH_CHAIN_HEAD_V1_LAYOUT.stateSpan;
+  const script = Buffer.from(buildHashChainHeadRedeemScript({ ownerPublicKey, guard: HASH_CHAIN_HEAD_V2_SAMPLE_GUARD }), "hex");
+  const { offset, len } = HASH_CHAIN_HEAD_V2_LAYOUT.stateSpan;
   const prefix = script.subarray(0, offset);
   const suffix = script.subarray(offset + len);
   const prefixLength = Buffer.alloc(8);

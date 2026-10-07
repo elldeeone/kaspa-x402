@@ -25,7 +25,7 @@ const accepted: BatchPaymentRequirements = {
   maxTimeoutSeconds: 60,
   extra: {
     binding: "kaspa-escrow-v3",
-    templateId: "kaspa-x402-escrow-v4",
+    templateId: "kaspa-x402-escrow-v5",
     serverPublicKey: H("1"),
     minDepositSompi: "10500",
     claimReserveSompi: "10000",

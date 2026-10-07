@@ -149,7 +149,7 @@
         "profile": { "const": "hash-chain-additive" },
         "assetTransferMethod": { "const": "kaspa-v1-hash-chain-proof" },
         "paymentFlow": { "const": "upfront" },
-        "templateId": { "const": "kaspa-x402-hash-chain-head-v1" },
+        "templateId": { "const": "kaspa-x402-hash-chain-head-v2" },
         "finality": { "enum": ["accepted", "confirmed"] },
         "transactionEncoding": { "const": "kaspa-sdk-safe-json-v2.0.0" },
         "payToScriptPublicKey": { "type": "string", "pattern": "^0000(?:[0-9a-fA-F]{2})+$" },
@@ -218,7 +218,7 @@
           "const": "kaspa-escrow-v3"
         },
         "templateId": {
-          "const": "kaspa-x402-escrow-v4"
+          "const": "kaspa-x402-escrow-v5"
         },
         "serverPublicKey": {
           "type": "string",

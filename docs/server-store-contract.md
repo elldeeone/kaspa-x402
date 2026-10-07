@@ -4,8 +4,12 @@ The reference `MemoryServerChannelStore` is for tests and examples. Production
 servers need a durable implementation of `ServerStateStore` with the semantics
 below.
 
-v1 RC2 supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` as the active
-batch profile. Pre-RC stores are not migrated or read by the v1 RC2 runtime.
+Development source supports `kaspa-escrow-v3` / `kaspa-x402-escrow-v5` as the
+active batch profile; published RC2 uses escrow-v4. Pre-RC stores are not
+migrated or read. A sighash change does not relax durable artifact identity,
+attempt ownership, or compare-and-set guarantees. See the
+[signature policy and template transition](versioning-policy.md#sighash-template-transition)
+before moving outstanding RC2 channels to a new runtime.
 
 ## Required Guarantees
 

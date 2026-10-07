@@ -1,6 +1,6 @@
 # Versioning Policy
 
-Status: policy for the published RC2 release. This file describes how changes
+Status: development policy after the published RC2 release. This file describes how changes
 are labeled before the stable `1.0.0` release.
 
 ## Spec Versions
@@ -9,9 +9,10 @@ The umbrella Kaspa x402 proposal is `v1`; bindings, signed domains, and
 covenant templates are versioned independently. Breaking changes must update
 the affected identifiers, schemas, vectors, packages, and docs together.
 
-The current `1.0.0-rc.2` surface uses `kaspa-exact-v2`,
-`kaspa-escrow-v3`, and `kaspa-x402-escrow-v4`. RC2 also includes
-`kaspa-hash-chain-exact-v1` and `kaspa-x402-hash-chain-head-v1`. The covenant was
+The development surface uses `kaspa-exact-v2`,
+`kaspa-escrow-v3`, and `kaspa-x402-escrow-v5`, plus
+`kaspa-hash-chain-exact-v1` and `kaspa-x402-hash-chain-head-v2`. These templates
+are unpublished development changes after RC2. The escrow covenant was
 compiled with
 SilverScript v1.0.0 commit `3ed973335b59269293564805cc2c58a14595ec03`
 (the portable artifact reports compiler version `0.1.0`). It uses explicit DAA
@@ -42,9 +43,9 @@ Rules:
 Template IDs identify covenant families. The current template ids are:
 
 ```text
-kaspa-x402-escrow-v4
+kaspa-x402-escrow-v5
 kaspa-x402-kip10-additive-v1
-kaspa-x402-hash-chain-head-v1
+kaspa-x402-hash-chain-head-v2
 ```
 
 Change the template id when the script source, argument layout, successor-output
@@ -81,3 +82,50 @@ kaspa:mainnet
 
 `kaspa:mainnet` is a reserved profile name in the draft spec. It is not a
 readiness claim.
+
+## Sighash template transition
+
+Published RC2 uses escrow-v4 and hash-chain-head-v1. The new escrow-v5 and
+hash-chain-head-v2 templates accept every consensus-supported transaction
+sighash type. Reference wallets and signers continue to default to
+`SIGHASH_ALL`; choosing another scope is a signer decision. The covenant
+validates signatures and independently enforces its spend-path guards.
+Verifiers use the sighash byte encoded in each signature and reject invalid
+flags, rather than assuming ALL or applying an ALL-only covenant policy.
+
+The supported flags are:
+
+| Scope | Flag | Output commitment |
+| --- | --- | --- |
+| `ALL` | `0x01` | All outputs. |
+| `NONE` | `0x02` | No outputs. |
+| `SINGLE` | `0x04` | The output at the signed input's index, if present. |
+| `ALL + ANYONECANPAY` | `0x81` | All outputs. |
+| `NONE + ANYONECANPAY` | `0x82` | No outputs. |
+| `SINGLE + ANYONECANPAY` | `0x84` | The output at the signed input's index, if present. |
+
+`ANYONECANPAY` omits the commitment to other input outpoints. Exact input,
+sequence, and transaction-field commitments follow Kaspa consensus rules;
+ALL does not mean every serialized field is signed. In particular, the
+transaction-v1 sighash does not commit to mass or compute budgets. A signature
+may remain valid after changes outside its chosen scope. Signers must consider
+which constraints are supplied by other signatures and covenant guards before
+choosing a weaker scope. Validity alone does not establish that the choice is
+appropriate for a wallet workflow.
+
+This policy applies to transaction signatures on borrow, owner rotation,
+owner sweep, claim, top-up, and refund paths. Off-chain voucher, presentation,
+and request-authorization signatures keep their existing message domains and
+have no transaction sighash byte. Exact-payment checks, payout destinations,
+voucher ceilings, singleton lineage, successor state, and refund guards remain
+mandatory regardless of the transaction signature scope.
+
+Existing heads and channels retain their original scripts and
+cannot switch templates in a state transition. Sweep and recreate hash-chain
+heads; settle/refund existing batch channels and open new channels. Retain an
+RC2 runtime for outstanding RC2 channels during operator cutover. The bindings
+and off-chain signed domains are unchanged; template IDs identify the changed
+on-chain programs. These source changes are not a new published release or a
+deployed migration. Local consensus coverage is documented in the
+[conformance vectors](../vectors/README.md); published RC2 funded and hosted
+proof does not establish live validation of these replacement templates.

@@ -6647,7 +6647,7 @@ function makeDepositPayment(
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
-    templateId: "kaspa-x402-escrow-v4",
+    templateId: "kaspa-x402-escrow-v5",
     clientPublicKey: CLIENT_KEY,
     serverPublicKey: SERVER_KEY,
     payTo: accepted.payTo,

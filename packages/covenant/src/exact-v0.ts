@@ -1,10 +1,10 @@
+import { kaspaSighashType, type KaspaSighashType } from "./sighash.js";
 import { blake2b } from "blakejs";
 
 import { bytesToHex, hexToBytes } from "./template.js";
 import type { FundingOutpoint } from "./template.js";
 
 const NATIVE_SUBNETWORK_ID = "00".repeat(20);
-const SIG_HASH_ALL = 0x01;
 const ZERO_HASH = "00".repeat(32);
 const U16_MAX = 0xffff;
 
@@ -39,7 +39,7 @@ export interface ExactV0ReferenceTransaction {
 export interface ExactV0SignatureEvidence {
   publicKey: string;
   signature: string;
-  hashType: 1;
+  hashType: KaspaSighashType;
   digest: string;
 }
 
@@ -61,7 +61,7 @@ export function exactV0TransactionId(transaction: ExactV0ReferenceTransaction): 
   return blake2bKeyed("TransactionID", writer.finish());
 }
 
-/** Recomputes Rusty Kaspa's Schnorr SIGHASH_ALL digest for one version-0 P2PK input. */
+/** Recomputes Rusty Kaspa's Schnorr digest using the signature's encoded sighash for one version-0 P2PK input. */
 export function exactV0SchnorrSignatureEvidence(
   transaction: ExactV0ReferenceTransaction,
   inputIndex: number,
@@ -70,31 +70,39 @@ export function exactV0SchnorrSignatureEvidence(
   const input = transaction.inputs[inputIndex];
   if (!input) throw new Error("exact input index is out of range");
   const signatureScript = hexToBytes(input.signatureScript, undefined, "signatureScript");
-  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65 || signatureScript[65] !== SIG_HASH_ALL) {
-    throw new Error("standard-native input must use a canonical 65-byte Schnorr SIGHASH_ALL push");
+  if (signatureScript.byteLength !== 66 || signatureScript[0] !== 65) {
+    throw new Error("standard-native input must use a canonical 65-byte Schnorr push");
   }
+  const hashType = kaspaSighashType(signatureScript[65]!);
+  const baseType = hashType & 7;
+  const anyoneCanPay = (hashType & 0x80) !== 0;
   const publicKey = p2pkPublicKey(input.utxo.scriptPublicKey);
+  const singleOutput = new ByteWriter();
+  if (baseType === 4 && transaction.outputs[inputIndex]) writeOutput(singleOutput, transaction.outputs[inputIndex]!);
+  const outputsHash = baseType === 2 ? ZERO_HASH : baseType === 4
+    ? (transaction.outputs[inputIndex] ? blake2bKeyed("TransactionSigningHash", singleOutput.finish()) : ZERO_HASH)
+    : hashOutputs(transaction);
   const writer = new ByteWriter()
     .u16(0)
-    .bytes(hashPreviousOutputs(transaction))
-    .bytes(hashSequences(transaction))
-    .bytes(hashSigOpCounts(transaction));
+    .bytes(anyoneCanPay ? ZERO_HASH : hashPreviousOutputs(transaction))
+    .bytes(anyoneCanPay || baseType !== 1 ? ZERO_HASH : hashSequences(transaction))
+    .bytes(anyoneCanPay ? ZERO_HASH : hashSigOpCounts(transaction));
   writeOutpoint(writer, input.previousOutpoint);
   writeScriptPublicKey(writer, input.utxo.scriptPublicKey);
   writer
     .u64(input.utxo.amount)
     .u64(input.sequence)
     .u8(input.sigOpCount)
-    .bytes(hashOutputs(transaction))
+    .bytes(outputsHash)
     .u64(transaction.lockTime)
     .bytes(transaction.subnetworkId)
     .u64(transaction.gas)
     .bytes(transaction.subnetworkId === NATIVE_SUBNETWORK_ID && transaction.payload === "" ? ZERO_HASH : hashPayload(transaction))
-    .u8(SIG_HASH_ALL);
+    .u8(hashType);
   return {
     publicKey,
     signature: bytesToHex(signatureScript.slice(1, 65)),
-    hashType: SIG_HASH_ALL,
+    hashType,
     digest: blake2bKeyed("TransactionSigningHash", writer.finish()),
   };
 }
