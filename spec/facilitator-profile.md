@@ -90,6 +90,9 @@ removed. For batch v3, it is also mandatory and must match the signed
 presentation fingerprint. A facilitator MUST NOT derive either scheme's
 request identity only from the payment payload.
 
+These top-level additions belong to the local reference API; upstream x402's
+standard facilitator request does not carry them.
+
 Successful `/verify` returns x402 v2 `VerifyResponse`:
 
 ```json

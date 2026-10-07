@@ -144,6 +144,7 @@ function makeExactRequired(): PaymentRequired {
         extra: {
           binding: "kaspa-exact-v2",
           profile: "standard-native",
+          paymentFlow: "upfront",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           payToScriptPublicKey: "000051",

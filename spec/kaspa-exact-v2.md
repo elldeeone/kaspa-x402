@@ -41,7 +41,8 @@ Every v2 exact requirement uses:
   "asset": "KAS",
   "extra": {
     "binding": "kaspa-exact-v2",
-    "profile": "standard-native"
+    "profile": "standard-native",
+    "paymentFlow": "upfront"
   }
 }
 ```
@@ -61,6 +62,12 @@ The binding settles native KAS only.
 
 ## Common PaymentRequirements
 
+Every exact offer MUST explicitly include `extra.paymentFlow: "upfront"`.
+An omitted flow, `authorization`, or `escrow` is invalid for these profiles.
+This development revision makes the schema match the reference server's
+existing settlement-before-service behavior. Do not insert this field into
+an already signed `accepted` object: obtain fresh terms and authorization.
+
 Both profiles include:
 
 ```json
@@ -74,6 +81,7 @@ Both profiles include:
   "extra": {
     "binding": "kaspa-exact-v2",
     "profile": "standard-native",
+    "paymentFlow": "upfront",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "payToScriptPublicKey": "0000..."
@@ -91,6 +99,7 @@ Both profiles include:
 | `maxTimeoutSeconds`          | MUST be a positive uint32. It bounds payment authorization validity as defined under Expiry.       |
 | `extra.binding`              | MUST equal `kaspa-exact-v2`.                                                                       |
 | `extra.profile`              | MUST equal `standard-native` or `additive`.                                                        |
+| `extra.paymentFlow`          | MUST equal `upfront`. Settlement succeeds before protected work begins.                            |
 | `extra.finality`             | MUST equal `accepted` or `confirmed` in the reference alpha. A stricter server policy is allowed.  |
 | `extra.transactionEncoding`  | MUST equal `kaspa-sdk-safe-json-v2.0.0` in this draft.                                             |
 | `extra.payToScriptPublicKey` | MUST be the canonical serialized script public key derived independently from `payTo`.             |
@@ -114,6 +123,7 @@ The common requirements are complete when:
   "extra": {
     "binding": "kaspa-exact-v2",
     "profile": "standard-native",
+    "paymentFlow": "upfront",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "payToScriptPublicKey": "0000..."
@@ -178,6 +188,7 @@ An additive offer includes:
   "extra": {
     "binding": "kaspa-exact-v2",
     "profile": "additive",
+    "paymentFlow": "upfront",
     "finality": "accepted",
     "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
     "payToScriptPublicKey": "<head serialized P2SH script public key>",

@@ -214,7 +214,7 @@ describe("trusted context and MCP admission", () => {
     asset: "KAS",
     payTo: "kaspatest:test",
     maxTimeoutSeconds: 1,
-    extra: { binding: "kaspa-exact-v2", profile: "standard-native" },
+    extra: { binding: "kaspa-exact-v2", profile: "standard-native", paymentFlow: "upfront" },
   } as PaymentRequirements;
 
   it("canonicalizes scope order and binds principal, tenant, scope, and state", () => {
