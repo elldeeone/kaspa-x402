@@ -4,16 +4,18 @@ Source base: `6d0690f6a957cda1179f74db9e22a921ef08cee8` with the verification ch
 
 The funded-run source snapshot digest (sorted relative source paths and SHA-256 values) is `fcc8b4058a8ac9de991bf0f9e56446689927dde17264dc1ca6fd4e211edc2f7c`. The complete private source/runtime manifest and reports are retained under `.kaspa-x402-live/protocol-verification-20261007T122111Z/` at the repository root. Signing and recovery keys stay there.
 
-After these runs, review fixes capped the exact/batch proof fee at 40,000,000 sompi and separated client/server test helpers. The recorded 40,000,000-sompi run remains within that cap. The source digest and proof-script fingerprints below identify the files used for the funded runs, before those fixes; they are not hashes of the final working tree. No funded run was repeated for the review fixes.
+After these runs, review fixes capped the exact/batch proof fee at 40,000,000 sompi, separated client/server test helpers and included covenant tests in type checking. The recorded 40,000,000-sompi run remains within that cap. The source digest and proof-script fingerprints below identify the files used for the funded runs, before those fixes; they are not hashes of the final working tree. No funded run was repeated for the review fixes.
 
 ## Local checks
 
-- All seven package source/test type checks and the reference test suites passed.
+- All seven package type-check commands and the reference test suites passed. The covenant command initially checked only sources; the follow-up below closes that coverage gap.
 - Standalone `protocol/` installation and `verify` passed under Node 22.16.0 and Node 24.15.0, including HTTP interoperability vectors, fixtures, upstream compatibility tests and package dry runs.
 - Independent website and gateway install/build/test checks passed.
 - [CI consensus report for the unchanged base](https://github.com/elldeeone/kaspa-x402/actions/runs/37619089003) passed against clean Rusty-Kaspa `01b532e8b553523216471682649693af92f0fd16` (2.1.0). It includes all six signature scopes and independent covenant guards; this is reused baseline evidence, not a new consensus run for these test/tooling changes.
 
 After the review fixes, standalone installation and `verify` passed again under Node 24.15.0. The isolation check now runs the client-only test command before building other packages: all 134 client tests and its type check passed without server declarations. Fee regression checks accepted the exact/batch default and 40,000,000-sompi cap, and rejected larger values before SDK or wallet access. The earlier Node 22, website and gateway checks above were not repeated for these fixes.
+
+The covenant type-check follow-up includes all five test files and represents the additive fixture's absent covenant binding as `covenantId: null`. Enabling the checks first detected the fixture error; after correction, the covenant build, all 70 covenant tests and all seven package source/test type checks passed under Node 24.15.0. Committed vectors and SDK runtime source remain unchanged. The full standalone verification above predates this follow-up.
 
 ## Funded Testnet-10 checks
 
