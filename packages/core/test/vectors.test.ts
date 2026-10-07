@@ -741,10 +741,29 @@ describe("exact v2 profile schemas", () => {
   const standardExtra = {
     binding: "kaspa-exact-v2",
     profile: "standard-native",
+    paymentFlow: "upfront",
     finality: "accepted",
     transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     payToScriptPublicKey: `0000${"11".repeat(34)}`,
   };
+
+  it.each([
+    ["standard-native", standardExtra],
+    ["additive", readJson<HttpVector>("vectors/x402-http/exact-transaction.json").paymentPayload.accepted.extra],
+    ["hash-chain-additive", readJson<HttpVector>("vectors/x402-http/hash-chain-exact.json").paymentPayload.accepted.extra],
+  ] as const)("requires upfront settlement for %s requirements", (_profile, extra) => {
+    const vector = readJson<HttpVector>("vectors/x402-http/exact-transaction.json");
+    for (const flow of [undefined, "authorization", "escrow", "upfront"]) {
+      const modified: Record<string, unknown> = { ...extra };
+      if (flow === undefined) delete modified.paymentFlow;
+      else modified.paymentFlow = flow;
+      expect(validateSchemaById(
+        "https://kaspa-x402.org/schemas/kaspa-requirements-extra.schema.json", modified,
+      ).ok).toBe(flow === "upfront");
+      expect(validateKaspaPaymentRequirement({ ...vector.paymentPayload.accepted, extra: modified }).ok)
+        .toBe(flow === "upfront");
+    }
+  });
 
   it("accepts inventory-free standard-native terms and rejects additive head fields", () => {
     expect(
@@ -1511,6 +1530,7 @@ describe("schema dispatch", () => {
         {
           binding: "kaspa-exact-v2",
           profile: "standard-native",
+          paymentFlow: "upfront",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           payToScriptPublicKey:

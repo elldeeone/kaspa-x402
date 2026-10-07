@@ -16,6 +16,7 @@
       "extra": {
         "binding": "kaspa-exact-v2",
         "profile": "standard-native",
+        "paymentFlow": "upfront",
         "finality": "accepted",
         "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
         "payToScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"

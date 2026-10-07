@@ -176,6 +176,7 @@ Unknown `extra` fields may be preserved by transports, but verifiers must ignore
       "extra": {
         "binding": "kaspa-exact-v2",
         "profile": "standard-native",
+        "paymentFlow": "upfront",
         "finality": "accepted",
         "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
         "payToScriptPublicKey": "0000..."

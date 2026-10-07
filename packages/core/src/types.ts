@@ -46,7 +46,7 @@ export interface ExactRequirementsExtra extends JsonRecord {
   binding: "kaspa-exact-v2" | "kaspa-hash-chain-exact-v1";
   profile: ExactProfile;
   /** Client submits a signed proof; settlement precedes protected work. */
-  paymentFlow?: "upfront";
+  paymentFlow: "upfront";
   finality?: "mempool" | "accepted" | "confirmed";
   payToScriptPublicKey?: ByteHex;
   templateId?: ExactAdditiveTemplateId | "kaspa-x402-hash-chain-head-v2";

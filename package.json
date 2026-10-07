@@ -20,7 +20,7 @@
   "type": "module",
   "scripts": {
     "build": "npm --workspace @kaspa-x402/core run build:self && npm --workspace @kaspa-x402/covenant run build:self && npm --workspace @kaspa-x402/server run build:self && npm --workspace @kaspa-x402/client run build:self && npm --workspace @kaspa-x402/facilitator run build:self && npm --workspace @kaspa-x402/cli run build:self && npm --workspace @kaspa-x402/demo-gateway run build:self",
-    "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/demo-gateway run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs",
+    "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/demo-gateway run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs && npm run test:x402-compatibility",
     "site:build": "node scripts/site-build.mjs",
     "site:check": "node --test scripts/site-markdown.test.mjs && node scripts/site-check.mjs",
     "site:deploy:check": "node scripts/site-build.mjs --require-clean && node --test scripts/site-markdown.test.mjs && node scripts/site-check.mjs --require-clean",
@@ -67,7 +67,9 @@
     "check:hash-chain-http-vector": "node scripts/generate-hash-chain-http-vector.mjs --check",
     "check:hash-chain-worker": "npm run build && npm run site:build && node scripts/check-hash-chain-worker.mjs",
     "vectors:sighash-consensus": "node scripts/generate-sighash-consensus-vectors.mjs",
-    "check:sighash-consensus-vector": "node scripts/generate-sighash-consensus-vectors.mjs --check"
+    "check:sighash-consensus-vector": "node scripts/generate-sighash-consensus-vectors.mjs --check",
+    "test:x402-compatibility": "tsc -p prototypes/x402-exact/tsconfig.json && vitest run prototypes/x402-exact/binding.test.ts",
+    "check:x402-compatibility": "npm --workspace @kaspa-x402/core run build:self && npm run test:x402-compatibility"
   },
   "workspaces": [
     "packages/*"
@@ -79,7 +81,9 @@
     "node": ">=22.0.0"
   },
   "devDependencies": {
+    "@noble/curves": "2.2.0",
     "@types/node": "^24.0.0",
+    "@x402/core": "2.28.0",
     "ajv": "^8.17.1",
     "buffer": "^6.0.3",
     "esbuild": "0.28.1",

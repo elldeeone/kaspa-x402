@@ -4277,6 +4277,7 @@ function makeExactRequired(input: {
         extra: {
           binding: "kaspa-exact-v2",
           profile: "standard-native",
+          paymentFlow: "upfront",
           finality: input.finality ?? "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
@@ -4304,6 +4305,7 @@ function makeStandardExactRequired(input: {
         extra: {
           binding: "kaspa-exact-v2",
           profile: "standard-native",
+          paymentFlow: "upfront",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           payToScriptPublicKey: STANDARD_PAY_TO_SCRIPT_PUBLIC_KEY,
@@ -4332,6 +4334,7 @@ function makeAdditiveExactRequired(input: {
         extra: {
           binding: "kaspa-exact-v2",
           profile: "additive",
+          paymentFlow: "upfront",
           finality: "accepted",
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
           payToScriptPublicKey: ADDITIVE_HEAD_SCRIPT_PUBLIC_KEY,

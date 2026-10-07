@@ -1,9 +1,9 @@
 {
   "kind": "negative",
-  "name": "float-amount",
-  "description": "Amounts are decimal sompi integer strings, not KAS floats.",
+  "name": "exact payment flow missing",
+  "description": "Amounts must fit in the digest's le64 field.",
   "schema": "https://kaspa-x402.org/schemas/payment-required.schema.json",
-  "expectedError": "invalid_kaspa_x402_amount",
+  "expectedError": "invalid_kaspa_x402_payload",
   "value": {
     "x402Version": 2,
     "resource": {
@@ -13,14 +13,13 @@
       {
         "scheme": "exact",
         "network": "kaspa:testnet-10",
-        "amount": "1.5",
+        "amount": "20000000",
         "asset": "KAS",
         "payTo": "kaspatest:qqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqqq",
         "maxTimeoutSeconds": 60,
         "extra": {
           "binding": "kaspa-exact-v2",
           "profile": "standard-native",
-          "paymentFlow": "upfront",
           "finality": "accepted",
           "transactionEncoding": "kaspa-sdk-safe-json-v2.0.0",
           "payToScriptPublicKey": "000020f991f944d1e1954a7fc8b9bf62e0d78f015f4c07762d505e20e6c45260a3661bac"
