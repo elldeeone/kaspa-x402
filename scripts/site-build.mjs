@@ -8,6 +8,8 @@ import { fileURLToPath } from "node:url";
 import { buildBrowserHashChain } from "./build-browser-hash-chain.mjs";
 
 import {
+  artifactSource,
+  artifactRoute,
   ARTIFACT_NOTES,
   BROWSER_BUNDLE_INPUTS,
   GENERATED_SITE_ASSETS,
@@ -210,7 +212,7 @@ function writeSchemasPage() {
       `/${file}`,
       path.basename(file),
       ARTIFACT_NOTES[file],
-      sha256File(path.join(root, file)),
+      sha256File(path.join(root, artifactSource(file))),
     ),
   );
   writeHtml(
@@ -235,7 +237,7 @@ function writeSpecsPage() {
       `/${htmlRoute(file)}/`,
       path.basename(file, ".md"),
       ARTIFACT_NOTES[file],
-      sha256File(path.join(root, file)),
+      sha256File(path.join(root, artifactSource(file))),
     ),
   );
   writeHtml(
@@ -261,7 +263,7 @@ function writeDocsPage() {
         `/${htmlRoute(file)}/`,
         path.basename(file, ".md"),
         ARTIFACT_NOTES[file],
-        sha256File(path.join(root, file)),
+        sha256File(path.join(root, artifactSource(file))),
       ),
     );
     return `<h2>${escapeHtml(group.title)}</h2>\n    ${annotatedTable("Document", rows, { hashes: false })}`;
@@ -311,7 +313,7 @@ function writeVectorsPage() {
             `/${file}`,
             file.split("/").slice(2).join("/"),
             "",
-            sha256File(path.join(root, file)),
+            sha256File(path.join(root, artifactSource(file))),
           ),
         );
       return `<h2><code>${escapeHtml(dir)}/</code></h2>
@@ -324,7 +326,7 @@ function writeVectorsPage() {
       `/${file}`,
       path.basename(file),
       "",
-      sha256File(path.join(root, file)),
+      sha256File(path.join(root, artifactSource(file))),
     ),
   );
   writeHtml(
@@ -725,7 +727,7 @@ function writeManifest(copiedArtifacts, vectorIndex) {
     releaseMetadata: "/release.json",
     schemas: schemaFiles.map((file) => ({
       path: `/${file}`,
-      sha256: sha256File(path.join(root, file)),
+      sha256: sha256File(path.join(root, artifactSource(file))),
     })),
     specs: specFiles.map((file) => ({
       path: `/${htmlRoute(file)}/`,
@@ -761,7 +763,7 @@ function writeMarkdownDocument(source, route) {
       `
         <main>
           <article>
-            ${markdownToHtml(markdown, path.dirname(source))}
+            ${markdownToHtml(markdown, path.dirname(artifactSource(source)))}
             <p class="muted">Source: <a href="/${source}"><code>/${source}</code></a></p>
           </article>
         </main>
@@ -773,17 +775,17 @@ function writeMarkdownDocument(source, route) {
 function buildVectorIndex(files) {
   return files.map((file) => ({
     path: `/${file}`,
-    bytes: fs.statSync(path.join(root, file)).size,
-    sha256: sha256File(path.join(root, file)),
+    bytes: fs.statSync(path.join(root, artifactSource(file))).size,
+    sha256: sha256File(path.join(root, artifactSource(file))),
   }));
 }
 
 function artifactRecord(source, target) {
   return {
-    source,
+    source: artifactSource(source),
     target,
-    bytes: fs.statSync(path.join(root, source)).size,
-    sha256: sha256File(path.join(root, source)),
+    bytes: fs.statSync(path.join(root, artifactSource(source))).size,
+    sha256: sha256File(path.join(root, artifactSource(source))),
   };
 }
 
@@ -848,12 +850,12 @@ function rewriteMarkdownHref(href, sourceDir) {
   if (/^(?:https?:|mailto:|#|\/)/.test(href)) return href;
   const [target, suffix = ""] = href.split(/(?=#)/, 2);
   if (target.endsWith(".md")) {
-    const normalized = path.posix.normalize(`${sourceDir}/${target}`);
+    const normalized = artifactRoute(path.posix.normalize(`${sourceDir}/${target}`));
     if (htmlSourceFiles.has(normalized))
       return `/${htmlRoute(normalized)}/${suffix}`;
     return `/${normalized}${suffix}`;
   }
-  const normalized = path.posix.normalize(`${sourceDir}/${target}`);
+  const normalized = artifactRoute(path.posix.normalize(`${sourceDir}/${target}`));
   if (publishedArtifactFiles.has(normalized)) return `/${normalized}${suffix}`;
   return href;
 }
@@ -957,11 +959,11 @@ function dirtyPublishableInputs() {
     "package.json",
     "wrangler.jsonc",
     "site/README.md",
-    ...schemaFiles,
-    ...specFiles,
-    ...contractFiles,
-    ...docFiles,
-    ...vectorFiles,
+    ...schemaFiles.map(artifactSource),
+    ...specFiles.map(artifactSource),
+    ...contractFiles.map(artifactSource),
+    ...docFiles.map(artifactSource),
+    ...vectorFiles.map(artifactSource),
     ...sitePackageFiles(),
     ...siteScriptFiles,
     ...siteSourceInputs(),
@@ -977,7 +979,7 @@ function dirtyPublishableInputs() {
 }
 
 function trackedPackageFiles() {
-  return trackedFiles("packages").filter((file) =>
+  return [...trackedFiles("packages"), ...trackedFiles("protocol/packages")].filter((file) =>
     file.endsWith("package.json"),
   );
 }
@@ -1002,12 +1004,14 @@ function siteSourceInputs() {
 }
 
 function trackedFiles(relativeDir) {
+  const physicalDir = artifactSource(`${relativeDir}/`).replace(/\/$/, "");
   const files = new Set([
-    ...git(["ls-files", relativeDir]).split(/\r?\n/).filter(Boolean),
-    ...listFiles(relativeDir),
+    ...git(["ls-files", physicalDir]).split(/\r?\n/).filter(Boolean),
+    ...listFiles(physicalDir),
   ]);
   return [...files]
-    .filter((file) => fs.existsSync(path.join(root, file)))
+    .map(file => /^(schemas|vectors|spec|contracts)$/.test(relativeDir) ? artifactRoute(file) : file)
+    .filter((file) => fs.existsSync(path.join(root, artifactSource(file))))
     .sort();
 }
 
@@ -1017,6 +1021,7 @@ function listFiles(relativeDir) {
   return fs
     .readdirSync(fullDir, { withFileTypes: true })
     .flatMap((entry) => {
+      if (["node_modules", "dist"].includes(entry.name)) return [];
       const full = path.join(fullDir, entry.name);
       const relative = path.relative(root, full).replaceAll(path.sep, "/");
       if (entry.isDirectory()) return listFiles(relative);
@@ -1028,7 +1033,7 @@ function listFiles(relativeDir) {
 function copyFile(source, target) {
   const targetPath = path.join(outDir, target);
   fs.mkdirSync(path.dirname(targetPath), { recursive: true });
-  fs.copyFileSync(path.join(root, source), targetPath);
+  fs.copyFileSync(path.join(root, artifactSource(source)), targetPath);
 }
 
 function writeHtml(target, html) {
@@ -1046,7 +1051,7 @@ function writeText(target, value) {
 }
 
 function readText(relativePath) {
-  return fs.readFileSync(path.join(root, relativePath), "utf8");
+  return fs.readFileSync(path.join(root, artifactSource(relativePath)), "utf8");
 }
 
 function readJson(relativePath) {

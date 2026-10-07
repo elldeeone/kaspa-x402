@@ -1,0 +1,37 @@
+{
+  "name": "@kaspa-x402/adapters",
+  "version": "1.0.0-rc.2",
+  "private": true,
+  "description": "Reusable Kaspa chain evidence, exact transaction verification and native address adapters.",
+  "license": "MIT",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "import": "./dist/index.js"
+    },
+    "./native": {
+      "types": "./dist/kaspa-native.d.ts",
+      "import": "./dist/kaspa-native.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "npm --workspace @kaspa-x402/server run build && npm run build:self",
+    "build:self": "tsup src/index.ts src/kaspa-native.ts --format esm --dts --clean",
+    "test": "npm run build && npm run test:self",
+    "typecheck": "tsc --noEmit",
+    "test:self": "npm run typecheck && vitest run"
+  },
+  "dependencies": {
+    "@kaspa-x402/core": "1.0.0-rc.2",
+    "@kaspa-x402/covenant": "1.0.0-rc.2",
+    "@kaspa-x402/server": "1.0.0-rc.2",
+    "@noble/curves": "^2.2.0",
+    "@noble/hashes": "^2.2.0"
+  }
+}

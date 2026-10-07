@@ -7,8 +7,8 @@ import {
   decodePaymentRequiredHeader,
   ESCROW_BINDING_ID,
   ESCROW_TEMPLATE_ID,
-} from "../packages/core/dist/index.js";
-import { readBoundedResponseText } from "./read-bounded-response.mjs";
+} from "../protocol/packages/core/dist/index.js";
+import { readBoundedResponseText } from "../protocol/scripts/read-bounded-response.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const gatewayDir = path.join(root, "packages/demo-gateway");

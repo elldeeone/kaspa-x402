@@ -1,4 +1,4 @@
-import { defineExactStoreContract } from "../../../test-support/exact-store-contract.mjs";
+import { defineExactStoreContract } from "../../../protocol/test-support/exact-store-contract.mjs";
 import { GatewayLedger } from "../src/state.js";
 import { FakeStorage } from "./fake-storage.js";
 

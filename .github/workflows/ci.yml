@@ -30,14 +30,14 @@ jobs:
       - name: Workspace tests
         run: npm test
       - name: Offline proofs
-        run: node scripts/proof-offline.mjs --out proof-artifacts/offline.json
+        run: node protocol/scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offline-proof-windows
-          path: proof-artifacts/offline.json
-          if-no-files-found: warn
+          path: protocol/proof-artifacts/offline.json
+          if-no-files-found: error
   verify:
     runs-on: ubuntu-latest
     steps:
@@ -50,21 +50,23 @@ jobs:
           cache: npm
       - name: Install dependencies
         run: npm ci
+      - name: Standalone protocol verification
+        run: npm run check:protocol-isolation
       - name: Workspace tests
         run: npm test
       - name: Offline proofs
-        run: npm run proof:offline -- --out proof-artifacts/offline.json
+        run: node protocol/scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: offline-proof-linux
-          path: proof-artifacts/offline.json
-          if-no-files-found: warn
+          path: protocol/proof-artifacts/offline.json
+          if-no-files-found: error
       - name: Schema validation
         run: npm run validate:schemas
       - name: Generated schema validator drift
-        run: npm run generate:schema-validators && git diff --exit-code -- packages/core/src/generated
+        run: npm run generate:schema-validators && git diff --exit-code -- protocol/packages/core/src/generated
       - name: Site build
         run: npm run site:build
       - name: Site checks
@@ -96,7 +98,7 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p proof-artifacts
-          node scripts/validate-tx-v1-consensus.mjs --kaspa-root .kaspa-consensus 2> >(tee proof-artifacts/tx-v1-consensus.stderr.log >&2) | tee proof-artifacts/tx-v1-consensus.json
+          node protocol/scripts/validate-tx-v1-consensus.mjs --kaspa-root .kaspa-consensus 2> >(tee proof-artifacts/tx-v1-consensus.stderr.log >&2) | tee proof-artifacts/tx-v1-consensus.json
       - name: Retain consensus proof report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2

@@ -1,0 +1,75 @@
+{
+  "name": "kaspa-x402-protocol",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Kaspa x402 protocol specifications, SDKs, adapters and verification tooling.",
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/elldeeone/kaspa-x402.git"
+  },
+  "keywords": [
+    "kaspa",
+    "x402",
+    "payments",
+    "micropayments",
+    "exact",
+    "batch-settlement",
+    "covenants"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "npm --workspace @kaspa-x402/core run build:self && npm --workspace @kaspa-x402/covenant run build:self && npm --workspace @kaspa-x402/server run build:self && npm --workspace @kaspa-x402/client run build:self && npm --workspace @kaspa-x402/facilitator run build:self && npm --workspace @kaspa-x402/cli run build:self && npm --workspace @kaspa-x402/adapters run build:self",
+    "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/adapters run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs && npm run test:x402-compatibility",
+    "check:diff": "git diff --check -- .",
+    "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
+    "validate:schemas": "node scripts/validate-schemas.mjs",
+    "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
+    "validate:reorg-consensus": "node scripts/validate-reorg-consensus.mjs",
+    "proof:offline": "node scripts/proof-offline.mjs",
+    "proof:mainnet:offline": "node scripts/proof-mainnet-shapes.mjs",
+    "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
+    "pack:public:dry-run": "node scripts/pack-public-workspaces.mjs",
+    "vectors:tx-v1": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",
+    "vectors:exact-consensus": "node scripts/generate-exact-consensus-vectors.mjs",
+    "check:exact-consensus-vector": "node scripts/generate-exact-consensus-vectors.mjs --check",
+    "vectors:exact-http": "node scripts/generate-exact-http-vector.mjs",
+    "check:exact-http-vector": "node scripts/generate-exact-http-vector.mjs --check",
+    "vectors:exact-interop": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs",
+    "check:exact-interop-vector": "npm --workspace @kaspa-x402/core run build && node scripts/generate-exact-interop-vector.mjs --check",
+    "vectors:batch-interop": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-batch-interop-vector.mjs",
+    "check:batch-interop-vector": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-batch-interop-vector.mjs --check && node --test scripts/batch-interop-crosslinks.test.mjs",
+    "check:covenant-fixtures": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs",
+    "generate:covenant-fixture": "node scripts/generate-covenant-fixture.mjs",
+    "generate:hash-chain-fixture": "node scripts/generate-hash-chain-fixture.mjs",
+    "check:hash-chain-fixture": "node scripts/generate-hash-chain-fixture.mjs --check",
+    "vectors:hash-chain-consensus": "node scripts/generate-hash-chain-consensus-vectors.mjs",
+    "check:hash-chain-consensus-vector": "node scripts/generate-hash-chain-consensus-vectors.mjs --check",
+    "vectors:hash-chain-http": "npm run build && node scripts/generate-hash-chain-http-vector.mjs",
+    "check:hash-chain-http-vector": "node scripts/generate-hash-chain-http-vector.mjs --check",
+    "vectors:sighash-consensus": "node scripts/generate-sighash-consensus-vectors.mjs",
+    "check:sighash-consensus-vector": "node scripts/generate-sighash-consensus-vectors.mjs --check",
+    "test:x402-compatibility": "tsc -p prototypes/x402-exact/tsconfig.json && vitest run prototypes/x402-exact/binding.test.ts",
+    "check:x402-compatibility": "npm --workspace @kaspa-x402/core run build:self && npm run test:x402-compatibility",
+    "verify": "npm test && npm run validate:schemas && npm run check:covenant-fixtures && npm run check:hash-chain-http-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run pack:public:dry-run"
+  },
+  "workspaces": [
+    "packages/*"
+  ],
+  "overrides": {
+    "esbuild": "0.28.1"
+  },
+  "engines": {
+    "node": ">=22.0.0"
+  },
+  "devDependencies": {
+    "@noble/curves": "2.2.0",
+    "@types/node": "^24.0.0",
+    "@x402/core": "2.28.0",
+    "ajv": "^8.17.1",
+    "tsup": "^8.3.5",
+    "typescript": "^5.8.3",
+    "vitest": "^4.1.11",
+    "blakejs": "1.2.1"
+  }
+}

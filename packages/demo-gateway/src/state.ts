@@ -31,7 +31,7 @@ import type {
   ServerStateStore,
   SettlementCommit,
 } from "@kaspa-x402/server";
-import type { PnnEvidenceRecord, PnnEvidenceStore } from "./pnn-chain-evidence.js";
+import type { PnnEvidenceRecord, PnnEvidenceStore } from "@kaspa-x402/adapters";
 import {
   durableByteLength,
   durableOpenRecordBytes,

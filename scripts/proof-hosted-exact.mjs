@@ -37,9 +37,9 @@ import { normalizedBaseUrl } from "./demo-exact-heads.mjs";
 import {
   stringifySanitizedProofOutput,
   writePrivateProofJson,
-} from "./proof-output-security.mjs";
-import { readBoundedResponseText } from "./read-bounded-response.mjs";
-import { transactionInputOutpoint } from "./transaction-input-outpoint.mjs";
+} from "../protocol/scripts/proof-output-security.mjs";
+import { readBoundedResponseText } from "../protocol/scripts/read-bounded-response.mjs";
+import { transactionInputOutpoint } from "../protocol/scripts/transaction-input-outpoint.mjs";
 
 const DEFAULT_GATEWAY_URL = "https://demo.kaspa-x402.org";
 const DEFAULT_CONFIRMATION_TIMEOUT_MS = 120_000;

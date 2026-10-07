@@ -1,4 +1,4 @@
-import type { PnnEvidenceRecord } from "./pnn-chain-evidence.js";
+import type { PnnEvidenceRecord } from "@kaspa-x402/adapters";
 import type { ChainCheckpoint } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,

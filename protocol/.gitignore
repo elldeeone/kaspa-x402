@@ -1,0 +1,9 @@
+node_modules/
+dist/
+coverage/
+.env
+.env.*
+*.log
+.kaspa-x402-live/
+.kaspa-x402-consensus-target/
+.kaspa-x402-consensus-cargo-home/

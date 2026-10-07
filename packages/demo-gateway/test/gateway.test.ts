@@ -1,5 +1,5 @@
-import { KaspaPnnClient } from "../src/adapters.js";
-import { PnnChainEvidence } from "../src/pnn-chain-evidence.js";
+import { KaspaPnnClient } from "@kaspa-x402/adapters";
+import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodePaymentRequiredHeader } from "@kaspa-x402/core";
 import {
@@ -12,7 +12,7 @@ import {
   readRequestJsonWithLimit,
   runGatewayCanary,
 } from "../src/gateway.js";
-import { addressForScriptPublicKey } from "../src/kaspa-native.js";
+import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_SIGNATURE_HEADER,

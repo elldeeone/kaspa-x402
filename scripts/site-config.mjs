@@ -65,10 +65,11 @@ export const SITE_ASSET_FILES = [
 export const BROWSER_BUNDLE_INPUTS = [
   "scripts/build-browser-hash-chain.mjs",
   "site/src/browser",
-  "packages/core/src",
-  "packages/covenant/src",
-  "packages/client/src",
-  "packages/demo-gateway/src/kaspa-native.ts",
+  "protocol/packages/core/src",
+  "protocol/packages/covenant/src",
+  "protocol/packages/client/src",
+  "protocol/packages/adapters/src/kaspa-native.ts",
+  "protocol/package-lock.json",
   "package-lock.json",
 ];
 export const GENERATED_SITE_ASSETS = ["assets/hash-chain-client.js"];
@@ -283,3 +284,30 @@ export const SITE_PACKAGE_NAMES = [
   "@kaspa-x402/facilitator",
   "@kaspa-x402/server",
 ];
+
+// Public routes remain stable when their repository sources move.
+const PROTOCOL_DOC_FILES = new Set([
+  "docs/adoption-examples.md",
+  "docs/hash-chain-live-proof.md",
+  "docs/hash-chain-otp-research.md",
+  "docs/live-testnet-proof.md",
+  "docs/live-testnet-report.md",
+  "docs/mainnet-readiness.md",
+  "docs/native-profile-boundary.md",
+  "docs/rc2-release.md",
+  "docs/release-publish.md",
+  "docs/security-threat-model.md",
+  "docs/server-runtime-lock-contract.md",
+  "docs/server-store-contract.md",
+  "docs/versioning-policy.md"
+]);
+
+export function artifactSource(file) {
+  return /^(spec|schemas|contracts|vectors)\//.test(file) || PROTOCOL_DOC_FILES.has(file)
+    ? `protocol/${file}`
+    : file;
+}
+
+export function artifactRoute(file) {
+  return file.startsWith("protocol/") ? file.slice("protocol/".length) : file;
+}

@@ -10,7 +10,7 @@ encoded consensus-supported sighash types, alongside independent spend-path
 guards. Signers choose the scope; verifiers reproduce it and reject invalid
 flags. Off-chain message signatures retain their existing domains. Published
 RC2 uses the earlier ALL-only templates; see the
-[signature policy and template transition](docs/versioning-policy.md#sighash-template-transition).
+[signature policy and template transition](./protocol/docs/versioning-policy.md#sighash-template-transition).
 
 ## Exact payment
 

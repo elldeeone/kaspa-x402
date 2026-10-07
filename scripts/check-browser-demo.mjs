@@ -11,7 +11,7 @@ import {
   encodePaymentRequiredHeader,
   encodePaymentSignatureHeader,
   validatePaymentRetry,
-} from "../packages/core/dist/index.js";
+} from "../protocol/packages/core/dist/index.js";
 import { SITE_DIST } from "./site-config.mjs";
 import { createHashChainDemoFixture, TEST_PAYER_KEY } from "./hash-chain-demo-fixture.mjs";
 
