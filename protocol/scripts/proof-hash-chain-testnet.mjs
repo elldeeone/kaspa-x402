@@ -194,16 +194,18 @@ try {
   const origin = `http://127.0.0.1:${http.address().port}`;
   const grantDestinationPolicy = { allowedOrigins: [origin] };
   server = new DirectModeServer({
-    network: "kaspa:testnet-10", payTo: fundingAddress, serverPublicKey: ownerPublicKey,
-    minDepositSompi: "1000", claimReserveSompi: "10", amount: "20000000",
-    refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
-    maxTimeoutSeconds: 150, acceptedFinality: "accepted", store: new MemoryServerChannelStore(),
-    chainProvider: { async getVirtualDaaScore() { return String((await rpc.getServerInfo()).virtualDaaScore); },
-      async sendTransaction() { throw new Error("hash-chain payer must broadcast"); } },
-    addressCodec, voucherVerifier: { verifyVoucher: () => false },
-    batchPresentationVerifier: { verifyPresentation: () => false },
-    exactProfile: "hash-chain-additive", exactTransactionVerifier: new HashChainExactTransactionVerifier(chainView),
-    hashChainIssuer: issuer, hashChainHeadId: headId,
+    network: "kaspa:testnet-10",
+    payTo: fundingAddress,
+    amount: "20000000",
+    confirmationThreshold: 30,
+    maxTimeoutSeconds: 150,
+    acceptedFinality: "accepted",
+    store: new MemoryServerChannelStore(),
+    addressCodec,
+    exactProfile: "hash-chain-additive",
+    exactTransactionVerifier: new HashChainExactTransactionVerifier(chainView),
+    hashChainIssuer: issuer,
+    hashChainHeadId: headId,
     hashChainGrantClaimUrl: `${origin}/hash-chain/grant`,
     admitHashChainChallenge: async () => true,
     hashChainIsSelected: async (transactionId, signal) => {
@@ -219,15 +221,18 @@ try {
         scriptPublicKey: { version: 0, script: current.scriptPublicKey.slice(4) },
         serializedScriptPublicKey: current.scriptPublicKey,
       });
-      const match = (await getAddressUtxos(rpc, address)).find((utxo) =>
-        utxo.outpoint.txid === outpoint.txid && utxo.outpoint.index === outpoint.index);
+      const match = (await getAddressUtxos(rpc, address)).find(
+        (utxo) => utxo.outpoint.txid === outpoint.txid && utxo.outpoint.index === outpoint.index,
+      );
       signal?.throwIfAborted();
-      return match ? {
-        outpoint: match.outpoint,
-        amount: match.amount,
-        scriptPublicKey: match.scriptPublicKey,
-        covenantId: match.covenantId ?? null,
-      } : null;
+      return match
+        ? {
+            outpoint: match.outpoint,
+            amount: match.amount,
+            scriptPublicKey: match.scriptPublicKey,
+            covenantId: match.covenantId ?? null,
+          }
+        : null;
     },
   });
   const provider = {
@@ -383,11 +388,18 @@ try {
       return { transactionId, evidence };
     },
   };
-  const client = new DirectModeClient({ fundingProvider: provider, signer: {},
-    store: new MemoryChannelStore(), addressCodec, confirmationThreshold: 30,
-    fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"], allowedOrigins: [origin],
-      maximumExactAmountSompi: "20000000" },
-    hashChainGrantDestinationPolicy: grantDestinationPolicy, fetch,
+  const client = new DirectModeClient({
+    addressCodec,
+    fundingProvider: provider,
+    store: new MemoryChannelStore(),
+    confirmationThreshold: 30,
+    fundingPolicy: {
+      allowedExactProfiles: ["hash-chain-additive"],
+      allowedOrigins: [origin],
+      maximumExactAmountSompi: "20000000",
+    },
+    hashChainGrantDestinationPolicy: grantDestinationPolicy,
+    fetch,
   });
   for (let i = 1; i <= 2; i++) {
     const url = `${origin}/resource/${i}`;

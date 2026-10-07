@@ -1,3 +1,6 @@
+import { exactServerStore, exactServerChain } from "../../../test-support/exact-dependencies.js";
+import { acceptedChainEvidence, fakeAuthorizationEvidence } from "../../../test-support/chain-evidence.js";
+import { serverTestConfig, type ServerTestConfig } from "../../../test-support/server-config.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -15,7 +18,6 @@ import {
   encodePaymentSignatureHeader,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
-  exactRequestAuthorizationId,
   mcpToolCallFingerprint,
   paymentIdentifierExtension as buildPaymentIdentifierExtension,
   readKaspaSettlementExtension,
@@ -25,7 +27,6 @@ import {
   stableStringify,
   trustedSecurityContextHash,
   voucherDigest,
-  type AcceptedTransactionEvidence,
   type BatchPaymentRequirements,
   type ChannelConfig,
   type ExactPaymentRequirements,
@@ -59,7 +60,6 @@ import {
   type ClaimReconciliation,
   type ClaimRecoveryInput,
   type ChannelOperationLeaseRecord,
-  type DirectModeServerConfig,
   type ExactHeadChallenge,
   type ExactHeadRecord,
   type ExactSettlementCommit,
@@ -83,31 +83,6 @@ const MCP_AUDIENCE = "https://mcp.example.test";
 const EXACT_TRANSACTION_ARTIFACT = '{"transaction":"signed-kip10-exact"}';
 const RESOURCE = { url: "https://api.example.test/data" };
 const CONFIRMATION_THRESHOLD = 30;
-
-function acceptedChainEvidence(
-  transactionId: string,
-  confirmationCount = CONFIRMATION_THRESHOLD,
-): AcceptedTransactionEvidence {
-  const checkpointBlueScore = 1_000n;
-  return {
-    status: "accepted",
-    transactionId: transactionId.toLowerCase(),
-    acceptingBlockHash: sha256Hex(
-      `accepting-block:${transactionId.toLowerCase()}`,
-    ),
-    acceptingBlockBlueScore: (
-      checkpointBlueScore -
-      BigInt(confirmationCount) +
-      1n
-    ).toString(),
-    confirmationCount,
-    checkpoint: {
-      blockHash: "ee".repeat(32),
-      blueScore: checkpointBlueScore.toString(),
-      daaScore: "1000",
-    },
-  };
-}
 
 function unknownChainEvidence(
   transactionId: string,
@@ -1432,6 +1407,49 @@ describe("direct-mode server", () => {
     expect(response.status).toBe(402);
     expect(verifierCalls).toBe(0);
     expect(executed).toBe(false);
+  });
+
+  it("offers and settles exact-only with no batch dependencies, including replay", async () => {
+    const setup = makeServer({}, true);
+    const handler = vi.fn(async () => ({ body: "exact only" }));
+    expect(setup.server.supportedKinds().map((kind) => kind.scheme)).toEqual(["exact"]);
+    const unpaid = await setup.server.handlePaidRequest({ url: RESOURCE.url }, handler);
+    expect(unpaid.status).toBe(402);
+    expect(
+      decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts.map(
+        (x) => x.scheme,
+      ),
+    ).toEqual(["exact"]);
+    const payment = makeStandardExactPayment(setup);
+    const request = requestWithPayment(payment);
+    expect((await setup.server.handlePaidRequest(request, handler)).status).toBe(200);
+    expect((await setup.server.handlePaidRequest(request, handler)).status).toBe(200);
+    expect(handler).toHaveBeenCalledTimes(1);
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toMatchObject({ amount: "100" });
+  });
+
+  it("rejects batch offers, retries and recovery on an exact-only server", async () => {
+    const setup = makeServer({}, true);
+    expect(() =>
+      setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "batch-settlement" }),
+    ).toThrow("batch settlement is not configured");
+    await expect(setup.server.listClaimableChannels()).rejects.toThrow(
+      "batch settlement is not configured",
+    );
+    await expect(
+      setup.server.recoverBatchHandler("11".repeat(32), { body: "secret" }),
+    ).rejects.toThrow("batch settlement is not configured");
+    const batch = makeDepositPayment(makeServer()).payload;
+    const handler = vi.fn(async () => ({ body: "secret" }));
+    const response = await setup.server.handlePaidRequest(requestWithPayment(batch), handler);
+    expect(response.status).toBe(402);
+    expect(handler).not.toHaveBeenCalled();
+    await expect(
+      setup.server.verifyPayment({ paymentPayload: batch, paymentRequirements: batch.accepted }),
+    ).rejects.toThrow("batch settlement is not configured");
+    await expect(
+      setup.server.settlePayment({ paymentPayload: batch, paymentRequirements: batch.accepted }),
+    ).resolves.toMatchObject({ success: false, errorReason: "invalid_scheme" });
   });
 
   it("verifies and settles standard-native exact before protected work without head state", async () => {
@@ -6192,7 +6210,7 @@ describe("direct-mode server", () => {
   });
 });
 
-function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
+function makeServer(overrides: Partial<ServerTestConfig> = {}, exactOnly = false) {
   const {
     exactTransactionVerifier: suppliedExactVerifier,
     ...serverOverrides
@@ -6203,7 +6221,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
     verifyExactPayment(
       request: Parameters<
         NonNullable<
-          DirectModeServerConfig["exactTransactionVerifier"]
+          ServerTestConfig["exactTransactionVerifier"]
         >["verifyExactPayment"]
       >[0],
     ) {
@@ -6221,7 +6239,7 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
       };
     },
   };
-  const server = new DirectModeServer({
+  const config = serverTestConfig({
     network: "kaspa:testnet-10",
     payTo: "kaspatest:payout",
     serverPublicKey: SERVER_KEY,
@@ -6252,12 +6270,15 @@ function makeServer(overrides: Partial<DirectModeServerConfig> = {}) {
         return {
           ...result,
           requestAuthorization:
-            result.requestAuthorization ??
-            fakeAuthorizationEvidence(request.authorization),
+            result.requestAuthorization ?? fakeAuthorizationEvidence(request.authorization),
         };
       },
     },
   });
+  const server = new DirectModeServer(exactOnly ? {
+    ...config, batch: undefined,
+    store: exactServerStore(store), chainProvider: exactServerChain(chain),
+  } : config);
   return {
     server,
     store,
@@ -6322,7 +6343,7 @@ function fixedClaim(channel: ServerChannelRecord, claimAmount: string) {
 }
 
 async function makeAdditiveServer(
-  overrides: Partial<DirectModeServerConfig> = {},
+  overrides: Partial<ServerTestConfig> = {},
   headOverrides: Partial<ExactHeadRecord> = {},
 ) {
   const threshold = headOverrides.additiveThresholdSompi ?? "10000000";
@@ -6350,7 +6371,7 @@ async function makeAdditiveServer(
     verifyExactPayment(
       request: Parameters<
         NonNullable<
-          DirectModeServerConfig["exactTransactionVerifier"]
+          ServerTestConfig["exactTransactionVerifier"]
         >["verifyExactPayment"]
       >[0],
     ) {
@@ -6619,15 +6640,6 @@ function fakeExactAuthorization(input: {
     expiresAt,
     digest,
     signature: "ab".repeat(64),
-  };
-}
-
-function fakeAuthorizationEvidence(authorization: ExactRequestAuthorization) {
-  return {
-    authorizationId: exactRequestAuthorizationId(authorization),
-    digest: authorization.digest,
-    inputIndex: authorization.inputIndex,
-    publicKey: CLIENT_KEY,
   };
 }
 

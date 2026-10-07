@@ -63,7 +63,12 @@ export const SITE_ASSET_FILES = [
 ];
 
 export const BROWSER_BUNDLE_INPUTS = [
-  "scripts/build-browser-hash-chain.mjs",
+  "site/package.json",
+  "protocol/package.json",
+  "protocol/scripts/build-packages.mjs",
+  "protocol/tsconfig.base.json",
+  "protocol/packages/adapters/package.json",
+  "site/scripts/build-browser-hash-chain.mjs",
   "site/src/browser",
   "protocol/packages/core/src",
   "protocol/packages/covenant/src",
@@ -116,6 +121,8 @@ export const PUBLIC_DOC_FILES = [
   "docs/mainnet-readiness.md",
   "docs/versioning-policy.md",
   "docs/native-profile-boundary.md",
+  "docs/evidence.md",
+  "docs/integration.md",
   "docs/server-store-contract.md",
   "docs/server-runtime-lock-contract.md",
 ];
@@ -222,7 +229,7 @@ export const DOC_GROUPS = [
   },
   {
     title: "Policy",
-    files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md"],
+    files: ["docs/versioning-policy.md", "docs/native-profile-boundary.md", "docs/evidence.md", "docs/integration.md"],
   },
 ];
 
@@ -294,6 +301,8 @@ const PROTOCOL_DOC_FILES = new Set([
   "docs/live-testnet-report.md",
   "docs/mainnet-readiness.md",
   "docs/native-profile-boundary.md",
+  "docs/evidence.md",
+  "docs/integration.md",
   "docs/rc2-release.md",
   "docs/release-publish.md",
   "docs/security-threat-model.md",
@@ -303,6 +312,7 @@ const PROTOCOL_DOC_FILES = new Set([
 ]);
 
 export function artifactSource(file) {
+  if (file === "docs/hash-chain-otp-research.md") return "protocol/docs/research/hash-chain-otp.md";
   return /^(spec|schemas|contracts|vectors)\//.test(file) || PROTOCOL_DOC_FILES.has(file)
     ? `protocol/${file}`
     : file;

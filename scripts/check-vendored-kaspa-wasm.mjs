@@ -6,7 +6,7 @@ import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
-import { VENDORED_KASPA_WASM } from "./site-config.mjs";
+import { VENDORED_KASPA_WASM } from "../site/scripts/site-config.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const source = VENDORED_KASPA_WASM.source;

@@ -52,6 +52,8 @@ jobs:
         run: npm ci
       - name: Standalone protocol verification
         run: npm run check:protocol-isolation
+      - name: Independent host builds
+        run: npm run check:host-isolation
       - name: Workspace tests
         run: npm test
       - name: Offline proofs

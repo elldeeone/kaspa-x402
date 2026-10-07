@@ -521,7 +521,7 @@ export interface ExactPaymentAttemptRecord {
   providerFinalized: boolean;
 }
 
-export interface ChannelStore {
+export interface ChannelStore extends ExactPaymentAttemptStore {
   loadChannels(scope: ChannelLookupScope): Promise<DirectModeChannel[]>;
   saveChannel(channel: DirectModeChannel): Promise<void>;
   /** Applies one validated settlement only if the disclosed channel snapshot is current. */
@@ -583,6 +583,9 @@ export interface ChannelStore {
     lineage: CovenantLineageState;
     channel: DirectModeChannel;
   }): Promise<DirectModeChannel>;
+}
+
+export interface ExactPaymentAttemptStore {
   loadExactPaymentAttempt(
     attemptId: Hash32Hex,
   ): Promise<ExactPaymentAttemptRecord | undefined>;
@@ -784,28 +787,41 @@ export interface ExactPaymentReconcileResult {
   accepted: boolean;
 }
 
-export interface DirectModeClientOptions {
-  fundingProvider: FundingProvider;
+export interface BatchClientOptions {
   signer: ChannelSigner;
-  store: ChannelStore;
-  addressCodec: AddressCodec;
   refundAddress?: string;
+  refundBuilder?: RefundTransactionBuilder;
+  refundReconciler?: RefundReconciler;
+  fundingTransitionReconciler?: FundingTransitionReconciler;
+  verifyVoucherSignature?: (
+    voucher: Voucher,
+    channel: DirectModeChannel,
+  ) => Promise<boolean> | boolean;
+}
+
+export interface ExactClientOptions {
+  addressCodec: Pick<AddressCodec, "scriptPublicKeyForAddress">;
+  fundingProvider: ExactFundingProvider;
+  store: ExactPaymentAttemptStore;
   supportedNetworks?: readonly NetworkId[];
   allowMainnet?: boolean;
   fundingPolicy?: FundingPolicy;
   fetch?: FetchLike;
-  refundBuilder?: RefundTransactionBuilder;
-  refundReconciler?: RefundReconciler;
-  fundingTransitionReconciler?: FundingTransitionReconciler;
   exactPaymentReconciler?: ExactPaymentReconciler;
   /** Required before any hash-chain wallet or grant operation. */
   hashChainGrantDestinationPolicy?: HashChainGrantDestinationPolicy;
   /** Deployment policy; Testnet-10 launch profile is 30. */
   confirmationThreshold: number;
-  verifyVoucherSignature?: (
-    voucher: Voucher,
-    channel: DirectModeChannel,
-  ) => Promise<boolean> | boolean;
   maxPaymentRetries?: number;
   supportedSchemes?: readonly PaymentScheme[];
 }
+
+/** Exact providers need no escrow funding, voucher, lineage or refund operations. */
+export type ExactFundingProvider = Pick<FundingProvider,
+  "networkId" | "sourceKind" | "getPublicIdentity" | "payExactTransaction" |
+  "claimHashChainGrant" | "payHashChainTransaction" | "finalizeExactPaymentAttempt" | "sendTransaction">;
+
+export type DirectModeClientOptions = ExactClientOptions & (
+  | { batch?: undefined }
+  | { batch: BatchClientOptions; addressCodec: AddressCodec; fundingProvider: FundingProvider; store: ChannelStore }
+);

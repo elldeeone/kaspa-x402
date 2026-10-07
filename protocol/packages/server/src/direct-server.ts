@@ -117,6 +117,9 @@ import {
   type DirectPaymentVerification,
   type DirectPaymentVerificationOptions,
   type DirectModeServerConfig,
+  type BatchServerConfig,
+  type ServerStateStore,
+  type ServerChainProvider,
   type ExactPaymentRecord,
   type ExactHeadChallenge,
   type HashChainHeadChallenge,
@@ -140,22 +143,31 @@ import {
   type VerifiedPayment,
 } from "./types.js";
 
-type ResolvedServerConfig = DirectModeServerConfig &
-  Required<
+type ResolvedServerConfig = Omit<DirectModeServerConfig, "batch"> & {
+  batch?: ResolvedBatchConfig;
+} & Required<
     Pick<
       DirectModeServerConfig,
       | "asset"
-      | "templateId"
       | "maxTimeoutSeconds"
       | "acceptedFinality"
       | "exactProfile"
       | "minimumExactAdditiveThresholdSompi"
-      | "minimumRefundLeadDaa"
-      | "allowRollingRefundTimeoutDaa"
       | "reconcileExactHeadOnOffer"
       | "lockManager"
     >
   >;
+
+type ResolvedBatchConfig = BatchServerConfig &
+  Required<
+    Pick<BatchServerConfig, "templateId" | "minimumRefundLeadDaa" | "allowRollingRefundTimeoutDaa">
+  >;
+
+function requireBatch(config: ResolvedServerConfig): ResolvedBatchConfig {
+  if (!config.batch)
+    throw new KaspaX402Error("invalid_kaspa_x402_scheme", "batch settlement is not configured");
+  return config.batch;
+}
 
 type PendingSettlement = {
   channel: ServerChannelRecord;
@@ -174,20 +186,36 @@ export class DirectModeServer {
   readonly #config: ResolvedServerConfig;
   readonly #publicBoundary: PublicBoundaryController;
 
+  get #batch(): ResolvedBatchConfig { return requireBatch(this.#config); }
+  get #batchStore(): ServerStateStore {
+    requireBatch(this.#config);
+    return this.#config.store as ServerStateStore;
+  }
+  get #batchChain(): ServerChainProvider {
+    requireBatch(this.#config);
+    return this.#config.chainProvider as ServerChainProvider;
+  }
+
   constructor(config: DirectModeServerConfig) {
     this.#config = {
       asset: "KAS",
-      templateId: "kaspa-x402-escrow-v5",
       maxTimeoutSeconds: 60,
       acceptedFinality: "accepted",
       exactProfile: "standard-native",
       minimumExactAdditiveThresholdSompi: "10000000",
-      minimumRefundLeadDaa: "1000",
-      allowRollingRefundTimeoutDaa: false,
       reconcileExactHeadOnOffer: false,
       lockManager: new MemoryChannelLockManager(),
       ...config,
+      batch: config.batch ? {
+        templateId: "kaspa-x402-escrow-v5",
+        minimumRefundLeadDaa: "1000",
+        allowRollingRefundTimeoutDaa: false,
+        ...config.batch,
+      } : undefined,
     };
+    if (!this.#config.chainProvider && (this.#config.batch || this.#config.exactProfile !== "hash-chain-additive")) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "configured settlement requires a chain provider");
+    }
     assertMainnetAllowed(
       this.#config.network,
       this.#config.allowMainnet,
@@ -204,7 +232,11 @@ export class DirectModeServer {
     if (this.#config.exactProfile === "hash-chain-additive" && this.#config.acceptedFinality !== "accepted") {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact currently supports accepted finality only");
     }
-    assertRefundPolicyConfig(this.#config);
+    if (this.#config.batch) {
+      assertRefundPolicyConfig(this.#config.batch);
+      parseBatchLaneAmount(this.#config.batch.minDepositSompi, "minimum deposit");
+      parseBatchLaneAmount(this.#config.batch.claimReserveSompi, "claim reserve");
+    }
     if (
       !Number.isSafeInteger(this.#config.confirmationThreshold) ||
       this.#config.confirmationThreshold < 1
@@ -214,8 +246,6 @@ export class DirectModeServer {
         "confirmationThreshold must be a positive safe integer",
       );
     }
-    parseBatchLaneAmount(this.#config.minDepositSompi, "minimum deposit");
-    parseBatchLaneAmount(this.#config.claimReserveSompi, "claim reserve");
     assertServerCoordinationTopology(
       this.#config.store,
       this.#config.lockManager,
@@ -320,7 +350,7 @@ export class DirectModeServer {
       }
       if (!options.trustedSecurityContext) {
         if (schemes.includes("batch-settlement")) {
-          await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+          await this.#assertRefundWindow(this.#batch.refundTimeoutDaa);
           return makePaymentRequired(this.#config, { ...options, schemes: ["batch-settlement"] });
         }
         throw new KaspaX402Error(
@@ -363,7 +393,7 @@ export class DirectModeServer {
             );
             if (!admitted) {
               if (schemes.includes("batch-settlement")) {
-                await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+                await this.#assertRefundWindow(this.#batch.refundTimeoutDaa);
                 return {
                   kind: "fallback",
                   paymentRequired: makePaymentRequired(this.#config, {
@@ -419,7 +449,7 @@ export class DirectModeServer {
             } catch (error) {
               if (!hashChainChallengeCapacityScope(error)) throw error;
               if (schemes.includes("batch-settlement")) {
-                await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+                await this.#assertRefundWindow(this.#batch.refundTimeoutDaa);
                 return {
                   kind: "fallback",
                   paymentRequired: makePaymentRequired(this.#config, {
@@ -513,7 +543,7 @@ export class DirectModeServer {
         return makePaymentRequired(this.#config, { ...options, exactHead });
       }
       if (schemes.includes("batch-settlement")) {
-        await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+        await this.#assertRefundWindow(this.#batch.refundTimeoutDaa);
         return makePaymentRequired(this.#config, {
           ...options,
           schemes: ["batch-settlement"],
@@ -525,7 +555,7 @@ export class DirectModeServer {
       );
     }
     if (schemes.includes("batch-settlement")) {
-      await this.#assertRefundWindow(this.#config.refundTimeoutDaa);
+      await this.#assertRefundWindow(this.#batch.refundTimeoutDaa);
     }
     return makePaymentRequired(this.#config, options);
   }
@@ -652,7 +682,7 @@ export class DirectModeServer {
         },
       });
     }
-    if (this.#config.network === "kaspa:testnet-10") {
+    if (this.#config.batch && this.#config.network === "kaspa:testnet-10") {
       kinds.push({
         x402Version: X402_VERSION,
         scheme: "batch-settlement",
@@ -660,8 +690,8 @@ export class DirectModeServer {
         extra: {
           asset: this.#config.asset,
           binding: "kaspa-escrow-v3",
-          templateId: this.#config.templateId,
-          modes: this.#config.claimBuilder
+          templateId: this.#batch.templateId,
+          modes: this.#batch.claimBuilder
             ? ["verify", "settle", "claim"]
             : ["verify", "settle"],
         },
@@ -944,7 +974,8 @@ export class DirectModeServer {
         ...requiredOptions,
       });
     }
-    if (!isPaymentSchemeAllowed(request, paymentPayload.accepted.scheme)) {
+    if ((!this.#config.batch && paymentPayload.accepted.scheme === "batch-settlement") ||
+      !isPaymentSchemeAllowed(request, paymentPayload.accepted.scheme)) {
       return this.#paymentRequiredResponse({
         resource,
         amount: paymentAmount,
@@ -1034,7 +1065,7 @@ export class DirectModeServer {
           if (verified.scheme === "batch-settlement") {
             try {
               const existingAttempt =
-                await this.#config.store.loadBatchSettlementAttempt(
+                await this.#batchStore.loadBatchSettlementAttempt(
                   this.#batchSettlementAttemptId(verified, fingerprint),
                 );
               if (!existingAttempt)
@@ -1063,7 +1094,7 @@ export class DirectModeServer {
                     verified.paymentPayload.payload.presentation.expiresAt,
                 });
                 if (expiryError) {
-                  await this.#config.store.abandonBatchSettlement(
+                  await this.#batchStore.abandonBatchSettlement(
                     claim.attempt.attemptId,
                     `batch presentation expired before protected work: ${expiryError}`,
                     new Date().toISOString(),
@@ -1079,7 +1110,7 @@ export class DirectModeServer {
                   );
                 }
                 const handlerStarted =
-                  await this.#config.store.beginBatchHandler(
+                  await this.#batchStore.beginBatchHandler(
                     batchAttemptId,
                     new Date().toISOString(),
                   );
@@ -1212,7 +1243,7 @@ export class DirectModeServer {
               if (execution.status === "expired") {
                 if (batchAttemptId) {
                   await markBatchHandlerRecoveryRequiredSafely(
-                    this.#config.store,
+                    this.#batchStore,
                     batchAttemptId,
                     `batch presentation expired after durable handler admission but before protected work: ${execution.reason}`,
                   );
@@ -1229,7 +1260,7 @@ export class DirectModeServer {
                 );
               } else if (batchAttemptId) {
                 await markBatchHandlerRecoveryRequiredSafely(
-                  this.#config.store,
+                  this.#batchStore,
                   batchAttemptId,
                   "protected handler threw after batch payment verification",
                 );
@@ -1288,7 +1319,7 @@ export class DirectModeServer {
             }
             if (batchAttemptId) {
               await markBatchHandlerRecoveryRequiredSafely(
-                this.#config.store,
+                this.#batchStore,
                 batchAttemptId,
                 error instanceof Error
                   ? error.message
@@ -1346,14 +1377,14 @@ export class DirectModeServer {
             return batchSettlementRecoveryRequiredResponse(500);
           if (!recoveredBatchHandlerResult) {
             try {
-              await this.#config.store.recordBatchHandlerResult(
+              await this.#batchStore.recordBatchHandlerResult(
                 batchAttemptId,
                 handlerResult,
                 new Date().toISOString(),
               );
             } catch (error) {
               await markBatchHandlerRecoveryRequiredSafely(
-                this.#config.store,
+                this.#batchStore,
                 batchAttemptId,
                 error instanceof Error
                   ? error.message
@@ -1526,7 +1557,7 @@ export class DirectModeServer {
     handlerResult: ProtectedHandlerResult,
   ): Promise<BatchSettlementAttemptRecord> {
     const attempt =
-      await this.#config.store.loadBatchSettlementAttempt(attemptId);
+      await this.#batchStore.loadBatchSettlementAttempt(attemptId);
     if (
       !attempt ||
       attempt.status !== "pending" ||
@@ -1548,12 +1579,12 @@ export class DirectModeServer {
     return this.#config.lockManager.runExclusive(
       attempt.channelId,
       async () => {
-        await this.#config.store.recordBatchHandlerResult(
+        await this.#batchStore.recordBatchHandlerResult(
           attemptId,
           { ...handlerResult, chargedAmount },
           new Date().toISOString(),
         );
-        return (await this.#config.store.loadBatchSettlementAttempt(
+        return (await this.#batchStore.loadBatchSettlementAttempt(
           attemptId,
         ))!;
       },
@@ -1566,10 +1597,10 @@ export class DirectModeServer {
     reason = "pre-handler batch attempt abandoned",
   ): Promise<void> {
     const attempt =
-      await this.#config.store.loadBatchSettlementAttempt(attemptId);
+      await this.#batchStore.loadBatchSettlementAttempt(attemptId);
     if (!attempt) return;
     await this.#config.lockManager.runExclusive(attempt.channelId, () =>
-      this.#config.store.abandonBatchSettlement(
+      this.#batchStore.abandonBatchSettlement(
         attemptId,
         reason,
         new Date().toISOString(),
@@ -1671,11 +1702,11 @@ export class DirectModeServer {
   }
 
   async listClaimableChannels(): Promise<ServerChannelRecord[]> {
-    const channels = await this.#config.store.listChannels();
+    const channels = await this.#batchStore.listChannels();
     const reconciled: ServerChannelRecord[] = [];
     for (const channel of channels) {
       if (channel.status !== "active") continue;
-      if (await this.#config.store.loadOpenClaimAttempt(channel.channelId)) {
+      if (await this.#batchStore.loadOpenClaimAttempt(channel.channelId)) {
         continue;
       }
       const current = await this.#config.lockManager.runExclusive(
@@ -1714,7 +1745,7 @@ export class DirectModeServer {
       }
       const leaseId = channelOperationLeaseId("retirement", channel, reason);
       const now = new Date().toISOString();
-      await this.#config.store.claimChannelOperation({
+      await this.#batchStore.claimChannelOperation({
         leaseId,
         channelId: channel.channelId,
         covenantId: channel.covenantId,
@@ -1724,7 +1755,7 @@ export class DirectModeServer {
         createdAt: now,
         updatedAt: now,
       });
-      await this.#config.store.retireChannel(
+      await this.#batchStore.retireChannel(
         channel.channelId,
         leaseId,
         channel,
@@ -1758,7 +1789,7 @@ export class DirectModeServer {
     const activeAmount = activeChargedAmount(channel);
     const claimAmount = requestedClaimAmount ?? formatSompiString(activeAmount);
     const estimatedFee = await this.#runAdapter("chain-provider", () =>
-      this.#config.chainProvider.estimateClaimFee(channel),
+      this.#batchChain.estimateClaimFee(channel),
     );
     const claim = parseSompiString(claimAmount);
     const fee = parseSompiString(estimatedFee);
@@ -1794,7 +1825,7 @@ export class DirectModeServer {
     claimAmount?: SompiString,
   ): Promise<ClaimExecutionResult> {
     return this.#config.lockManager.runExclusive(channelId, async () => {
-      if (!this.#config.claimBuilder) {
+      if (!this.#batch.claimBuilder) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "claim transaction builder is required",
@@ -1802,7 +1833,7 @@ export class DirectModeServer {
       }
       const preview = await this.#previewClaim(channelId, claimAmount);
       const openAttempt =
-        await this.#config.store.loadOpenClaimAttempt(channelId);
+        await this.#batchStore.loadOpenClaimAttempt(channelId);
       if (openAttempt) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
@@ -1820,7 +1851,7 @@ export class DirectModeServer {
         preview.channel,
         preview.claimAmount,
       );
-      const operationClaim = await this.#config.store.claimChannelOperation({
+      const operationClaim = await this.#batchStore.claimChannelOperation({
         leaseId: operationLeaseId,
         channelId: preview.channel.channelId,
         covenantId: preview.channel.covenantId,
@@ -1833,14 +1864,14 @@ export class DirectModeServer {
       let claim;
       try {
         claim = await this.#runAdapter("claim-builder", () =>
-          this.#config.claimBuilder!.buildClaimTransaction({
+          this.#batch.claimBuilder!.buildClaimTransaction({
             channel: preview.channel,
             claimAmount: preview.claimAmount,
           }),
         );
       } catch (error) {
         if (operationClaim.created) {
-          await this.#config.store.abandonChannelOperation(
+          await this.#batchStore.abandonChannelOperation(
             operationLeaseId,
             "claim construction failed before any broadcast",
             new Date().toISOString(),
@@ -1850,7 +1881,7 @@ export class DirectModeServer {
       }
       const abandonPreparedClaim = async (reason: string) => {
         if (!operationClaim.created) return;
-        await this.#config.store.abandonChannelOperation(
+        await this.#batchStore.abandonChannelOperation(
           operationLeaseId,
           reason,
           new Date().toISOString(),
@@ -1944,10 +1975,10 @@ export class DirectModeServer {
         expected: preview.channel,
       };
       try {
-        await this.#config.store.saveClaimAttempt(attempt);
+        await this.#batchStore.saveClaimAttempt(attempt);
       } catch (error) {
         if (operationClaim.created) {
-          await this.#config.store.abandonChannelOperation(
+          await this.#batchStore.abandonChannelOperation(
             operationLeaseId,
             "claim attempt was not persisted before broadcast",
             new Date().toISOString(),
@@ -1956,7 +1987,7 @@ export class DirectModeServer {
         throw error;
       }
       const broadcast = await this.#runAdapter("chain-provider", () =>
-        this.#config.chainProvider.sendTransaction(claim.transaction),
+        this.#batchChain.sendTransaction(claim.transaction),
       );
       if (
         !/^[0-9a-fA-F]{64}$/.test(broadcast.transactionId) ||
@@ -1975,7 +2006,7 @@ export class DirectModeServer {
         attempt.activeOutpoint,
       );
       if (decision.status === "absent") {
-        await this.#config.store.abandonClaimAttempt(
+        await this.#batchStore.abandonClaimAttempt(
           attempt.attemptId,
           decision.evidence.reason,
         );
@@ -1998,7 +2029,7 @@ export class DirectModeServer {
           : {}),
         status: "broadcast",
       };
-      await this.#config.store.saveClaimAttempt(broadcastAttempt);
+      await this.#batchStore.saveClaimAttempt(broadcastAttempt);
       let resultFinality: SettlementFinality = broadcastAttempt.finality!;
       let continuation: (ChainUtxo & { covenantId: Hash32Hex }) | undefined;
       if (accepted) {
@@ -2045,8 +2076,8 @@ export class DirectModeServer {
           acceptance: continuation!.acceptance,
           status: "accepted",
         };
-        await this.#config.store.saveClaimAttempt(acceptedAttempt);
-        await this.#config.store.applyClaimAttempt(updated, acceptedAttempt);
+        await this.#batchStore.saveClaimAttempt(acceptedAttempt);
+        await this.#batchStore.applyClaimAttempt(updated, acceptedAttempt);
       }
       return {
         channel: updated,
@@ -2059,7 +2090,7 @@ export class DirectModeServer {
 
   async abandonClaimAttempt(channelId: Hash32Hex): Promise<void> {
     await this.#config.lockManager.runExclusive(channelId, async () => {
-      const attempt = await this.#config.store.loadOpenClaimAttempt(channelId);
+      const attempt = await this.#batchStore.loadOpenClaimAttempt(channelId);
       if (!attempt) return;
       if (attempt.status === "accepted") {
         throw new KaspaX402Error(
@@ -2067,14 +2098,14 @@ export class DirectModeServer {
           "accepted claim attempts must be recovered, not abandoned",
         );
       }
-      if (!this.#config.claimReconciler) {
+      if (!this.#batch.claimReconciler) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           "trusted claim reconciler is required before abandonment",
         );
       }
       const reconciliation = await this.#runAdapter("claim-reconciler", () =>
-        this.#config.claimReconciler!.reconcileClaim(attempt),
+        this.#batch.claimReconciler!.reconcileClaim(attempt),
       );
       if (
         !/^[0-9a-f]{64}$/.test(reconciliation.transactionId) ||
@@ -2104,7 +2135,7 @@ export class DirectModeServer {
           "accepted claim attempts must be recovered, not abandoned",
         );
       }
-      await this.#config.store.abandonClaimAttempt(
+      await this.#batchStore.abandonClaimAttempt(
         attempt.attemptId,
         decision.evidence.reason,
       );
@@ -2116,7 +2147,7 @@ export class DirectModeServer {
     input: ClaimRecoveryInput = {},
   ): Promise<ClaimExecutionResult> {
     return this.#config.lockManager.runExclusive(channelId, async () => {
-      const attempt = await this.#config.store.loadOpenClaimAttempt(channelId);
+      const attempt = await this.#batchStore.loadOpenClaimAttempt(channelId);
       if (
         !attempt ||
         (attempt.status !== "accepted" &&
@@ -2234,7 +2265,7 @@ export class DirectModeServer {
           acceptance: continuation.acceptance,
           status: "broadcast",
         };
-        await this.#config.store.saveClaimAttempt(recoveredAttempt);
+        await this.#batchStore.saveClaimAttempt(recoveredAttempt);
       }
       if (recoveredAttempt.status === "broadcast") {
         recoveredAttempt = {
@@ -2243,9 +2274,9 @@ export class DirectModeServer {
           acceptance: continuation.acceptance,
           status: "accepted",
         };
-        await this.#config.store.saveClaimAttempt(recoveredAttempt);
+        await this.#batchStore.saveClaimAttempt(recoveredAttempt);
       }
-      await this.#config.store.applyClaimAttempt(updated, recoveredAttempt);
+      await this.#batchStore.applyClaimAttempt(updated, recoveredAttempt);
       return {
         channel: updated,
         transactionId,
@@ -2766,7 +2797,7 @@ export class DirectModeServer {
         "channel id does not match channel config",
       );
     }
-    let existing = await this.#config.store.loadChannel(payload.channelId);
+    let existing = await this.#batchStore.loadChannel(payload.channelId);
     if (existing && existing.status !== "active") {
       throw new KaspaX402Error(
         "invalid_kaspa_channel_id",
@@ -2859,7 +2890,7 @@ export class DirectModeServer {
     let genesisEvidence = existing?.genesisEvidence;
     if (!existing) {
       const genesis = await this.#runAdapter("chain-provider", () =>
-        this.#config.chainProvider.verifyCovenantGenesis({
+        this.#batchChain.verifyCovenantGenesis({
           utxo,
           payment: paymentPayload,
         }),
@@ -2943,14 +2974,14 @@ export class DirectModeServer {
         payload.activeScriptPublicKey,
       )
     ) {
-      if (!this.#config.topUpVerifier) {
+      if (!this.#batch.topUpVerifier) {
         throw new KaspaX402Error(
           "invalid_kaspa_outpoint",
           "top-up transition verifier is required",
         );
       }
       const transition = await this.#runAdapter("top-up-verifier", () =>
-        this.#config.topUpVerifier!.verifyTopUp({
+        this.#batch.topUpVerifier!.verifyTopUp({
           previous: existing,
           next: initial,
           utxo,
@@ -3187,7 +3218,7 @@ export class DirectModeServer {
       authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
     };
     const verified = await this.#runAdapter("voucher-verifier", () =>
-      this.#config.voucherVerifier.verifyVoucher({
+      this.#batch.voucherVerifier.verifyVoucher({
         channelId,
         clientPublicKey,
         digest: voucherDigest(input),
@@ -3260,7 +3291,7 @@ export class DirectModeServer {
     if (initialExpiryError && initialExpiryError !== "expired_presentation")
       throw batchPresentationExpiryFailure(initialExpiryError);
     const verified = await this.#runAdapter("batch-presentation-verifier", () =>
-      this.#config.batchPresentationVerifier.verifyPresentation({
+      this.#batch.batchPresentationVerifier.verifyPresentation({
         channelId,
         clientPublicKey,
         digest: expectedDigest,
@@ -3283,7 +3314,7 @@ export class DirectModeServer {
     if (currentExpiryError === "expired_presentation") {
       const paymentRequirementsHash = batchPaymentRequirementsHash(accepted);
       const currentPayloadHash = paymentPayloadHash(paymentPayload);
-      const attempt = await this.#config.store.loadBatchSettlementAttempt(
+      const attempt = await this.#batchStore.loadBatchSettlementAttempt(
         batchSettlementAttemptId({
           channelId,
           covenantId: voucher.covenantId,
@@ -3316,10 +3347,10 @@ export class DirectModeServer {
     const timeout = parseSompiString(timeoutDaa);
     const current = parseSompiString(
       await this.#runAdapter("chain-provider", () =>
-        this.#config.chainProvider.getVirtualDaaScore(),
+        this.#batchChain.getVirtualDaaScore(),
       ),
     );
-    const lead = parseSompiString(this.#config.minimumRefundLeadDaa);
+    const lead = parseSompiString(this.#batch.minimumRefundLeadDaa);
     if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
@@ -3332,8 +3363,8 @@ export class DirectModeServer {
         "escrow is too close to its absolute DAA refund threshold",
       );
     }
-    if (this.#config.allowRollingRefundTimeoutDaa) {
-      const horizon = parseSompiString(this.#config.maximumRefundHorizonDaa!);
+    if (this.#batch.allowRollingRefundTimeoutDaa) {
+      const horizon = parseSompiString(this.#batch.maximumRefundHorizonDaa!);
       if (timeout > current + horizon) {
         throw new KaspaX402Error(
           "invalid_kaspa_x402_payload",
@@ -3345,7 +3376,7 @@ export class DirectModeServer {
 
   async #rejectOpenClaimAttempt(channelId: Hash32Hex): Promise<void> {
     const openAttempt =
-      await this.#config.store.loadOpenClaimAttempt(channelId);
+      await this.#batchStore.loadOpenClaimAttempt(channelId);
     if (openAttempt) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
@@ -3362,7 +3393,7 @@ export class DirectModeServer {
     requiredConfirmations = this.#config.confirmationThreshold,
   ): Promise<ChainUtxo & { covenantId: Hash32Hex }> {
     const utxo = await this.#runAdapter("chain-provider", () =>
-      this.#config.chainProvider.getUtxo(outpoint, this.#config.network),
+      this.#batchChain.getUtxo(outpoint, this.#config.network),
     );
     if (!utxo)
       throw new KaspaX402Error(
@@ -3447,7 +3478,7 @@ export class DirectModeServer {
       body: handlerResult.body,
     };
     try {
-      await this.#config.store.commitSettlement({
+      await this.#batchStore.commitSettlement({
         batchAttemptId,
         channel,
         commitment: { ...pending.commitment, response },
@@ -3616,7 +3647,7 @@ export class DirectModeServer {
       createdAt: now,
       updatedAt: now,
     };
-    return this.#config.store.claimBatchSettlement(attempt);
+    return this.#batchStore.claimBatchSettlement(attempt);
   }
 
   #batchSettlementAttemptId(
@@ -3854,7 +3885,7 @@ export class DirectModeServer {
     let broadcast: TransactionBroadcast;
     try {
       broadcast = await this.#runAdapter("chain-provider", () =>
-        this.#config.chainProvider.sendTransaction(transaction),
+        this.#config.chainProvider!.sendTransaction(transaction),
       );
     } catch {
       throw new KaspaX402Error(
@@ -4142,9 +4173,9 @@ export class DirectModeServer {
     if (paymentPayload.accepted.scheme !== "batch-settlement") return undefined;
     const channelId = safePaymentChannelId(paymentPayload);
     if (!channelId) return undefined;
-    const channel = await this.#config.store.loadChannel(channelId);
+    const channel = await this.#batchStore.loadChannel(channelId);
     if (!channel?.lastCommitmentId) return undefined;
-    const record = await this.#config.store.loadCommitment(
+    const record = await this.#batchStore.loadCommitment(
       channel.lastCommitmentId,
     );
     if (!record) return undefined;
@@ -4321,7 +4352,7 @@ export class DirectModeServer {
   }
 
   async #requireChannel(channelId: Hash32Hex): Promise<ServerChannelRecord> {
-    const channel = await this.#config.store.loadChannel(channelId);
+    const channel = await this.#batchStore.loadChannel(channelId);
     if (!channel)
       throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     return channel;
@@ -4331,7 +4362,7 @@ export class DirectModeServer {
     channel: ServerChannelRecord,
   ): Promise<ServerChannelRecord> {
     const update = await this.#runAdapter("chain-provider", () =>
-      this.#config.chainProvider.discoverCovenantLineage({
+      this.#batchChain.discoverCovenantLineage({
         network: channel.channelConfig.network,
         covenantId: channel.covenantId,
         templateId: channel.channelConfig.templateId,
@@ -4356,7 +4387,7 @@ export class DirectModeServer {
     }
 
     if (sameCovenantLineage(channel.lineage, lineage)) {
-      const existingLease = await this.#config.store.loadChannelOperation(
+      const existingLease = await this.#batchStore.loadChannelOperation(
         channel.channelId,
       );
       if (
@@ -4365,7 +4396,7 @@ export class DirectModeServer {
           existingLease.kind === "refund") &&
         stableStringify(existingLease.expected) === stableStringify(channel)
       ) {
-        await this.#config.store.abandonChannelOperation(
+        await this.#batchStore.abandonChannelOperation(
           existingLease.leaseId,
           "authoritative lineage confirms the durable head is unchanged",
           new Date().toISOString(),
@@ -4381,7 +4412,7 @@ export class DirectModeServer {
       "authoritative-lineage",
     );
     const now = new Date().toISOString();
-    await this.#config.store.claimChannelOperation({
+    await this.#batchStore.claimChannelOperation({
       leaseId,
       channelId: channel.channelId,
       covenantId: channel.covenantId,
@@ -4415,7 +4446,7 @@ export class DirectModeServer {
         lineage,
         status: "refunded" as const,
       };
-      await this.#config.store.applyCovenantLineage(channel, terminal, leaseId);
+      await this.#batchStore.applyCovenantLineage(channel, terminal, leaseId);
       return terminal;
     }
 
@@ -4455,7 +4486,7 @@ export class DirectModeServer {
           ? "suspicious"
           : channel.status,
     };
-    await this.#config.store.applyCovenantLineage(channel, reconciled, leaseId);
+    await this.#batchStore.applyCovenantLineage(channel, reconciled, leaseId);
     return reconciled;
   }
 
@@ -4498,11 +4529,11 @@ export class DirectModeServer {
         ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
       });
     }
-    const channel = await this.#config.store.loadChannel(payloadChannelId);
+    const channel = await this.#batchStore.loadChannel(payloadChannelId);
     const acceptedExtra = accepted.extra;
     if (!channel || channel.status !== "active") {
       if (
-        this.#config.allowRollingRefundTimeoutDaa &&
+        this.#batch.allowRollingRefundTimeoutDaa &&
         paymentPayload.payload.type === "deposit-voucher" &&
         !acceptedExtra.channelState &&
         batchRequirementMatchesRoute(
@@ -4714,6 +4745,7 @@ function makeAcceptedRequirement(
     };
   }
 
+  const batch = requireBatch(config);
   if (config.network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
@@ -4739,13 +4771,13 @@ function makeAcceptedRequirement(
     maxTimeoutSeconds: config.maxTimeoutSeconds,
     extra: {
       binding: "kaspa-escrow-v3",
-      templateId: config.templateId,
-      serverPublicKey: config.serverPublicKey,
-      minDepositSompi: advertisedBatchMinimumDeposit(config, amount),
-      claimReserveSompi: config.claimReserveSompi,
+      templateId: batch.templateId,
+      serverPublicKey: batch.serverPublicKey,
+      minDepositSompi: advertisedBatchMinimumDeposit(batch, amount),
+      claimReserveSompi: batch.claimReserveSompi,
       refundTimeoutDaa:
         options.channel?.channelConfig.refundTimeoutDaa ??
-        config.refundTimeoutDaa,
+        batch.refundTimeoutDaa,
       securityContextHash:
         options.securityContextHash ??
         (options.trustedSecurityContext
@@ -4759,7 +4791,7 @@ function makeAcceptedRequirement(
       ...(options.mcpErrorChargeSompi
         ? { mcpErrorChargeSompi: options.mcpErrorChargeSompi }
         : {}),
-      ...(config.claimPolicy ? { claimPolicy: config.claimPolicy } : {}),
+      ...(batch.claimPolicy ? { claimPolicy: batch.claimPolicy } : {}),
       ...(options.channel
         ? { channelState: channelState(options.channel) }
         : {}),
@@ -4774,8 +4806,9 @@ function paymentRequirementSchemes(
   const schemes =
     options.schemes && options.schemes.length > 0
       ? options.schemes
-      : [options.scheme ?? "batch-settlement"];
+      : [options.scheme ?? (config.batch ? "batch-settlement" : "exact")];
   const unique = [...new Set(schemes)];
+  if (unique.includes("batch-settlement")) requireBatch(config);
   if (
     config.exactProfile === "additive" &&
     !config.exactSettlementReconciler &&
@@ -5282,6 +5315,7 @@ function validateChannelTerms(
   accepted: BatchPaymentRequirements,
   channelConfig: ChannelConfig,
 ): void {
+  const batch = requireBatch(config);
   if (config.network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
@@ -5310,8 +5344,8 @@ function validateChannelTerms(
     );
   }
   if (
-    accepted.extra.serverPublicKey !== config.serverPublicKey ||
-    channelConfig.serverPublicKey !== config.serverPublicKey
+    accepted.extra.serverPublicKey !== batch.serverPublicKey ||
+    channelConfig.serverPublicKey !== batch.serverPublicKey
   ) {
     throw new KaspaX402Error(
       "invalid_kaspa_public_key",
@@ -5319,8 +5353,8 @@ function validateChannelTerms(
     );
   }
   if (
-    accepted.extra.templateId !== config.templateId ||
-    channelConfig.templateId !== config.templateId
+    accepted.extra.templateId !== batch.templateId ||
+    channelConfig.templateId !== batch.templateId
   ) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
@@ -5333,15 +5367,15 @@ function validateChannelTerms(
       "refund timeout does not match channel config",
     );
   }
-  if (accepted.extra.claimReserveSompi !== config.claimReserveSompi) {
+  if (accepted.extra.claimReserveSompi !== batch.claimReserveSompi) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
       "claim reserve does not match server config",
     );
   }
   if (
-    !config.allowRollingRefundTimeoutDaa &&
-    accepted.extra.refundTimeoutDaa !== config.refundTimeoutDaa
+    !batch.allowRollingRefundTimeoutDaa &&
+    accepted.extra.refundTimeoutDaa !== batch.refundTimeoutDaa
   ) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
@@ -5356,6 +5390,7 @@ function batchRequirementMatchesRoute(
   paymentAmount?: SompiString,
   mcpErrorChargeSompi?: SompiString,
 ): boolean {
+  const batch = requireBatch(config);
   const amount = paymentAmount ?? config.amount;
   return (
     accepted.network === config.network &&
@@ -5364,23 +5399,23 @@ function batchRequirementMatchesRoute(
     accepted.payTo === config.payTo &&
     accepted.maxTimeoutSeconds === config.maxTimeoutSeconds &&
     accepted.extra.binding === "kaspa-escrow-v3" &&
-    accepted.extra.templateId === config.templateId &&
-    accepted.extra.serverPublicKey === config.serverPublicKey &&
+    accepted.extra.templateId === batch.templateId &&
+    accepted.extra.serverPublicKey === batch.serverPublicKey &&
     accepted.extra.minDepositSompi ===
-      advertisedBatchMinimumDeposit(config, amount) &&
-    accepted.extra.claimReserveSompi === config.claimReserveSompi &&
+      advertisedBatchMinimumDeposit(batch, amount) &&
+    accepted.extra.claimReserveSompi === batch.claimReserveSompi &&
     accepted.extra.mcpErrorChargeSompi === mcpErrorChargeSompi &&
     ((accepted.extra.claimPolicy === undefined &&
-      config.claimPolicy === undefined) ||
+      batch.claimPolicy === undefined) ||
       (accepted.extra.claimPolicy !== undefined &&
-        config.claimPolicy !== undefined &&
+        batch.claimPolicy !== undefined &&
         stableStringify(accepted.extra.claimPolicy) ===
-          stableStringify(config.claimPolicy)))
+          stableStringify(batch.claimPolicy)))
   );
 }
 
 function advertisedBatchMinimumDeposit(
-  config: Pick<ResolvedServerConfig, "minDepositSompi" | "claimReserveSompi">,
+  config: Pick<BatchServerConfig, "minDepositSompi" | "claimReserveSompi">,
   amount: SompiString,
 ): SompiString {
   const configuredMinimum = parseBatchLaneAmount(
@@ -5399,7 +5434,7 @@ function advertisedBatchMinimumDeposit(
   return advertised;
 }
 
-function assertRefundPolicyConfig(config: ResolvedServerConfig): void {
+function assertRefundPolicyConfig(config: ResolvedBatchConfig): void {
   const timeout = parseSompiString(config.refundTimeoutDaa);
   const lead = parseSompiString(config.minimumRefundLeadDaa);
   if (timeout >= KASPA_LOCK_TIME_THRESHOLD) {
@@ -5800,7 +5835,7 @@ function batchSettlementRecoveryRequiredResponse(status = 503): ServerResponse {
 }
 
 async function markBatchHandlerRecoveryRequiredSafely(
-  store: DirectModeServerConfig["store"],
+  store: ServerStateStore,
   attemptId: Hash32Hex,
   reason: string,
 ): Promise<void> {

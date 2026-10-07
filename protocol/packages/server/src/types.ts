@@ -846,6 +846,14 @@ export interface ClaimAttemptStore {
   abandonClaimAttempt(attemptId: Hash32Hex, reason?: string): Promise<void>;
 }
 
+/** Exact requires no channel, voucher, claim or refund persistence. */
+export interface ExactServerStateStore extends ExactPaymentStore, ExactHeadStore, IdempotencyStore {
+  readonly coordinationScope: StoreCoordinationScope;
+  readonly coordinationDomain: string;
+}
+
+export type ExactServerChainProvider = Pick<ServerChainProvider, "sendTransaction">;
+
 export interface ServerStateStore
   extends
     ServerChannelStore,
@@ -917,17 +925,12 @@ export interface ClaimRecoveryInput {
   transactionId?: Hash32Hex;
 }
 
-export interface DirectModeServerConfig {
-  network: NetworkId;
-  asset?: "KAS";
-  payTo: string;
+export interface BatchServerConfig {
   serverPublicKey: PublicKeyHex;
-  serverPrivateKey?: string;
   templateId?: "kaspa-x402-escrow-v5";
   minDepositSompi: SompiString;
   /** Deterministic reserve the client must leave beyond its signed claim ceiling. */
   claimReserveSompi: SompiString;
-  amount: SompiString;
   refundTimeoutDaa: SompiString;
   /** Minimum remaining DAA-score distance before accepting a voucher. */
   minimumRefundLeadDaa?: SompiString;
@@ -935,12 +938,23 @@ export interface DirectModeServerConfig {
   allowRollingRefundTimeoutDaa?: boolean;
   /** Required when rolling timeouts are enabled. */
   maximumRefundHorizonDaa?: SompiString;
-  maxTimeoutSeconds?: number;
-  store: ServerStateStore;
-  chainProvider: ServerChainProvider;
-  addressCodec: AddressCodec;
   voucherVerifier: VoucherVerifier;
   batchPresentationVerifier: BatchPresentationVerifier;
+  claimPolicy?: ClaimPolicy;
+  claimBuilder?: ClaimTransactionBuilder;
+  claimReconciler?: ClaimReconciler;
+  topUpVerifier?: TopUpVerifier;
+}
+
+export interface ExactServerConfig {
+  network: NetworkId;
+  asset?: "KAS";
+  payTo: string;
+  amount: SompiString;
+  maxTimeoutSeconds?: number;
+  store: ExactServerStateStore;
+  chainProvider: ExactServerChainProvider;
+  addressCodec: AddressCodec;
   exactTransactionVerifier?: ExactTransactionVerifier;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
@@ -978,20 +992,29 @@ export interface DirectModeServerConfig {
   exactProfile?: ExactProfile;
   minimumExactAdditiveThresholdSompi?: SompiString;
   lockManager?: ChannelLockManager;
-  claimPolicy?: ClaimPolicy;
-  claimBuilder?: ClaimTransactionBuilder;
-  claimReconciler?: ClaimReconciler;
   requirePaymentIdentifier?: boolean;
   allowMainnet?: boolean;
   acceptedFinality?: Exclude<SettlementFinality, "broadcast">;
   /** Deployment policy; the Testnet-10 launch profile is 30. */
   confirmationThreshold: number;
-  topUpVerifier?: TopUpVerifier;
   /** Public admission, concurrency, and adapter timeout policy. */
   publicBoundaryPolicy?: Partial<PublicBoundaryPolicy>;
   /** Controller shared by server instances in one process or isolate. */
   publicBoundaryController?: PublicBoundaryController;
 }
+
+/** Omit batch for exact-only use. Both schemes share one atomic replay store. */
+export type DirectModeServerConfig =
+  | (ExactServerConfig & (
+      | { batch?: undefined }
+      | { batch: BatchServerConfig; store: ServerStateStore; chainProvider: ServerChainProvider }
+    ))
+  | (Omit<ExactServerConfig, "chainProvider"> & {
+      exactProfile: "hash-chain-additive";
+      batch?: undefined;
+      /** This profile requires the payer to broadcast. */
+      chainProvider?: undefined;
+    });
 
 export interface BuildPaymentRequiredOptions {
   resource: ResourceInfo;

@@ -6,7 +6,8 @@ import {
 } from '@kaspa-x402/client';
 import { decodePaymentRequiredHeader, validateKaspaPaymentRequirement } from '@kaspa-x402/core';
 import { scriptPublicKeyForAddress, addressForScriptPublicKey } from '@kaspa-x402/adapters/native';
-import { HASH_CHAIN_CALLER_HEADER } from '../../../packages/demo-gateway/src/hash-chain-proxy.ts';
+// Demo transport header, shared on the wire with the gateway (not part of x402).
+const HASH_CHAIN_CALLER_HEADER = 'X-KASPA-X402-DEMO-CALLER';
 export { addressForScriptPublicKey, scriptPublicKeyForAddress };
 
 export const DEMO_FEE_SOMPI = '1000000';
@@ -58,22 +59,31 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
     return funding;
   }
   const client = new DirectModeClient({
+    addressCodec: { scriptPublicKeyForAddress },
     fundingProvider: {
-      networkId: 'kaspa:testnet-10', sourceKind: 'hot-wallet',
-      async getPublicIdentity() { return { address, publicKey: payerPublicKey }; },
+      networkId: 'kaspa:testnet-10',
+      sourceKind: 'hot-wallet',
+      async getPublicIdentity() {
+        return { address, publicKey: payerPublicKey };
+      },
       async claimHashChainGrant(request) {
         // Check the wallet before consuming the demo's only available grant.
         await prepareFunding(quote.accepted.amount);
-        return claimHashChainGrantViaHttp(request, (digest) =>
-          Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), key)).toString('hex'), fetcher);
+        return claimHashChainGrantViaHttp(
+          request,
+          (digest) => Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), key)).toString('hex'),
+          fetcher,
+        );
       },
       async payHashChainTransaction(request) {
         const saved = attempts.get(request.attemptId);
         if (saved) return saved;
         const selected = await prepareFunding(request.amount);
-        const result = signHashChainExactTransaction({ request,
+        const result = signHashChainExactTransaction({
+          request,
           funding: { ...selected, scriptPublicKey: payerScript, privateKey, payerAddress: address },
-          feeSompi: DEMO_FEE_SOMPI });
+          feeSompi: DEMO_FEE_SOMPI,
+        });
         attempts.set(request.attemptId, result);
         return result;
       },
@@ -84,21 +94,31 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
           const id = transaction.id;
           if (submitted.has(id)) return { transactionId: id };
           const result = await rpc.submitTransaction({ transaction, allowOrphan: false });
-          if (String(result.transactionId).toLowerCase() !== id.toLowerCase()) throw new Error('Broadcast returned a different transaction ID.');
+          if (String(result.transactionId).toLowerCase() !== id.toLowerCase())
+            throw new Error('Broadcast returned a different transaction ID.');
           submitted.add(id);
           return { transactionId: id };
-        } finally { transaction.free(); }
+        } finally {
+          transaction.free();
+        }
       },
     },
-    signer: {}, store: new MemoryChannelStore(), addressCodec: { scriptPublicKeyForAddress },
-    fundingPolicy: { allowedOrigins: [origin], allowedExactProfiles: ['hash-chain-additive'],
-      maximumExactAmountSompi: quote.accepted.amount, allowedPayTo: [quote.accepted.payTo] },
+    store: new MemoryChannelStore(),
+    fundingPolicy: {
+      allowedOrigins: [origin],
+      allowedExactProfiles: ['hash-chain-additive'],
+      maximumExactAmountSompi: quote.accepted.amount,
+      allowedPayTo: [quote.accepted.payTo],
+    },
     hashChainGrantDestinationPolicy: { allowedOrigins: [origin] },
     confirmationThreshold: 30,
     fetch: async (input, init) => {
       if (firstQuote && !new Headers(init?.headers).has('PAYMENT-SIGNATURE')) {
         firstQuote = false;
-        const response = new Response('{}', { status: 402, headers: { 'PAYMENT-REQUIRED': quote.header } });
+        const response = new Response('{}', {
+          status: 402,
+          headers: { 'PAYMENT-REQUIRED': quote.header },
+        });
         Object.defineProperty(response, 'url', { value: input });
         return response;
       }

@@ -21,7 +21,7 @@
     "dist"
   ],
   "scripts": {
-    "build": "npm --workspace @kaspa-x402/server run build && npm run build:self",
+    "build": "node ../../scripts/build-packages.mjs @kaspa-x402/adapters",
     "build:self": "tsup src/index.ts src/kaspa-native.ts --format esm --dts --clean",
     "test": "npm run build && npm run test:self",
     "typecheck": "tsc --noEmit",

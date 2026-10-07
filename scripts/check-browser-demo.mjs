@@ -12,7 +12,7 @@ import {
   encodePaymentSignatureHeader,
   validatePaymentRetry,
 } from "../protocol/packages/core/dist/index.js";
-import { SITE_DIST } from "./site-config.mjs";
+import { SITE_DIST } from "../site/scripts/site-config.mjs";
 import { createHashChainDemoFixture, TEST_PAYER_KEY } from "./hash-chain-demo-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");

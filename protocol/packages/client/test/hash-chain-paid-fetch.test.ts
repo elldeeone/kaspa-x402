@@ -61,27 +61,42 @@ describe("hash-chain paidFetch", () => {
       },
     } as unknown as DirectModeClientOptions["fundingProvider"];
     const client = new DirectModeClient({
-      fundingProvider: provider, store: new MemoryChannelStore(),
-      signer: {} as DirectModeClientOptions["signer"],
       addressCodec: {
         scriptPublicKeyForAddress: () => vector.paymentPayload.accepted.extra.payToScriptPublicKey,
         encodeScriptAddress: () => vector.paymentPayload.accepted.payTo,
       },
+      fundingProvider: provider,
+      store: new MemoryChannelStore(),
       confirmationThreshold: 30,
-      fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"], allowedOrigins: ["https://api.example.test"] },
+      fundingPolicy: {
+        allowedExactProfiles: ["hash-chain-additive"],
+        allowedOrigins: ["https://api.example.test"],
+      },
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
       fetch: async (url, init) => {
         const headers = init?.headers as Record<string, string> | undefined;
-        const paid = headers && Object.keys(headers).some((key) => key.toLowerCase() === "payment-signature");
-        if (!paid) return {
-          status: 402, url, redirected: false,
-          headers: { get: (key: string) => key.toLowerCase() === "payment-required" ? equivalentHeader : null },
-        };
+        const paid =
+          headers && Object.keys(headers).some((key) => key.toLowerCase() === "payment-signature");
+        if (!paid)
+          return {
+            status: 402,
+            url,
+            redirected: false,
+            headers: {
+              get: (key: string) =>
+                key.toLowerCase() === "payment-required" ? equivalentHeader : null,
+            },
+          };
         paidRequests++;
         if (paidRequests === 1) throw new Error("merchant response lost");
         return {
-          status: 200, url, redirected: false,
-          headers: { get: (key: string) => key.toLowerCase() === "payment-response" ? vector.headers.paymentResponse : null },
+          status: 200,
+          url,
+          redirected: false,
+          headers: {
+            get: (key: string) =>
+              key.toLowerCase() === "payment-response" ? vector.headers.paymentResponse : null,
+          },
         };
       },
     });
@@ -139,14 +154,17 @@ describe("hash-chain paidFetch", () => {
         },
       } as unknown as DirectModeClientOptions["fundingProvider"];
       const client = new DirectModeClient({
-        fundingProvider: provider, store,
-        signer: {} as DirectModeClientOptions["signer"],
         addressCodec: {
           scriptPublicKeyForAddress: () => vector.paymentPayload.accepted.extra.payToScriptPublicKey,
           encodeScriptAddress: () => vector.paymentPayload.accepted.payTo,
         },
+        fundingProvider: provider,
+        store,
         confirmationThreshold: 30,
-        fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"], allowedOrigins: ["https://api.example.test"] },
+        fundingPolicy: {
+          allowedExactProfiles: ["hash-chain-additive"],
+          allowedOrigins: ["https://api.example.test"],
+        },
         hashChainGrantDestinationPolicy: grantDestinationPolicy,
         exactPaymentReconciler: {
           async reconcileExactPayment(attempt) {
@@ -172,17 +190,16 @@ describe("hash-chain paidFetch", () => {
         fetch: async (url, init) => {
           paidRequests++;
           const headers = init?.headers as Record<string, string>;
-          expect(Object.keys(headers).some(
-            (key) => key.toLowerCase() === "payment-signature",
-          )).toBe(true);
+          expect(Object.keys(headers).some((key) => key.toLowerCase() === "payment-signature")).toBe(
+            true,
+          );
           return {
             status: serverRecoveryReady ? 200 : 402,
             url,
             redirected: false,
             headers: {
-              get: (key: string) => key.toLowerCase() === "payment-response"
-                ? vector.headers.paymentResponse
-                : null,
+              get: (key: string) =>
+                key.toLowerCase() === "payment-response" ? vector.headers.paymentResponse : null,
             },
           };
         },
@@ -258,15 +275,17 @@ describe("hash-chain paidFetch", () => {
           }
         }
         const client = new DirectModeClient({
+          addressCodec: {
+            scriptPublicKeyForAddress: () => vector.paymentPayload.accepted.extra.payToScriptPublicKey,
+            encodeScriptAddress: () => vector.paymentPayload.accepted.payTo,
+          },
           fundingProvider: {
             networkId: "kaspa:testnet-10",
             sourceKind: "hot-wallet",
             async getPublicIdentity() {
               return {
                 address: vector.paymentPayload.payload.payerAddress,
-                publicKey: Buffer.from(schnorr.getPublicKey(
-                  Buffer.from(payerKey, "hex"),
-                )).toString("hex"),
+                publicKey: Buffer.from(schnorr.getPublicKey(Buffer.from(payerKey, "hex"))).toString("hex"),
               };
             },
             async claimHashChainGrant(request) {
@@ -279,12 +298,6 @@ describe("hash-chain paidFetch", () => {
             async finalizeExactPaymentAttempt() {},
           } as unknown as DirectModeClientOptions["fundingProvider"],
           store: new InspectingStore(),
-          signer: {} as DirectModeClientOptions["signer"],
-          addressCodec: {
-            scriptPublicKeyForAddress: () =>
-              vector.paymentPayload.accepted.extra.payToScriptPublicKey,
-            encodeScriptAddress: () => vector.paymentPayload.accepted.payTo,
-          },
           confirmationThreshold: 30,
           fundingPolicy: {
             allowedExactProfiles: ["hash-chain-additive"],
@@ -318,19 +331,26 @@ describe("hash-chain paidFetch", () => {
       async sendTransaction() { sends++; throw new Error("send must not run"); },
     } as unknown as DirectModeClientOptions["fundingProvider"];
     const client = new DirectModeClient({
-      fundingProvider: provider, store: new MemoryChannelStore(),
-      signer: {} as DirectModeClientOptions["signer"],
       addressCodec: {
         scriptPublicKeyForAddress: () => vector.paymentPayload.accepted.extra.payToScriptPublicKey,
         encodeScriptAddress: () => vector.paymentPayload.accepted.payTo,
       },
+      fundingProvider: provider,
+      store: new MemoryChannelStore(),
       confirmationThreshold: 30,
-      fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"], allowedOrigins: ["https://api.example.test"] },
+      fundingPolicy: {
+        allowedExactProfiles: ["hash-chain-additive"],
+        allowedOrigins: ["https://api.example.test"],
+      },
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
       fetch: async (url) => ({
-        status: 402, url, redirected: false,
-        headers: { get: (key: string) => key.toLowerCase() === "payment-required"
-          ? encodePaymentRequiredHeader(malicious) : null },
+        status: 402,
+        url,
+        redirected: false,
+        headers: {
+          get: (key: string) =>
+            key.toLowerCase() === "payment-required" ? encodePaymentRequiredHeader(malicious) : null,
+        },
       }),
     });
     await expect(client.paidFetch("https://api.example.test/hash-chain/file", {
@@ -398,30 +418,28 @@ describe("hash-chain paidFetch", () => {
     const store = new LegacyStore();
     let requests = 0;
     const client = new DirectModeClient({
+      addressCodec: {} as DirectModeClientOptions["addressCodec"],
       fundingProvider: {
         networkId: "kaspa:testnet-10",
         sourceKind: "hot-wallet",
       } as DirectModeClientOptions["fundingProvider"],
       store,
-      signer: {} as DirectModeClientOptions["signer"],
-      addressCodec: {} as DirectModeClientOptions["addressCodec"],
       confirmationThreshold: 30,
       fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"] },
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
       fetch: async (url, init) => {
         requests++;
         const headers = init?.headers as Record<string, string>;
-        expect(Object.keys(headers).some(
-          (key) => key.toLowerCase() === "payment-signature",
-        )).toBe(true);
+        expect(Object.keys(headers).some((key) => key.toLowerCase() === "payment-signature")).toBe(
+          true,
+        );
         return {
           status: 200,
           url,
           redirected: false,
           headers: {
-            get: (key: string) => key.toLowerCase() === "payment-response"
-              ? vector.headers.paymentResponse
-              : null,
+            get: (key: string) =>
+              key.toLowerCase() === "payment-response" ? vector.headers.paymentResponse : null,
           },
         };
       },

@@ -1,6 +1,6 @@
 # kaspa-x402.org Site
 
-This directory contains source assets for the static standards reference site.
+This workspace owns the static standards reference site, browser demo and build tools.
 The generated output lives in `site/dist/` and is ignored.
 
 Development artifacts and the browser bundle use escrow-v5/head-v2 with
@@ -9,14 +9,22 @@ Published RC2 and its hosted gateway still use escrow-v4/head-v1. Use a matching
 development server and fresh covenant state when testing the new templates;
 see the [signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition).
 
-Build locally:
+Install once with `npm ci` at the repository root. Build this host independently:
 
 ```sh
-npm run site:build
-npm run site:check
+cd site
+npm run build
+npm run check
 ```
 
-Preview locally without Cloudflare credentials:
+The build consumes protocol package exports plus the explicitly published
+specifications, schemas, contracts, vectors and docs listed in
+[scripts/site-config.mjs](scripts/site-config.mjs). It does not build the gateway.
+The browser Buffer/SHA-256 adapters stay in this host. Root scripts delegate
+to this workspace; `npm run check:host-isolation` at the root checks a copy
+with the gateway removed and only this host's dependency graph installed.
+
+Preview from the repository root without Cloudflare credentials:
 
 ```sh
 npm run site:serve

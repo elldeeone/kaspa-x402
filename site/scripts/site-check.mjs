@@ -23,17 +23,17 @@ import {
   VENDORED_KASPA_WASM,
 } from "./site-config.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const outDir = path.join(root, SITE_DIST);
 const errors = [];
 const requireClean = process.argv.includes("--require-clean");
 const siteScriptFiles = [
-  "scripts/site-build.mjs",
-  "scripts/site-markdown.mjs",
-  "scripts/site-check.mjs",
-  "scripts/site-config.mjs",
-  "scripts/site-inputs.mjs",
-  "scripts/site-serve.mjs",
+  "site/scripts/site-build.mjs",
+  "site/scripts/site-markdown.mjs",
+  "site/scripts/site-check.mjs",
+  "site/scripts/site-config.mjs",
+  "site/scripts/site-inputs.mjs",
+  "site/scripts/site-serve.mjs",
 ];
 
 if (!fs.existsSync(outDir)) {
@@ -539,7 +539,8 @@ function trackedFiles(relativeDir) {
 }
 
 function git(args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  // Preserve the leading status column in porcelain output.
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trimEnd();
 }
 
 function listFiles(dir) {

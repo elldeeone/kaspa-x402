@@ -41,7 +41,8 @@ installs its own lockfile and runs `verify` there.
    The optional [hash-chain exact profile](spec/kaspa-hash-chain-exact-v1.md)
    builds on the exact scheme. Schemas define wire shape; the specifications
    also define signatures, request binding, settlement and replay rules.
-2. Run the [mock HTTP, MCP and recovery examples](docs/adoption-examples.md).
+2. Choose [exact-only or combined SDK configuration](docs/integration.md), then
+   run the [mock HTTP, MCP and recovery examples](docs/adoption-examples.md).
    They show SDK integration without funded transactions.
 3. Connect the server interfaces to a trusted chain source, persistent stores
    and the application's actual request/authentication context. Use
@@ -53,6 +54,10 @@ installs its own lockfile and runs `verify` there.
    [compatibility experiment](prototypes/x402-exact/README.md). It exercises
    `@x402/core` 2.28.0 through real HTTP interfaces with simulated chain settlement.
    Its server attestation is experimental; it is not a production facilitator.
+
+See the [capability map](docs/native-profile-boundary.md),
+[glossary](CONTEXT.md) and [evidence index](docs/evidence.md) for one place to
+check supported profiles, terminology and the limits of each proof.
 
 ## Source map
 
@@ -67,7 +72,7 @@ installs its own lockfile and runs `verify` there.
 | `packages/adapters/` | Exact verification, native addresses, REST/PNN clients and chain evidence. |
 | `packages/facilitator/`, `packages/cli/` | Local facilitator service and inspection/recovery tooling. |
 | `examples/`, `prototypes/` | Mock integration examples and bounded upstream compatibility experiment. |
-| `test-support/` | Store contract tests shared with host implementations. |
+| `test-support/` | Shared store contracts and deterministic test fixture setup. |
 | `scripts/`, `tools/` | Fixture generation, offline/live proofs and pinned Rust consensus harnesses. |
 | `docs/` | Integration contracts, threat model, release/evidence limits and reproduction instructions. |
 

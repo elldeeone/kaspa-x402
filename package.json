@@ -21,10 +21,10 @@
   "scripts": {
     "build": "npm --prefix protocol run build && npm --workspace @kaspa-x402/demo-gateway run build:self",
     "test": "npm --prefix protocol test && npm --workspace @kaspa-x402/demo-gateway run build:self && npm --workspace @kaspa-x402/demo-gateway run test:self && node --test scripts/proof-hosted-exact.test.mjs",
-    "site:build": "node scripts/site-build.mjs",
-    "site:check": "node --test scripts/site-markdown.test.mjs && node scripts/site-check.mjs",
-    "site:deploy:check": "node scripts/site-build.mjs --require-clean && node --test scripts/site-markdown.test.mjs && node scripts/site-check.mjs --require-clean",
-    "site:serve": "npm run site:build && node scripts/site-serve.mjs",
+    "site:build": "npm --workspace @kaspa-x402/site run build",
+    "site:check": "npm --workspace @kaspa-x402/site run check",
+    "site:deploy:check": "npm --workspace @kaspa-x402/site run deploy:check",
+    "site:serve": "npm --workspace @kaspa-x402/site run serve",
     "check:browser-demo": "npm --workspace @kaspa-x402/core run build && npm run site:build && node scripts/check-browser-demo.mjs",
     "check:pnn-browser": "node scripts/check-pnn-browser.mjs",
     "check:vendor-wasm": "node scripts/check-vendored-kaspa-wasm.mjs",
@@ -32,7 +32,7 @@
     "check:demo-gateway": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/demo-gateway run build && node scripts/check-demo-gateway.mjs",
     "check:admin-security": "node scripts/check-admin-cli-security.mjs",
     "check:hosted-offer-pins": "node scripts/check-hosted-offer-pins.mjs",
-    "check:site-input-guards": "node --test scripts/site-inputs.test.mjs",
+    "check:site-input-guards": "node --test site/scripts/site-inputs.test.mjs",
     "demo:exact-heads": "node scripts/demo-exact-heads.mjs",
     "demo:hash-chain": "node scripts/hash-chain-demo.mjs",
     "check:hash-chain-demo": "npm run site:build && node --test scripts/hash-chain-demo.test.mjs",
@@ -42,7 +42,7 @@
     "validate:tx-v1-consensus": "node protocol/scripts/validate-tx-v1-consensus.mjs",
     "validate:reorg-consensus": "node protocol/scripts/validate-reorg-consensus.mjs",
     "proof:offline": "node protocol/scripts/proof-offline.mjs",
-    "proof:mainnet:offline": "node protocol/scripts/proof-mainnet-shapes.mjs",
+    "check:address-transaction-compatibility": "node protocol/scripts/check-address-transaction-compatibility.mjs",
     "proof:live:check": "node protocol/scripts/proof-live-testnet.mjs --check",
     "proof:hosted-exact": "node scripts/proof-hosted-exact.mjs",
     "pack:public:dry-run": "npm --prefix protocol run pack:public:dry-run --",
@@ -70,11 +70,13 @@
     "check:sighash-consensus-vector": "npm --prefix protocol run check:sighash-consensus-vector --",
     "test:x402-compatibility": "npm --prefix protocol run test:x402-compatibility --",
     "check:x402-compatibility": "npm --prefix protocol run check:x402-compatibility --",
-    "check:protocol-isolation": "node scripts/check-protocol-isolation.mjs"
+    "check:protocol-isolation": "node scripts/check-protocol-isolation.mjs",
+    "check:host-isolation": "node scripts/check-host-isolation.mjs"
   },
   "workspaces": [
     "protocol/packages/*",
-    "packages/*"
+    "packages/*",
+    "site"
   ],
   "overrides": {
     "esbuild": "0.28.1"
@@ -87,13 +89,9 @@
     "@types/node": "^24.0.0",
     "@x402/core": "2.28.0",
     "ajv": "^8.17.1",
-    "buffer": "^6.0.3",
-    "esbuild": "0.28.1",
-    "markdown-it": "^15.0.2",
     "tsup": "^8.3.5",
     "typescript": "^5.8.3",
     "vitest": "^4.1.11",
-    "wrangler": "^4.120.0",
     "blakejs": "1.2.1"
   }
 }

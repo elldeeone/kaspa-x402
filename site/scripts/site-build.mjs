@@ -28,7 +28,7 @@ import {
   VECTOR_GROUPS,
 } from "./site-config.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const outDir = path.join(root, SITE_DIST);
 const requireClean = process.argv.includes("--require-clean");
 
@@ -48,12 +48,12 @@ const publishedArtifactFiles = new Set([
   ...vectorFiles,
 ]);
 const siteScriptFiles = [
-  "scripts/site-build.mjs",
-  "scripts/site-markdown.mjs",
-  "scripts/site-check.mjs",
-  "scripts/site-config.mjs",
-  "scripts/site-inputs.mjs",
-  "scripts/site-serve.mjs",
+  "site/scripts/site-build.mjs",
+  "site/scripts/site-markdown.mjs",
+  "site/scripts/site-check.mjs",
+  "site/scripts/site-config.mjs",
+  "site/scripts/site-inputs.mjs",
+  "site/scripts/site-serve.mjs",
 ];
 const packages = readPackages();
 const publicPackages = packages.filter((pkg) =>
@@ -853,6 +853,10 @@ function rewriteMarkdownHref(href, sourceDir) {
     const normalized = artifactRoute(path.posix.normalize(`${sourceDir}/${target}`));
     if (htmlSourceFiles.has(normalized))
       return `/${htmlRoute(normalized)}/${suffix}`;
+    // Repository-only integration material is not a published site artifact.
+    const repositoryPath = path.posix.normalize(`${sourceDir}/${target}`);
+    if (fs.existsSync(path.join(root, repositoryPath)))
+      return `https://github.com/elldeeone/kaspa-x402/blob/${commit}/${repositoryPath}${suffix}`;
     return `/${normalized}${suffix}`;
   }
   const normalized = artifactRoute(path.posix.normalize(`${sourceDir}/${target}`));
@@ -1079,7 +1083,8 @@ function sha256File(file) {
 }
 
 function git(args) {
-  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trim();
+  // Preserve the leading status column in porcelain output.
+  return execFileSync("git", args, { cwd: root, encoding: "utf8" }).trimEnd();
 }
 
 function normalizeRepositoryUrl(value) {

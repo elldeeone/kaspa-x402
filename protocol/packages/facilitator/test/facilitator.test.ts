@@ -1,16 +1,16 @@
+import { acceptedChainEvidence, fakeAuthorizationEvidence } from "../../../test-support/chain-evidence.js";
+import { serverTestConfig, type ServerTestConfig } from "../../../test-support/server-config.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
   KASPA_X402_RESOURCE_BUDGET,
   X402_VERSION,
-  type AcceptedTransactionEvidence,
   batchPaymentRequirementsHash,
   batchPresentationDigest,
   bindRequestHashToTrustedContext,
   channelId,
   exactAuthorizationExpiresAt,
   exactRequestAuthorizationDigest,
-  exactRequestAuthorizationId,
   readKaspaSettlementExtension,
   paymentIdentifierExtension,
   sha256Hex,
@@ -39,7 +39,6 @@ import {
   type AddressCodec,
   type ChainUtxo,
   type CovenantGenesisVerificationRequest,
-  type DirectModeServerConfig,
   type ServerChainProvider,
   type ServerChannelRecord,
   type SendTransactionResult,
@@ -61,28 +60,6 @@ const RESOURCE = { url: "https://api.example.test/data" };
 const REQUEST_HASH = "99".repeat(32);
 const OTHER_REQUEST_HASH = "98".repeat(32);
 const CONFIRMATION_THRESHOLD = 30;
-
-function acceptedChainEvidence(
-  transactionId: string,
-): AcceptedTransactionEvidence {
-  const checkpointBlueScore = 1_000n;
-  return {
-    status: "accepted",
-    transactionId: transactionId.toLowerCase(),
-    acceptingBlockHash: sha256Hex(
-      `accepting-block:${transactionId.toLowerCase()}`,
-    ),
-    acceptingBlockBlueScore: (
-      checkpointBlueScore - BigInt(CONFIRMATION_THRESHOLD) + 1n
-    ).toString(),
-    confirmationCount: CONFIRMATION_THRESHOLD,
-    checkpoint: {
-      blockHash: "ee".repeat(32),
-      blueScore: checkpointBlueScore.toString(),
-      daaScore: "1000",
-    },
-  };
-}
 
 describe("direct-mode facilitator", () => {
   it("accepts the facilitator byte maximum and rejects maximum plus one", async () => {
@@ -1226,7 +1203,7 @@ describe("direct-mode facilitator", () => {
 });
 
 function makeFacilitator(
-  overrides: Partial<DirectModeServerConfig> = {},
+  overrides: Partial<ServerTestConfig> = {},
   facilitatorOptions: { allowMainnet?: boolean } = {},
 ) {
   const {
@@ -1239,7 +1216,7 @@ function makeFacilitator(
     verifyExactPayment(
       request: Parameters<
         NonNullable<
-          DirectModeServerConfig["exactTransactionVerifier"]
+          ServerTestConfig["exactTransactionVerifier"]
         >["verifyExactPayment"]
       >[0],
     ) {
@@ -1260,7 +1237,7 @@ function makeFacilitator(
       overrides,
       "exactTransactionVerifier",
     ) && suppliedExactVerifier === undefined;
-  const server = new DirectModeServer({
+  const server = new DirectModeServer(serverTestConfig({
     confirmationThreshold: CONFIRMATION_THRESHOLD,
     network: "kaspa:testnet-10",
     payTo: "kaspatest:payout",
@@ -1298,7 +1275,7 @@ function makeFacilitator(
             };
           },
         },
-  });
+  }));
   (server as unknown as { __testChain?: FakeChainProvider }).__testChain =
     chain;
   return {
@@ -1377,15 +1354,6 @@ function fakeExactAuthorization(
       expiresAt,
     }),
     signature: "ab".repeat(64),
-  };
-}
-
-function fakeAuthorizationEvidence(authorization: ExactRequestAuthorization) {
-  return {
-    authorizationId: exactRequestAuthorizationId(authorization),
-    digest: authorization.digest,
-    inputIndex: authorization.inputIndex,
-    publicKey: CLIENT_KEY,
   };
 }
 

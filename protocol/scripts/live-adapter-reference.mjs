@@ -255,16 +255,10 @@ export async function runLiveProof(context) {
     const baseServerConfig = {
       network: context.network,
       payTo: serverPayoutAddress,
-      serverPublicKey: serverChannelKey.publicKey,
       amount: EXACT_AMOUNT,
-      minDepositSompi: BATCH_DEPOSIT_AMOUNT,
-      claimReserveSompi: DEFAULT_FEE_SOMPI.toString(),
-      refundTimeoutDaa: initialRefundTimeoutDaa,
       chainProvider: chain,
       lockManager: serverLockManager,
       addressCodec,
-      voucherVerifier,
-      batchPresentationVerifier,
       exactTransactionVerifier,
       exactSettlementReconciler,
       acceptedFinality: "accepted",
@@ -272,6 +266,14 @@ export async function runLiveProof(context) {
       publicBoundaryPolicy: {
         adapterTimeoutMs: LIVE_ADAPTER_TIMEOUT_MS,
       },
+    };
+    const batchConfig = {
+      serverPublicKey: serverChannelKey.publicKey,
+      minDepositSompi: BATCH_DEPOSIT_AMOUNT,
+      claimReserveSompi: DEFAULT_FEE_SOMPI.toString(),
+      refundTimeoutDaa: initialRefundTimeoutDaa,
+      voucherVerifier,
+      batchPresentationVerifier,
       topUpVerifier: {
         verifyTopUp(request) {
           return verifyPersistedBatchTopUp(batchTopUpsByOutpoint, request);
@@ -301,7 +303,6 @@ export async function runLiveProof(context) {
       ...baseServerConfig,
       store: serverStore,
       exactProfile: "standard-native",
-      claimBuilder,
     });
     const additiveHeads = [];
     for (let index = 0; index < 2; index += 1) {
@@ -330,25 +331,17 @@ export async function runLiveProof(context) {
       exactHeadReconciler,
     });
     const client = new DirectModeClient({
-      fundingProvider,
-      signer,
-      store: clientStore,
       addressCodec,
-      refundAddress: fundingAddress,
+      fundingProvider,
+      store: clientStore,
       fundingPolicy: {
         requiredSource: "hot-wallet",
         batchPayment: {
-          maximumBatchChargeSompi: (
-            BigInt(BATCH_DEPOSIT_AMOUNT) * 2n
-          ).toString(),
+          maximumBatchChargeSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 2n).toString(),
           maximumInitialDepositSompi: BATCH_DEPOSIT_AMOUNT,
           maximumTopUpSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 2n).toString(),
-          maximumCumulativeAuthorizationSompi: (
-            BigInt(BATCH_DEPOSIT_AMOUNT) * 10n
-          ).toString(),
-          maximumTotalExposureSompi: (
-            BigInt(BATCH_DEPOSIT_AMOUNT) * 12n
-          ).toString(),
+          maximumCumulativeAuthorizationSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 10n).toString(),
+          maximumTotalExposureSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 12n).toString(),
           minimumRefundLeadDaa: "1",
           maximumRefundHorizonDaa: (timeoutDelta + 1n).toString(),
           allowedOrigins: ["https://live.kaspa-x402.local"],
@@ -358,38 +351,42 @@ export async function runLiveProof(context) {
           allowedFundingSources: ["hot-wallet"],
         },
       },
-      refundBuilder: {
-        async buildRefundTransaction(request) {
-          return buildPreparedRefund({
-            ...request,
-            refundAddress: fundingAddress,
-            rpc,
-            sdk,
-            addressCodec,
-            pendingBroadcasts,
-            batchArtifactsByTxid,
-            dataDir,
-          });
-        },
-      },
-      refundReconciler: makeRefundReconciler({
-        rpc,
-        refundAddress: fundingAddress,
-        batchArtifactsByTxid,
-      }),
       supportedNetworks: [context.network],
       confirmationThreshold: CONFIRMATION_THRESHOLD,
-      verifyVoucherSignature(voucher, channel) {
-        const digest = voucherDigest({
-          network: channel.config.network,
-          covenantId: channel.covenantId,
-          authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
-        });
-        return schnorr.verify(
-          hexToBytes(voucher.signature, { expectedLength: 64 }),
-          hexToBytes(digest, { expectedLength: 32 }),
-          hexToBytes(channel.clientPublicKey, { expectedLength: 32 }),
-        );
+      batch: {
+        signer,
+        refundAddress: fundingAddress,
+        refundBuilder: {
+          async buildRefundTransaction(request) {
+            return buildPreparedRefund({
+              ...request,
+              refundAddress: fundingAddress,
+              rpc,
+              sdk,
+              addressCodec,
+              pendingBroadcasts,
+              batchArtifactsByTxid,
+              dataDir,
+            });
+          },
+        },
+        refundReconciler: makeRefundReconciler({
+          rpc,
+          refundAddress: fundingAddress,
+          batchArtifactsByTxid,
+        }),
+        verifyVoucherSignature(voucher, channel) {
+          const digest = voucherDigest({
+            network: channel.config.network,
+            covenantId: channel.covenantId,
+            authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
+          });
+          return schnorr.verify(
+            hexToBytes(voucher.signature, { expectedLength: 64 }),
+            hexToBytes(digest, { expectedLength: 32 }),
+            hexToBytes(channel.clientPublicKey, { expectedLength: 32 }),
+          );
+        },
       },
     });
 
@@ -511,10 +508,13 @@ export async function runLiveProof(context) {
       };
       const batchServer = new DirectModeServer({
         ...baseServerConfig,
-        refundTimeoutDaa,
         store: serverStore,
         exactProfile: "standard-native",
-        claimBuilder,
+        batch: {
+          ...batchConfig,
+          refundTimeoutDaa,
+          claimBuilder,
+        },
       });
       report.batch = await runBatch({
         client,
@@ -1940,11 +1940,9 @@ async function runHostedBatchCanary(input) {
   const hostedStore = new MemoryChannelStore();
   input.batchRecovery.clientStore = hostedStore;
   const client = new DirectModeClient({
-    fundingProvider: input.fundingProvider,
-    signer: input.signer,
-    store: hostedStore,
     addressCodec: input.addressCodec,
-    refundAddress: input.fundingAddress,
+    fundingProvider: input.fundingProvider,
+    store: hostedStore,
     fundingPolicy: {
       requiredSource: "hot-wallet",
       batchPayment: {
@@ -1965,17 +1963,21 @@ async function runHostedBatchCanary(input) {
     supportedNetworks: [input.network],
     supportedSchemes: ["batch-settlement"],
     confirmationThreshold: CONFIRMATION_THRESHOLD,
-    verifyVoucherSignature(voucher, channel) {
-      const digest = voucherDigest({
-        network: channel.config.network,
-        covenantId: channel.covenantId,
-        authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
-      });
-      return input.schnorr.verify(
-        hexToBytes(voucher.signature, { expectedLength: 64 }),
-        hexToBytes(digest, { expectedLength: 32 }),
-        hexToBytes(channel.clientPublicKey, { expectedLength: 32 }),
-      );
+    batch: {
+      signer: input.signer,
+      refundAddress: input.fundingAddress,
+      verifyVoucherSignature(voucher, channel) {
+        const digest = voucherDigest({
+          network: channel.config.network,
+          covenantId: channel.covenantId,
+          authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
+        });
+        return input.schnorr.verify(
+          hexToBytes(voucher.signature, { expectedLength: 64 }),
+          hexToBytes(digest, { expectedLength: 32 }),
+          hexToBytes(channel.clientPublicKey, { expectedLength: 32 }),
+        );
+      },
     },
   });
 
