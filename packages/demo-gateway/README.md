@@ -13,10 +13,15 @@ Run from the repository root:
 
 ```sh
 npm ci
-npm run build
+npm --workspace @kaspa-x402/demo-gateway run build
 npm --workspace @kaspa-x402/demo-gateway run test:self
 npm run check:demo-gateway
 ```
+
+The build compiles its protocol dependencies and this Worker without the site,
+client, facilitator or CLI. Wrangler, TypeScript and test tooling are declared
+here. `npm run check:host-isolation` at the root repeats the build and tests
+without the website and with only the gateway dependency graph installed.
 
 Build performs a Worker dry run and does not deploy. Tests cover gateway routing,
 shared store contracts, persistence/recovery, resource limits and demo integration.

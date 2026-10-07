@@ -1,5 +1,8 @@
 # @kaspa-x402/client
 
+
+For exact-only setup and the batch configuration migration, start with
+[SDK configuration](../../docs/integration.md).
 Client SDK for direct-mode Kaspa x402 payments.
 
 Status: release candidate. This package targets testnet iteration and mock/local examples;

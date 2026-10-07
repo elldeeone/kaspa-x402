@@ -2,7 +2,7 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { build } from 'esbuild';
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
 export async function buildBrowserHashChain(outDir) {
   return build({
@@ -16,11 +16,8 @@ export async function buildBrowserHashChain(outDir) {
     minify: true,
     inject: [path.join(root, 'site/src/browser/buffer.mjs')],
     alias: {
-      '@kaspa-x402/adapters/native': path.join(root, 'protocol/packages/adapters/src/kaspa-native.ts'),
+      crypto: path.join(root, 'site/src/browser/crypto.mjs'),
       'node:crypto': path.join(root, 'site/src/browser/crypto.mjs'),
-      '@kaspa-x402/core': path.join(root, 'protocol/packages/core/src/index.ts'),
-      '@kaspa-x402/covenant': path.join(root, 'protocol/packages/covenant/src/index.ts'),
-      '@kaspa-x402/client': path.join(root, 'protocol/packages/client/src/index.ts'),
     },
     logLevel: 'silent',
   });

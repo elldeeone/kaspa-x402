@@ -18,8 +18,7 @@ import {
   MemoryChannelStore,
   paidMcpToolCall,
   type AddressCodec,
-  type ChannelSigner,
-  type FundingProvider,
+  type ExactFundingProvider,
 } from "@kaspa-x402/client";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -69,11 +68,10 @@ describe("MCP hybrid settlement failure E2E", () => {
       },
     };
     const client = new DirectModeClient({
+      addressCodec: exactAddressCodec(),
       confirmationThreshold: 30,
       fundingProvider: exactFundingProvider(),
       store: new MemoryChannelStore(),
-      signer: unusedChannelSigner(),
-      addressCodec: unusedAddressCodec(),
     });
 
     const result = await paidMcpToolCall(
@@ -155,22 +153,16 @@ function makeExactRequired(): PaymentRequired {
   };
 }
 
-function exactFundingProvider(): FundingProvider {
+function exactFundingProvider(): ExactFundingProvider {
   const attempts = new Map<
     string,
-    { intentHash: string; result: Awaited<ReturnType<NonNullable<FundingProvider["payExactTransaction"]>>> }
+    { intentHash: string; result: Awaited<ReturnType<NonNullable<ExactFundingProvider["payExactTransaction"]>>> }
   >();
   return {
     networkId: "kaspa:testnet-10",
     sourceKind: "hot-wallet",
     async getPublicIdentity() {
       return { address: "kaspatest:refund" };
-    },
-    async prepareEscrowDeposit() {
-      throw new Error("not used");
-    },
-    async prepareEscrowTopUp() {
-      throw new Error("not used");
     },
     async payExactTransaction(request) {
       const existing = attempts.get(request.attemptId.toLowerCase());
@@ -225,45 +217,13 @@ function exactFundingProvider(): FundingProvider {
         throw new Error("exact transaction id does not match provider attempt");
       }
     },
-    async getUtxos() {
-      return [];
-    },
-    async getUtxo() {
-      return null;
-    },
-    async verifyCovenantGenesis() {
-      return null;
-    },
-    async verifyCovenantTopUp() {
-      return null;
-    },
-    async getVirtualDaaScore() {
-      return "0";
-    },
     async sendTransaction() {
       throw new Error("not used");
     },
-    async estimateFees() {
-      return { feeSompi: "0" };
-    },
   };
 }
 
-function unusedChannelSigner(): ChannelSigner {
-  return {
-    async generateChannelKey() {
-      throw new Error("not used");
-    },
-    async randomSalt() {
-      throw new Error("not used");
-    },
-    async signVoucher() {
-      throw new Error("not used");
-    },
-  };
-}
-
-function unusedAddressCodec(): AddressCodec {
+function exactAddressCodec(): AddressCodec {
   return {
     scriptPublicKeyForAddress() {
       return "000051";

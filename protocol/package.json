@@ -19,7 +19,7 @@
   ],
   "type": "module",
   "scripts": {
-    "build": "npm --workspace @kaspa-x402/core run build:self && npm --workspace @kaspa-x402/covenant run build:self && npm --workspace @kaspa-x402/server run build:self && npm --workspace @kaspa-x402/client run build:self && npm --workspace @kaspa-x402/facilitator run build:self && npm --workspace @kaspa-x402/cli run build:self && npm --workspace @kaspa-x402/adapters run build:self",
+    "build": "node scripts/build-packages.mjs",
     "test": "npm run build && npm --workspace @kaspa-x402/core run test:self && npm --workspace @kaspa-x402/covenant run test:self && npm --workspace @kaspa-x402/server run test:self && npm --workspace @kaspa-x402/client run test:self && npm --workspace @kaspa-x402/facilitator run test:self && npm --workspace @kaspa-x402/cli run test:self && npm --workspace @kaspa-x402/adapters run test:self && node --test scripts/kaspa-consensus-source.test.mjs scripts/npm-pack-output.test.mjs scripts/covenant-artifact-clean-room.test.mjs scripts/read-bounded-response.test.mjs scripts/proof-output-security.test.mjs scripts/transaction-input-outpoint.test.mjs scripts/payment-persistence.test.mjs scripts/live-chain-continuity.test.mjs && npm run test:x402-compatibility",
     "check:diff": "git diff --check -- .",
     "generate:schema-validators": "node scripts/generate-schema-validators.mjs",
@@ -27,7 +27,7 @@
     "validate:tx-v1-consensus": "node scripts/validate-tx-v1-consensus.mjs",
     "validate:reorg-consensus": "node scripts/validate-reorg-consensus.mjs",
     "proof:offline": "node scripts/proof-offline.mjs",
-    "proof:mainnet:offline": "node scripts/proof-mainnet-shapes.mjs",
+    "check:address-transaction-compatibility": "node scripts/check-address-transaction-compatibility.mjs",
     "proof:live:check": "node scripts/proof-live-testnet.mjs --check",
     "pack:public:dry-run": "node scripts/pack-public-workspaces.mjs",
     "vectors:tx-v1": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && node scripts/generate-tx-v1-vectors.mjs",

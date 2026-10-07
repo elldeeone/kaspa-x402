@@ -1,10 +1,9 @@
-import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import {
   DirectModeServer,
   handleHashChainGrantClaimHttp,
 } from "@kaspa-x402/server";
 import type { HashChainGrantIssuer } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient, NativeAddressCodec, VerifiedKaspaChainProvider, ScriptAddressBook } from "@kaspa-x402/adapters";
+import { KaspaPnnClient, NativeAddressCodec, ScriptAddressBook } from "@kaspa-x402/adapters";
 import type { GatewayConfig } from "./config.js";
 import { HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
 import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
@@ -74,15 +73,19 @@ export class HashChainDemoService {
     if (!current) return json({ error: "hash_chain_unavailable" }, 503);
     const book = new ScriptAddressBook();
     const server = new DirectModeServer({
-      network: "kaspa:testnet-10", payTo: current.payTo, serverPublicKey: current.ownerPublicKey,
-      amount: this.config.exactAmount, minDepositSompi: "1000", claimReserveSompi: "10",
-      refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
-      maxTimeoutSeconds: 150, acceptedFinality: "accepted", store: this.state, lockManager: this.#lock,
+      network: "kaspa:testnet-10",
+      payTo: current.payTo,
+      amount: this.config.exactAmount,
+      confirmationThreshold: 30,
+      maxTimeoutSeconds: 150,
+      acceptedFinality: "accepted",
+      store: this.state,
+      lockManager: this.#lock,
       publicBoundaryPolicy: { adapterTimeoutMs: 60_000 },
-      chainProvider: new VerifiedKaspaChainProvider(new PnnChainEvidence(this.#pnn, book, this.state), book, this.config.claimFeeSompi),
       addressCodec: new NativeAddressCodec(book),
-      voucherVerifier: { verifyVoucher: () => false }, batchPresentationVerifier: { verifyPresentation: () => false },
-      exactProfile: "hash-chain-additive", hashChainIssuer: this.issuer, hashChainHeadId: current.headId,
+      exactProfile: "hash-chain-additive",
+      hashChainIssuer: this.issuer,
+      hashChainHeadId: current.headId,
       hashChainGrantClaimUrl: `${this.config.gatewayBaseUrl}/hash-chain/grant`,
       exactTransactionVerifier: this.#chain,
       admitHashChainChallenge: () => true,

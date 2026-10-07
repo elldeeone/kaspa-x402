@@ -265,7 +265,7 @@ The funding wallet retained `58689925100` sompi after the run.
 
 The latest separate mainnet read-only check reported a synced Rusty Kaspa
 `2.0.1` node with UTXO index enabled beyond the recorded Toccata activation
-score. `npm run proof:mainnet:offline` constructs and signs deterministic
+score. `npm run proof:mainnet:offline` (now `npm run check:address-transaction-compatibility`) constructs and signs deterministic
 synthetic standard-native v0 and additive v1 shapes without real UTXOs, funds,
 transaction submission, spend, or broadcast.
 

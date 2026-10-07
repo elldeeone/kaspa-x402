@@ -1,94 +1,23 @@
-# Native Profile Boundary
+# Native profile boundary
 
-Status: boundary for the development Testnet-10 package surface after RC2.
-Development uses escrow-v5 and head-v2 with signer-chosen transaction sighash
-types and ALL as the reference signing default. Published RC2 uses escrow-v4
-and head-v1. See the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+This is the capability map for the development Testnet-10 implementation.
+Definitions live in the [glossary](../CONTEXT.md); verification scope and
+historical template versions live in the [evidence index](evidence.md).
 
-The current native Kaspa x402 surface implements two x402 schemes:
+| Scheme / profile | Binding | Payment mechanism | Specification |
+| --- | --- | --- | --- |
+| exact / standard-native | kaspa-exact-v2 | One ordinary merchant output for the advertised amount. | [Exact](../spec/kaspa-exact-v2.md) |
+| exact / additive | kaspa-exact-v2 | Exact increase of a reusable KIP-10 head. | [Exact](../spec/kaspa-exact-v2.md#additive-profile) |
+| exact / hash-chain-additive | kaspa-hash-chain-exact-v1 | Exact increase and guard transition of a KIP-20 head using a privately assigned one-time signing grant. | [Hash-chain exact](../spec/kaspa-hash-chain-exact-v1.md) |
+| batch-settlement | kaspa-escrow-v3 | Funded escrow, cumulative vouchers, partial claims, top-ups and timed refunds. | [Batch](../spec/kaspa-batch-settlement-v3.md) |
 
-- `exact` with `kaspa-exact-v2` for fixed-price one-shot transfers. Its
-  default `standard-native` profile is an ordinary native-KAS transfer; its
-  optional `additive` profile uses a reusable KIP-10 head whose exact
-  successor delta is the payment;
-- `batch-settlement` with `kaspa-escrow-v3` for repeated fixed-price
-  requests backed by a funded escrow/channel.
+All settle native KAS. There is no KCC20 settlement or runtime support for other
+x402 schemes. Mainnet is a reserved profile with [unclosed gates](mainnet-readiness.md).
 
-RC2 also ships the optional `hash-chain-additive` exact profile under the
-separate `kaspa-hash-chain-exact-v1` binding. A privately assigned one-time
-signing grant lets the payer increase a merchant KIP-20 head and advance its
-hash guard without merchant co-signing. This is native KAS, not KCC20 token
-settlement. See its [specification](../spec/kaspa-hash-chain-exact-v1.md) and
-the [RC2 release reference](rc2-release.md).
-
-Both schemes are represented in schemas, vectors, examples, public specs,
-runtime packages, and the live proof harness. Other x402 schemes are outside
-the shipped compatibility contract until they can be expressed with native
-Kaspa validation and covered by the same level of schemas, vectors, tests, and
-live evidence.
-
-## Asset Boundary
-
-The shipped profiles settle native KAS only. `kaspa-exact-v2` verifies that a
-Kaspa transaction satisfies the advertised exact profile. `standard-native`
-requires one ordinary native-KAS output that pays exactly the advertised amount
-to the advertised recipient. Optional `additive` requires a signed transaction
-that spends the advertised current KIP-10 head and recreates its same-script
-successor with an exact delta equal to the advertised amount. The head challenge
-is not an exclusive reservation and there is no second merchant payment output.
-`kaspa-hash-chain-exact-v1` similarly checks an exact successor increase,
-but its one-use grant changes the successor guard and script. The x402 layer
-binds the payment to its payer and request. Grant expiry does not revoke a
-disclosed on-chain key; accepted head advancement or owner rotation does.
-`kaspa-escrow-v3` settles native KAS from a funded
-`kaspa-x402-escrow-v5` channel. Buyer vouchers sign lifetime cumulative
-ceilings, so the provider may make partial claims without resetting the
-authorization history. Top-ups add capacity while preserving the settled
-lifetime total, and the buyer retains a timed refund path. KIP-20 keeps the
-channel's `covenantId` stable across successors and enforces its lineage. The
-runtime separately persists the current outpoint because a `covenantId` does
-not provide reverse lookup of the live UTXO.
-
-v1 RC2 uses a clean batch binding and state model. No runtime compatibility
-reader or migration exists for pre-RC channels. Both active schemes are
-Testnet-10 only.
-
-## Absent Upstream Schemes
-
-Upstream x402 currently defines four schemes: `exact`, `upto`,
-`batch-settlement`, and `auth-capture`. This binding ships the first and
-third. The other two share one blocking constraint: UTXO-style script supports only
-lower-bound time locks, because a once-valid transaction must not become
-invalid. A settlement-expiry upper bound therefore cannot be a hard spend-path
-invalidation; it can only be expressed as a race in which a refund branch
-becomes spendable at the deadline and a late-settling counterparty can be
-beaten by the client's refund. Upstream batch-settlement already accepts this
-escape-hatch model for its timed withdrawal delay, which is why the shipped
-escrow profile is unaffected by the constraint.
-
-### upto
-
-Kaspa covenants can enforce every fund-safety property of a one-shot capped
-authorization on-chain: server signature, client authorization digest, charge
-cap, single-use outpoint binding, payout and refund output hashes, and a
-bounded fee reserve. Only the expiry bound degrades to the refund race
-described above. Upstream `upto`, however, currently defines its time-bound
-requirement only through hard contract-enforced deadlines. Shipping a
-race-based expiry under that scheme name would overstate the guarantee, so the
-profile remains archived research until upstream clarifies whether a
-client-refundable expiry satisfies `upto`'s time-bound requirement. If it
-does, the archived covenant and its consensus-validated artifacts are a viable
-basis for reintroduction.
-
-### auth-capture
-
-`auth-capture` maps naturally to Kaspa: the authorization is a funded covenant
-output — a real on-chain hold, stronger than an allowance-style hold — and
-capture is a bounded claim, with the same expiry-by-refund-race caveat as
-`upto`. It is absent for priority rather than feasibility: upstream currently
-has a single EVM binding and little adoption pressure, and any new profile
-must clear the full readiness bar below before it can ship.
+[SDK configuration](integration.md) enables batch explicitly. Exact-only
+integrations need no batch funding, voucher or refund dependencies. Client offer
+selection still requires a complete payer policy and capable adapters for each
+selected scheme. This changes SDK configuration, not wire bindings or schemas.
 
 ## Boundary Rules
 

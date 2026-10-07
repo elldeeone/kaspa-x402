@@ -4,8 +4,8 @@ Current policy: development head-v2 accepts consensus-supported sighash
 types on borrow, owner rotation, and owner sweep; reference signing defaults
 to ALL. The September research and prototype checkpoints below concern the
 earlier head-v1 and retain their historical proof limits. See the
-[signature policy](versioning-policy.md#sighash-template-transition) and
-[current binding](../spec/kaspa-hash-chain-exact-v1.md).
+[signature policy](../versioning-policy.md#sighash-template-transition) and
+[current binding](../../spec/kaspa-hash-chain-exact-v1.md).
 
 **Target clarified 2026-09-22:** reproduce the useful part of Michael
 Sutton's KCC20 suggestion: release a hash-chain link and its one-time signing
@@ -159,7 +159,7 @@ KIP-20 data model and the borrowed-receive note's outpoint-churn warning.
 
 ## Consequences for this native-KAS branch
 
-1. **Scope and naming.** The existing [exact profile](../spec/kaspa-exact-v2.md)
+1. **Scope and naming.** The existing [exact profile](../../spec/kaspa-exact-v2.md)
    transfers native KAS, not KCC20 tokens. The new head's native-KAS value gain
    replaces KCC20's token amount increase. Use a distinct optional profile and
    template ID; existing `additive` clients expect a same-script KIP-10 head.
@@ -170,7 +170,7 @@ KIP-20 data model and the borrowed-receive note's outpoint-churn warning.
    exact `successor.value - current.value`, transaction, request, expiry and
    payer authorization before protected work. A larger delta is an overpayment
    under our exact spec, even though KCC20 permits any positive increase.
-   [Current exact rules](../spec/kaspa-exact-v2.md).
+   [Current exact rules](../../spec/kaspa-exact-v2.md).
 3. **A delegated grant is the product goal.** The merchant releases the
    predecessor guard and corresponding one-time private key to the payer,
    privately and only for the current head. The payer signs the head input and
@@ -227,7 +227,7 @@ value gain remains a mandatory payment guard. It uses KIP-20 input/output
 cardinality and an owner sweep. The
 contract itself checks a signature, not who held the key before signing; its
 comments now state the delegated-grant target. The local
-[helper](../packages/covenant/src/hash-chain.ts) computes unkeyed BLAKE3 over
+[helper](../../packages/covenant/src/hash-chain.ts) computes unkeyed BLAKE3 over
 32+32 bytes and returns reverse-order releases. These observations are from
 the September prototype snapshot, not independent consensus proof.
 
@@ -298,8 +298,8 @@ fully signed transaction. Clients that do not support the new profile must
 skip its offer; `standard-native` and batch-settlement remain separately
 selectable.
 [x402 wire schemas](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/x402-specification-v2.md#L250-L367),
-[current Kaspa exact binding](../spec/kaspa-exact-v2.md),
-[current profile boundary](./native-profile-boundary.md).
+[current Kaspa exact binding](../../spec/kaspa-exact-v2.md),
+[current profile boundary](.././native-profile-boundary.md).
 
 **Payment flow is an RC2 compatibility item even without the new covenant.**
 The current x402 v2 spec says that a non-`authorization` flow must advertise
@@ -316,12 +316,12 @@ transaction before the protected handler. This is a finding against the current 
 a claim that RC1 transactions failed on Testnet-10.
 [x402 flow rules](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/x402-specification-v2.md#L425-L455),
 [x402 exact flow](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/schemes/exact/scheme_exact.md#L207-L229),
-[local lifecycle](../spec/kaspa-exact-v2.md#settlement-lifecycle).
+[local lifecycle](../../spec/kaspa-exact-v2.md#settlement-lifecycle).
 
 The upstream exact scheme allows a client-signed transaction that a
 facilitator later submits, including a self-funded network fee, and makes
 network replay plus atomic duplicate-delivery control binding requirements.
-The selected [native-KAS binding](../spec/kaspa-hash-chain-exact-v1.md) uses
+The selected [native-KAS binding](../../spec/kaspa-hash-chain-exact-v1.md) uses
 the upstream client-submitted branch of that family: **the payer signs the
 head input with the released one-time key and signs its own funding inputs,
 then broadcasts and presents the complete transaction**. No merchant
@@ -333,7 +333,7 @@ exact signed artifact and derive fee/mass from it. The upstream Aptos binding
 shows a separate optional cosigning pattern, but adopting that as the primary
 mode here would lose the delegated OTP-like behavior Michael described.
 [x402 exact facilitator-submitted rules](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/schemes/exact/scheme_exact.md#L214-L229),
-[local v1 ID code](../packages/covenant/src/tx-v1.ts).
+[local v1 ID code](../../packages/covenant/src/tx-v1.ts).
 
 **`payTo` needs an explicit new binding rule.** The current additive profile
 advertises the current head P2SH address; its successor uses the same script,
@@ -349,7 +349,7 @@ review; do not assume every generic x402 wallet already understands a
 changing recipient address or net-delta accounting.
 [x402 `payTo` meaning](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/x402-specification-v2.md#L294-L303),
 [x402 exact transfer correctness](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/schemes/exact/scheme_exact.md#L216-L229),
-[local additive payTo rule](../spec/kaspa-exact-v2.md#additive-profile).
+[local additive payTo rule](../../spec/kaspa-exact-v2.md#additive-profile).
 
 The binding must define its `assetTransferMethod` family, self-funded fee,
 validity window, head/UTXO replay primitive, duplicate-submission behavior,
@@ -368,8 +368,8 @@ and serving the resource. Keep the existing request hash, requirements hash,
 `payment-identifier`, finality, replay and ambiguous-broadcast recovery
 controls.
 [x402 mechanism requirements](https://github.com/x402-foundation/x402/blob/749653343bfbbe82fde9f31fdcbb2349b426a460/specs/schemes/exact/scheme_exact.md#L214-L229),
-[local exact payload](../spec/kaspa-exact-v2.md#paymentpayload),
-[local verifier](../packages/server/src/types.ts).
+[local exact payload](../../spec/kaspa-exact-v2.md#paymentpayload),
+[local verifier](../../packages/server/src/types.ts).
 
 ## Implementation checkpoint (2026-09-22)
 
@@ -377,10 +377,10 @@ The historical [head-v1 contract](https://github.com/elldeeone/kaspa-x402/blob/7
 implements the KCC20-derived BLAKE3 link and one-time Schnorr signature,
 same-ID successor, owner guard rotation and owner sweep. Its SilverScript
 artifact is reproducibly pinned to compiler commit `3ed9733` by
-[`generate-hash-chain-fixture.mjs`](../scripts/generate-hash-chain-fixture.mjs).
-The [consensus vector](../vectors/hash-chain/consensus-v1.json) records two
+[`generate-hash-chain-fixture.mjs`](../../scripts/generate-hash-chain-fixture.mjs).
+The [consensus vector](../../vectors/hash-chain/consensus-v1.json) records two
 successive delegated spends and negative cases under Rusty-Kaspa
-`c338d495`. The [durable issuer](../packages/server/src/hash-chain-grants.ts)
+`c338d495`. The [durable issuer](../../packages/server/src/hash-chain-grants.ts)
 encrypts keys at rest, commits one payer assignment before delivery, and
 tracks consumed, abandoned, rotated and reorg-held heads. These are local
 implementation and consensus proofs; they are not funded Testnet-10 or
@@ -417,7 +417,7 @@ remain later implementation steps.
    broadcast, owner-revocation races, reorg, duplicate delivery, and old-client
    behavior.
 5. **Treat release as a separate gate.** Satisfy the repository's
-   [new-profile readiness bar](./native-profile-boundary.md#readiness-expectations),
+   [new-profile readiness bar](.././native-profile-boundary.md#readiness-expectations),
    run the full release validation and fresh funded Testnet-10 proof on the
    exact candidate commit, inspect package contents, and review audit/mainnet
    gates. This feature can be one RC2 component; the research and local

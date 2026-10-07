@@ -1,3 +1,4 @@
+import { exactClientStore, exactClientFunding } from "../../../test-support/exact-dependencies.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -150,6 +151,26 @@ function absentEvidence(
 }
 
 describe("direct-mode client", () => {
+  it("selects exact-only without channel signing, funding or persistence dependencies", async () => {
+    const client = makeClient({ exactOnly: true });
+    expect(client.supportedSchemes()).toEqual(["exact"]);
+    const payment = await client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      {
+        url: "https://api.example.test/file",
+      },
+    );
+    expect(payment.scheme).toBe("exact");
+    await expect(
+      client.createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })), {
+        url: "https://api.example.test/data",
+      }),
+    ).rejects.toThrow();
+    await expect(client.listRefundableChannels()).rejects.toThrow(
+      "batch settlement is not configured",
+    );
+  });
+
   it("normalizes schema-known challenge hex before authorization", () => {
     const client = makeClient({});
     const required = makeRequired({ amount: "100" });
@@ -4139,6 +4160,7 @@ describe("direct-mode client", () => {
 });
 
 function makeClient(options: {
+  exactOnly?: boolean;
   provider?: FakeFundingProvider;
   store?: MemoryChannelStore;
   fundingSource?: FundingSourceKind;
@@ -4168,29 +4190,33 @@ function makeClient(options: {
     (options.useDefaultBatchPolicy === false
       ? undefined
       : defaultBatchPaymentPolicy(provider));
-  return new DirectModeClient({
-    fundingProvider: provider,
-    signer: options.signer ?? new FakeSigner(),
-    store: options.store ?? new MemoryChannelStore(),
+  const config = {
     addressCodec: new FakeAddressCodec(),
+    fundingProvider: provider,
+    store: options.store ?? new MemoryChannelStore(),
     fundingPolicy: {
       ...options.fundingPolicy,
-      ...(options.fundingSource
-        ? { requiredSource: options.fundingSource }
-        : {}),
+      ...(options.fundingSource ? { requiredSource: options.fundingSource } : {}),
       ...(batchPayment ? { batchPayment } : {}),
     },
     fetch: options.fetch as never,
-    verifyVoucherSignature: options.verifyVoucherSignature,
-    refundBuilder: options.refundBuilder,
-    refundReconciler: options.refundReconciler,
-    fundingTransitionReconciler: options.fundingTransitionReconciler,
     exactPaymentReconciler: options.exactPaymentReconciler,
     confirmationThreshold: CONFIRMATION_THRESHOLD,
     allowMainnet: options.allowMainnet,
     supportedNetworks: options.supportedNetworks,
     supportedSchemes: options.supportedSchemes,
-  });
+    batch: {
+      signer: options.signer ?? new FakeSigner(),
+      verifyVoucherSignature: options.verifyVoucherSignature,
+      refundBuilder: options.refundBuilder,
+      refundReconciler: options.refundReconciler,
+      fundingTransitionReconciler: options.fundingTransitionReconciler,
+    },
+  };
+  return new DirectModeClient(options.exactOnly ? {
+    ...config, batch: undefined,
+    fundingProvider: exactClientFunding(provider), store: exactClientStore(config.store),
+  } : config);
 }
 
 function defaultBatchPaymentPolicy(

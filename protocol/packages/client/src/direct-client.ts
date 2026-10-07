@@ -74,6 +74,10 @@ import {
   type CreatePaymentResult,
   type DirectModeChannel,
   type DirectModeClientOptions,
+  type BatchClientOptions,
+  type AddressCodec,
+  type ChannelStore,
+  type FundingProvider,
   type ExactPaymentAttemptFinalizeRequest,
   type ExactPaymentAttemptRecord,
   type ExactPaymentReconcileResult,
@@ -118,6 +122,23 @@ export class PendingExactPaymentError extends KaspaX402Error {
 
 export class DirectModeClient {
   readonly #options: DirectModeClientOptions;
+
+  get #batch(): BatchClientOptions {
+    if (!this.#options.batch) throw new KaspaX402Error("invalid_kaspa_x402_scheme", "batch settlement is not configured");
+    return this.#options.batch;
+  }
+  get #batchAddressCodec(): AddressCodec {
+    this.#batch;
+    return this.#options.addressCodec as AddressCodec;
+  }
+  get #batchStore(): ChannelStore {
+    this.#batch;
+    return this.#options.store as ChannelStore;
+  }
+  get #batchProvider(): FundingProvider {
+    this.#batch;
+    return this.#options.fundingProvider as FundingProvider;
+  }
 
   constructor(options: DirectModeClientOptions) {
     if (
@@ -258,7 +279,7 @@ export class DirectModeClient {
     }
 
     const unresolvedGenesis = (
-      await this.#options.store.loadOpenFundingTransitionAttempts({
+      await this.#batchStore.loadOpenFundingTransitionAttempts({
         origin,
         resourceUrl,
         network: accepted.network,
@@ -465,7 +486,7 @@ export class DirectModeClient {
     if (payment.accepted.scheme !== "batch-settlement" || !payment.channel) {
       return;
     }
-    await this.#options.store.quarantineChannel(payment.channel);
+    await this.#batchStore.quarantineChannel(payment.channel);
   }
 
   async reconcileExactPayment(
@@ -650,7 +671,7 @@ export class DirectModeClient {
         paymentVoucherAmount(payment.paymentPayload),
       );
 
-      const applied = await this.#options.store.applySettledChannel(
+      const applied = await this.#batchStore.applySettledChannel(
         payment.channel,
         updated,
       );
@@ -669,8 +690,8 @@ export class DirectModeClient {
     nowDaa?: SompiString,
   ): Promise<DirectModeChannel[]> {
     const daa =
-      nowDaa ?? (await this.#options.fundingProvider.getVirtualDaaScore());
-    const candidates = await this.#options.store.loadChannels({});
+      nowDaa ?? (await this.#batchProvider.getVirtualDaaScore());
+    const candidates = await this.#batchStore.loadChannels({});
     for (const candidate of candidates) {
       if (
         candidate.status === "active" ||
@@ -680,8 +701,8 @@ export class DirectModeClient {
         candidate.status === "refunded"
       ) {
         const [fundingAttempt, refundAttempt] = await Promise.all([
-          this.#options.store.loadFundingTransitionAttempt(candidate.id),
-          this.#options.store.loadRefundAttempt(candidate.id),
+          this.#batchStore.loadFundingTransitionAttempt(candidate.id),
+          this.#batchStore.loadRefundAttempt(candidate.id),
         ]);
         if (
           (fundingAttempt && fundingAttempt.status !== "applied") ||
@@ -692,11 +713,11 @@ export class DirectModeClient {
         await this.#reconcileChannelSnapshot(candidate);
       }
     }
-    return this.#options.store.listRefundableChannels(daa);
+    return this.#batchStore.listRefundableChannels(daa);
   }
 
   async reconcileChannel(channelId: string): Promise<DirectModeChannel> {
-    const channel = (await this.#options.store.loadChannels({})).find(
+    const channel = (await this.#batchStore.loadChannels({})).find(
       (candidate) => sameHash32(candidate.id, channelId),
     );
     if (!channel) {
@@ -706,14 +727,14 @@ export class DirectModeClient {
   }
 
   async refundChannel(channelId: string): Promise<RefundResult> {
-    let target = (await this.#options.store.loadChannels({})).find(
+    let target = (await this.#batchStore.loadChannels({})).find(
       (candidate) => sameHash32(candidate.id, channelId),
     );
     if (!target) {
       throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     }
     assertProviderNetwork(this.#options, target.config.network);
-    let existingAttempt = await this.#options.store.loadRefundAttempt(
+    let existingAttempt = await this.#batchStore.loadRefundAttempt(
       target.id,
     );
     if (existingAttempt && existingAttempt.status !== "applied") {
@@ -730,7 +751,7 @@ export class DirectModeClient {
     }
     if (existingAttempt?.status === "applied") {
       target = await this.#reconcileChannelSnapshot(target);
-      existingAttempt = await this.#options.store.loadRefundAttempt(target.id);
+      existingAttempt = await this.#batchStore.loadRefundAttempt(target.id);
       if (existingAttempt) {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
@@ -746,14 +767,14 @@ export class DirectModeClient {
       );
     }
 
-    const nowDaa = await this.#options.fundingProvider.getVirtualDaaScore();
+    const nowDaa = await this.#batchProvider.getVirtualDaaScore();
     if (parseSompiString(nowDaa) <= parseSompiString(target.refundTimeoutDaa)) {
       throw new KaspaX402Error(
         "invalid_kaspa_settlement_response",
         "channel is not refund-unlocked yet",
       );
     }
-    if (!this.#options.signer.signRefund || !this.#options.refundBuilder) {
+    if (!this.#batch.signer.signRefund || !this.#batch.refundBuilder) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "refund signing and transaction builder adapters are required",
@@ -762,7 +783,7 @@ export class DirectModeClient {
 
     const refundAmount = target.fundingAmount;
     let signatureRequests = 0;
-    const refund = await this.#options.refundBuilder.buildRefundTransaction({
+    const refund = await this.#batch.refundBuilder.buildRefundTransaction({
       channel: target,
       refundAmount,
       signDigest: async (digest) => {
@@ -773,7 +794,7 @@ export class DirectModeClient {
             "refund builder requested more than one signing digest",
           );
         }
-        return this.#options.signer.signRefund!({
+        return this.#batch.signer.signRefund!({
           channel: target,
           refundAmount,
           digest,
@@ -813,7 +834,7 @@ export class DirectModeClient {
       refundScriptPublicKey,
       status: "pending",
     };
-    await this.#options.store.claimRefundAttempt(attempt);
+    await this.#batchStore.claimRefundAttempt(attempt);
     const broadcast = await this.#options.fundingProvider.sendTransaction(
       attempt.transaction,
     );
@@ -832,7 +853,7 @@ export class DirectModeClient {
       [attempt.activeOutpoint],
     );
     if (decision.status === "absent") {
-      await this.#options.store.releaseRefundAttempt(
+      await this.#batchStore.releaseRefundAttempt(
         attempt.channelId,
         attempt.transactionId,
       );
@@ -842,7 +863,7 @@ export class DirectModeClient {
       );
     }
     if (decision.status !== "confirmed") {
-      await this.#options.store.saveRefundAttempt({
+      await this.#batchStore.saveRefundAttempt({
         ...attempt,
         status: "broadcast",
         finality: "broadcast",
@@ -858,7 +879,7 @@ export class DirectModeClient {
         accepted: false,
       };
     }
-    const applied = await this.#options.store.applyRefundAttempt({
+    const applied = await this.#batchStore.applyRefundAttempt({
       channelId: target.id,
       transactionId: attempt.transactionId,
       acceptance: decision.evidence,
@@ -867,13 +888,13 @@ export class DirectModeClient {
   }
 
   async reconcileRefund(channelId: string): Promise<RefundReconcileResult> {
-    const target = (await this.#options.store.loadChannels({})).find(
+    const target = (await this.#batchStore.loadChannels({})).find(
       (candidate) => sameHash32(candidate.id, channelId),
     );
     if (!target) {
       throw new KaspaX402Error("invalid_kaspa_channel_id", "channel not found");
     }
-    const attempt = await this.#options.store.loadRefundAttempt(target.id);
+    const attempt = await this.#batchStore.loadRefundAttempt(target.id);
     if (!attempt) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
@@ -894,7 +915,7 @@ export class DirectModeClient {
           "applied refund attempt is missing accepted finality",
         );
       }
-      const applied = await this.#options.store.applyRefundAttempt({
+      const applied = await this.#batchStore.applyRefundAttempt({
         channelId: target.id,
         transactionId: attempt.transactionId,
         acceptance: requireAcceptedEvidence(
@@ -905,14 +926,14 @@ export class DirectModeClient {
       });
       return refundResultFromApplied(applied);
     }
-    if (!this.#options.refundReconciler) {
+    if (!this.#batch.refundReconciler) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "trusted refund reconciliation adapter is required",
       );
     }
     const observed =
-      await this.#options.refundReconciler.reconcileRefund(attempt);
+      await this.#batch.refundReconciler.reconcileRefund(attempt);
     assertTransactionId(observed.transactionId, "reconciled refund");
     if (!sameHash32(observed.transactionId, attempt.transactionId)) {
       throw new KaspaX402Error(
@@ -937,7 +958,7 @@ export class DirectModeClient {
       };
     }
     if (decision.status === "absent") {
-      await this.#options.store.releaseRefundAttempt(
+      await this.#batchStore.releaseRefundAttempt(
         attempt.channelId,
         attempt.transactionId,
       );
@@ -949,7 +970,7 @@ export class DirectModeClient {
         accepted: false,
       };
     }
-    const applied = await this.#options.store.applyRefundAttempt({
+    const applied = await this.#batchStore.applyRefundAttempt({
       channelId: target.id,
       transactionId: attempt.transactionId,
       acceptance: decision.evidence,
@@ -961,7 +982,7 @@ export class DirectModeClient {
     channelId: string,
   ): Promise<FundingTransitionReconcileResult> {
     const attempt =
-      await this.#options.store.loadFundingTransitionAttempt(channelId);
+      await this.#batchStore.loadFundingTransitionAttempt(channelId);
     if (!attempt) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
@@ -975,7 +996,7 @@ export class DirectModeClient {
         : attempt.expectedChannel.config.network,
     );
     if (attempt.status === "applied") {
-      const channel = (await this.#options.store.loadChannels({})).find(
+      const channel = (await this.#batchStore.loadChannels({})).find(
         (candidate) => sameHash32(candidate.id, attempt.channelId),
       );
       if (
@@ -989,14 +1010,14 @@ export class DirectModeClient {
       }
       return fundingTransitionResult(attempt, attempt.finality, true, channel);
     }
-    if (!this.#options.fundingTransitionReconciler) {
+    if (!this.#batch.fundingTransitionReconciler) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "trusted funding transition reconciliation adapter is required",
       );
     }
     const observed =
-      await this.#options.fundingTransitionReconciler.reconcileFundingTransition(
+      await this.#batch.fundingTransitionReconciler.reconcileFundingTransition(
         attempt,
       );
     assertTransactionId(observed.transactionId, "reconciled funding");
@@ -1017,7 +1038,7 @@ export class DirectModeClient {
       return fundingTransitionResult(attempt, decision.status, false);
     }
     if (decision.status === "absent") {
-      await this.#options.store.releaseFundingTransitionAttempt(
+      await this.#batchStore.releaseFundingTransitionAttempt(
         attempt.channelId,
         attempt.transactionId,
       );
@@ -1042,7 +1063,7 @@ export class DirectModeClient {
     paymentRequired: CreatePaymentResult["paymentRequired"],
     context: PaymentRequestContext,
   ): Promise<{ channel: DirectModeChannel; toppedUp: boolean } | undefined> {
-    const channels = await this.#options.store.loadChannels({
+    const channels = await this.#batchStore.loadChannels({
       origin,
       network: accepted.network,
       status: "active",
@@ -1052,14 +1073,14 @@ export class DirectModeClient {
       if (!channelMatchesRequirement(channel, accepted, resourceUrl)) continue;
 
       const openFundingAttempt =
-        await this.#options.store.loadFundingTransitionAttempt(channel.id);
+        await this.#batchStore.loadFundingTransitionAttempt(channel.id);
       if (openFundingAttempt && openFundingAttempt.status !== "applied") {
         throw new KaspaX402Error(
           "invalid_kaspa_transaction",
           `funding transition ${channel.id} is unresolved; reconcile it before reusing this payment lane`,
         );
       }
-      const openRefundAttempt = await this.#options.store.loadRefundAttempt(
+      const openRefundAttempt = await this.#batchStore.loadRefundAttempt(
         channel.id,
       );
       if (openRefundAttempt) {
@@ -1154,7 +1175,7 @@ export class DirectModeClient {
       );
     }
     const escrowAddress = deriveEscrowAddress(escrowParams, (input) =>
-      this.#options.addressCodec.encodeScriptAddress(input),
+      this.#batchAddressCodec.encodeScriptAddress(input),
     );
     const requiredAuthorization =
       maxBigInt(
@@ -1189,7 +1210,7 @@ export class DirectModeClient {
       ),
       resultingFundingSompi: targetFundingAmount,
     });
-    const prepared = await this.#options.fundingProvider.prepareEscrowTopUp({
+    const prepared = await this.#batchProvider.prepareEscrowTopUp({
       network: channel.config.network,
       channel,
       targetFundingAmount,
@@ -1240,7 +1261,7 @@ export class DirectModeClient {
       requiredConfirmations: this.#options.confirmationThreshold,
       status: "pending",
     };
-    await this.#options.store.claimFundingTransitionAttempt(attempt);
+    await this.#batchStore.claimFundingTransitionAttempt(attempt);
     return this.#broadcastFundingTransition(attempt);
   }
 
@@ -1273,8 +1294,8 @@ export class DirectModeClient {
       resultingFundingSompi: initialFundingAmount,
     });
     const identity = await this.#options.fundingProvider.getPublicIdentity();
-    const refundAddress = this.#options.refundAddress ?? identity.address;
-    const channelKey = await this.#options.signer.generateChannelKey();
+    const refundAddress = this.#batch.refundAddress ?? identity.address;
+    const channelKey = await this.#batch.signer.generateChannelKey();
     const channelConfig: ChannelConfig = {
       network: accepted.network,
       asset: "KAS",
@@ -1284,7 +1305,7 @@ export class DirectModeClient {
       payTo: accepted.payTo,
       refundAddress,
       refundTimeoutDaa: accepted.extra.refundTimeoutDaa,
-      salt: await this.#options.signer.randomSalt(),
+      salt: await this.#batch.signer.randomSalt(),
     };
     const id = channelId(channelConfig);
     const payoutScriptPublicKeyHash = scriptPublicKeyHash(
@@ -1319,9 +1340,9 @@ export class DirectModeClient {
         timeoutDaa: channelConfig.refundTimeoutDaa,
         claimedCumulativeAmount: "0",
       },
-      (input) => this.#options.addressCodec.encodeScriptAddress(input),
+      (input) => this.#batchAddressCodec.encodeScriptAddress(input),
     );
-    const prepared = await this.#options.fundingProvider.prepareEscrowDeposit({
+    const prepared = await this.#batchProvider.prepareEscrowDeposit({
       network: accepted.network,
       channelId: id,
       channelConfig,
@@ -1385,7 +1406,7 @@ export class DirectModeClient {
       requiredConfirmations: this.#options.confirmationThreshold,
       status: "pending",
     };
-    await this.#options.store.claimFundingTransitionAttempt(attempt);
+    await this.#batchStore.claimFundingTransitionAttempt(attempt);
     const channel = await this.#broadcastFundingTransition(attempt);
     const fundingOutpoint = channel.activeOutpoint;
     const fundingAmount = channel.fundingAmount;
@@ -1424,7 +1445,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#options.store.saveChannel(signedChannel);
+    await this.#batchStore.saveChannel(signedChannel);
     return { channel: signedChannel, paymentPayload };
   }
 
@@ -1839,7 +1860,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#options.store.saveChannel(updated);
+    await this.#batchStore.saveChannel(updated);
     return { channel: updated, paymentPayload };
   }
 
@@ -1856,7 +1877,7 @@ export class DirectModeClient {
     resultingFundingSompi: SompiString;
   }): Promise<void> {
     const policy = this.#options.fundingPolicy?.batchPayment;
-    const authorize = this.#options.fundingProvider.authorizeBatchPayment;
+    const authorize = this.#batchProvider.authorizeBatchPayment;
     if (!policy || !authorize) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
@@ -1869,7 +1890,7 @@ export class DirectModeClient {
         "batch payment authorization requires the request fingerprint",
       );
     }
-    const currentDaa = await this.#options.fundingProvider.getVirtualDaaScore();
+    const currentDaa = await this.#batchProvider.getVirtualDaaScore();
     if (input.accepted.network !== "kaspa:testnet-10") {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_network",
@@ -1954,7 +1975,7 @@ export class DirectModeClient {
     };
     const digest = voucherDigest(input);
     const preimage = voucherPreimageHex(input);
-    const signature = await this.#options.signer.signVoucher({
+    const signature = await this.#batch.signer.signVoucher({
       digest,
       preimage,
       channel,
@@ -1979,7 +2000,7 @@ export class DirectModeClient {
         "batch presentation requires the request fingerprint",
       );
     }
-    if (!this.#options.signer.signBatchPresentation) {
+    if (!this.#batch.signer.signBatchPresentation) {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         "batch presentation signing is required",
@@ -1998,15 +2019,15 @@ export class DirectModeClient {
         authorizedCumulativeAmount: voucher.authorizedCumulativeAmount,
       }),
       paymentIdentifier: context.paymentIdentifier ?? null,
-      nonce: this.#options.signer.randomNonce
-        ? await this.#options.signer.randomNonce()
-        : await this.#options.signer.randomSalt(),
+      nonce: this.#batch.signer.randomNonce
+        ? await this.#batch.signer.randomNonce()
+        : await this.#batch.signer.randomSalt(),
       expiresAt: new Date(
         Date.now() + accepted.maxTimeoutSeconds * 1_000,
       ).toISOString(),
     };
     const digest = batchPresentationDigest(authorization);
-    const signature = await this.#options.signer.signBatchPresentation({
+    const signature = await this.#batch.signer.signBatchPresentation({
       digest,
       authorization,
       channel,
@@ -2036,7 +2057,7 @@ export class DirectModeClient {
       attempt.inputOutpoints,
     );
     if (decision.status === "absent") {
-      await this.#options.store.releaseFundingTransitionAttempt(
+      await this.#batchStore.releaseFundingTransitionAttempt(
         attempt.channelId,
         attempt.transactionId,
       );
@@ -2045,7 +2066,7 @@ export class DirectModeClient {
         "funding artifact was definitively rejected before acceptance",
       );
     }
-    await this.#options.store.saveFundingTransitionAttempt({
+    await this.#batchStore.saveFundingTransitionAttempt({
       ...attempt,
       status: "broadcast",
       finality: "broadcast",
@@ -2068,7 +2089,7 @@ export class DirectModeClient {
     attempt: FundingTransitionAttemptRecord,
     acceptance: AcceptedTransactionEvidence,
   ): Promise<FundingTransitionAttemptApplyResult> {
-    const successor = await this.#options.fundingProvider.getUtxo(
+    const successor = await this.#batchProvider.getUtxo(
       attempt.intendedSuccessor.outpoint,
     );
     if (!successorMatchesIntent(successor, attempt)) {
@@ -2106,7 +2127,7 @@ export class DirectModeClient {
     };
     if (attempt.kind === "genesis") {
       const evidence =
-        await this.#options.fundingProvider.verifyCovenantGenesis({
+        await this.#batchProvider.verifyCovenantGenesis({
           prepared,
           utxo: successor,
         });
@@ -2133,7 +2154,7 @@ export class DirectModeClient {
           "escrow genesis is not a verified single-output KIP-20 covenant",
         );
       }
-      return this.#options.store.applyFundingTransitionAttempt({
+      return this.#batchStore.applyFundingTransitionAttempt({
         kind: "genesis",
         channelId: attempt.channelId,
         transactionId: attempt.transactionId,
@@ -2142,7 +2163,7 @@ export class DirectModeClient {
       });
     }
 
-    const evidence = await this.#options.fundingProvider.verifyCovenantTopUp({
+    const evidence = await this.#batchProvider.verifyCovenantTopUp({
       previous: attempt.expectedChannel,
       prepared,
       successor,
@@ -2170,7 +2191,7 @@ export class DirectModeClient {
         "top-up transition is not a verified singleton covenant successor",
       );
     }
-    return this.#options.store.applyFundingTransitionAttempt({
+    return this.#batchStore.applyFundingTransitionAttempt({
       kind: "top-up",
       channelId: attempt.channelId,
       transactionId: attempt.transactionId,
@@ -2180,7 +2201,7 @@ export class DirectModeClient {
   }
 
   async #activeOutpointExists(channel: DirectModeChannel): Promise<boolean> {
-    const utxo = await this.#options.fundingProvider.getUtxo(
+    const utxo = await this.#batchProvider.getUtxo(
       channel.activeOutpoint,
     );
     return (
@@ -2198,14 +2219,14 @@ export class DirectModeClient {
   async #reconcileChannelSnapshot(
     channel: DirectModeChannel,
   ): Promise<DirectModeChannel> {
-    const discover = this.#options.fundingProvider.discoverCovenantLineage;
+    const discover = this.#batchProvider.discoverCovenantLineage;
     if (!discover) {
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         "authoritative covenant lineage discovery adapter is required",
       );
     }
-    const durable = await this.#options.store.loadCovenantLineage(channel.id);
+    const durable = await this.#batchStore.loadCovenantLineage(channel.id);
     if (
       !durable ||
       !sameHash32(durable.manifest.genesis.covenantId, channel.covenantId)
@@ -2263,7 +2284,7 @@ export class DirectModeClient {
         );
       }
       const terminal = { ...channel, lineage, status: "refunded" as const };
-      return this.#options.store.applyCovenantLineage({
+      return this.#batchStore.applyCovenantLineage({
         expectedChannel: channel,
         lineage,
         channel: terminal,
@@ -2283,7 +2304,7 @@ export class DirectModeClient {
         "authoritative successor does not match the escrow covenant template state",
       );
     }
-    const utxo = await this.#options.fundingProvider.getUtxo(head.outpoint);
+    const utxo = await this.#batchProvider.getUtxo(head.outpoint);
     if (
       !utxo ||
       !sameOutpoint(utxo.outpoint, head.outpoint) ||
@@ -2346,7 +2367,7 @@ export class DirectModeClient {
           ? "refundable"
           : channel.status,
     };
-    return this.#options.store.applyCovenantLineage({
+    return this.#batchStore.applyCovenantLineage({
       expectedChannel: channel,
       lineage,
       channel: reconciled,
@@ -2383,7 +2404,7 @@ export class DirectModeClient {
         escrowScriptPublicKey(params),
       ),
       escrowAddress: deriveEscrowAddress(params, (input) =>
-        this.#options.addressCodec.encodeScriptAddress(input),
+        this.#batchAddressCodec.encodeScriptAddress(input),
       ),
     };
   }
@@ -2403,7 +2424,7 @@ export class DirectModeClient {
         "corrective channel state requires the locally retained voucher proof",
       );
     }
-    if (!this.#options.verifyVoucherSignature) {
+    if (!this.#batch.verifyVoucherSignature) {
       throw new KaspaX402Error(
         "invalid_kaspa_signature",
         "corrective voucher proof verifier is required",
@@ -2443,7 +2464,7 @@ export class DirectModeClient {
       ...applyCorrectiveChannelState(channel, state, voucherState),
       escrowAddress: derived.escrowAddress,
     };
-    const verified = await this.#options.verifyVoucherSignature(
+    const verified = await this.#batch.verifyVoucherSignature(
       voucherState,
       candidate,
     );
@@ -2459,7 +2480,7 @@ export class DirectModeClient {
         "corrective active outpoint does not match authoritative chain state",
       );
     }
-    await this.#options.store.saveChannel(candidate);
+    await this.#batchStore.saveChannel(candidate);
     return candidate;
   }
 }
@@ -2837,40 +2858,29 @@ function supportedNetworksForClient(
     : networks.filter((network) => network !== "kaspa:mainnet");
 }
 
+function supportsBatch(options: DirectModeClientOptions): boolean {
+  const provider = options.batch ? (options.fundingProvider as FundingProvider) : undefined;
+  return Boolean(
+    provider?.discoverCovenantLineage &&
+      provider.authorizeBatchPayment &&
+      options.fundingPolicy?.batchPayment,
+  );
+}
+
 function supportedSchemesForClient(
   options: DirectModeClientOptions,
 ): readonly ("exact" | "batch-settlement")[] {
-  if (options.supportedSchemes) {
-    return options.supportedSchemes.filter(
-      (scheme) =>
-        (scheme !== "batch-settlement" ||
-          Boolean(
-            options.fundingProvider.discoverCovenantLineage &&
-            options.fundingProvider.authorizeBatchPayment &&
-            options.fundingPolicy?.batchPayment,
-          )) &&
-        (scheme !== "exact" ||
-          Boolean(
-            (options.fundingProvider.payExactTransaction || (options.fundingProvider.claimHashChainGrant && options.fundingProvider.payHashChainTransaction)) &&
-            options.fundingProvider.finalizeExactPaymentAttempt,
-          )),
-    );
-  }
-  const schemes: ("exact" | "batch-settlement")[] = [];
-  if (
-    (options.fundingProvider.payExactTransaction || (options.fundingProvider.claimHashChainGrant && options.fundingProvider.payHashChainTransaction)) &&
-    options.fundingProvider.finalizeExactPaymentAttempt
-  ) {
-    schemes.push("exact");
-  }
-  if (
-    options.fundingProvider.discoverCovenantLineage &&
-    options.fundingProvider.authorizeBatchPayment &&
-    options.fundingPolicy?.batchPayment
-  ) {
-    schemes.push("batch-settlement");
-  }
-  return schemes;
+  const provider = options.fundingProvider;
+  const exact = Boolean(
+    (provider.payExactTransaction ||
+      (provider.claimHashChainGrant && provider.payHashChainTransaction)) &&
+      provider.finalizeExactPaymentAttempt,
+  );
+  const batch = supportsBatch(options);
+  const schemes = options.supportedSchemes ?? (["exact", "batch-settlement"] as const);
+  return schemes.filter((scheme) =>
+    scheme === "exact" ? exact : scheme === "batch-settlement" && batch,
+  );
 }
 
 function paymentRequiredParseOptionsForClient(
@@ -2888,13 +2898,7 @@ function supportsRequirementForClient(
   options: DirectModeClientOptions,
   requirement: PaymentRequirements,
 ): boolean {
-  if (requirement.scheme === "batch-settlement") {
-    return Boolean(
-      options.fundingProvider.discoverCovenantLineage &&
-      options.fundingProvider.authorizeBatchPayment &&
-      options.fundingPolicy?.batchPayment,
-    );
-  }
+  if (requirement.scheme === "batch-settlement") return supportsBatch(options);
   if (requirement.scheme !== "exact") return false;
   if (requirement.extra.binding === "kaspa-hash-chain-exact-v1") {
     return Boolean(

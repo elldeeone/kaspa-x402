@@ -9,7 +9,7 @@ import {
   parsePreviewRequestUrl,
 } from "./site-preview-inputs.mjs";
 
-const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..");
 const outDir = path.join(root, SITE_DIST);
 const preferredPort = Number(process.env.PORT ?? 4173);
 const explicitPort = process.env.PORT !== undefined;

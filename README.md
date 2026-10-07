@@ -17,7 +17,7 @@ newer templates. See [readiness gates](protocol/docs/mainnet-readiness.md).
 | [protocol/](protocol/README.md) | Protocol and local reference implementation; engineer entry point. |
 | [packages/demo-gateway/](packages/demo-gateway/README.md) | Cloudflare Worker, durable storage and demo integration. |
 | [site/](site/README.md) | Public documentation website and browser demo. |
-| `scripts/`, `docs/` | Website/gateway build, checks and operations. |
+| `scripts/`, `docs/` | Host integration checks and operations; website build tools live in `site/scripts/`. |
 
 To work on the protocol alone:
 
@@ -32,5 +32,9 @@ For the complete repository, run `npm ci`, `npm test`, then
 `npm run check:protocol-isolation` verifies a separate copy of `protocol/` with
 its own dependencies. Public schema IDs and hosted documentation URLs remain
 unchanged by the folder layout.
+
+The website and gateway each have their own build scripts and declared tooling.
+`npm run check:host-isolation` installs each host separately in a temporary copy
+with the other host removed, then builds and checks it against protocol package exports.
 
 See [CONTRIBUTING.md](CONTRIBUTING.md) for checks and contribution requirements.

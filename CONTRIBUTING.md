@@ -37,11 +37,15 @@ npm run check:demo-gateway
 
 ## CI Contract
 
-`.github/workflows/ci.yml` runs the routine checks on every pull request and
-push to `main`: workspace tests, schema validation, site checks, and diff
-hygiene. Release-only packaging, Worker, consensus, fixture, and funded proof
-checks belong to `npm run validate:release`, not every pull request. The Node
-version is pinned by `.node-version`.
+`.github/workflows/ci.yml` runs workspace tests and offline proof reports on
+Linux and Windows. Linux also checks standalone protocol installation, host
+build isolation, schema/validator drift, the website, the local hash-chain demo,
+diff hygiene and the pinned Rust consensus harness. The Node version is pinned
+by `.node-version`. Consensus validation is a normal PR gate.
+
+`npm run validate:release` adds packaging, fixture reproduction, browser/Worker
+and network-dependent checks. Funded proof is explicitly opt-in through
+`validate:release:live`; a routine CI pass does not establish it.
 
 `.github/workflows/scheduled-checks.yml` runs the network-dependent integrity
 checks weekly: vendored kaspa-wasm hashes against the pinned upstream release

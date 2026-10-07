@@ -90,8 +90,20 @@ describe("native-KAS hash-chain x402 product path", () => {
         network: "kaspa:testnet-10", payTo: "kaspatest:merchant", serverPublicKey: OWNER,
         minDepositSompi: "1000", claimReserveSompi: "10", amount: "20000000",
         refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
+        batch: {
+          serverPublicKey: OWNER, minDepositSompi: "1000", claimReserveSompi: "10",
+          refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0",
+          voucherVerifier: { verifyVoucher: () => true },
+          batchPresentationVerifier: { verifyPresentation: () => true },
+        },
         store,
-        chainProvider: { async getVirtualDaaScore() { return "0"; }, async sendTransaction() { serverBroadcasts++; throw new Error("server must not broadcast"); } } as unknown as DirectModeServerConfig["chainProvider"],
+        chainProvider: {
+          async getVirtualDaaScore() { return "0"; },
+          async getUtxo() { throw new Error("batch funding is not part of this scenario"); },
+          async verifyCovenantGenesis() { throw new Error("batch funding is not part of this scenario"); },
+          async discoverCovenantLineage() { throw new Error("batch funding is not part of this scenario"); },
+          async estimateClaimFee() { throw new Error("batch claims are not part of this scenario"); },
+          async sendTransaction() { serverBroadcasts++; throw new Error("server must not broadcast"); } },
         addressCodec, voucherVerifier: { verifyVoucher: () => true },
         batchPresentationVerifier: { verifyPresentation: () => true },
         exactProfile: "hash-chain-additive",
@@ -122,7 +134,7 @@ describe("native-KAS hash-chain x402 product path", () => {
             covenantId: current.covenantId,
           };
         },
-      } as DirectModeServerConfig;
+      } satisfies DirectModeServerConfig;
       expect(() => new DirectModeServer({ ...config, acceptedFinality: "confirmed" })).toThrow("accepted finality only");
       const server = new DirectModeServer(config);
       let protectedCalls = 0;

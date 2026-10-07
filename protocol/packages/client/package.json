@@ -21,7 +21,7 @@
   ],
   "scripts": {
     "prepack": "node ../../scripts/assert-package-dist.mjs",
-    "build": "npm --workspace @kaspa-x402/core run build && npm --workspace @kaspa-x402/covenant run build && npm run build:self",
+    "build": "node ../../scripts/build-packages.mjs @kaspa-x402/client",
     "build:self": "tsup src/index.ts --format esm --dts --clean",
     "test": "npm run build && npm run test:self",
     "test:self": "vitest run"

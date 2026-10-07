@@ -50,11 +50,11 @@ and always states the prerelease/testnet-only status.
 - `site/src/` contains the stylesheet for the reference site. There are no
   decorative assets.
 - Protocol inputs live under `protocol/`. `artifactSource`/`artifactRoute` in
-  `scripts/site-config.mjs` separate repository paths from public URLs.
-- `scripts/site-build.mjs` generates `site/dist/` from committed schemas,
+  `site/scripts/site-config.mjs` separate repository paths from public URLs.
+- `site/scripts/site-build.mjs` generates `site/dist/` from committed schemas,
   specs, vectors, and selected docs. Page annotations and doc/vector grouping
-  live in `scripts/site-config.mjs`.
-- `scripts/site-check.mjs` validates the generated output before deployment.
+  live in `site/scripts/site-config.mjs`.
+- `site/scripts/site-check.mjs` validates the generated output before deployment.
 - `wrangler.jsonc` points Cloudflare Pages at `site/dist/`.
 
 `site/dist/` is generated and ignored. Cloudflare Pages should run
