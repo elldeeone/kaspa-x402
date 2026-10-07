@@ -2335,7 +2335,10 @@ async function runBatch(input) {
     expectedTopUpOutpoint: topUpProof.successorOutpoint,
   });
 
-  await waitForDaa(rpc, timeoutDaa + 10n);
+  await waitForDaa(rpc, timeoutDaa + 10n, async () => {
+    await client.reconcileChannel(claimable.channelId);
+    await server.reconcileChannel(claimable.channelId);
+  });
   const refundExecution = await client.refundChannel(claimable.channelId);
   if (!refundExecution.accepted) {
     throw new Error("batch refund did not reach accepted finality");
@@ -4693,10 +4696,17 @@ async function balanceSompi(rpc, address) {
   return entries.reduce((sum, entry) => sum + BigInt(entry.balance ?? 0), 0n);
 }
 
-async function waitForDaa(rpc, target) {
+async function waitForDaa(rpc, target, reconcile) {
+  let lastReconciliation = Date.now();
   while (true) {
     const info = await rpc.getServerInfo();
     if (BigInt(info.virtualDaaScore) >= target) return;
+    // Keep both lineage checkpoints recent during the refund timelock. A
+    // single Full V2 read after a long idle wait can exhaust the SDK heap.
+    if (reconcile && Date.now() - lastReconciliation >= 30_000) {
+      await reconcile();
+      lastReconciliation = Date.now();
+    }
     await sleep(1_000);
   }
 }
