@@ -3,37 +3,42 @@ import test from "node:test";
 import { selectedChainEvidenceRemainsCanonical } from "./live-adapter-reference.mjs";
 
 const oldHash = "11".repeat(32);
-const middleHash = "22".repeat(32);
-const currentHash = "33".repeat(32);
+const tipHash = "22".repeat(32);
 const evidence = { checkpoint: { blockHash: oldHash, blueScore: "10" } };
-function rpcFor(pages) {
-  let page = 0;
+function rpcFor(response, expectedStart = oldHash) {
   return {
-    async getBlockDagInfo() { return { sink: currentHash }; },
-    async getBlock() { return { header: { hash: currentHash, blueScore: "30", daaScore: "40" } }; },
+    async getBlockDagInfo() { throw new Error("continuity must use one RPC snapshot"); },
     async getVirtualChainFromBlock(request) {
       assert.equal(request.includeAcceptedTransactionIds, false);
-      assert.equal(request.startHash, page === 0 ? oldHash : middleHash);
-      return pages[page++];
+      assert.equal(request.startHash, expectedStart);
+      return response;
     },
     async getVirtualChainFromBlockV2() { throw new Error("continuity must not download full transactions"); },
   };
 }
-test("checks checkpoint continuity using paginated chain hashes", async () => {
-  const rpc = rpcFor([
-    { removedChainBlockHashes: [], addedChainBlockHashes: [middleHash] },
-    { removedChainBlockHashes: [], addedChainBlockHashes: [currentHash] },
-  ]);
+test("checks checkpoint membership at one node snapshot without walking to a moving tip", async () => {
+  const rpc = rpcFor({ removedChainBlockHashes: [], addedChainBlockHashes: [tipHash] });
   assert.equal(await selectedChainEvidenceRemainsCanonical({ rpc, evidence }), true);
 });
-test("rejects a rollback on a later page", async () => {
-  const rpc = rpcFor([
-    { removedChainBlockHashes: [], addedChainBlockHashes: [middleHash] },
-    { removedChainBlockHashes: [middleHash], addedChainBlockHashes: [currentHash] },
-  ]);
+test("accepts a checkpoint that is still the current tip", async () => {
+  const rpc = rpcFor({ removedChainBlockHashes: [], addedChainBlockHashes: [] });
+  assert.equal(await selectedChainEvidenceRemainsCanonical({ rpc, evidence }), true);
+});
+test("rejects a removed checkpoint", async () => {
+  const rpc = rpcFor({ removedChainBlockHashes: [oldHash], addedChainBlockHashes: [tipHash] });
   assert.equal(await selectedChainEvidenceRemainsCanonical({ rpc, evidence }), false);
 });
-test("fails closed when traversal ends before the current checkpoint", async () => {
-  const rpc = rpcFor([{ removedChainBlockHashes: [], addedChainBlockHashes: [] }]);
-  await assert.rejects(selectedChainEvidenceRemainsCanonical({ rpc, evidence }), /did not reach/);
+test("checks the accepting block even when its later checkpoint tip has changed", async () => {
+  const rpc = rpcFor({ removedChainBlockHashes: [], addedChainBlockHashes: [tipHash] });
+  assert.equal(await selectedChainEvidenceRemainsCanonical({ rpc, evidence: {
+    acceptingBlockHash: oldHash, acceptingBlockBlueScore: "10",
+    checkpoint: { blockHash: tipHash, blueScore: "20" },
+  } }), true);
+});
+test("rejects incomplete continuity evidence", async () => {
+  const rpc = rpcFor({ removedChainBlockHashes: [], addedChainBlockHashes: [] });
+  await assert.rejects(selectedChainEvidenceRemainsCanonical({ rpc, evidence: {
+    ...evidence, acceptingBlockHash: "invalid", acceptingBlockBlueScore: "10",
+  } }), /invalid/);
+  await assert.rejects(selectedChainEvidenceRemainsCanonical({ rpc: rpcFor({ addedChainBlockHashes: [] }), evidence }), /incomplete/);
 });
