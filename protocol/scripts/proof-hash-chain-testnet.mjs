@@ -4,6 +4,7 @@ import { createRequire } from "node:module";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
 import path from "node:path";
+import { proofFeeSompi } from "./live-proof-fees.mjs";
 import { fileURLToPath } from "node:url";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import {
@@ -35,6 +36,16 @@ const options = parseOptions(process.argv.slice(2));
 if (!options.live || !options.walletFile || !options.rpcUrl) {
   throw new Error("usage: proof-hash-chain-testnet.mjs --live --wallet-file <private-file> --rpc-url <testnet-10 wrpc> [--output-dir <private-dir>]");
 }
+const sdkPath = process.env.KASPA_X402_KASPA_WASM_MODULE;
+if (!sdkPath) throw new Error("KASPA_X402_KASPA_WASM_MODULE is required");
+const absoluteSdkPath = path.resolve(sdkPath);
+const sdkRequire = createRequire(fs.statSync(absoluteSdkPath).isDirectory()
+  ? path.join(absoluteSdkPath, "kaspa.js") : absoluteSdkPath);
+globalThis.WebSocket = sdkRequire("websocket").w3cwebsocket;
+const sdk = sdkRequire(absoluteSdkPath);
+const ownerFee = proofFeeSompi("KASPA_X402_PROOF_FEE_SOMPI", "1000000");
+const payerFee = proofFeeSompi("KASPA_X402_HASH_CHAIN_PAYER_FEE_SOMPI", "1000000", 10_000_000n);
+const genesisShardAmount = ownerFee + 100_000_000n;
 const outputDir = path.resolve(options.outputDir ?? path.join(root, ".kaspa-x402-live", `hash-chain-${Date.now()}`));
 fs.mkdirSync(outputDir, { recursive: true, mode: 0o700 });
 const reportFile = path.join(outputDir, "report.json");
@@ -44,6 +55,7 @@ const runtimeArtifacts = [
   "packages/client/dist/index.js", "packages/facilitator/dist/index.js",
   "packages/cli/dist/index.js", "scripts/live-adapter-reference.mjs",
   "scripts/proof-hash-chain-testnet.mjs",
+  "scripts/live-proof-fees.mjs",
 ];
 const HASH_CHAIN_RPC_TIMEOUT_MS = 15_000;
 const HASH_CHAIN_MIN_ACCEPTANCE_WINDOW_MS = 30_000;
@@ -58,13 +70,11 @@ const report = { kind: "native-kas-hash-chain-live-v1", network: "kaspa:testnet-
     class: "configured-pnn-selected-chain-v2", independentlyOperatedSources: 1,
     origins: "pre-spend PNN UTXO snapshots", finality: "selected-chain checkpoint continuity",
   },
+  fees: { ownerSompi: ownerFee.toString(), payerSompi: payerFee.toString() },
   status: "running", stages: [], transactions: [], x402: [] };
 const persist = () => writePrivateJson(reportFile, report);
 persist();
 
-const sdkRequire = createRequire(path.join(root, ".kaspa-x402-live/runtime/sdk-v2.0.0/kaspa.js"));
-globalThis.WebSocket = sdkRequire("websocket").w3cwebsocket;
-const sdk = sdkRequire("./kaspa.js");
 const rawWallet = fs.readFileSync(path.resolve(options.walletFile), "utf8").trim();
 const fundingPrivateKeyHex = path.extname(options.walletFile) === ".json"
   ? JSON.parse(rawWallet).private_key : rawWallet;
@@ -88,15 +98,15 @@ try {
   const grants = generateHashChainBorrowGrants(3);
   const headId = randomBytes(32).toString("hex");
   let genesisFunding = (await getAddressUtxos(rpc, fundingAddress))
-    .filter((item) => item.covenantId === undefined && BigInt(item.amount) > 70_000_000n)
+    .filter((item) => item.covenantId === undefined && BigInt(item.amount) > ownerFee + 10_000_000n)
     .sort((a, b) => BigInt(a.amount) < BigInt(b.amount) ? -1 : 1)[0];
   if (!genesisFunding) throw new Error("no spendable Testnet-10 funding UTXO for genesis");
-  if (BigInt(genesisFunding.amount) > 200_000_000n) {
+  if (BigInt(genesisFunding.amount) >= genesisShardAmount + ownerFee + 10_000_000n) {
     await createFundingShard(rpc, sdk, fundingKey, fundingAddress, genesisFunding);
-    genesisFunding = (await getAddressUtxos(rpc, fundingAddress)).find((item) => item.amount === "100000000");
-    if (!genesisFunding) throw new Error("the accepted 100m-sompi funding shard is unavailable");
+    genesisFunding = (await getAddressUtxos(rpc, fundingAddress)).find((item) => item.amount === genesisShardAmount.toString());
+    if (!genesisFunding) throw new Error("the accepted funding shard is unavailable");
   }
-  const genesisFee = 1_000_000n;
+  const genesisFee = ownerFee;
   const headAmount = BigInt(genesisFunding.amount) - genesisFee;
   const initialScript = hashChainHeadScriptPublicKey({ ownerPublicKey, guard: grants.initialGuard });
   const unbound = { amount: headAmount.toString(), scriptPublicKey: initialScript, covenant: null };
@@ -254,13 +264,13 @@ try {
       }
       const funding = (await getAddressUtxos(rpc, fundingAddress))
         .filter((item) => !reserved.has(outpointKey(item.outpoint)) && !item.covenantId &&
-          BigInt(item.amount) > BigInt(request.amount) + 2_000_000n)
+          BigInt(item.amount) >= BigInt(request.amount) + payerFee + 10_000_000n)
         .sort((a, b) => BigInt(a.amount) < BigInt(b.amount) ? -1 : 1)[0];
       if (!funding) throw new Error("payer funding is unavailable");
       const result = signHashChainExactTransaction({ request,
         funding: { outpoint: funding.outpoint, amount: funding.amount,
           scriptPublicKey: funding.scriptPublicKey, privateKey: fundingPrivateKeyHex,
-          payerAddress: fundingAddress }, feeSompi: "1000000" });
+          payerAddress: fundingAddress }, feeSompi: payerFee.toString() });
       if (!request.hashChainHead) throw new Error("hash-chain payment request is missing its trusted head");
       trustedOrigins.set(outpointKey(funding.outpoint), {
         amount: funding.amount, scriptPublicKey: funding.scriptPublicKey, covenantId: null,
@@ -471,7 +481,7 @@ try {
   const replacement = generateHashChainBorrowGrants(2);
   const before = issuer.getCurrent(headId);
   const rotationFunding = (await getAddressUtxos(rpc, fundingAddress))
-    .filter((item) => !reserved.has(outpointKey(item.outpoint)) && !item.covenantId && BigInt(item.amount) > 1_000_000n)
+    .filter((item) => !reserved.has(outpointKey(item.outpoint)) && !item.covenantId && BigInt(item.amount) >= ownerFee + 10_000_000n)
     .sort((a, b) => BigInt(a.amount) < BigInt(b.amount) ? -1 : 1)[0];
   if (!rotationFunding) throw new Error("owner rotation fee funding is unavailable");
   const rotatedScript = hashChainHeadScriptPublicKey({ ownerPublicKey, guard: replacement.initialGuard });
@@ -482,7 +492,7 @@ try {
   ], [
     { amount: before.head.amount, scriptPublicKey: rotatedScript,
       covenant: { authorizingInput: 0, covenantId } },
-    { amount: (BigInt(rotationFunding.amount) - 1_000_000n).toString(),
+    { amount: (BigInt(rotationFunding.amount) - ownerFee).toString(),
       scriptPublicKey: rotationFunding.scriptPublicKey, covenant: null },
   ]);
   const rotation = signReference(rotationUnsigned, [
@@ -688,8 +698,8 @@ function awaitWithSignal(promise, signal) {
 }
 
 async function createFundingShard(rpc, sdk, fundingKey, address, source) {
-  const splitAmount = 100_000_000n;
-  const fee = 1_000_000n;
+  const splitAmount = genesisShardAmount;
+  const fee = ownerFee;
   const script = sdk.payToAddressScript(address);
   const raw = Buffer.from(source.scriptPublicKey, "hex");
   const sourceScript = new sdk.ScriptPublicKey((raw[0] << 8) | raw[1], raw.subarray(2));

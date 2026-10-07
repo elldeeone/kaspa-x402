@@ -5,7 +5,7 @@ import type {
   ExactServerConfig,
   ServerStateStore,
   ServerChainProvider,
-} from "../packages/server/src/types.js";
+} from "@kaspa-x402/server";
 export type ServerTestConfig = ExactServerConfig &
   BatchServerConfig & {
     store: ServerStateStore;

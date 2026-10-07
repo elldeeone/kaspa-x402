@@ -32,6 +32,18 @@ Use `live-proof.env.example` as the starting config. Real runs must provide:
 The reference adapter writes generated channel keys, payout keys, recovery
 state, and reports under `KASPA_X402_DATA_DIR`. Keep that directory ignored.
 
+Export configuration into the process, for example with
+`node --env-file=/private/run.env scripts/proof-live-testnet.mjs --live`.
+The external SDK and optional proof fee are consumed by the adapter, so setting
+them only through the runner's `--config-file` does not configure that adapter.
+Use a new data/report/recovery directory for a fresh proof.
+
+`KASPA_X402_PROOF_FEE_SOMPI` overrides the proof's default 2,000,000-sompi fee,
+up to 40,000,000 sompi. The cap keeps at least 10,000,000 sompi for the server
+in the required 50,000,000-sompi second claim. Larger fees are rejected before
+SDK, wallet or RPC access. This is a proof harness input for Testnet congestion;
+it does not change SDK fee policy. Record the selected fee with the result.
+
 ## Required Flows
 
 The current proof requires:

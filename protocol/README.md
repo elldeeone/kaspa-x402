@@ -26,7 +26,9 @@ checks committed covenant fixtures, runs offline proofs, and checks the four
 public npm packages with `npm pack --dry-run`. It needs no website, Cloudflare,
 wallet, node connection, sibling checkout or Git history.
 
-For a shorter edit cycle, `npm test` builds and runs tests. After a build, use
+For a shorter edit cycle, `npm test` builds, type-checks all seven packages
+(sources and tests), and runs tests. `npm run typecheck` repeats only the type
+checks after a build. After a build, use
 `npm --workspace @kaspa-x402/adapters run test:self` for transaction-verifier work.
 That command type-checks the adapter sources and tests before running Vitest.
 To check the folder boundary itself, run `npm run check:protocol-isolation` from
@@ -54,6 +56,8 @@ installs its own lockfile and runs `verify` there.
    [compatibility experiment](prototypes/x402-exact/README.md). It exercises
    `@x402/core` 2.28.0 through real HTTP interfaces with simulated chain settlement.
    Its server attestation is experimental; it is not a production facilitator.
+   The [upstream readiness record](docs/upstream-readiness.md) separates spec
+   review decisions from later SDK work and records current contribution rules.
 
 See the [capability map](docs/native-profile-boundary.md),
 [glossary](CONTEXT.md) and [evidence index](docs/evidence.md) for one place to

@@ -398,6 +398,7 @@ describe("memory durable-state limits", () => {
           voucher: {
             covenantId: current.covenantId,
             amount: nextCharge,
+            authorizedCumulativeAmount: nextCharge,
             signature: "16".repeat(64),
           },
           chargedAmount: "1",
@@ -1850,6 +1851,7 @@ function settlementCommit(
     voucher: {
       covenantId: previous.covenantId,
       amount: "100",
+      authorizedCumulativeAmount: "100",
       signature: "16".repeat(64),
     },
     chargedAmount: "100",

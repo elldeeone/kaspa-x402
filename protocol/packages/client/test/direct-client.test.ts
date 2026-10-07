@@ -1,4 +1,4 @@
-import { exactClientStore, exactClientFunding } from "../../../test-support/exact-dependencies.js";
+import { exactClientStore, exactClientFunding } from "./exact-dependencies.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -1152,6 +1152,8 @@ describe("direct-mode client", () => {
         url: "https://api.example.test/file",
       },
     );
+    if (payment.paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact payment");
 
     const settlement = await client.applySettlement(payment, {
       success: true,
@@ -1182,6 +1184,8 @@ describe("direct-mode client", () => {
         url: "https://api.example.test/file",
       },
     );
+    if (payment.paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact payment");
     const response: SettlementResponse = {
       success: true,
       transaction: EXACT_TX_ID,
@@ -1222,6 +1226,8 @@ describe("direct-mode client", () => {
         url: "https://api.example.test/file",
       },
     );
+    if (payment.paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact payment");
 
     await expect(
       client.applySettlement(payment, {
@@ -1419,6 +1425,8 @@ describe("direct-mode client", () => {
         paymentIdentifier: "fabricated_confirmation_0001",
       },
     );
+    if (payment.paymentPayload.payload.type !== "exact-transaction")
+      throw new Error("expected exact payment");
 
     const acknowledgement = await client.applySettlement(payment, {
       success: true,
@@ -3888,7 +3896,6 @@ describe("direct-mode client", () => {
       requiredConfirmations: CONFIRMATION_THRESHOLD,
       refundScriptPublicKey: new FakeAddressCodec().scriptPublicKeyForAddress(
         channel.config.refundAddress,
-        channel.config.network,
       ),
       status: "pending",
     };

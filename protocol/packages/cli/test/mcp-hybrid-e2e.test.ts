@@ -19,6 +19,7 @@ import {
   paidMcpToolCall,
   type AddressCodec,
   type ExactFundingProvider,
+  type ExactTransactionPaymentResult,
 } from "@kaspa-x402/client";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -186,7 +187,7 @@ function exactFundingProvider(): ExactFundingProvider {
         inputIndex: 0,
         expiresAt: request.authorizationExpiresAt,
       });
-      const result = {
+      const result: ExactTransactionPaymentResult = {
         transaction: '{"transaction":"signed-kip10-exact"}',
         transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
         transactionId,

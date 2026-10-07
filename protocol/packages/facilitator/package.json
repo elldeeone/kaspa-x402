@@ -20,7 +20,8 @@
     "build": "node ../../scripts/build-packages.mjs @kaspa-x402/facilitator",
     "build:self": "tsup src/index.ts --format esm --dts --clean",
     "test": "npm run build && npm run test:self",
-    "test:self": "vitest run"
+    "test:self": "npm run typecheck && vitest run",
+    "typecheck": "tsc --noEmit"
   },
   "dependencies": {
     "@kaspa-x402/core": "1.0.0-rc.2",

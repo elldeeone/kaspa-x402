@@ -288,7 +288,7 @@ describe("hash-chain paidFetch", () => {
                 publicKey: Buffer.from(schnorr.getPublicKey(Buffer.from(payerKey, "hex"))).toString("hex"),
               };
             },
-            async claimHashChainGrant(request) {
+            async claimHashChainGrant(request: Parameters<NonNullable<DirectModeClientOptions["fundingProvider"]["claimHashChainGrant"]>>[0]) {
               claimRequestHash = request.requestHash;
               throw new Error("inspection complete");
             },

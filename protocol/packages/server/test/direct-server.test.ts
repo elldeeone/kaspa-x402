@@ -1,4 +1,4 @@
-import { exactServerStore, exactServerChain } from "../../../test-support/exact-dependencies.js";
+import { exactServerStore, exactServerChain } from "./exact-dependencies.js";
 import { acceptedChainEvidence, fakeAuthorizationEvidence } from "../../../test-support/chain-evidence.js";
 import { serverTestConfig, type ServerTestConfig } from "../../../test-support/server-config.js";
 import { describe, expect, it, vi } from "vitest";
@@ -66,6 +66,7 @@ import {
   type ServerChainProvider,
   type ServerChannelRecord,
   type ServerChannelStore,
+  type ServerStateStore,
   type SettlementCommit,
   type SettlementFinality,
 } from "../src/index.js";
@@ -3211,7 +3212,7 @@ describe("direct-mode server", () => {
       async ({ request }) => {
         observed = request.signal;
         markEntered();
-        await new Promise<never>((_resolve, reject) => {
+        return new Promise<never>((_resolve, reject) => {
           request.signal?.addEventListener(
             "abort",
             () => reject(request.signal?.reason),
@@ -3824,7 +3825,8 @@ describe("direct-mode server", () => {
     let now = Date.UTC(2030, 0, 1);
     const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
     try {
-      const setup = makeServer();
+      const store = new MemoryServerChannelStore();
+      const setup = makeServer({ store });
       const payment = makeDepositPayment(setup);
       if (payment.payload.payload.type !== "deposit-voucher") {
         throw new Error("expected deposit-voucher");
@@ -3849,7 +3851,7 @@ describe("direct-mode server", () => {
 
       expect(response.status).toBe(402);
       expect(executions).toBe(0);
-      expect(setup.store.durableStateStats().openRecords).toBe(0);
+      expect(store.durableStateStats().openRecords).toBe(0);
     } finally {
       nowSpy.mockRestore();
     }
@@ -3870,9 +3872,8 @@ describe("direct-mode server", () => {
         const request = requestWithPayment(payment.payload, {
           requestHash: "aa".repeat(32),
         });
-        store.afterHandlerAdmission = () => {
-          now = Date.parse(payment.payload.payload.presentation.expiresAt);
-        };
+        const expiresAt = Date.parse(payment.payload.payload.presentation.expiresAt);
+        store.afterHandlerAdmission = () => { now = expiresAt; };
         let executions = 0;
 
         const expired = await setup.server.handlePaidRequest(
@@ -6165,7 +6166,6 @@ describe("direct-mode server", () => {
     await expect(
       setup.server.recoverAcceptedClaim(payment.channelId, {
         transactionId: otherTx,
-        finality: "accepted",
       }),
     ).rejects.toThrow("does not match recorded broadcast");
   });
@@ -6861,7 +6861,7 @@ async function requireChannel(
 }
 
 async function retireChannelForTest(
-  store: ServerChannelStore,
+  store: ServerStateStore,
   channel: ServerChannelRecord,
 ): Promise<void> {
   const leaseId = sha256Hex(

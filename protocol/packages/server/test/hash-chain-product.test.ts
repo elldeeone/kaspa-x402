@@ -87,9 +87,8 @@ describe("native-KAS hash-chain x402 product path", () => {
       const referenceVerifier = new HashChainExactTransactionVerifier(view);
       const store = new FailOnceAfterAcceptanceStore();
       const config = {
-        network: "kaspa:testnet-10", payTo: "kaspatest:merchant", serverPublicKey: OWNER,
-        minDepositSompi: "1000", claimReserveSompi: "10", amount: "20000000",
-        refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0", confirmationThreshold: 30,
+        network: "kaspa:testnet-10", payTo: "kaspatest:merchant",
+        amount: "20000000", confirmationThreshold: 30,
         batch: {
           serverPublicKey: OWNER, minDepositSompi: "1000", claimReserveSompi: "10",
           refundTimeoutDaa: "1000", minimumRefundLeadDaa: "0",
@@ -104,8 +103,7 @@ describe("native-KAS hash-chain x402 product path", () => {
           async discoverCovenantLineage() { throw new Error("batch funding is not part of this scenario"); },
           async estimateClaimFee() { throw new Error("batch claims are not part of this scenario"); },
           async sendTransaction() { serverBroadcasts++; throw new Error("server must not broadcast"); } },
-        addressCodec, voucherVerifier: { verifyVoucher: () => true },
-        batchPresentationVerifier: { verifyPresentation: () => true },
+        addressCodec,
         exactProfile: "hash-chain-additive",
         exactTransactionVerifier: {
           verifyExactPayment(request) {
@@ -256,6 +254,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(issuer.getDeliveryRecord(HEAD_ID, extra.grantId!)).toBeUndefined();
       failHeadRead = false;
       const grant = await server.claimHashChainGrant(claim, trustedSecurityContext);
+      if (!extra.payToScriptPublicKey) throw new Error("missing payment script");
       const signingRequest = {
           attemptId: "a1".repeat(32), intentHash: "a2".repeat(32),
           network: "kaspa:testnet-10", profile: "hash-chain-additive",
