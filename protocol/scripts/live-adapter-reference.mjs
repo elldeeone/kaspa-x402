@@ -679,12 +679,13 @@ async function runExact({
     paymentPayload: payment.paymentPayload,
     transactionId: settlement.transaction,
     requestHash: replayRequestHash,
+    paymentIdentifier: `${payment.paymentPayload.extensions["payment-identifier"].info.id}_replay`,
     schnorr,
     fundingPrivateKeyHex,
   });
   const replay = await server.handlePaidRequest(
     requestWithPayment(replayPayload, { routeAccess: "public",
-      url: `${resource.url}/replay`,
+      url: resource.url,
       resource,
       scheme: "exact",
       amount,
@@ -755,11 +756,14 @@ function reauthorizeExactPayload({
   paymentPayload,
   transactionId,
   requestHash,
+  paymentIdentifier,
   schnorr,
   fundingPrivateKeyHex,
   expiresAt,
 }) {
   const replay = JSON.parse(JSON.stringify(paymentPayload));
+  if (paymentIdentifier)
+    replay.extensions["payment-identifier"].info.id = paymentIdentifier;
   const accepted = replay.accepted;
   const authorization = replay.payload.authorization;
   const digest = exactRequestAuthorizationDigest({
