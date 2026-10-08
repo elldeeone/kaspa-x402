@@ -1216,11 +1216,6 @@ export class DirectModeServer {
                 };
               }
               if (!recoveredExactHandlerResult) {
-                if (verified.recoveryOnly) {
-                  return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } };
-                }
-                try { this.#assertExactAuthorizationLive(verified); }
-                catch { return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } }; }
                 const handlerStarted =
                   await this.#config.store.beginExactHandler(
                     verified.transactionId,
@@ -1261,10 +1256,7 @@ export class DirectModeServer {
                 >(
                   "protected-handler",
                 (signal) => {
-                  if (verified.scheme === "exact") {
-                    try { this.#assertExactAuthorizationLive(verified); }
-                    catch { return { status: "expired", reason: "exact authorization expired before protected work" }; }
-                  } else {
+                  if (verified.scheme === "batch-settlement") {
                     const expiryError = batchPresentationExpiryError({
                       maxTimeoutSeconds: verified.accepted.maxTimeoutSeconds,
                       expiresAt:
@@ -1286,12 +1278,6 @@ export class DirectModeServer {
                 request.signal,
               );
               if (execution.status === "expired") {
-                if (verified.scheme === "exact") {
-                  await this.#config.store.markExactHandlerRecoveryRequired(
-                    verified.transactionId, execution.reason, new Date().toISOString(),
-                  );
-                  return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } };
-                }
                 if (batchAttemptId) {
                   await markBatchHandlerRecoveryRequiredSafely(
                     this.#batchStore,

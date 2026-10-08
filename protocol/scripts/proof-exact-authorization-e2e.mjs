@@ -58,12 +58,13 @@ export async function runExactAuthorizationE2EProof() {
   };
 
   let verifierCalls = 0;
+  const serverStore = new MemoryServerChannelStore();
   const server = new DirectModeServer({
     confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     network: NETWORK,
     payTo: PAYOUT_ADDRESS,
     amount: "100000",
-    store: new MemoryServerChannelStore(),
+    store: serverStore,
     chainProvider,
     addressCodec,
     exactProfile: "standard-native",
@@ -270,6 +271,172 @@ export async function runExactAuthorizationE2EProof() {
   assert.deepEqual(cached.body, paid.body);
   assert.equal(handlerExecutions, 1);
 
+  const lateUrl = "https://api.example.test/exact-authorization-late-settlement";
+  const lateRoute = {
+    ...route,
+    url: lateUrl,
+    resource: { ...resource, url: lateUrl },
+    requestHash: mockRequestHash({ proof: "exact-authorization-late-settlement", url: lateUrl }),
+  };
+  let lateHandlerExecutions = 0;
+  const lateHandler = async () => {
+    lateHandlerExecutions += 1;
+    return { status: 200, body: { ok: true, resource: "late-settlement" } };
+  };
+  const lateChallenge = await server.handlePaidRequest(lateRoute, lateHandler);
+  assert.equal(lateChallenge.status, 402);
+  const latePayment = await client.createPayment(lateChallenge.headers[PAYMENT_REQUIRED_HEADER], {
+    url: lateUrl,
+    paymentIdentifier: "offline_exact_authorization_late_settlement_0001",
+    requestHash: lateRoute.requestHash,
+  });
+  const latePayload = encodePaymentSignatureHeader(latePayment.paymentPayload);
+  const interruptedUrl = "https://api.example.test/exact-authorization-interrupted-settlement";
+  const interruptedRoute = {
+    ...route,
+    url: interruptedUrl,
+    resource: { ...resource, url: interruptedUrl },
+    requestHash: mockRequestHash({ proof: "exact-authorization-interrupted-settlement", url: interruptedUrl }),
+  };
+  let interruptedHandlerExecutions = 0;
+  const interruptedHandler = async () => {
+    interruptedHandlerExecutions += 1;
+    return { status: 200, body: { ok: true, resource: "interrupted-settlement" } };
+  };
+  const interruptedChallenge = await server.handlePaidRequest(interruptedRoute, interruptedHandler);
+  assert.equal(interruptedChallenge.status, 402);
+  const interruptedPayment = await client.createPayment(
+    interruptedChallenge.headers[PAYMENT_REQUIRED_HEADER], {
+      url: interruptedUrl,
+      paymentIdentifier: "offline_exact_authorization_interrupted_settlement_0001",
+      requestHash: interruptedRoute.requestHash,
+    },
+  );
+  const interruptedPayload = encodePaymentSignatureHeader(interruptedPayment.paymentPayload);
+  const staleUrl = "https://api.example.test/exact-authorization-stale-new-claim";
+  const staleRoute = {
+    ...route,
+    url: staleUrl,
+    resource: { ...resource, url: staleUrl },
+    requestHash: mockRequestHash({ proof: "exact-authorization-stale-new-claim", url: staleUrl }),
+  };
+  const staleChallenge = await server.handlePaidRequest(staleRoute, handler);
+  assert.equal(staleChallenge.status, 402);
+  const stalePayment = await client.createPayment(staleChallenge.headers[PAYMENT_REQUIRED_HEADER], {
+    url: staleUrl,
+    paymentIdentifier: "offline_exact_authorization_stale_new_claim_0001",
+    requestHash: staleRoute.requestHash,
+  });
+  const racingUrl = "https://api.example.test/exact-authorization-racing-claim";
+  const racingRoute = {
+    ...route,
+    url: racingUrl,
+    resource: { ...resource, url: racingUrl },
+    requestHash: mockRequestHash({ proof: "exact-authorization-racing-claim", url: racingUrl }),
+  };
+  const racingChallenge = await server.handlePaidRequest(racingRoute, handler);
+  assert.equal(racingChallenge.status, 402);
+  const racingPayment = await client.createPayment(racingChallenge.headers[PAYMENT_REQUIRED_HEADER], {
+    url: racingUrl,
+    paymentIdentifier: "offline_exact_authorization_racing_claim_0001",
+    requestHash: racingRoute.requestHash,
+  });
+  const RealDate = Date;
+  let nowMs = RealDate.now();
+  class ProofDate extends RealDate {
+    constructor(...args) { super(...(args.length ? args : [nowMs])); }
+    static now() { return nowMs; }
+  }
+  const acceptExactSettlement = serverStore.acceptExactSettlement.bind(serverStore);
+  const claimExactSettlement = serverStore.claimExactSettlement.bind(serverStore);
+  let acceptedAt;
+  let latePaid;
+  let lateRetry;
+  let interruptedAcceptedAt;
+  let interruptedFirst;
+  let interruptedRetry;
+  let staleResponse;
+  let lateAttempt;
+  let interruptedCompleted;
+  let racingResponse;
+  try {
+    globalThis.Date = ProofDate;
+    serverStore.acceptExactSettlement = async (transactionId, finality, _observedAt) => {
+      if (transactionId === latePayment.transactionId) {
+        nowMs = RealDate.parse(latePayment.paymentPayload.payload.authorization.expiresAt) + 1_000;
+        acceptedAt = new Date().toISOString();
+        return acceptExactSettlement(transactionId, finality, acceptedAt);
+      }
+      if (transactionId === interruptedPayment.transactionId) {
+        nowMs = RealDate.parse(interruptedPayment.paymentPayload.payload.authorization.expiresAt) + 1_000;
+        interruptedAcceptedAt = new Date().toISOString();
+        await acceptExactSettlement(transactionId, finality, interruptedAcceptedAt);
+        throw new Error("simulated interruption after durable acceptance");
+      }
+      return acceptExactSettlement(transactionId, finality, _observedAt);
+    };
+    serverStore.claimExactSettlement = async (attempt) => {
+      if (attempt.transactionId === racingPayment.transactionId) {
+        nowMs = RealDate.parse(racingPayment.paymentPayload.payload.authorization.expiresAt) + 1_000;
+      }
+      return claimExactSettlement(attempt);
+    };
+    latePaid = await server.handlePaidRequest({
+      ...lateRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: latePayload },
+    }, lateHandler);
+    assert.equal(latePaid.status, 200, "accepted late settlement must deliver the paid result");
+    lateRetry = await server.handlePaidRequest({
+      ...lateRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: latePayload },
+    }, lateHandler);
+    assert.equal(lateRetry.status, 200);
+    assert.deepEqual(lateRetry.body, latePaid.body);
+    assert.equal(lateHandlerExecutions, 1);
+    lateAttempt = await serverStore.loadExactSettlementAttempt(latePayment.transactionId);
+    assert.equal(lateAttempt?.status, "applied");
+
+    nowMs = RealDate.now();
+    interruptedFirst = await server.handlePaidRequest({
+      ...interruptedRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: interruptedPayload },
+    }, interruptedHandler);
+    assert.equal(interruptedFirst.status, 503);
+    const interruptedAttempt = await serverStore.loadExactSettlementAttempt(interruptedPayment.transactionId);
+    assert.equal(interruptedAttempt?.status, "accepted");
+    assert.equal(interruptedAttempt.handlerStartedAt, undefined);
+    assert.equal(interruptedHandlerExecutions, 0);
+    interruptedRetry = await server.handlePaidRequest({
+      ...interruptedRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: interruptedPayload },
+    }, interruptedHandler);
+    assert.equal(interruptedRetry.status, 200, "accepted interrupted settlement must recover on retry");
+    assert.equal(interruptedHandlerExecutions, 1);
+    interruptedCompleted = await serverStore.loadExactSettlementAttempt(interruptedPayment.transactionId);
+    assert.equal(interruptedCompleted?.status, "applied");
+
+    nowMs = RealDate.parse(stalePayment.paymentPayload.payload.authorization.expiresAt) + 1_000;
+    staleResponse = await server.handlePaidRequest({
+      ...staleRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(stalePayment.paymentPayload) },
+    }, handler);
+    assert.notEqual(staleResponse.status, 200);
+    assert.equal(await serverStore.loadExactSettlementAttempt(stalePayment.transactionId), undefined);
+
+    nowMs = RealDate.now();
+    racingResponse = await server.handlePaidRequest({
+      ...racingRoute,
+      headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(racingPayment.paymentPayload) },
+    }, handler);
+    assert.notEqual(racingResponse.status, 200);
+    assert.equal(await serverStore.loadExactSettlementAttempt(racingPayment.transactionId), undefined);
+    assert.equal(handlerExecutions, 1);
+  } finally {
+    serverStore.acceptExactSettlement = acceptExactSettlement;
+    serverStore.claimExactSettlement = claimExactSettlement;
+    globalThis.Date = RealDate;
+  }
+
   return {
     signedDomain: authorization.version,
     payerPublicKey: publicKeyHex,
@@ -282,6 +449,19 @@ export async function runExactAuthorizationE2EProof() {
     retry: { persistedArtifactSha256, approvalCalls: approvals, providerCalls,
       changedIntentRejected: true,
       cachedStatus: cached.status, handlerExecutions },
+    lateSettlement: { transactionId: latePayment.transactionId,
+      authorizationExpiresAt: latePayment.paymentPayload.payload.authorization.expiresAt,
+      acceptedAt, paidStatus: latePaid?.status, retryStatus: lateRetry?.status,
+      attemptStatus: lateAttempt?.status, handlerExecutions: lateHandlerExecutions },
+    interruptedSettlement: {
+      transactionId: interruptedPayment.transactionId,
+      authorizationExpiresAt: interruptedPayment.paymentPayload.payload.authorization.expiresAt,
+      acceptedAt: interruptedAcceptedAt, firstStatus: interruptedFirst?.status,
+      retryStatus: interruptedRetry?.status, attemptStatus: interruptedCompleted?.status,
+      handlerExecutions: interruptedHandlerExecutions,
+    },
+    expiredNewClaim: { status: staleResponse?.status, attemptAbsent: true },
+    racingNewClaim: { status: racingResponse?.status, attemptAbsent: true },
     chain: "synthetic offline settlement",
   };
 }

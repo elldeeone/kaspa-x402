@@ -52,7 +52,7 @@ const report = {
 try {
   report.flows.exact = await runExactProof();
   report.flows.exactAuthorization = await runExactAuthorizationE2EProof();
-  check("v2 exact authorization, v1 rejection, and restart retry", report.flows.exactAuthorization);
+  check("v2 exact authorization, restart retry, and late accepted settlement", report.flows.exactAuthorization);
   report.flows.batch = await runBatchProof();
   report.flows.txV1 = runTxV1Proof();
   report.flows.exactAttemptPersistence =

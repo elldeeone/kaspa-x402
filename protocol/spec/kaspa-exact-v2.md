@@ -519,20 +519,22 @@ Let `now` be the verifier's current time:
 - an additive client MUST select the earlier of that value and the advertised
   `challengeExpiresAt`.
 
-The resource server or facilitator checks authorization ordering before
-protected work. It MUST re-evaluate authorization, challenge, and delivered
-grant expiry after awaited transaction verification, immediately before atomic
-handler admission, and again before protected work starts. The
-additive head/challenge provider checks challenge liveness and head state. An
-adapter may repeat these checks but cannot weaken them.
+The resource server or facilitator checks authorization ordering before a new
+settlement claim. It MUST re-evaluate authorization, challenge, and delivered
+grant expiry after awaited transaction verification and atomically when the
+durable settlement claim is created. The additive head/challenge provider checks
+challenge liveness and head state. An adapter may repeat these checks but cannot
+weaken them.
 
-Expiry prevents a new settlement or protected-handler execution. It does not
-invalidate recovery for an exactly matching immutable attempt whose transaction
-was already durably accepted. That exception may only resume persisted handler
-or commit state; it MUST NOT reconstruct or rebroadcast a transaction. An
-implementation MAY verify enough of an expired artifact to identify that exact
-attempt, but MUST NOT execute the protected handler or create a new settlement
-when no matching accepted record exists.
+Expiry prevents a new settlement claim. Once a claim was durably created while
+the deadlines were live and its transaction reaches accepted finality, the
+matching request MAY start or resume protected work after expiry. The handler
+still runs at most once, and an identical retry may complete the persisted
+payment and response. This exception MUST NOT create a new claim, reconstruct
+or rebroadcast a transaction, or serve a different request. An implementation
+MAY verify enough of an expired artifact to identify that exact accepted
+attempt, but MUST NOT execute protected work when no matching accepted record
+exists.
 
 The committed interoperability vector fixes a reference clock and supplies
 positive and negative expiry cases so results do not depend on the test

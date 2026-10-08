@@ -393,15 +393,19 @@ The transaction ID MUST be recomputed from the canonical transaction;
 client-supplied IDs, UTXO values, finality or fee claims are not authority.
 `authorization.expiresAt` and `challengeExpiresAt` MUST be live for a new
 proof claim, and the former MUST be no later than the latter and the
-`maxTimeoutSeconds` window. A previously accepted immutable attempt may be
-recovered after expiry only under the existing exact replay rules; expiry
-never authorizes a new handler run. A client MUST recheck both expiries
-immediately before every broadcast and MUST NOT broadcast an expired attempt;
+`maxTimeoutSeconds` window. A server settlement claim created while those
+deadlines and the delivered grant were live may complete the same immutable
+request after accepted finality, even if a deadline has passed. An identical
+accepted attempt may start or resume its one handler run after expiry; an
+expired attempt cannot create a new settlement claim. A client MUST recheck
+both expiries immediately before every broadcast. It MUST NOT broadcast an
+expired attempt;
 it may only reconcile that exact transaction through trusted chain evidence.
 Clients should allow time for network
-acceptance before expiry. A payment that becomes final only after its
-presentation window closes has no automatic resource entitlement or refund
-under this binding; that consequence must be exposed before wallet approval.
+acceptance before expiry. A payment with a timely durable server settlement
+claim remains eligible for delivery if acceptance follows expiry. A payment
+without that claim has no automatic resource entitlement or refund under this
+binding; that consequence must be exposed before wallet approval.
 
 ## Settlement, replay, and finality
 

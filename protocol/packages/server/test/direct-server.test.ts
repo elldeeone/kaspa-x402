@@ -171,57 +171,6 @@ describe("direct-mode server", () => {
     expect(await setup.store.loadChannel(deposit.channelId)).toBeUndefined();
   });
 
-  it("does not admit an exact handler when authorization expires during settlement", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-    try {
-      class LateSettlementStore extends MemoryServerChannelStore {
-        override async acceptExactSettlement(...args: Parameters<MemoryServerChannelStore["acceptExactSettlement"]>) {
-          await super.acceptExactSettlement(...args);
-          vi.setSystemTime(new Date("2030-01-01T00:00:02.000Z"));
-        }
-      }
-      const store = new LateSettlementStore();
-      const setup = makeServer({ store, maxTimeoutSeconds: 1 });
-      const payment = makeExactPayment(setup);
-      const handler = vi.fn(async () => ({ body: "must not run" }));
-      const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }), handler,
-      );
-      expect(response.status).not.toBe(200);
-      expect(handler).not.toHaveBeenCalled();
-      const attempt = await store.loadExactSettlementAttempt(EXACT_TX_ID);
-      expect(attempt?.status).toBe("accepted");
-      expect(attempt?.handlerStartedAt).toBeUndefined();
-    } finally { vi.useRealTimers(); }
-  });
-
-  it("does not execute exact protected work when expiry wins after atomic admission", async () => {
-    vi.useFakeTimers();
-    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
-    try {
-      class LateHandlerStore extends MemoryServerChannelStore {
-        override async beginExactHandler(...args: Parameters<MemoryServerChannelStore["beginExactHandler"]>) {
-          const admitted = await super.beginExactHandler(...args);
-          vi.setSystemTime(new Date("2030-01-01T00:00:02.000Z"));
-          return admitted;
-        }
-      }
-      const store = new LateHandlerStore();
-      const setup = makeServer({ store, maxTimeoutSeconds: 1 });
-      const payment = makeExactPayment(setup);
-      const handler = vi.fn(async () => ({ body: "must not run" }));
-      const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }), handler,
-      );
-      expect(response).toMatchObject({ status: 503, body: { error: "exact_settlement_recovery_required" } });
-      expect(handler).not.toHaveBeenCalled();
-      const attempt = await store.loadExactSettlementAttempt(EXACT_TX_ID);
-      expect(attempt?.handlerStartedAt).toBeDefined();
-      expect(attempt?.recoveryReason).toContain("expired before protected work");
-    } finally { vi.useRealTimers(); }
-  });
-
   it("rejects an HTTP resource alias before issuing a challenge", async () => {
     const setup = makeServer();
     const handler = vi.fn(async () => ({ body: "must not run" }));

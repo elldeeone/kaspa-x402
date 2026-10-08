@@ -200,6 +200,12 @@ export function prepareExactTransition(
         result: { attempt: structuredClone(snapshot.attempt), created: false },
       };
     }
+    const claimTime = Date.parse(snapshot.now);
+    if (!Number.isFinite(claimTime) ||
+      [attempt.authorizationExpiresAt, attempt.challengeExpiresAt, attempt.grantExpiresAt]
+        .some((deadline) => deadline !== undefined && claimTime >= Date.parse(deadline))) {
+      throw new Error("exact settlement claim expired before durable admission");
+    }
     assertPaymentIdentifierAvailable(
       attempt.paymentIdentifier,
       snapshot.reservation,
@@ -373,10 +379,7 @@ export function prepareExactTransition(
       const [, startedAt] = command.args;
       if (attempt.status !== "accepted" || attempt.handlerStartedAt)
         return { result: false };
-      const admissionTime = Date.parse(snapshot.now);
-      if (!Number.isFinite(admissionTime) || !Number.isFinite(Date.parse(startedAt)) ||
-        [attempt.authorizationExpiresAt, attempt.challengeExpiresAt, attempt.grantExpiresAt]
-          .some((deadline) => deadline !== undefined && admissionTime >= Date.parse(deadline))) {
+      if (!Number.isFinite(Date.parse(startedAt))) {
         return { result: false };
       }
       return {
