@@ -365,7 +365,7 @@ The paid request carries a full signed transaction as proof:
     "challengeId": "<32-byte challenge id>",
     "requestHash": "<normalized request hash>",
     "authorization": {
-      "version": "kaspa-x402-exact-request-authorization-v1",
+      "version": "kaspa-x402-exact-request-authorization-v2",
       "digest": "<32-byte digest>",
       "inputIndex": 1,
       "expiresAt": "2026-09-22T12:05:00.000Z",
@@ -380,7 +380,7 @@ requirements; the server MUST reject altered or unissued offers. It
 independently computes `requestHash`; it MUST NOT trust only
 `payload.requestHash`. The payer's
 separate request-authorization signature uses the existing
-[`kaspa-x402-exact-request-authorization-v1`](kaspa-exact-v2.md#canonical-request-authorization)
+[`kaspa-x402-exact-request-authorization-v2`](kaspa-exact-v2.md#canonical-request-authorization)
 digest with `profile = "hash-chain-additive"`, output index 0, this
 binding's successor `payTo`, the complete requirements hash, the grant's
 `challengeId`, the recomputed transaction ID, payer funding input index,

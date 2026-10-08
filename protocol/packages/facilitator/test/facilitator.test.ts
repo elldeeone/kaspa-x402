@@ -126,7 +126,7 @@ describe("direct-mode facilitator", () => {
       },
     });
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/verify",
       body: "x".repeat(
@@ -142,7 +142,7 @@ describe("direct-mode facilitator", () => {
   it("returns supported x402 kinds without hardcoded signer identity", async () => {
     const { facilitator } = makeFacilitator();
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "GET",
       path: "/supported",
     });
@@ -218,7 +218,7 @@ describe("direct-mode facilitator", () => {
     const paymentPayload = makeExactPayment(server);
     const paymentRequirements = paymentPayload.accepted;
 
-    const direct = await server.verifyPayment({
+    const direct = await server.verifyPayment({ routeAccess: "public",
       paymentPayload,
       paymentRequirements,
       resource: RESOURCE,
@@ -230,7 +230,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(verify).toEqual({
       isValid: true,
@@ -274,7 +274,7 @@ describe("direct-mode facilitator", () => {
       REQUEST_HASH,
     );
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/verify",
       body: {
@@ -329,7 +329,7 @@ describe("direct-mode facilitator", () => {
       REQUEST_HASH,
     );
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/verify",
       body: {
@@ -361,14 +361,14 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(verify).toMatchObject({ isValid: true, payer: "kaspatest:refund" });
     expect(settlement).toMatchObject({
@@ -392,7 +392,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
     const otherResource = { url: "https://api.example.test/other" };
 
     const verify = await facilitator.verify({
@@ -400,13 +400,13 @@ describe("direct-mode facilitator", () => {
       paymentPayload,
       paymentRequirements,
       resource: otherResource,
-    });
+    }, "public");
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements,
       resource: otherResource,
-    });
+    }, "public");
 
     expect(original).toMatchObject({
       success: true,
@@ -441,7 +441,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(verify.isValid).toBe(false);
     expect(verify.invalidReason).toBe("invalid_payment_requirements");
@@ -458,7 +458,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(settlement).toMatchObject({
       success: true,
@@ -498,13 +498,13 @@ describe("direct-mode facilitator", () => {
     };
 
     await expect(
-      facilitator.verify(request, trustedSecurityContext),
+      facilitator.verify(request, "authenticated", trustedSecurityContext),
     ).resolves.toMatchObject({ isValid: true });
     await expect(
-      facilitator.settle(request, trustedSecurityContext),
+      facilitator.settle(request, "authenticated", trustedSecurityContext),
     ).resolves.toMatchObject({ success: true, transaction: EXACT_TX_ID });
     await expect(
-      facilitator.settle(request, {
+      facilitator.settle(request, "authenticated", {
         ...trustedSecurityContext,
         principal: "user:beta",
       }),
@@ -522,7 +522,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(settlement, JSON.stringify(settlement)).toMatchObject({
       success: true,
@@ -549,7 +549,7 @@ describe("direct-mode facilitator", () => {
       REQUEST_HASH,
       trustedSecurityContext,
     );
-    const accepted = server.buildPaymentRequired({
+    const accepted = server.buildPaymentRequired({ routeAccess: "authenticated",
       resource: RESOURCE,
       scheme: "batch-settlement",
       trustedSecurityContext,
@@ -575,13 +575,13 @@ describe("direct-mode facilitator", () => {
     };
 
     await expect(
-      facilitator.verify(request, trustedSecurityContext),
+      facilitator.verify(request, "authenticated", trustedSecurityContext),
     ).resolves.toMatchObject({ isValid: true });
     await expect(
-      facilitator.settle(request, trustedSecurityContext),
+      facilitator.settle(request, "authenticated", trustedSecurityContext),
     ).resolves.toMatchObject({ success: true });
     await expect(
-      facilitator.settle(request, {
+      facilitator.settle(request, "authenticated", {
         ...trustedSecurityContext,
         principal: "user:beta",
       }),
@@ -591,7 +591,7 @@ describe("direct-mode facilitator", () => {
   it("rejects malformed facilitator requests at the HTTP adapter boundary", async () => {
     const { facilitator } = makeFacilitator();
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/verify",
       body: { x402Version: X402_VERSION },
@@ -607,7 +607,7 @@ describe("direct-mode facilitator", () => {
   it("returns settlement failures for shallow but unusable settlement payloads", async () => {
     const { facilitator } = makeFacilitator();
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/settle",
       body: {
@@ -655,7 +655,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(settlement).toMatchObject({
       success: false,
@@ -688,14 +688,14 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
     const settlement = await facilitator.settle({
       x402Version: X402_VERSION,
       paymentPayload,
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
 
     expect(facilitator.supported().kinds).toEqual([]);
     expect(verification).toEqual({
@@ -851,7 +851,7 @@ describe("direct-mode facilitator", () => {
         } as PaymentPayload,
         paymentRequirements: deposit.accepted,
         resource: RESOURCE,
-      });
+      }, "public");
 
       expect(settlement).toMatchObject({
         success: false,
@@ -900,7 +900,7 @@ describe("direct-mode facilitator", () => {
       } as PaymentPayload,
       paymentRequirements: deposit.accepted,
       resource: {} as never,
-    });
+    }, "public");
 
     expect(settlement).toMatchObject({
       success: false,
@@ -948,7 +948,7 @@ describe("direct-mode facilitator", () => {
       paymentPayload: claimPayload,
       paymentRequirements: { ...deposit.accepted, amount: "101" },
       resource: RESOURCE,
-    });
+    }, "public");
 
     expect(settlement).toMatchObject({
       success: false,
@@ -997,7 +997,7 @@ describe("direct-mode facilitator", () => {
       } as PaymentPayload,
       paymentRequirements: { ...deposit.accepted, amount: "101" },
       resource: RESOURCE,
-    });
+    }, "public");
 
     expect(settlement).toMatchObject({
       success: false,
@@ -1017,7 +1017,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
     const replayPayload = structuredClone(paymentPayload);
     if (replayPayload.payload.type !== "exact-transaction")
       throw new Error("expected exact transaction payload");
@@ -1032,7 +1032,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: replayPayload.accepted,
       resource: RESOURCE,
       requestHash: OTHER_REQUEST_HASH,
-    });
+    }, "public");
 
     expect(settlement.success).toBe(true);
     expect(replay).toEqual({
@@ -1051,7 +1051,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: paymentPayload.accepted,
       resource: RESOURCE,
       requestHash: REQUEST_HASH,
-    });
+    }, "public");
     const replayPayload = structuredClone(paymentPayload);
     if (replayPayload.payload.type !== "exact-transaction")
       throw new Error("expected exact transaction payload");
@@ -1084,7 +1084,7 @@ describe("direct-mode facilitator", () => {
       paymentRequirements: replayPayload.accepted,
       resource: RESOURCE,
       requestHash: OTHER_REQUEST_HASH,
-    });
+    }, "public");
 
     expect(settlement.success).toBe(true);
     expect(replay).toEqual({
@@ -1098,7 +1098,7 @@ describe("direct-mode facilitator", () => {
     const { facilitator, server } = makeFacilitator();
     const paymentPayload = makeExactPayment(server);
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/verify",
       body: {
@@ -1124,7 +1124,7 @@ describe("direct-mode facilitator", () => {
       network: "kaspa:testnet-12",
     } as unknown as ExactPaymentRequirements;
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/settle",
       body: {
@@ -1152,7 +1152,7 @@ describe("direct-mode facilitator", () => {
       network: "testnet-10",
     } as unknown as ExactPaymentRequirements;
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/settle",
       body: {
@@ -1180,7 +1180,7 @@ describe("direct-mode facilitator", () => {
       network: "kaspa:mainnet",
     } as ExactPaymentRequirements;
 
-    const response = await handleFacilitatorRequest(facilitator, {
+    const response = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
       method: "POST",
       path: "/settle",
       body: {
@@ -1297,7 +1297,7 @@ function makeExactPayment(server: DirectModeServer): PaymentPayload {
 }
 
 function makeStandardExactPayment(server: DirectModeServer): PaymentPayload {
-  const required = server.buildPaymentRequired({
+  const required = server.buildPaymentRequired({ routeAccess: "public",
     resource: RESOURCE,
     scheme: "exact",
   });
@@ -1336,7 +1336,7 @@ function fakeExactAuthorization(
       : undefined,
   );
   return {
-    version: "kaspa-x402-exact-request-authorization-v1",
+    version: "kaspa-x402-exact-request-authorization-v2",
     inputIndex: 0,
     expiresAt,
     digest: exactRequestAuthorizationDigest({
@@ -1349,6 +1349,7 @@ function fakeExactAuthorization(
       payToScriptPublicKey: accepted.extra.payToScriptPublicKey!,
       paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
       requestHash,
+      paymentIdentifier: `exact_${REQUEST_HASH}`,
       inputIndex: 0,
       expiresAt,
     }),
@@ -1360,7 +1361,7 @@ function makeDepositPayment(
   server: DirectModeServer,
   chain: FakeChainProvider,
 ): PaymentPayload {
-  const required = server.buildPaymentRequired({
+  const required = server.buildPaymentRequired({ routeAccess: "public",
     resource: RESOURCE,
     scheme: "batch-settlement",
   });

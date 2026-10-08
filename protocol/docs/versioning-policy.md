@@ -62,7 +62,12 @@ Current examples include:
 ```text
 kaspa:x402:escrow-voucher:v3
 kaspa:x402:channel:v2
+kaspa-x402-exact-request-authorization-v2
 ```
+
+Exact request authorization uses the v2 domain because its signed preimage
+includes the payment identifier. Current validators accept v2 only; v1
+authorizations must be recreated under the current format.
 
 ## Vector Sets
 
@@ -115,17 +120,20 @@ appropriate for a wallet workflow.
 
 This policy applies to transaction signatures on borrow, owner rotation,
 owner sweep, claim, top-up, and refund paths. Off-chain voucher, presentation,
-and request-authorization signatures keep their existing message domains and
-have no transaction sighash byte. Exact-payment checks, payout destinations,
+and request-authorization signatures have no transaction sighash byte. The
+sighash template transition does not change those message domains; the exact
+request-authorization domain has the separate v2 cutover described above.
+Exact-payment checks, payout destinations,
 voucher ceilings, singleton lineage, successor state, and refund guards remain
 mandatory regardless of the transaction signature scope.
 
 Existing heads and channels retain their original scripts and
 cannot switch templates in a state transition. Sweep and recreate hash-chain
 heads; settle/refund existing batch channels and open new channels. Retain an
-RC2 runtime for outstanding RC2 channels during operator cutover. The bindings
-and off-chain signed domains are unchanged; template IDs identify the changed
-on-chain programs. These source changes are not a new published release or a
+RC2 runtime for outstanding RC2 channels during operator cutover. The sighash
+template transition leaves bindings and off-chain signed domains unchanged;
+template IDs identify the changed on-chain programs. These source changes are
+not a new published release or a
 deployed migration. Local consensus coverage is documented in the
 [conformance vectors](../vectors/README.md); published RC2 funded and hosted
 proof does not establish live validation of these replacement templates.

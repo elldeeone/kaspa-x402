@@ -16,6 +16,7 @@ import {
   batchCommitmentId,
   batchPaymentRequirementsHash,
   bindRequestHashToTrustedContext,
+  canonicalTrustedSecurityContext,
   canonicalCovenantTransitions,
   channelId,
   createCovenantLineageState,
@@ -273,6 +274,7 @@ export class DirectModeServer {
   }
 
   buildPaymentRequired(options: BuildPaymentRequiredOptions): PaymentRequired {
+    options = { ...options, trustedSecurityContext: paidRouteContext(options) };
     if (this.#config.exactProfile === "hash-chain-additive" &&
       paymentRequirementSchemes(this.#config, options).includes("exact") && !options.hashChainAccepted) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain offers require async challenge issuance");
@@ -310,6 +312,11 @@ export class DirectModeServer {
     status = 402,
   ): Promise<ServerResponse> {
     if (options.signal?.aborted) return requestAbortedResponse();
+    try {
+      paidRouteContext(options);
+    } catch (error) {
+      return { status: 400, headers: {}, body: { error: paidRouteError(error) } };
+    }
     let paymentRequired: PaymentRequired;
     try {
       paymentRequired = await this.#buildRuntimePaymentRequired(options);
@@ -340,6 +347,7 @@ export class DirectModeServer {
   async #buildRuntimePaymentRequired(
     options: BuildPaymentRequiredOptions,
   ): Promise<PaymentRequired> {
+    options = { ...options, trustedSecurityContext: paidRouteContext(options) };
     const schemes = paymentRequirementSchemes(this.#config, options);
     if (this.#config.exactProfile === "hash-chain-additive" && schemes.includes("exact") && !options.hashChainAccepted) {
       const issuer = this.#config.hashChainIssuer;
@@ -570,6 +578,7 @@ export class DirectModeServer {
     trustedSecurityContext: TrustedSecurityContext,
     parentSignal?: AbortSignal,
   ): Promise<HashChainGrantDelivery> {
+    trustedSecurityContext = snapshotTrustedContext(trustedSecurityContext);
     if (this.#config.exactProfile !== "hash-chain-additive" || !this.#config.hashChainIssuer || !this.#config.hashChainHeadId) {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant issuance is not configured");
     }
@@ -755,6 +764,7 @@ export class DirectModeServer {
   async verifyPayment(
     options: DirectPaymentVerificationOptions,
   ): Promise<DirectPaymentVerification> {
+    options = { ...options, trustedSecurityContext: paidRouteContext(options) };
     let requestPermit: PublicBoundaryPermit;
     try {
       requestPermit = this.#publicBoundary.enterRequest(
@@ -830,6 +840,7 @@ export class DirectModeServer {
   async settlePayment(
     options: DirectPaymentSettlementOptions,
   ): Promise<SettlementResponse> {
+    options = { ...options, trustedSecurityContext: paidRouteContext(options) };
     const paymentPayload = validatedPaymentPayload(options.paymentPayload);
     const resource = options.resource ?? facilitatorResource();
     const settlementPaymentRequired = validatedPaymentRequired(
@@ -852,6 +863,7 @@ export class DirectModeServer {
     });
     const response = await this.handlePaidRequest(
       {
+        routeAccess: options.routeAccess,
         method: "FACILITATOR",
         url: resource.url,
         resource,
@@ -880,6 +892,7 @@ export class DirectModeServer {
   ): Promise<ServerResponse> {
     let permit: PublicBoundaryPermit;
     try {
+      request = { ...request, trustedSecurityContext: paidRouteContext(request) };
       permit = this.#publicBoundary.enterRequest(request.trustedSecurityContext);
     } catch (error) {
       return error instanceof PublicBoundaryError
@@ -887,7 +900,7 @@ export class DirectModeServer {
         : {
             status: 400,
             headers: {},
-            body: { error: "invalid_payload" },
+            body: { error: paidRouteError(error) },
           };
     }
     try {
@@ -906,7 +919,7 @@ export class DirectModeServer {
     handler: ProtectedHandler,
   ): Promise<ServerResponse> {
     if (request.signal?.aborted) return requestAbortedResponse();
-    const resource = request.resource ?? { url: request.url };
+    let resource = request.resource ?? { url: request.url };
     try {
       assertJsonResourceBudget(
         {
@@ -933,6 +946,25 @@ export class DirectModeServer {
         headers: {},
         body: { error: "invalid_payload" },
       };
+    }
+    if (request.method !== "MCP" && request.method !== "FACILITATOR") {
+      let actualUrl: string;
+      let resourceUrl: string;
+      try {
+        const actual = new URL(request.url);
+        const advertised = new URL(resource.url);
+        actual.hash = "";
+        advertised.hash = "";
+        actualUrl = actual.href;
+        resourceUrl = advertised.href;
+      } catch {
+        return { status: 400, headers: {}, body: { error: "invalid_resource_url" } };
+      }
+      if (actualUrl !== resourceUrl) {
+        return { status: 400, headers: {}, body: { error: "resource_url_mismatch" } };
+      }
+      resource = { ...resource, url: actualUrl };
+      request = { ...request, url: actualUrl, resource };
     }
     const paymentAmount = request.paymentAmount;
     const requiredOptions = paymentRequirementRouteOptions(request, this.#config.exactProfile);
@@ -1035,6 +1067,7 @@ export class DirectModeServer {
         let verified: VerifiedPayment;
         try {
           verified = await this.#verifyPayment(
+            request.routeAccess,
             paymentPayload,
             resource,
             fingerprint,
@@ -1049,6 +1082,7 @@ export class DirectModeServer {
             return publicBoundaryResponse(error);
           if (request.signal?.aborted) return requestAbortedResponse();
           return this.#correctiveResponse(
+            request.routeAccess,
             resource,
             paymentPayload,
             error,
@@ -1100,6 +1134,7 @@ export class DirectModeServer {
                     new Date().toISOString(),
                   );
                   return this.#correctiveResponse(
+                    request.routeAccess,
                     resource,
                     verified.paymentPayload,
                     batchPresentationExpiryFailure(expiryError),
@@ -1136,6 +1171,7 @@ export class DirectModeServer {
               }
             } catch (error) {
               return this.#correctiveResponse(
+                request.routeAccess,
                 resource,
                 verified.paymentPayload,
                 error,
@@ -1180,6 +1216,11 @@ export class DirectModeServer {
                 };
               }
               if (!recoveredExactHandlerResult) {
+                if (verified.recoveryOnly) {
+                  return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } };
+                }
+                try { this.#assertExactAuthorizationLive(verified); }
+                catch { return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } }; }
                 const handlerStarted =
                   await this.#config.store.beginExactHandler(
                     verified.transactionId,
@@ -1197,6 +1238,7 @@ export class DirectModeServer {
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return this.#settlementCorrectiveResponse(
+                request.routeAccess,
                 resource,
                 verified,
                 error,
@@ -1219,7 +1261,10 @@ export class DirectModeServer {
                 >(
                   "protected-handler",
                 (signal) => {
-                  if (verified.scheme === "batch-settlement") {
+                  if (verified.scheme === "exact") {
+                    try { this.#assertExactAuthorizationLive(verified); }
+                    catch { return { status: "expired", reason: "exact authorization expired before protected work" }; }
+                  } else {
                     const expiryError = batchPresentationExpiryError({
                       maxTimeoutSeconds: verified.accepted.maxTimeoutSeconds,
                       expiresAt:
@@ -1241,6 +1286,12 @@ export class DirectModeServer {
                 request.signal,
               );
               if (execution.status === "expired") {
+                if (verified.scheme === "exact") {
+                  await this.#config.store.markExactHandlerRecoveryRequired(
+                    verified.transactionId, execution.reason, new Date().toISOString(),
+                  );
+                  return { status: 503, headers: {}, body: { error: "exact_settlement_recovery_required" } };
+                }
                 if (batchAttemptId) {
                   await markBatchHandlerRecoveryRequiredSafely(
                     this.#batchStore,
@@ -1328,6 +1379,7 @@ export class DirectModeServer {
               return batchSettlementRecoveryRequiredResponse(500);
             }
             return this.#correctiveResponse(
+              request.routeAccess,
               resource,
               paymentPayload,
               error,
@@ -2287,6 +2339,7 @@ export class DirectModeServer {
   }
 
   async #verifyPayment(
+    routeAccess: PaidRequest["routeAccess"],
     paymentPayload: PaymentPayload,
     resource: ResourceInfo,
     requestFingerprint: Hash32Hex,
@@ -2298,6 +2351,7 @@ export class DirectModeServer {
   ): Promise<VerifiedPayment> {
     assertTrustedBatchContext(paymentPayload.accepted, trustedSecurityContext);
     const paymentRequired = await this.#expectedPaymentRequired(
+      routeAccess,
       resource,
       paymentPayload,
       paymentAmount,
@@ -2451,6 +2505,7 @@ export class DirectModeServer {
       payToScriptPublicKey,
       requiredFinality,
       requestHash: requestFingerprint,
+      paymentIdentifier: readPaymentIdentifier(paymentPayload)!,
       paymentRequirementsHash,
       authorization: payload.authorization,
       ...(head ? { head } : {}),
@@ -2520,6 +2575,7 @@ export class DirectModeServer {
       payToScriptPublicKey,
       paymentRequirementsHash,
       requestHash: requestFingerprint,
+      paymentIdentifier: verificationRequest.paymentIdentifier,
       challengeId: head?.challengeId ?? hashChainHead?.challengeId,
       inputIndex: payload.authorization.inputIndex,
       expiresAt: payload.authorization.expiresAt,
@@ -3713,6 +3769,12 @@ export class DirectModeServer {
       paymentRequirementsHash: sha256Hex(stableStringify(verified.accepted)),
       paymentPayloadHash: payloadHash,
       requestAuthorizationId: verified.requestAuthorizationId,
+      authorizationExpiresAt: verified.paymentPayload.payload.authorization.expiresAt,
+      ...(verified.head || verified.hashChainHead
+        ? { challengeExpiresAt: verified.head?.expiresAt ?? verified.hashChainHead!.challengeExpiresAt }
+        : {}),
+      ...(verified.hashChainHead?.grantExpiresAt
+        ? { grantExpiresAt: verified.hashChainHead.grantExpiresAt } : {}),
       payToScriptPublicKey: verified.accepted.extra.payToScriptPublicKey!,
       transaction: verified.transaction,
       // The route matcher already requires the advertised exact finality to
@@ -4236,6 +4298,7 @@ export class DirectModeServer {
   }
 
   async #settlementCorrectiveResponse(
+    routeAccess: PaidRequest["routeAccess"],
     resource: ResourceInfo,
     verified: VerifiedPayment,
     error: unknown,
@@ -4262,6 +4325,7 @@ export class DirectModeServer {
         };
       }
       const paymentRequired = await this.#paymentRequiredResponse({
+        routeAccess,
         resource,
         amount: paymentAmount,
         scheme: "exact",
@@ -4278,6 +4342,7 @@ export class DirectModeServer {
       };
     }
     return this.#correctiveResponse(
+      routeAccess,
       resource,
       verified.paymentPayload,
       error,
@@ -4289,6 +4354,7 @@ export class DirectModeServer {
   }
 
   async #correctiveResponse(
+    routeAccess: PaidRequest["routeAccess"],
     resource: ResourceInfo,
     paymentPayload: PaymentPayload,
     error: unknown,
@@ -4331,6 +4397,7 @@ export class DirectModeServer {
       };
     }
     const paymentRequired = await this.#paymentRequiredResponse({
+      routeAccess,
       resource,
       amount: paymentAmount,
       scheme,
@@ -4491,6 +4558,7 @@ export class DirectModeServer {
   }
 
   async #expectedPaymentRequired(
+    routeAccess: PaidRequest["routeAccess"],
     resource: ResourceInfo,
     paymentPayload: PaymentPayload,
     paymentAmount?: SompiString,
@@ -4513,6 +4581,7 @@ export class DirectModeServer {
         };
       }
       return this.#buildRuntimePaymentRequired({
+        routeAccess,
         resource,
         amount: paymentAmount,
         scheme: "exact",
@@ -4523,6 +4592,7 @@ export class DirectModeServer {
     }
     if (accepted.scheme !== "batch-settlement" || !payloadChannelId) {
       return this.buildPaymentRequired({
+        routeAccess,
         resource,
         amount: paymentAmount,
         scheme: requestedScheme,
@@ -4551,6 +4621,7 @@ export class DirectModeServer {
         };
       }
       return this.buildPaymentRequired({
+        routeAccess,
         resource,
         amount: paymentAmount,
         scheme: "batch-settlement",
@@ -4577,6 +4648,7 @@ export class DirectModeServer {
         };
       }
       return this.buildPaymentRequired({
+        routeAccess,
         resource,
         amount: paymentAmount,
         scheme: "batch-settlement",
@@ -4586,6 +4658,7 @@ export class DirectModeServer {
       });
     }
     return this.buildPaymentRequired({
+      routeAccess,
       resource,
       amount: paymentAmount,
       scheme: "batch-settlement",
@@ -4779,7 +4852,6 @@ function makeAcceptedRequirement(
         options.channel?.channelConfig.refundTimeoutDaa ??
         batch.refundTimeoutDaa,
       securityContextHash:
-        options.securityContextHash ??
         (options.trustedSecurityContext
           ? trustedSecurityContextHash(options.trustedSecurityContext)
           : sha256Hex(
@@ -4831,13 +4903,14 @@ function paymentRequirementRouteOptions(
   profile: import("@kaspa-x402/core").ExactProfile,
 ): Pick<
   BuildPaymentRequiredOptions,
-  "scheme" | "schemes" | "trustedSecurityContext" | "mcpErrorChargeSompi" | "requestHash" | "signal"
+  "routeAccess" | "scheme" | "schemes" | "trustedSecurityContext" | "mcpErrorChargeSompi" | "requestHash" | "signal"
 > {
   const trustedSecurityContext = request.trustedSecurityContext;
   const mcpErrorChargeSompi = request.mcpErrorChargeSompi;
   const requestHash = profile === "hash-chain-additive" ? hashChainRequestFingerprint(request) : undefined;
   if (request.paymentSchemes !== undefined)
     return {
+      routeAccess: request.routeAccess,
       schemes: request.paymentSchemes,
       ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
       ...(mcpErrorChargeSompi ? { mcpErrorChargeSompi } : {}),
@@ -4845,6 +4918,7 @@ function paymentRequirementRouteOptions(
       ...(request.signal ? { signal: request.signal } : {}),
     };
   return {
+    routeAccess: request.routeAccess,
     scheme: request.paymentScheme,
     ...(trustedSecurityContext ? { trustedSecurityContext } : {}),
     ...(mcpErrorChargeSompi ? { mcpErrorChargeSompi } : {}),
@@ -5012,16 +5086,10 @@ function assertSettlementRequirements(
 
   const authorizedAmount = parseSompiString(authorized.amount);
   const settlementAmount = parseSompiString(settlement.amount);
-  if (authorized.scheme === "exact" && settlementAmount !== authorizedAmount) {
+  if (settlementAmount !== authorizedAmount) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_amount",
-      "exact settlement amount must equal the authorized amount",
-    );
-  }
-  if (settlementAmount > authorizedAmount) {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_amount",
-      "settlement amount exceeds the authorized amount",
+      "settlement amount must equal the authorized amount",
     );
   }
 }
@@ -5667,6 +5735,43 @@ function fingerprintRequest(
     requestHash,
     request.trustedSecurityContext,
   );
+}
+
+function snapshotTrustedContext(context: TrustedSecurityContext): TrustedSecurityContext {
+  const canonical = canonicalTrustedSecurityContext(context) as unknown as {
+    principal: string;
+    tenant: string | null;
+    authorizationScopes: string[];
+    handlerState: Record<string, string | number | boolean | null>;
+  };
+  return {
+    principal: canonical.principal,
+    ...(canonical.tenant === null ? {} : { tenant: canonical.tenant }),
+    authorizationScopes: canonical.authorizationScopes,
+    handlerState: canonical.handlerState,
+  };
+}
+
+function paidRouteContext(options: {
+  routeAccess: string;
+  trustedSecurityContext?: TrustedSecurityContext;
+}): TrustedSecurityContext | undefined {
+  if (options.routeAccess === "authenticated") {
+    if (!options.trustedSecurityContext) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "missing_trusted_security_context");
+    }
+    return snapshotTrustedContext(options.trustedSecurityContext);
+  }
+  if (options.routeAccess !== "public" || options.trustedSecurityContext !== undefined) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "invalid_route_access");
+  }
+  return undefined;
+}
+
+function paidRouteError(error: unknown): string {
+  return error instanceof KaspaX402Error && error.message === "missing_trusted_security_context"
+    ? "missing_trusted_security_context"
+    : "invalid_route_access";
 }
 
 function hashChainRequestFingerprint(request: PaidRequest): Hash32Hex {

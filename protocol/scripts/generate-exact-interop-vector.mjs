@@ -31,6 +31,7 @@ const authorizationInput = {
   payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
   paymentRequirementsHash,
   requestHash: payload.requestHash,
+  paymentIdentifier: http.paymentPayload.extensions["payment-identifier"].info.id,
   challengeId: payload.challengeId,
   inputIndex: payload.authorization.inputIndex,
   expiresAt: payload.authorization.expiresAt,

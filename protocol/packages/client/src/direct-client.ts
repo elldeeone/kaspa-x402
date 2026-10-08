@@ -78,6 +78,7 @@ import {
   type AddressCodec,
   type ChannelStore,
   type FundingProvider,
+  type FundingPolicy,
   type ExactPaymentAttemptFinalizeRequest,
   type ExactPaymentAttemptRecord,
   type ExactPaymentReconcileResult,
@@ -204,19 +205,40 @@ export class DirectModeClient {
     header: string,
     context: PaymentRequestContext,
   ): Promise<CreatePaymentResult> {
+    if (context.audience !== undefined) {
+      throw new KaspaX402Error("invalid_kaspa_x402_binding", "HTTP payment context cannot declare an MCP audience");
+    }
+    return this.#createPayment(header, context);
+  }
+
+  /** The host supplies the authenticated MCP audience for this tool call. */
+  async createMcpPayment(
+    header: string,
+    context: PaymentRequestContext & { audience: string },
+  ): Promise<CreatePaymentResult> {
+    if (context.origin !== undefined || !context.audience.trim()) {
+      throw new KaspaX402Error("invalid_kaspa_x402_binding", "MCP audience cannot be overridden by an HTTP origin");
+    }
+    return this.#createPayment(header, context);
+  }
+
+  async #createPayment(
+    header: string,
+    context: PaymentRequestContext,
+  ): Promise<CreatePaymentResult> {
     assertFundingPolicy(this.#options);
     const parsed = this.selectPaymentRequirement(header);
-    const isHashChainExact =
-      parsed.accepted.scheme === "exact" &&
-      parsed.accepted.extra.profile === "hash-chain-additive";
-    const paymentContext = isHashChainExact
-      ? canonicalHashChainPaymentContext(context)
-      : context;
+    const paymentContext = canonicalPaymentContext(context, parsed.paymentRequired.resource.url);
+    if (parsed.accepted.scheme === "exact" &&
+      !hasCompleteExactPolicy(this.#options.fundingPolicy, !!paymentContext.audience) &&
+      !this.#options.authorizeExactPayment) {
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact funding requires a complete payer policy or explicit authorization callback");
+    }
     const identifiedContext =
-      isHashChainExact && !paymentContext.paymentIdentifier
+      parsed.accepted.scheme === "exact" && !paymentContext.paymentIdentifier
         ? {
             ...paymentContext,
-            paymentIdentifier: defaultExactPaymentIdentifier(paymentContext),
+            paymentIdentifier: defaultExactPaymentIdentifier(),
           }
         : paymentContext;
     const requestContext = contextWithRequestHash(
@@ -231,12 +253,7 @@ export class DirectModeClient {
     );
     assertProviderNetwork(this.#options, parsed.accepted.network);
     if (parsed.accepted.scheme === "exact") {
-      return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, {
-        ...requestContext,
-        paymentIdentifier:
-          requestContext.paymentIdentifier ??
-          defaultExactPaymentIdentifier(paymentContext),
-      });
+      return this.#createExactPayment(parsed.accepted, parsed.paymentRequired, requestContext);
     }
     if (parsed.accepted.scheme !== "batch-settlement") {
       throw new KaspaX402Error(
@@ -245,11 +262,13 @@ export class DirectModeClient {
       );
     }
 
-    const origin = context.origin ?? originForUrl(context.url);
-    const resourceUrl = parsed.paymentRequired.resource.url;
+    const origin = paymentContext.audience ?? originForUrl(paymentContext.url);
+    const resourceUrl = paymentContext.audience
+      ? parsed.paymentRequired.resource.url : paymentContext.url;
     const accepted = parsed.accepted;
     assertPaymentDestinationPolicy(this.#options, {
       origin,
+      ...(paymentContext.audience ? { audience: paymentContext.audience } : {}),
       payTo: accepted.payTo,
     });
     const existing = await this.#selectExistingChannel(
@@ -322,12 +341,9 @@ export class DirectModeClient {
       method: init.method, body: init.body,
       trustedSecurityContext: init.trustedSecurityContext,
     };
-    const previous = await loadReplayExactPaymentAttempt(
-      this.#options.store,
-      requestContext,
-      originalRequestUrl,
-      init.paymentIdentifier,
-    );
+    const previous = init.paymentIdentifier
+      ? await this.#options.store.loadExactPaymentAttemptByIdentifier(init.paymentIdentifier)
+      : undefined;
     let payment: CreatePaymentResult;
     const recoveringHashChainAttempt =
       previous &&
@@ -1493,10 +1509,9 @@ export class DirectModeClient {
         "exact payment requires a stable payment identifier",
       );
     }
-    const origin = context.origin ?? originForUrl(context.url);
-    const resourceUrl = profile === "hash-chain-additive"
-      ? canonicalRequestUrl(context.url)
-      : paymentRequired.resource.url;
+    const origin = context.audience ?? originForUrl(context.url);
+    const resourceUrl = context.audience
+      ? paymentRequired.resource.url : context.url;
     const intentHash = exactPaymentIntentHash(
       accepted,
       origin,
@@ -1508,31 +1523,6 @@ export class DirectModeClient {
       context.paymentAttemptId,
       context.paymentIdentifier,
     );
-    const [existingByAttempt, existingByIdentifier] = await Promise.all([
-      this.#options.store.loadExactPaymentAttempt(attemptId),
-      this.#options.store.loadExactPaymentAttemptByIdentifier(
-        context.paymentIdentifier,
-      ),
-    ]);
-    const existing = existingByAttempt ?? existingByIdentifier;
-    if (existing) {
-      assertMatchingExactAttempt(existing, attemptId, intentHash);
-      if (existing.status === "absent") {
-        throw new KaspaX402Error(
-          "invalid_kaspa_exact_replay",
-          "this exact artifact is permanently absent; authorize a new logical payment with a new identifier",
-        );
-      }
-      const retryValidation = validatePaymentRetry({
-        paymentRequired,
-        paymentPayload: existing.payment.paymentPayload,
-      });
-      if (!retryValidation.ok) throw retryValidation.error;
-      return {
-        ...existing.payment,
-        paymentRequired: retryValidation.value.paymentRequired,
-      };
-    }
     const head = exactHeadHint(accepted);
     const hashChainHead = hashChainHeadHint(accepted);
     if (profile === "additive" && !head) {
@@ -1547,9 +1537,11 @@ export class DirectModeClient {
     const exactRequest: ExactPaymentRequest = {
       attemptId,
       intentHash,
+      paymentIdentifier: context.paymentIdentifier,
       network: accepted.network,
       profile,
       origin,
+      ...(context.audience ? { audience: context.audience } : {}),
       resourceUrl,
       amount: accepted.amount,
       payTo: accepted.payTo,
@@ -1564,7 +1556,7 @@ export class DirectModeClient {
         head?.challengeExpiresAt ?? hashChainHead?.challengeExpiresAt,
       ),
       requiredFinality: accepted.extra.finality,
-      fundingSource: this.#options.fundingPolicy?.requiredSource,
+      fundingSource: this.#options.fundingProvider.sourceKind,
     };
     let exact: ExactTransactionPaymentResult;
     let payload: PaymentPayload["payload"];
@@ -1574,6 +1566,31 @@ export class DirectModeClient {
       ...(head ? { head } : {}),
       ...(hashChainHead ? { hashChainHead } : {}),
     };
+    assertExactFundingPolicy(this.#options, transactionRequest);
+    const [existingByAttempt, existingByIdentifier] = await Promise.all([
+      this.#options.store.loadExactPaymentAttempt(attemptId),
+      this.#options.store.loadExactPaymentAttemptByIdentifier(context.paymentIdentifier),
+    ]);
+    const existing = existingByAttempt ?? existingByIdentifier;
+    if (existing) {
+      assertMatchingExactAttempt(existing, attemptId, intentHash);
+      if (existing.status === "absent") {
+        throw new KaspaX402Error("invalid_kaspa_exact_replay", "this exact artifact is permanently absent; authorize a new logical payment with a new identifier");
+      }
+      const retryValidation = validatePaymentRetry({ paymentRequired, paymentPayload: existing.payment.paymentPayload });
+      if (!retryValidation.ok) throw retryValidation.error;
+      return { ...existing.payment, paymentRequired: retryValidation.value.paymentRequired };
+    }
+    if (this.#options.authorizeExactPayment) {
+      const intentDigest = sha256Hex(stableStringify(transactionRequest));
+      const approval = await this.#options.authorizeExactPayment({
+        intent: Object.freeze(structuredClone(transactionRequest)), intentDigest,
+      });
+      if (!approval || approval.intentDigest.toLowerCase() !== intentDigest ||
+        sha256Hex(stableStringify(transactionRequest)) !== intentDigest) {
+        throw new KaspaX402Error("invalid_kaspa_x402_binding", "exact payer approval does not bind the requested intent");
+      }
+    }
     const transactionExact =
       await this.#createExactTransaction(transactionRequest);
     this.#assertExactResult(transactionExact, transactionRequest);
@@ -1673,7 +1690,7 @@ export class DirectModeClient {
     const expiresAt = Date.parse(exact.authorization.expiresAt);
     if (
       exact.authorization.version !==
-        "kaspa-x402-exact-request-authorization-v1" ||
+        "kaspa-x402-exact-request-authorization-v2" ||
       !Number.isInteger(exact.authorization.inputIndex) ||
       exact.authorization.inputIndex < 0 ||
       !Number.isFinite(expiresAt) ||
@@ -1695,6 +1712,7 @@ export class DirectModeClient {
       payToScriptPublicKey: request.payToScriptPublicKey,
       paymentRequirementsHash: request.paymentRequirementsHash,
       requestHash: request.requestHash,
+      paymentIdentifier: request.paymentIdentifier,
       challengeId: request.head?.challengeId ?? request.hashChainHead?.challengeId,
       inputIndex: exact.authorization.inputIndex,
       expiresAt: exact.authorization.expiresAt,
@@ -2785,6 +2803,9 @@ function assertExactFundingPolicy(
   request: ExactPaymentRequest,
 ): void {
   const policy = options.fundingPolicy;
+  if (!hasCompleteExactPolicy(policy, !!request.audience) && !options.authorizeExactPayment) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "exact funding requires a complete payer policy or explicit authorization callback");
+  }
   if (!policy) return;
   assertPaymentDestinationPolicy(options, request);
   if (
@@ -2808,14 +2829,27 @@ function assertExactFundingPolicy(
   }
 }
 
+function hasCompleteExactPolicy(policy: FundingPolicy | undefined, mcp: boolean): boolean {
+  return !!policy?.requiredSource &&
+    !!(mcp ? policy.allowedMcpAudiences?.length : policy.allowedOrigins?.length) &&
+    !!policy.allowedPayTo?.length &&
+    !!policy.allowedExactProfiles?.length &&
+    policy.maximumExactAmountSompi !== undefined &&
+    parseSompiString(policy.maximumExactAmountSompi) > 0n;
+}
+
 function assertPaymentDestinationPolicy(
   options: DirectModeClientOptions,
-  request: { origin: string; payTo: string },
+  request: { origin: string; payTo: string; audience?: string },
 ): void {
   const policy = options.fundingPolicy;
   if (!policy) return;
+  if (request.audience && policy.allowedMcpAudiences &&
+    !policy.allowedMcpAudiences.includes(request.audience)) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "MCP audience is not allowed by funding policy");
+  }
   if (
-    policy.allowedOrigins &&
+    !request.audience && policy.allowedOrigins &&
     !policy.allowedOrigins.includes(request.origin)
   ) {
     throw new KaspaX402Error(
@@ -3034,46 +3068,6 @@ function pendingExactPaymentError(
     : new PendingExactPaymentError(payment, error);
 }
 
-async function loadReplayExactPaymentAttempt(
-  store: DirectModeClientOptions["store"],
-  context: PaymentRequestContext,
-  originalUrl: string,
-  explicitIdentifier?: string,
-): Promise<ExactPaymentAttemptRecord | undefined> {
-  const identifiers = new Set<string>();
-  if (explicitIdentifier) {
-    identifiers.add(explicitIdentifier);
-  } else {
-    const urls = new Set([context.url, originalUrl]);
-    const defaultPortAlias = explicitDefaultPortAlias(context.url);
-    if (defaultPortAlias) urls.add(defaultPortAlias);
-    for (const url of urls) {
-      try {
-        identifiers.add(defaultExactPaymentIdentifier({ ...context, url }));
-      } catch {
-        // Free and non-JSON requests still proceed to the ordinary first fetch.
-      }
-    }
-  }
-  const loaded = (
-    await Promise.all(
-      [...identifiers].map((identifier) =>
-        store.loadExactPaymentAttemptByIdentifier(identifier),
-      ),
-    )
-  ).filter((attempt): attempt is ExactPaymentAttemptRecord => !!attempt);
-  const byAttempt = new Map(
-    loaded.map((attempt) => [attempt.attemptId.toLowerCase(), attempt]),
-  );
-  if (byAttempt.size > 1) {
-    throw new KaspaX402Error(
-      "invalid_kaspa_exact_replay",
-      "canonical request URL aliases belong to different exact payment attempts",
-    );
-  }
-  return byAttempt.values().next().value;
-}
-
 function assertHashChainReplayRequest(
   attempt: ExactPaymentAttemptRecord,
   context: PaymentRequestContext,
@@ -3107,17 +3101,6 @@ function assertHashChainReplayRequest(
       "invalid_kaspa_exact_replay",
       "recoverable hash-chain payment belongs to another request",
     );
-  }
-}
-
-function explicitDefaultPortAlias(value: string): string | undefined {
-  try {
-    const url = new URL(value);
-    const port = url.protocol === "https:" ? "443" : url.protocol === "http:" ? "80" : undefined;
-    if (!port || url.port) return undefined;
-    return `${url.protocol}//${url.hostname}:${port}${url.pathname}${url.search}${url.hash}`;
-  } catch {
-    return undefined;
   }
 }
 
@@ -3156,26 +3139,8 @@ function exactPaymentIntentHash(
   );
 }
 
-function defaultExactPaymentIdentifier(context: PaymentRequestContext): string {
-  try {
-    return sha256Hex(
-      stableStringify({
-        scope: "kaspa:x402:exact-request-identifier:v1",
-        origin: context.origin ?? originForUrl(context.url),
-        url: context.url,
-        requestIdentity: context.requestHash ?? {
-          method: context.method ?? "GET",
-          body: context.body ?? null,
-        },
-      }),
-    );
-  } catch (error) {
-    throw new KaspaX402Error(
-      "missing_kaspa_payment_identifier",
-      "paymentIdentifier is required when the exact request is outside the JSON canonicalization profile",
-      error,
-    );
-  }
+function defaultExactPaymentIdentifier(): string {
+  return crypto.randomUUID();
 }
 
 function exactPaymentAttemptId(
@@ -3580,7 +3545,7 @@ function intendedPaymentPayloadForPreflight(
         paymentOutputIndex: accepted.extra.paymentOutputIndex ?? 0,
         requestHash: context.requestHash!,
         authorization: {
-          version: "kaspa-x402-exact-request-authorization-v1",
+          version: "kaspa-x402-exact-request-authorization-v2",
           inputIndex: 0,
           expiresAt: "1970-01-01T00:00:00.000Z",
           digest: zeroHash,
@@ -3900,7 +3865,9 @@ function canonicalRequestUrl(url: string): string {
   try {
     const browserBase = (globalThis as { location?: { href?: string } })
       .location?.href;
-    return (browserBase ? new URL(url, browserBase) : new URL(url)).href;
+    const parsed = browserBase ? new URL(url, browserBase) : new URL(url);
+    parsed.hash = "";
+    return parsed.href;
   } catch {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_payload",
@@ -3909,9 +3876,16 @@ function canonicalRequestUrl(url: string): string {
   }
 }
 
-function canonicalHashChainPaymentContext(
+function canonicalPaymentContext(
   context: PaymentRequestContext,
+  advertisedResourceUrl: string,
 ): PaymentRequestContext {
+  if (context.audience !== undefined) {
+    if (context.origin !== undefined || !context.audience.trim()) {
+      throw new KaspaX402Error("invalid_kaspa_x402_binding", "MCP audience cannot be overridden by an HTTP origin");
+    }
+    return { ...context, origin: undefined };
+  }
   const url = canonicalRequestUrl(context.url);
   const requestOrigin = originForUrl(url);
   if (context.origin !== undefined) {
@@ -3921,20 +3895,26 @@ function canonicalHashChainPaymentContext(
     } catch {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_payload",
-        "hash-chain request origin must be an absolute URL origin",
+        "request origin must be an absolute URL origin",
       );
     }
     if (suppliedOrigin !== requestOrigin) {
       throw new KaspaX402Error(
         "invalid_kaspa_x402_binding",
-        "hash-chain request origin does not match the actual request URL",
+        "request origin does not match the actual request URL",
       );
     }
+  }
+  let resourceUrl: string;
+  try { resourceUrl = canonicalRequestUrl(advertisedResourceUrl); }
+  catch { throw new KaspaX402Error("invalid_kaspa_x402_binding", "advertised resource URL is invalid"); }
+  if (resourceUrl !== url) {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "advertised resource URL does not match the actual request URL");
   }
   return {
     ...context,
     url,
-    ...(context.origin !== undefined ? { origin: requestOrigin } : {}),
+    origin: requestOrigin,
   };
 }
 

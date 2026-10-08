@@ -310,6 +310,7 @@ export interface ExactTransactionVerificationRequest {
   payToScriptPublicKey: ByteHex;
   requiredFinality: "accepted" | "confirmed";
   requestHash: Hash32Hex;
+  paymentIdentifier: string;
   paymentRequirementsHash: Hash32Hex;
   authorization: ExactRequestAuthorization;
   /** Cancellation from the public adapter boundary. */
@@ -587,6 +588,10 @@ export interface ExactSettlementAttemptRecord {
   paymentRequirementsHash: Hash32Hex;
   paymentPayloadHash: Hash32Hex;
   requestAuthorizationId: Hash32Hex;
+  /** Signed and challenge/grant deadlines captured before durable settlement. */
+  authorizationExpiresAt: string;
+  challengeExpiresAt?: string;
+  grantExpiresAt?: string;
   payToScriptPublicKey: ByteHex;
   transaction: PreparedTransaction;
   /** Immutable finality threshold advertised for this signed payment attempt. */
@@ -1016,10 +1021,12 @@ export type DirectModeServerConfig =
       chainProvider?: undefined;
     });
 
+/** Every paid entry point declares whether the host authenticated its caller. */
+export type PaidRouteAccess = "public" | "authenticated";
+
 export interface BuildPaymentRequiredOptions {
+  routeAccess: PaidRouteAccess;
   resource: ResourceInfo;
-  /** Hash of the authenticated tenant/session/capability context for this challenge. */
-  securityContextHash?: Hash32Hex;
   /** Host-derived normalized claims used to derive securityContextHash. */
   trustedSecurityContext?: TrustedSecurityContext;
   amount?: SompiString;
@@ -1038,6 +1045,7 @@ export interface BuildPaymentRequiredOptions {
 }
 
 export interface DirectPaymentVerificationOptions {
+  routeAccess: PaidRouteAccess;
   paymentPayload: PaymentPayload;
   paymentRequirements: PaymentPayload["accepted"];
   resource?: ResourceInfo;
@@ -1056,6 +1064,7 @@ export interface DirectPaymentVerification {
 export interface DirectPaymentSettlementOptions extends DirectPaymentVerificationOptions {}
 
 export interface PaidRequest {
+  routeAccess: PaidRouteAccess;
   method?: string;
   url: string;
   headers?: HeaderSource;

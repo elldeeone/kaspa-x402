@@ -151,6 +151,107 @@ function absentEvidence(
 }
 
 describe("direct-mode client", () => {
+  it("rejects exact funding without complete payer policy before wallet work", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = new DirectModeClient({
+      addressCodec: new FakeAddressCodec(),
+      fundingProvider: exactClientFunding(provider),
+      store: exactClientStore(store),
+      confirmationThreshold: CONFIRMATION_THRESHOLD,
+    });
+    await expect(client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file" },
+    )).rejects.toThrow("exact funding requires");
+    expect(provider.exactPayments).toHaveLength(0);
+    expect(await store.loadExactPaymentAttemptByIdentifier("missing")).toBeUndefined();
+  });
+
+  it("requires digest-bound exact approval when policy is omitted", async () => {
+    const provider = new FakeFundingProvider();
+    const makeApprovedClient = (approve: (digest: string) => { intentDigest: string }) =>
+      new DirectModeClient({
+        addressCodec: new FakeAddressCodec(),
+        fundingProvider: exactClientFunding(provider),
+        store: exactClientStore(new MemoryChannelStore()),
+        confirmationThreshold: CONFIRMATION_THRESHOLD,
+        authorizeExactPayment: ({ intent, intentDigest }) => {
+          expect(intent.paymentIdentifier).toMatch(/^[0-9a-f-]{36}$/);
+          expect(intent.fundingSource).toBe(provider.sourceKind);
+          return approve(intentDigest);
+        },
+      });
+    await expect(makeApprovedClient(() => ({ intentDigest: "00".repeat(32) })).createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file" },
+    )).rejects.toThrow("exact payer approval");
+    expect(provider.exactPayments).toHaveLength(0);
+    const payment = await makeApprovedClient((digest) => ({ intentDigest: digest })).createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file" },
+    );
+    expect(payment.scheme).toBe("exact");
+    expect(provider.exactPayments).toHaveLength(1);
+  });
+
+  it("rejects a conflicting MCP origin before tool or wallet work", async () => {
+    const provider = new FakeFundingProvider();
+    const callTool = vi.fn(async () => mcpPaymentRequiredResult(makeExactRequired({ amount: "250" })));
+    await expect(paidMcpToolCall(makeClient({ provider }), callTool,
+      { name: "download", arguments: { id: 1 } },
+      { audience: MCP_AUDIENCE, origin: "https://allowed.example.test" } as never,
+    )).rejects.toThrow("MCP audience cannot be overridden");
+    expect(callTool).not.toHaveBeenCalled();
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects a merchant resource alias before batch authorization or funding", async () => {
+    const provider = new FakeFundingProvider();
+    const required = makeRequired({ amount: "100" });
+    required.resource.url = "https://api.example.test/allowed";
+    const client = makeClient({ provider });
+    await expect(client.createPayment(encodePaymentRequiredHeader(required), {
+      url: "https://api.example.test/disallowed",
+    })).rejects.toThrow("resource URL");
+    expect(provider.batchAuthorizations).toHaveLength(0);
+    expect(provider.deposits).toHaveLength(0);
+  });
+
+  it("rejects a caller origin override before exact signer work", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider });
+    await expect(client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file", origin: "https://allowed.example.test" },
+    )).rejects.toThrow("origin");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("rejects an MCP audience on the HTTP payment entry point", async () => {
+    const provider = new FakeFundingProvider();
+    const client = makeClient({ provider });
+    await expect(client.createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://untrusted.example.test/file", audience: MCP_AUDIENCE },
+    )).rejects.toThrow("HTTP payment context cannot declare an MCP audience");
+    expect(provider.exactPayments).toHaveLength(0);
+  });
+
+  it("gives distinct default exact identifiers to independent payers", async () => {
+    const first = await makeClient({ provider: new FakeFundingProvider() }).createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file" },
+    );
+    const second = await makeClient({ provider: new FakeFundingProvider() }).createPayment(
+      encodePaymentRequiredHeader(makeExactRequired({ amount: "250" })),
+      { url: "https://api.example.test/file" },
+    );
+    const firstId = (first.paymentPayload.extensions?.["payment-identifier"] as { info: { id: string } }).info.id;
+    const secondId = (second.paymentPayload.extensions?.["payment-identifier"] as { info: { id: string } }).info.id;
+    expect(firstId).not.toBe(secondId);
+  });
+
   it("selects exact-only without channel signing, funding or persistence dependencies", async () => {
     const client = makeClient({ exactOnly: true });
     expect(client.supportedSchemes()).toEqual(["exact"]);
@@ -586,7 +687,7 @@ describe("direct-mode client", () => {
 
       await expect(
         client.createPayment(required, {
-          url: "https://api.example.test/file",
+          url: "https://api.example.test/data",
         }),
       ).rejects.toThrow("funding policy");
       expect(provider.deposits).toHaveLength(0);
@@ -2750,7 +2851,7 @@ describe("direct-mode client", () => {
     });
 
     await expect(
-      client.paidFetch("https://api.example.test/data"),
+      client.paidFetch("https://api.example.test/file"),
     ).rejects.toThrow("redirected away from the authorized request URL");
     expect(provider.exactPayments).toHaveLength(0);
   });
@@ -2812,14 +2913,14 @@ describe("direct-mode client", () => {
             "PAYMENT-REQUIRED": encodePaymentRequiredHeader(
               makeExactRequired({ amount: "100" }),
             ),
-          });
+          }, "https://api.example.test/file");
         }
         return response(200, {}, "https://attacker.example/payment", true);
       },
     });
 
     await expect(
-      client.paidFetch("https://api.example.test/data"),
+      client.paidFetch("https://api.example.test/file"),
     ).rejects.toThrow("redirected away from the authorized request URL");
     expect(attempts).toBe(2);
     expect(provider.exactPayments).toHaveLength(1);
@@ -2838,12 +2939,12 @@ describe("direct-mode client", () => {
               makeExactRequired({ amount: "100" }),
             ),
           },
-          "https://api.example.test/variable",
+          "https://api.example.test/file",
         ),
     });
 
     await expect(
-      client.paidFetch("https://api.example.test/variable", {
+      client.paidFetch("https://api.example.test/file", {
         body: new URLSearchParams([["a", "b"]]),
       }),
     ).rejects.toThrow("requestHash is required");
@@ -3300,12 +3401,6 @@ describe("direct-mode client", () => {
 
   it("rejects missing required identifiers before exact or deposit adapter work", async () => {
     for (const required of [
-      {
-        ...makeExactRequired({ amount: "100" }),
-        extensions: {
-          "payment-identifier": paymentIdentifierExtension({ required: true }),
-        },
-      },
       makeRequired({
         amount: "100",
         extensions: {
@@ -4202,6 +4297,12 @@ function makeClient(options: {
     fundingProvider: provider,
     store: options.store ?? new MemoryChannelStore(),
     fundingPolicy: {
+      requiredSource: provider.sourceKind,
+      allowedOrigins: ["https://api.example.test"],
+      allowedMcpAudiences: [MCP_AUDIENCE],
+      allowedExactProfiles: ["standard-native", "additive", "hash-chain-additive"] as const,
+      allowedPayTo: ["kaspatest:payout", "kaspatest:head"],
+      maximumExactAmountSompi: "1000000000",
       ...options.fundingPolicy,
       ...(options.fundingSource ? { requiredSource: options.fundingSource } : {}),
       ...(batchPayment ? { batchPayment } : {}),
@@ -4720,6 +4821,7 @@ class FakeFundingProvider implements FundingProvider {
       payToScriptPublicKey: request.payToScriptPublicKey,
       paymentRequirementsHash: request.paymentRequirementsHash,
       requestHash: request.requestHash,
+      paymentIdentifier: request.paymentIdentifier,
       challengeId: request.head?.challengeId,
       inputIndex: request.profile === "additive" ? 1 : 0,
       expiresAt,
@@ -4730,7 +4832,7 @@ class FakeFundingProvider implements FundingProvider {
       ...(this.omitExactTransactionId ? {} : { transactionId: EXACT_TX_ID }),
       paymentOutputIndex,
       authorization: {
-        version: "kaspa-x402-exact-request-authorization-v1" as const,
+        version: "kaspa-x402-exact-request-authorization-v2" as const,
         inputIndex: request.profile === "additive" ? 1 : 0,
         expiresAt,
         digest,

@@ -1,6 +1,7 @@
 import {
   KASPA_X402_RESOURCE_BUDGET,
   assertJsonResourceBudget,
+  canonicalTrustedSecurityContext,
   decodeBoundedJsonBytes,
   isFacilitatorRequest,
   isKaspaX402Network,
@@ -16,7 +17,7 @@ import {
   type VerifyResponse,
 } from "@kaspa-x402/core";
 import { KaspaX402Error } from "@kaspa-x402/core";
-import { DirectModeServer } from "@kaspa-x402/server";
+import { DirectModeServer, type PaidRouteAccess } from "@kaspa-x402/server";
 
 type FacilitatorMode = "verify" | "settle" | "claim" | "refund";
 const FACILITATOR_MODES = new Set<FacilitatorMode>(["verify", "settle", "claim", "refund"]);
@@ -44,6 +45,7 @@ export type FacilitatorActionSettler = (
 ) => Promise<SettlementResponse> | SettlementResponse;
 
 export interface FacilitatorHttpRequest {
+  routeAccess: PaidRouteAccess;
   method: string;
   path: string;
   /** Parsed JSON or bounded raw UTF-8 JSON bytes. */
@@ -80,9 +82,15 @@ export class DirectModeFacilitator {
 
   async verify(
     input: unknown,
+    routeAccess: PaidRouteAccess,
     trustedSecurityContext?: TrustedSecurityContext,
     signal?: AbortSignal,
   ): Promise<VerifyResponse> {
+    try {
+      trustedSecurityContext = facilitatorRouteContext(routeAccess, trustedSecurityContext);
+    } catch {
+      return invalidVerify("invalid_kaspa_x402_payload");
+    }
     if (!isFacilitatorRequest(input)) {
       return invalidVerify("invalid_kaspa_x402_payload");
     }
@@ -90,7 +98,7 @@ export class DirectModeFacilitator {
     if (unsupportedReason) return invalidVerify(unsupportedReason);
     try {
       const verification = await this.#config.server.verifyPayment(
-        facilitatorServerOptions(input, trustedSecurityContext, signal),
+        facilitatorServerOptions(input, routeAccess, trustedSecurityContext, signal),
       );
       return {
         isValid: true,
@@ -104,9 +112,15 @@ export class DirectModeFacilitator {
 
   async settle(
     input: unknown,
+    routeAccess: PaidRouteAccess,
     trustedSecurityContext?: TrustedSecurityContext,
     signal?: AbortSignal,
   ): Promise<SettleResponse> {
+    try {
+      trustedSecurityContext = facilitatorRouteContext(routeAccess, trustedSecurityContext);
+    } catch {
+      return invalidSettlement("invalid_kaspa_x402_payload");
+    }
     if (!isFacilitatorRequest(input)) {
       return invalidSettlement("invalid_kaspa_x402_payload");
     }
@@ -145,7 +159,7 @@ export class DirectModeFacilitator {
     }
     try {
       return await this.#config.server.settlePayment(
-        facilitatorServerOptions(input, trustedSecurityContext, signal),
+        facilitatorServerOptions(input, routeAccess, trustedSecurityContext, signal),
       );
     } catch (error) {
       return invalidSettlement(errorCode(error), network);
@@ -172,10 +186,12 @@ export class DirectModeFacilitator {
 
 function facilitatorServerOptions(
   input: FacilitatorRequest,
+  routeAccess: PaidRouteAccess,
   trustedSecurityContext?: TrustedSecurityContext,
   signal?: AbortSignal,
 ) {
   return {
+    routeAccess,
     paymentPayload: input.paymentPayload,
     paymentRequirements: input.paymentRequirements,
     ...(input.resource ? { resource: input.resource } : {}),
@@ -202,6 +218,7 @@ export async function handleFacilitatorRequest(
     }
     const body = await facilitator.verify(
       input,
+      request.routeAccess,
       request.trustedSecurityContext,
       request.signal,
     );
@@ -214,12 +231,35 @@ export async function handleFacilitatorRequest(
     }
     const body = await facilitator.settle(
       input,
+      request.routeAccess,
       request.trustedSecurityContext,
       request.signal,
     );
     return jsonResponse(200, body);
   }
   return jsonResponse(404, { error: "not_found" });
+}
+
+function facilitatorRouteContext(
+  routeAccess: PaidRouteAccess,
+  context?: TrustedSecurityContext,
+): TrustedSecurityContext | undefined {
+  if (routeAccess === "public" && context === undefined) return undefined;
+  if (routeAccess !== "authenticated" || !context || typeof context !== "object" || Array.isArray(context)) {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", "invalid paid route context");
+  }
+  const canonical = canonicalTrustedSecurityContext(context) as unknown as {
+    principal: string;
+    tenant: string | null;
+    authorizationScopes: string[];
+    handlerState: Record<string, string | number | boolean | null>;
+  };
+  return {
+    principal: canonical.principal,
+    ...(canonical.tenant === null ? {} : { tenant: canonical.tenant }),
+    authorizationScopes: canonical.authorizationScopes,
+    handlerState: canonical.handlerState,
+  };
 }
 
 export interface FacilitatorBodyReadOptions {

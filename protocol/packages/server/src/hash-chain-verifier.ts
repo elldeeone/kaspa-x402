@@ -125,6 +125,7 @@ function localValidationFingerprint(
     payTo: request.payTo,
     payToScriptPublicKey: request.payToScriptPublicKey,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     paymentRequirementsHash: request.paymentRequirementsHash,
     authorization: request.authorization,
     hashChainHead: request.hashChainHead,
@@ -252,7 +253,7 @@ function locallyValidateHashChainPayment(
   }
   const authorization = request.authorization;
   const publicKey = fundingKeys.get(authorization.inputIndex);
-  if (!publicKey || authorization.version !== "kaspa-x402-exact-request-authorization-v1" ||
+  if (!publicKey || authorization.version !== "kaspa-x402-exact-request-authorization-v2" ||
     !Number.isFinite(Date.parse(authorization.expiresAt))) {
     throw new Error("hash-chain request authorization is missing or not signed by a payer input");
   }
@@ -266,6 +267,7 @@ function locallyValidateHashChainPayment(
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: head.challengeId,
     inputIndex: authorization.inputIndex,
     expiresAt: authorization.expiresAt,

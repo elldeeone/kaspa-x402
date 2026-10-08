@@ -37,6 +37,7 @@ import {
   runBatchArtifactPersistenceProof,
   runExactPaymentAttemptPersistenceProof,
 } from "./live-adapter-reference.mjs";
+import { runExactAuthorizationE2EProof } from "./proof-exact-authorization-e2e.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const options = readOptions(process.argv.slice(2));
@@ -50,6 +51,8 @@ const report = {
 
 try {
   report.flows.exact = await runExactProof();
+  report.flows.exactAuthorization = await runExactAuthorizationE2EProof();
+  check("v2 exact authorization, v1 rejection, and restart retry", report.flows.exactAuthorization);
   report.flows.batch = await runBatchProof();
   report.flows.txV1 = runTxV1Proof();
   report.flows.exactAttemptPersistence =
@@ -98,7 +101,7 @@ async function runExactProof() {
     step: "download",
   });
   const unpaid = await server.handlePaidRequest(
-    { url, resource, paymentAmount: amount, paymentScheme: "exact" },
+    { routeAccess: "public", url, resource, paymentAmount: amount, paymentScheme: "exact" },
     async () => ({
       status: 200,
       body: { ok: false },
@@ -140,7 +143,7 @@ async function runExactProof() {
     paymentRequirements: payment.accepted,
     resource,
     requestHash,
-  });
+  }, "public");
   assert.equal(verification.isValid, true);
   check("standard-native exact server verification", {
     payer: verification.payer,
@@ -148,7 +151,7 @@ async function runExactProof() {
 
   let executions = 0;
   const response = await server.handlePaidRequest(
-    requestWithPayment(payment.paymentPayload, {
+    requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "exact",
@@ -181,7 +184,7 @@ async function runExactProof() {
 
   let cachedExecutions = 0;
   const cached = await server.handlePaidRequest(
-    requestWithPayment(payment.paymentPayload, {
+    requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "exact",
@@ -213,7 +216,7 @@ async function runExactProof() {
     mimeType: "application/octet-stream",
   };
   const replayRequired = await server.handlePaidRequest(
-    {
+    { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
       paymentAmount: amount,
@@ -235,7 +238,7 @@ async function runExactProof() {
   const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
   assert.ok(replayFirstHash);
   const replaySource = await server.handlePaidRequest(
-    requestWithPayment(replayPayment.paymentPayload, {
+    requestWithPayment(replayPayment.paymentPayload, { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
       scheme: "exact",
@@ -251,7 +254,7 @@ async function runExactProof() {
 
   let replayExecutions = 0;
   const replay = await server.handlePaidRequest(
-    requestWithPayment(replayPayment.paymentPayload, {
+    requestWithPayment(replayPayment.paymentPayload, { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
       scheme: "exact",
@@ -309,7 +312,7 @@ async function runBatchProof() {
   });
 
   const deposit = await client.createPayment(
-    paymentRequiredFor(server, {
+    paymentRequiredFor(server, { routeAccess: "public",
       resource,
       amount: "50000",
       scheme: "batch-settlement",
@@ -354,14 +357,14 @@ async function runBatchProof() {
     paymentRequirements: deposit.accepted,
     resource,
     requestHash: firstHash,
-  });
+  }, "public");
   assert.equal(depositVerify.isValid, true);
   check("batch deposit server verification", {
     channelId: depositVerify.extra?.channelId,
   });
 
   const depositResponse = await server.handlePaidRequest(
-    requestWithPayment(deposit.paymentPayload, {
+    requestWithPayment(deposit.paymentPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "batch-settlement",
@@ -396,7 +399,7 @@ async function runBatchProof() {
   });
 
   const voucher = await client.createPayment(
-    paymentRequiredFor(server, {
+    paymentRequiredFor(server, { routeAccess: "public",
       resource,
       amount: "50000",
       scheme: "batch-settlement",
@@ -426,7 +429,7 @@ async function runBatchProof() {
     paymentRequirements: voucher.accepted,
     resource,
     requestHash: secondHash,
-  });
+  }, "public");
   assert.equal(voucherVerify.isValid, true);
   check("batch voucher server verification", {
     channelId: voucherVerify.extra?.channelId,
@@ -437,7 +440,7 @@ async function runBatchProof() {
     deposit.paymentPayload.payload.voucher,
   );
   const corrective = await server.handlePaidRequest(
-    requestWithPayment(underpaidPayload, {
+    requestWithPayment(underpaidPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "batch-settlement",
@@ -465,7 +468,7 @@ async function runBatchProof() {
 
   let executions = 0;
   const voucherResponse = await server.handlePaidRequest(
-    requestWithPayment(voucher.paymentPayload, {
+    requestWithPayment(voucher.paymentPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "batch-settlement",
@@ -505,7 +508,7 @@ async function runBatchProof() {
 
   let cachedExecutions = 0;
   const cached = await server.handlePaidRequest(
-    requestWithPayment(voucher.paymentPayload, {
+    requestWithPayment(voucher.paymentPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "batch-settlement",
@@ -534,7 +537,7 @@ async function runBatchProof() {
   let replayExecutions = 0;
   const staleReplayPayload = withoutPaymentIdentifier(voucher.paymentPayload);
   const staleReplay = await server.handlePaidRequest(
-    requestWithPayment(staleReplayPayload, {
+    requestWithPayment(staleReplayPayload, { routeAccess: "public",
       url,
       resource,
       scheme: "batch-settlement",
@@ -935,9 +938,10 @@ function validateVectorCompute(artifact, label) {
 
 function requestWithPayment(
   paymentPayload,
-  { url, resource, scheme, amount, requestHash },
+  { routeAccess, url, resource, scheme, amount, requestHash },
 ) {
   return {
+    routeAccess,
     method: "GET",
     url,
     body: null,

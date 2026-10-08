@@ -47,7 +47,7 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
     network: "kaspa:testnet-10", profile: "hash-chain-additive",
     transactionId: tx.id, paymentOutputIndex: 0, amount: step.amount,
     payTo: "kaspatest:successor", payToScriptPublicKey: successorScript,
-    paymentRequirementsHash, requestHash, challengeId: head.challengeId,
+    paymentRequirementsHash, requestHash, paymentIdentifier: "hash_chain_verifier_0001", challengeId: head.challengeId,
     inputIndex: 1, expiresAt,
   });
   const payerKey = Buffer.alloc(32, 7);
@@ -56,9 +56,9 @@ function fixture(selectedMode: "valid" | "missing" | "wrong-successor" = "valid"
     transaction: JSON.stringify(tx), transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
     paymentOutputIndex: 0, amount: step.amount, payTo: "kaspatest:successor",
     payToScriptPublicKey: successorScript, requiredFinality: "accepted",
-    requestHash, paymentRequirementsHash,
+    requestHash, paymentRequirementsHash, paymentIdentifier: "hash_chain_verifier_0001",
     authorization: {
-      version: "kaspa-x402-exact-request-authorization-v1", inputIndex: 1,
+      version: "kaspa-x402-exact-request-authorization-v2", inputIndex: 1,
       expiresAt, digest,
       signature: Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), payerKey)).toString("hex"),
     },
@@ -169,7 +169,7 @@ describe("hash-chain exact selected-chain verifier", () => {
       paymentOutputIndex: 0, amount: request.amount, payTo: request.payTo,
       payToScriptPublicKey: request.payToScriptPublicKey,
       paymentRequirementsHash: request.paymentRequirementsHash,
-      requestHash: request.requestHash, challengeId: request.hashChainHead!.challengeId,
+      requestHash: request.requestHash, paymentIdentifier: request.paymentIdentifier, challengeId: request.hashChainHead!.challengeId,
       inputIndex: 1, expiresAt: expired,
     });
     await expect(verifier.verifyExactPayment({ ...request, authorization: {

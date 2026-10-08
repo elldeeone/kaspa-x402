@@ -423,7 +423,16 @@ describe("x402 HTTP vectors", () => {
     expect(
       validatePaymentRetry({
         paymentRequired,
-        paymentPayload: batch.paymentPayload,
+        paymentPayload: {
+          ...batch.paymentPayload,
+          extensions: {
+            ...batch.paymentPayload.extensions,
+            "payment-identifier": paymentIdentifierExtension({
+              required: true,
+              id: "batch_mixed_vector_0001",
+            }),
+          },
+        },
       }).ok,
     ).toBe(true);
   });

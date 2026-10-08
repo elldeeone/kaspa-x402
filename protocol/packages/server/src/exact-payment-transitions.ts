@@ -373,6 +373,12 @@ export function prepareExactTransition(
       const [, startedAt] = command.args;
       if (attempt.status !== "accepted" || attempt.handlerStartedAt)
         return { result: false };
+      const admissionTime = Date.parse(snapshot.now);
+      if (!Number.isFinite(admissionTime) || !Number.isFinite(Date.parse(startedAt)) ||
+        [attempt.authorizationExpiresAt, attempt.challengeExpiresAt, attempt.grantExpiresAt]
+          .some((deadline) => deadline !== undefined && admissionTime >= Date.parse(deadline))) {
+        return { result: false };
+      }
       return {
         ...pending({
           ...attempt,

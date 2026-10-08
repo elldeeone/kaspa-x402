@@ -5,6 +5,12 @@ For exact-only setup and the batch configuration migration, start with
 [SDK configuration](../../docs/integration.md).
 Server SDK for direct-mode Kaspa x402 payments.
 
+Every paid request, challenge, direct verification, settlement and MCP tool
+call must declare `routeAccess: "public"` or `routeAccess: "authenticated"`.
+Authenticated routes must pass host-derived `trustedSecurityContext` on every
+call, including retries. The server rejects missing context before payment
+work or cached-response lookup.
+
 Status: release candidate. This package targets testnet iteration and reference server
 flows; production deployments need independent review, durable storage, key
 management, and the mainnet gates in the repository docs.

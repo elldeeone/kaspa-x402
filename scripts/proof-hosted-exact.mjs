@@ -220,6 +220,7 @@ async function runHostedExactProof(input) {
       fetch: gatewayFetch,
       maxPaymentRetries: 0,
       fundingPolicy: {
+        requiredSource: "hot-wallet",
         allowedOrigins: [input.expectedGatewayOrigin],
         allowedExactProfiles: [input.expectedExactProfile],
         allowedPayTo: [expectedPayTo],
@@ -728,6 +729,7 @@ function exactPaymentArtifact(
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: request.head?.challengeId,
     inputIndex: authorizationInputIndex,
     expiresAt: request.authorizationExpiresAt,
@@ -739,7 +741,7 @@ function exactPaymentArtifact(
     transactionId: transaction.id,
     inputOutpoints: exactTransactionInputOutpoints(transaction),
     authorization: {
-      version: "kaspa-x402-exact-request-authorization-v1",
+      version: "kaspa-x402-exact-request-authorization-v2",
       inputIndex: authorizationInputIndex,
       expiresAt: request.authorizationExpiresAt,
       digest: authorizationDigest,

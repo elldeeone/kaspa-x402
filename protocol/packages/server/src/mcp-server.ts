@@ -24,10 +24,12 @@ import {
   PAYMENT_RESPONSE_HEADER,
   PAYMENT_SIGNATURE_HEADER,
   type HandlerContext,
+  type PaidRouteAccess,
   type ServerResponse,
 } from "./types.js";
 
 export interface PaidMcpToolOptions {
+  routeAccess: PaidRouteAccess;
   /** Trusted server identity that payer authorizations must target. */
   audience: string;
   name: string;
@@ -92,6 +94,7 @@ export async function handlePaidMcpToolCall(
   if (options.scheme !== "exact") {
     try {
       server.buildPaymentRequired({
+        routeAccess: options.routeAccess,
         resource,
         amount: options.amount,
         scheme: "batch-settlement",
@@ -110,6 +113,7 @@ export async function handlePaidMcpToolCall(
   } catch {
     const response = await server.handlePaidRequest(
       {
+        routeAccess: options.routeAccess,
         method: "MCP",
         url: resource.url,
         resource,
@@ -153,6 +157,7 @@ export async function handlePaidMcpToolCall(
 
   const response = await server.handlePaidRequest(
     {
+      routeAccess: options.routeAccess,
       method: "MCP",
       url: resource.url,
       resource,

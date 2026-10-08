@@ -73,6 +73,13 @@ describe("MCP hybrid settlement failure E2E", () => {
       confirmationThreshold: 30,
       fundingProvider: exactFundingProvider(),
       store: new MemoryChannelStore(),
+      fundingPolicy: {
+        requiredSource: "hot-wallet",
+        allowedMcpAudiences: [audience],
+        allowedPayTo: [required.accepts[0]!.payTo],
+        allowedExactProfiles: ["standard-native"],
+        maximumExactAmountSompi: "100",
+      },
     });
 
     const result = await paidMcpToolCall(
@@ -80,7 +87,7 @@ describe("MCP hybrid settlement failure E2E", () => {
       (params) =>
         handlePaidMcpToolCall(
           server as never,
-          {
+          { routeAccess: "public",
             audience,
             name: "download",
             resource: { url: "mcp://tool/download" },
@@ -184,6 +191,7 @@ function exactFundingProvider(): ExactFundingProvider {
         payToScriptPublicKey: request.payToScriptPublicKey,
         paymentRequirementsHash: request.paymentRequirementsHash,
         requestHash: request.requestHash,
+        paymentIdentifier: request.paymentIdentifier,
         inputIndex: 0,
         expiresAt: request.authorizationExpiresAt,
       });
@@ -193,7 +201,7 @@ function exactFundingProvider(): ExactFundingProvider {
         transactionId,
         paymentOutputIndex,
         authorization: {
-          version: "kaspa-x402-exact-request-authorization-v1",
+          version: "kaspa-x402-exact-request-authorization-v2",
           inputIndex: 0,
           expiresAt: request.authorizationExpiresAt,
           digest,

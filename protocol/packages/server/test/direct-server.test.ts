@@ -118,11 +118,141 @@ function absentChainEvidence(
 }
 
 describe("direct-mode server", () => {
+  it("requires host context on authenticated routes even when auth headers were consumed", async () => {
+    const setup = makeServer();
+    const anonymous = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, routeAccess: "authenticated" },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(anonymous.status).toBe(400);
+    expect(anonymous.body).toEqual({ error: "missing_trusted_security_context" });
+    expect(anonymous.headers[PAYMENT_REQUIRED_HEADER]).toBeUndefined();
+
+    const publicRequest = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, routeAccess: "public" },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(publicRequest.status).toBe(402);
+
+    const context = { principal: "account:one" };
+    const challenged = await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, routeAccess: "authenticated", trustedSecurityContext: context },
+      async () => ({ body: "unreachable" }),
+    );
+    expect(challenged.status).toBe(402);
+    const accepted = decodePaymentRequiredHeader(
+      challenged.headers[PAYMENT_REQUIRED_HEADER]!,
+    ).accepts[0] as BatchPaymentRequirements;
+    expect(accepted.extra.securityContextHash).toBe(trustedSecurityContextHash(context));
+
+    const payment = makeDepositPayment(setup, { accepted });
+    const paid = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { routeAccess: "authenticated", trustedSecurityContext: context }),
+      async () => ({ body: "private", chargedAmount: "100" }),
+    );
+    expect(paid.status).toBe(200);
+    const replay = await setup.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { routeAccess: "authenticated", trustedSecurityContext: undefined }),
+      async () => ({ body: "wrong", chargedAmount: "100" }),
+    );
+    expect(replay.status).toBe(400);
+    expect(replay.body).not.toBe("private");
+  });
+
+  it("rejects reduced batch settlement before durable channel state changes", async () => {
+    const setup = makeServer();
+    const deposit = makeDepositPayment(setup);
+    const payment = deposit.payload;
+    const reduced = { ...payment.accepted, amount: "99" };
+    await expect(setup.server.settlePayment({ routeAccess: "public",
+      paymentPayload: payment,
+      paymentRequirements: reduced,
+    })).rejects.toThrow("settlement amount must equal");
+    expect(await setup.store.loadChannel(deposit.channelId)).toBeUndefined();
+  });
+
+  it("does not admit an exact handler when authorization expires during settlement", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    try {
+      class LateSettlementStore extends MemoryServerChannelStore {
+        override async acceptExactSettlement(...args: Parameters<MemoryServerChannelStore["acceptExactSettlement"]>) {
+          await super.acceptExactSettlement(...args);
+          vi.setSystemTime(new Date("2030-01-01T00:00:02.000Z"));
+        }
+      }
+      const store = new LateSettlementStore();
+      const setup = makeServer({ store, maxTimeoutSeconds: 1 });
+      const payment = makeExactPayment(setup);
+      const handler = vi.fn(async () => ({ body: "must not run" }));
+      const response = await setup.server.handlePaidRequest(
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }), handler,
+      );
+      expect(response.status).not.toBe(200);
+      expect(handler).not.toHaveBeenCalled();
+      const attempt = await store.loadExactSettlementAttempt(EXACT_TX_ID);
+      expect(attempt?.status).toBe("accepted");
+      expect(attempt?.handlerStartedAt).toBeUndefined();
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("does not execute exact protected work when expiry wins after atomic admission", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2030-01-01T00:00:00.000Z"));
+    try {
+      class LateHandlerStore extends MemoryServerChannelStore {
+        override async beginExactHandler(...args: Parameters<MemoryServerChannelStore["beginExactHandler"]>) {
+          const admitted = await super.beginExactHandler(...args);
+          vi.setSystemTime(new Date("2030-01-01T00:00:02.000Z"));
+          return admitted;
+        }
+      }
+      const store = new LateHandlerStore();
+      const setup = makeServer({ store, maxTimeoutSeconds: 1 });
+      const payment = makeExactPayment(setup);
+      const handler = vi.fn(async () => ({ body: "must not run" }));
+      const response = await setup.server.handlePaidRequest(
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }), handler,
+      );
+      expect(response).toMatchObject({ status: 503, body: { error: "exact_settlement_recovery_required" } });
+      expect(handler).not.toHaveBeenCalled();
+      const attempt = await store.loadExactSettlementAttempt(EXACT_TX_ID);
+      expect(attempt?.handlerStartedAt).toBeDefined();
+      expect(attempt?.recoveryReason).toContain("expired before protected work");
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rejects an HTTP resource alias before issuing a challenge", async () => {
+    const setup = makeServer();
+    const handler = vi.fn(async () => ({ body: "must not run" }));
+    const response = await setup.server.handlePaidRequest({ routeAccess: "public",
+      method: "GET", url: `${RESOURCE.url}?private=1`, resource: RESOURCE,
+    }, handler);
+    expect(response).toMatchObject({ status: 400, body: { error: "resource_url_mismatch" } });
+    expect(response.headers[PAYMENT_REQUIRED_HEADER]).toBeUndefined();
+    expect(handler).not.toHaveBeenCalled();
+  });
+
+  it("rejects an exact identifier changed after payer authorization", async () => {
+    const setup = makeServer();
+    const payment = makeExactPayment(setup, { paymentIdentifier: "payer_one_payment_0001" });
+    payment.extensions = {
+      "payment-identifier": buildPaymentIdentifierExtension({ required: true, id: "payer_two_payment_0001" }),
+    };
+    const handler = vi.fn(async () => ({ body: "must not run" }));
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }), handler,
+    );
+    expect(response.status).not.toBe(200);
+    expect(handler).not.toHaveBeenCalled();
+    await expect(setup.store.loadExactPayment(EXACT_TX_ID)).resolves.toBeUndefined();
+  });
+
   it("returns PAYMENT-REQUIRED for unpaid requests", async () => {
     const { server } = makeServer();
 
     const response = await server.handlePaidRequest(
-      { url: RESOURCE.url },
+      { routeAccess: "public", url: RESOURCE.url },
       async () => ({ body: "secret" }),
     );
 
@@ -139,7 +269,7 @@ describe("direct-mode server", () => {
       handlerState: { policyVersion: 3 },
     } satisfies TrustedSecurityContext;
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "authenticated",
         url: RESOURCE.url,
         resource: RESOURCE,
         trustedSecurityContext,
@@ -162,7 +292,7 @@ describe("direct-mode server", () => {
       tenant: "tenant:one",
       authorizationScopes: ["download"],
     } satisfies TrustedSecurityContext;
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "authenticated",
       resource: RESOURCE,
       trustedSecurityContext,
     });
@@ -171,7 +301,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { trustedSecurityContext }),
+      requestWithPayment(payment.payload, { routeAccess: "authenticated", trustedSecurityContext }),
       async () => ({ body: "context-bound", chargedAmount: "100" }),
     );
 
@@ -183,12 +313,12 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const principalA = { principal: "batch-user-a", tenant: "merchant" };
     const principalB = { principal: "batch-user-b", tenant: "merchant" };
-    const accepted = setup.server.buildPaymentRequired({
+    const accepted = setup.server.buildPaymentRequired({ routeAccess: "authenticated",
       resource: RESOURCE,
       trustedSecurityContext: principalA,
     }).accepts[0] as BatchPaymentRequirements;
     const payment = makeDepositPayment(setup, { accepted });
-    const requestA = requestWithPayment(payment.payload, {
+    const requestA = requestWithPayment(payment.payload, { routeAccess: "authenticated",
       trustedSecurityContext: principalA,
     });
     const first = await setup.server.handlePaidRequest(requestA, async () => ({
@@ -213,7 +343,7 @@ describe("direct-mode server", () => {
     const { server } = makeServer({ amount: "100" });
 
     const response = await server.handlePaidRequest(
-      { url: RESOURCE.url, paymentAmount: "75" },
+      { routeAccess: "public", url: RESOURCE.url, paymentAmount: "75" },
       async () => ({ body: "secret" }),
     );
 
@@ -237,11 +367,11 @@ describe("direct-mode server", () => {
       "exact",
     ]);
     expect(
-      server.buildPaymentRequired({ resource: RESOURCE, scheme: "exact" })
+      server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE, scheme: "exact" })
         .accepts[0],
     ).toMatchObject({ scheme: "exact", network: "kaspa:mainnet" });
     expect(() =>
-      server.buildPaymentRequired({
+      server.buildPaymentRequired({ routeAccess: "public",
         resource: RESOURCE,
         scheme: "batch-settlement",
       }),
@@ -267,7 +397,7 @@ describe("direct-mode server", () => {
       },
     };
     await expect(
-      server.verifyPayment({
+      server.verifyPayment({ routeAccess: "public",
         paymentPayload: mainnetBatch,
         paymentRequirements: accepted,
         resource: RESOURCE,
@@ -289,7 +419,7 @@ describe("direct-mode server", () => {
     setup.chain.daa = "1000";
 
     const response = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, paymentScheme: "batch-settlement" },
+      { routeAccess: "public", url: RESOURCE.url, paymentScheme: "batch-settlement" },
       async () => ({ body: "secret" }),
     );
 
@@ -307,7 +437,7 @@ describe("direct-mode server", () => {
     const setup = makeServer(config);
     setup.chain.daa = "1000";
     const validAccepted = structuredClone(
-      setup.server.buildPaymentRequired({ resource: RESOURCE })
+      setup.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE })
         .accepts[0] as BatchPaymentRequirements,
     );
     validAccepted.extra.refundTimeoutDaa = "1900";
@@ -315,7 +445,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const valid = await setup.server.handlePaidRequest(
-      requestWithPayment(validPayment.payload),
+      requestWithPayment(validPayment.payload, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { body: "secret", chargedAmount: "100" };
@@ -327,14 +457,14 @@ describe("direct-mode server", () => {
     const outside = makeServer(config);
     outside.chain.daa = "1000";
     const tooFarAccepted = structuredClone(
-      outside.server.buildPaymentRequired({ resource: RESOURCE })
+      outside.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE })
         .accepts[0] as BatchPaymentRequirements,
     );
     tooFarAccepted.extra.refundTimeoutDaa = "2001";
     const tooFar = makeDepositPayment(outside, { accepted: tooFarAccepted });
     let rejectedHandlerExecuted = false;
     const rejected = await outside.server.handlePaidRequest(
-      requestWithPayment(tooFar.payload),
+      requestWithPayment(tooFar.payload, { routeAccess: "public" }),
       async () => {
         rejectedHandlerExecuted = true;
         return { body: "secret", chargedAmount: "100" };
@@ -349,7 +479,7 @@ describe("direct-mode server", () => {
     const { server } = makeServer({ amount: "100" });
 
     const response = await server.handlePaidRequest(
-      { url: RESOURCE.url, paymentAmount: "75", paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, paymentAmount: "75", paymentScheme: "exact" },
       async () => ({
         body: "secret",
       }),
@@ -369,7 +499,7 @@ describe("direct-mode server", () => {
     const setup = makeServer({ exactProfile: "standard-native" });
 
     const response = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, paymentAmount: "20000000", paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, paymentAmount: "20000000", paymentScheme: "exact" },
       async () => ({ body: "secret" }),
     );
 
@@ -407,7 +537,7 @@ describe("direct-mode server", () => {
   it("rejects zero-value standard-native exact offers", () => {
     const { server } = makeServer({ exactProfile: "standard-native" });
     expect(() =>
-      server.buildPaymentRequired({
+      server.buildPaymentRequired({ routeAccess: "public",
         resource: RESOURCE,
         scheme: "exact",
         amount: "0",
@@ -419,7 +549,7 @@ describe("direct-mode server", () => {
     const { server } = makeServer({ amount: "100" });
 
     const response = await server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         url: RESOURCE.url,
         paymentAmount: "75",
         paymentSchemes: ["exact", "batch-settlement"],
@@ -452,7 +582,7 @@ describe("direct-mode server", () => {
       "batch-settlement",
     ]);
     expect(() =>
-      setup.server.buildPaymentRequired({
+      setup.server.buildPaymentRequired({ routeAccess: "public",
         resource: RESOURCE,
         scheme: "exact",
         exactHead: exactHeadChallenge(exactHead()),
@@ -460,7 +590,7 @@ describe("direct-mode server", () => {
     ).toThrow("trusted settlement reconciler");
     expect(
       setup.server
-        .buildPaymentRequired({
+        .buildPaymentRequired({ routeAccess: "public",
           resource: RESOURCE,
           schemes: ["exact", "batch-settlement"],
         })
@@ -468,7 +598,7 @@ describe("direct-mode server", () => {
     ).toEqual(["batch-settlement"]);
 
     const exactOnly = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({ body: "unreachable" }),
     );
     expect(exactOnly.status).toBe(503);
@@ -485,7 +615,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         url: RESOURCE.url,
         resource: RESOURCE,
         paymentSchemes: ["exact", "batch-settlement"],
@@ -513,7 +643,7 @@ describe("direct-mode server", () => {
 
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -544,7 +674,7 @@ describe("direct-mode server", () => {
 
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -575,7 +705,7 @@ describe("direct-mode server", () => {
     const setup = makeServer({ amount: "100" });
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -595,7 +725,7 @@ describe("direct-mode server", () => {
     const setup = makeServer({ amount: "100" });
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -615,7 +745,7 @@ describe("direct-mode server", () => {
   it("charges an approved batch MCP error once and rejects capture under other arguments", async () => {
     const setup = makeServer({ amount: "100" });
     const resource = { url: "mcp://tool/download" };
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource,
       amount: "100",
       scheme: "batch-settlement",
@@ -658,6 +788,7 @@ describe("direct-mode server", () => {
       };
     };
     const options = {
+      routeAccess: "public" as const,
       audience: MCP_AUDIENCE,
       name: "download",
       resource,
@@ -709,7 +840,7 @@ describe("direct-mode server", () => {
 
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -744,9 +875,9 @@ describe("direct-mode server", () => {
 
     for (let index = 0; index < 1_000; index += 1) {
       const response = await setup.server.handlePaidRequest(
-        {
+        { routeAccess: "public",
           url: `${RESOURCE.url}?offer=${index}`,
-          resource: RESOURCE,
+          resource: { url: `${RESOURCE.url}?offer=${index}` },
           paymentScheme: "exact",
         },
         async () => ({ body: "unreachable" }),
@@ -789,9 +920,9 @@ describe("direct-mode server", () => {
     }
 
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         url: `${RESOURCE.url}?bounded-reconciliation=1`,
-        resource: RESOURCE,
+        resource: { url: `${RESOURCE.url}?bounded-reconciliation=1` },
         paymentScheme: "exact",
       },
       async () => ({ body: "unreachable" }),
@@ -834,7 +965,7 @@ describe("direct-mode server", () => {
       },
     });
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({ body: "unreachable" }),
     );
     const accepted = decodePaymentRequiredHeader(
@@ -863,14 +994,14 @@ describe("direct-mode server", () => {
 
     const [left, right] = await Promise.all([
       setup.server.handlePaidRequest(
-        requestWithPayment(first, {
+        requestWithPayment(first, { routeAccess: "public",
           paymentScheme: "exact",
           requestHash: "a1".repeat(32),
         }),
         handler,
       ),
       setup.server.handlePaidRequest(
-        requestWithPayment(second, {
+        requestWithPayment(second, { routeAccess: "public",
           paymentScheme: "exact",
           requestHash: "a2".repeat(32),
         }),
@@ -894,7 +1025,7 @@ describe("direct-mode server", () => {
     const setup = await makeAdditiveServer({}, { additiveThresholdSompi: "1" });
 
     const response = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -928,7 +1059,7 @@ describe("direct-mode server", () => {
     );
 
     expect(() =>
-      setup.server.buildPaymentRequired({
+      setup.server.buildPaymentRequired({ routeAccess: "public",
         resource: RESOURCE,
         scheme: "exact",
         amount: "20000000",
@@ -943,7 +1074,7 @@ describe("direct-mode server", () => {
 
     const result = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -970,7 +1101,7 @@ describe("direct-mode server", () => {
 
   it("returns cached MCP paid results for idempotent retries", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: { url: "mcp://tool/download" },
       amount: "100",
       scheme: "exact",
@@ -992,7 +1123,7 @@ describe("direct-mode server", () => {
 
     const first = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -1007,7 +1138,7 @@ describe("direct-mode server", () => {
     );
     const second = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -1031,7 +1162,7 @@ describe("direct-mode server", () => {
     const principalA = { principal: "mcp-user-a" };
     const principalB = { principal: "mcp-user-b" };
     const resource = { url: "mcp://tool/download" };
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "authenticated",
       resource,
       amount: "100",
       scheme: "exact",
@@ -1057,7 +1188,7 @@ describe("direct-mode server", () => {
 
     const first = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "authenticated",
         audience: MCP_AUDIENCE,
         name: "download",
         resource,
@@ -1073,7 +1204,7 @@ describe("direct-mode server", () => {
     );
     const crossPrincipal = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "authenticated",
         audience: MCP_AUDIENCE,
         name: "download",
         resource,
@@ -1099,7 +1230,7 @@ describe("direct-mode server", () => {
     const serverB = makeServer({ amount: "100" });
     const audienceA = "https://mcp-a.example.test";
     const audienceB = "https://mcp-b.example.test";
-    const required = serverA.server.buildPaymentRequired({
+    const required = serverA.server.buildPaymentRequired({ routeAccess: "public",
       resource: { url: "mcp://server-a/download" },
       amount: "100",
       scheme: "exact",
@@ -1122,7 +1253,7 @@ describe("direct-mode server", () => {
 
     const first = await handlePaidMcpToolCall(
       serverA.server,
-      {
+      { routeAccess: "public",
         audience: audienceA,
         name: "download",
         resource: { url: "mcp://server-a/download" },
@@ -1137,7 +1268,7 @@ describe("direct-mode server", () => {
     );
     const replay = await handlePaidMcpToolCall(
       serverB.server,
-      {
+      { routeAccess: "public",
         audience: audienceB,
         name: "download",
         resource: { url: "mcp://server-b/download" },
@@ -1168,7 +1299,7 @@ describe("direct-mode server", () => {
       url: "mcp://custom/download",
       tenantResource: "tenant-b",
     };
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: resourceA,
       amount: "100",
       scheme: "exact",
@@ -1190,7 +1321,7 @@ describe("direct-mode server", () => {
 
     const accepted = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: resourceA,
@@ -1205,7 +1336,7 @@ describe("direct-mode server", () => {
     );
     const substituted = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: resourceB,
@@ -1230,7 +1361,7 @@ describe("direct-mode server", () => {
 
   it("returns a fresh MCP challenge when payer authorization targets another call", async () => {
     const setup = makeServer({ amount: "100" });
-    const firstRequired = setup.server.buildPaymentRequired({
+    const firstRequired = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: { url: "mcp://tool/download" },
       amount: "100",
       scheme: "exact",
@@ -1246,7 +1377,7 @@ describe("direct-mode server", () => {
 
     await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -1264,7 +1395,7 @@ describe("direct-mode server", () => {
     const replayPayload = structuredClone(payment);
     const replay = await handlePaidMcpToolCall(
       setup.server,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -1286,7 +1417,7 @@ describe("direct-mode server", () => {
 
   it("returns hybrid MCP settlement failures without exposing paid tool output", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: { url: "mcp://tool/download" },
       amount: "100",
       scheme: "exact",
@@ -1318,7 +1449,7 @@ describe("direct-mode server", () => {
 
     const result = await handlePaidMcpToolCall(
       fakeServer,
-      {
+      { routeAccess: "public",
         audience: MCP_AUDIENCE,
         name: "download",
         resource: { url: "mcp://tool/download" },
@@ -1352,7 +1483,7 @@ describe("direct-mode server", () => {
     const payment = makeExactPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => ({
         body: "download",
       }),
@@ -1398,7 +1529,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -1414,7 +1545,7 @@ describe("direct-mode server", () => {
     const setup = makeServer({}, true);
     const handler = vi.fn(async () => ({ body: "exact only" }));
     expect(setup.server.supportedKinds().map((kind) => kind.scheme)).toEqual(["exact"]);
-    const unpaid = await setup.server.handlePaidRequest({ url: RESOURCE.url }, handler);
+    const unpaid = await setup.server.handlePaidRequest({ routeAccess: "public", url: RESOURCE.url }, handler);
     expect(unpaid.status).toBe(402);
     expect(
       decodePaymentRequiredHeader(unpaid.headers[PAYMENT_REQUIRED_HEADER]).accepts.map(
@@ -1422,7 +1553,7 @@ describe("direct-mode server", () => {
       ),
     ).toEqual(["exact"]);
     const payment = makeStandardExactPayment(setup);
-    const request = requestWithPayment(payment);
+    const request = requestWithPayment(payment, { routeAccess: "public" });
     expect((await setup.server.handlePaidRequest(request, handler)).status).toBe(200);
     expect((await setup.server.handlePaidRequest(request, handler)).status).toBe(200);
     expect(handler).toHaveBeenCalledTimes(1);
@@ -1432,7 +1563,7 @@ describe("direct-mode server", () => {
   it("rejects batch offers, retries and recovery on an exact-only server", async () => {
     const setup = makeServer({}, true);
     expect(() =>
-      setup.server.buildPaymentRequired({ resource: RESOURCE, scheme: "batch-settlement" }),
+      setup.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE, scheme: "batch-settlement" }),
     ).toThrow("batch settlement is not configured");
     await expect(setup.server.listClaimableChannels()).rejects.toThrow(
       "batch settlement is not configured",
@@ -1442,14 +1573,14 @@ describe("direct-mode server", () => {
     ).rejects.toThrow("batch settlement is not configured");
     const batch = makeDepositPayment(makeServer()).payload;
     const handler = vi.fn(async () => ({ body: "secret" }));
-    const response = await setup.server.handlePaidRequest(requestWithPayment(batch), handler);
+    const response = await setup.server.handlePaidRequest(requestWithPayment(batch, { routeAccess: "public" }), handler);
     expect(response.status).toBe(402);
     expect(handler).not.toHaveBeenCalled();
     await expect(
-      setup.server.verifyPayment({ paymentPayload: batch, paymentRequirements: batch.accepted }),
+      setup.server.verifyPayment({ routeAccess: "public", paymentPayload: batch, paymentRequirements: batch.accepted }),
     ).rejects.toThrow("batch settlement is not configured");
     await expect(
-      setup.server.settlePayment({ paymentPayload: batch, paymentRequirements: batch.accepted }),
+      setup.server.settlePayment({ routeAccess: "public", paymentPayload: batch, paymentRequirements: batch.accepted }),
     ).resolves.toMatchObject({ success: false, errorReason: "invalid_scheme" });
   });
 
@@ -1459,7 +1590,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "standard", chargedAmount: "100" };
@@ -1488,7 +1619,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithRawPaymentPayload(payment, { paymentScheme: "exact" }),
+      requestWithRawPaymentPayload(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "secret" };
@@ -1507,7 +1638,7 @@ describe("direct-mode server", () => {
     const payment = makeExactPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, {
+      requestWithPayment(payment, { routeAccess: "public",
         paymentSchemes: ["exact", "batch-settlement"],
       }),
       async () => ({
@@ -1530,7 +1661,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { paymentScheme: "exact" }),
+      requestWithPayment(payment.payload, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "secret" };
@@ -1551,7 +1682,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "batch-settlement" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "batch-settlement" }),
       async () => {
         executed = true;
         return { body: "secret" };
@@ -1572,7 +1703,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, {
+      requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash: "13".repeat(32),
       }),
@@ -1606,12 +1737,12 @@ describe("direct-mode server", () => {
     );
     const payment = makeExactPayment(setup, { requestHash });
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { trustedSecurityContext: principalA }),
+      requestWithPayment(payment, { routeAccess: "authenticated", trustedSecurityContext: principalA }),
       async () => ({ body: "principal A secret" }),
     );
     let executed = false;
     const crossPrincipal = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { trustedSecurityContext: principalB }),
+      requestWithPayment(payment, { routeAccess: "authenticated", trustedSecurityContext: principalB }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -1651,11 +1782,11 @@ describe("direct-mode server", () => {
     };
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       handler,
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       handler,
     );
 
@@ -1684,7 +1815,7 @@ describe("direct-mode server", () => {
     const requestHash = "12".repeat(32);
     const payment = makeExactPayment(setup, { requestHash });
     let handlerInvocations = 0;
-    const request = requestWithPayment(payment, {
+    const request = requestWithPayment(payment, { routeAccess: "public",
       paymentScheme: "exact",
       requestHash,
     });
@@ -1758,14 +1889,14 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(firstPayment),
+      requestWithPayment(firstPayment, { routeAccess: "public" }),
       async () => {
         executions += 1;
         return { body: "first" };
       },
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(secondPayment),
+      requestWithPayment(secondPayment, { routeAccess: "public" }),
       async () => {
         executions += 1;
         return { body: "must not run" };
@@ -1784,7 +1915,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const payment = makeExactPayment(setup, { requestHash: "12".repeat(32) });
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment, {
+      requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash: "12".repeat(32),
       }),
@@ -1795,7 +1926,7 @@ describe("direct-mode server", () => {
 
     let executed = false;
     const replay = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, {
+      requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash: "13".repeat(32),
       }),
@@ -1831,7 +1962,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "must not run" };
@@ -1877,7 +2008,7 @@ describe("direct-mode server", () => {
       let executed = false;
 
       const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact" }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
         async () => {
           executed = true;
           return { body: "must not run" };
@@ -1934,7 +2065,7 @@ describe("direct-mode server", () => {
         },
       });
       const unpaid = await setup.server.handlePaidRequest(
-        { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+        { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
         async () => ({ body: "unreachable" }),
       );
       const accepted = decodePaymentRequiredHeader(
@@ -1944,7 +2075,7 @@ describe("direct-mode server", () => {
       let executed = false;
 
       const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact" }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
         async () => {
           executed = true;
           return { body: "must not run" };
@@ -2031,7 +2162,7 @@ describe("direct-mode server", () => {
       const payment = makeExactPayment(setup);
       let executed = false;
       const pendingResponse = setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact" }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
         async () => {
           executed = true;
           return { body: "must not run" };
@@ -2082,14 +2213,14 @@ describe("direct-mode server", () => {
 
     const [first, second] = await Promise.all([
       setup.server.handlePaidRequest(
-        requestWithPayment(firstPayment, {
+        requestWithPayment(firstPayment, { routeAccess: "public",
           paymentScheme: "exact",
           requestHash: "21".repeat(32),
         }),
         handler,
       ),
       setup.server.handlePaidRequest(
-        requestWithPayment(secondPayment, {
+        requestWithPayment(secondPayment, { routeAccess: "public",
           paymentScheme: "exact",
           requestHash: "22".repeat(32),
         }),
@@ -2116,7 +2247,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithRawPaymentPayload(payment, { paymentScheme: "exact" }),
+      requestWithRawPaymentPayload(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "download" };
@@ -2152,7 +2283,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithRawPaymentPayload(payment, { paymentScheme: "exact" }),
+      requestWithRawPaymentPayload(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "download" };
@@ -2198,7 +2329,7 @@ describe("direct-mode server", () => {
       },
     });
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({ body: "unreachable" }),
     );
     const confirmed = structuredClone(
@@ -2210,7 +2341,7 @@ describe("direct-mode server", () => {
     const paymentPayload = makeAdditivePayment(confirmed, { requestHash });
 
     await expect(
-      setup.server.verifyPayment({
+      setup.server.verifyPayment({ routeAccess: "public",
         paymentPayload,
         paymentRequirements: confirmed,
         resource: RESOURCE,
@@ -2251,7 +2382,7 @@ describe("direct-mode server", () => {
     setup.chain.sendTransactionId = EXACT_TX_ID;
 
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2271,7 +2402,7 @@ describe("direct-mode server", () => {
     let handlerSawBroadcast = false;
     const payment = makeAdditivePayment(accepted);
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         handlerSawBroadcast = setup.chain.sentTransactions.includes(
           EXACT_TRANSACTION_ARTIFACT,
@@ -2345,7 +2476,7 @@ describe("direct-mode server", () => {
     setup.chain.sendFailure = new Error("already submitted");
 
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2357,7 +2488,7 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executions += 1;
         return { body: "download" };
@@ -2403,7 +2534,7 @@ describe("direct-mode server", () => {
       },
     });
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2424,7 +2555,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithRawPaymentPayload(payment, { paymentScheme: "exact" }),
+      requestWithRawPaymentPayload(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "download" };
@@ -2472,7 +2603,7 @@ describe("direct-mode server", () => {
     setup.chain.finality = "broadcast";
 
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2484,7 +2615,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact" }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
       async () => {
         executed = true;
         return { body: "download" };
@@ -2542,7 +2673,7 @@ describe("direct-mode server", () => {
       });
 
       const unpaid = await setup.server.handlePaidRequest(
-        { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+        { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
         async () => ({
           body: "unreachable",
         }),
@@ -2554,7 +2685,7 @@ describe("direct-mode server", () => {
       vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
 
       const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact" }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact" }),
         async () => ({
           body: "unreachable",
         }),
@@ -2607,7 +2738,7 @@ describe("direct-mode server", () => {
     const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
     const requestHash = "aa".repeat(32);
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2616,7 +2747,7 @@ describe("direct-mode server", () => {
       unpaid.headers[PAYMENT_REQUIRED_HEADER],
     ).accepts[0] as ExactPaymentRequirements;
     const payment: PaymentPayload = {
-      ...makeAdditivePayment(accepted, { requestHash }),
+      ...makeAdditivePayment(accepted, { requestHash, paymentIdentifier }),
       ...paymentIdentifierExtension(paymentIdentifier),
     };
     if (payment.payload.type !== "exact-transaction") {
@@ -2665,14 +2796,14 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       async () => {
         executions += 1;
         return { body: "cached" };
       },
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(representationVariant, {
+      requestWithPayment(representationVariant, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash,
       }),
@@ -2698,7 +2829,7 @@ describe("direct-mode server", () => {
       const setup = await makeAdditiveServer({ maxTimeoutSeconds: 1 });
       const requestHash = "ab".repeat(32);
       const unpaid = await setup.server.handlePaidRequest(
-        { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+        { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
         async () => ({
           body: "unreachable",
         }),
@@ -2710,7 +2841,7 @@ describe("direct-mode server", () => {
       let executions = 0;
 
       const first = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
         async () => {
           executions += 1;
           return { body: "cached" };
@@ -2718,7 +2849,7 @@ describe("direct-mode server", () => {
       );
       vi.setSystemTime(new Date("2026-01-01T00:00:02.000Z"));
       const second = await setup.server.handlePaidRequest(
-        requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+        requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
         async () => {
           executions += 1;
           return { body: "wrong" };
@@ -2759,7 +2890,7 @@ describe("direct-mode server", () => {
       setup.chain.sendTransactionId = EXACT_TX_ID;
       const requestHash = "bd".repeat(32);
       const payment = makeExactPayment(setup, { requestHash });
-      const request = requestWithPayment(payment, {
+      const request = requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash,
       });
@@ -2827,7 +2958,7 @@ describe("direct-mode server", () => {
       });
       const requestHash = "be".repeat(32);
       const payment = makeExactPayment(setup, { requestHash });
-      const request = requestWithPayment(payment, {
+      const request = requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         requestHash,
       });
@@ -2843,7 +2974,7 @@ describe("direct-mode server", () => {
       let executed = false;
 
       const rejected = await setup.server.handlePaidRequest(
-        requestWithPayment(changed, {
+        requestWithPayment(changed, { routeAccess: "public",
           paymentScheme: "exact",
           requestHash,
         }),
@@ -2907,7 +3038,7 @@ describe("direct-mode server", () => {
     setup.chain.sendFailure = new Error("ambiguous transport failure");
     const requestHash = "ac".repeat(32);
     const unpaid = await setup.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({
         body: "unreachable",
       }),
@@ -2923,11 +3054,11 @@ describe("direct-mode server", () => {
     };
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       handler,
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       handler,
     );
 
@@ -2968,7 +3099,7 @@ describe("direct-mode server", () => {
       setup.server.reconcileExactSettlement(EXACT_TX_ID),
     ).resolves.toMatchObject({ status: "accepted", finality: "confirmed" });
     const recovered = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, { paymentScheme: "exact", requestHash }),
+      requestWithPayment(payment, { routeAccess: "public", paymentScheme: "exact", requestHash }),
       handler,
     );
     expect(recovered).toMatchObject({ status: 200, body: "recovered" });
@@ -3119,14 +3250,14 @@ describe("direct-mode server", () => {
     await additive.server.reconcileExactHead(EXACT_HEAD_ID);
 
     const additiveOffer = await additive.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({ body: "unreachable" }),
     );
     expect(additiveOffer.status).toBe(503);
 
     const standard = makeServer({ exactProfile: "standard-native" });
     const standardOffer = await standard.server.handlePaidRequest(
-      { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
+      { routeAccess: "public", url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" },
       async () => ({ body: "unreachable" }),
     );
     expect(standardOffer.status).toBe(402);
@@ -3161,7 +3292,7 @@ describe("direct-mode server", () => {
     const payment = makeExactPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment, {
+      requestWithPayment(payment, { routeAccess: "public",
         paymentScheme: "exact",
         body: new URLSearchParams([["a", "b"]]),
       }),
@@ -3177,7 +3308,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({
         body: "secret",
         chargedAmount: "100",
@@ -3208,7 +3339,7 @@ describe("direct-mode server", () => {
     let observed: AbortSignal | undefined;
 
     const pending = setup.server.handlePaidRequest(
-      { ...requestWithPayment(payment.payload), signal: controller.signal },
+      { ...requestWithPayment(payment.payload, { routeAccess: "public" }), signal: controller.signal },
       async ({ request }) => {
         observed = request.signal;
         markEntered();
@@ -3239,11 +3370,11 @@ describe("direct-mode server", () => {
     };
 
     const accepted = await setup.server.handlePaidRequest(
-      requestWithPayment(first.payload),
+      requestWithPayment(first.payload, { routeAccess: "public" }),
       handler,
     );
     const rejected = await setup.server.handlePaidRequest(
-      requestWithPayment(alias.payload),
+      requestWithPayment(alias.payload, { routeAccess: "public" }),
       handler,
     );
 
@@ -3271,11 +3402,11 @@ describe("direct-mode server", () => {
 
     const responses = await Promise.all([
       setup.server.handlePaidRequest(
-        requestWithPayment(first.payload),
+        requestWithPayment(first.payload, { routeAccess: "public" }),
         handler,
       ),
       setup.server.handlePaidRequest(
-        requestWithPayment(alias.payload),
+        requestWithPayment(alias.payload, { routeAccess: "public" }),
         handler,
       ),
     ]);
@@ -3314,11 +3445,11 @@ describe("direct-mode server", () => {
 
     const responses = await Promise.all([
       first.server.handlePaidRequest(
-        requestWithPayment(payment.payload),
+        requestWithPayment(payment.payload, { routeAccess: "public" }),
         handler,
       ),
       second.server.handlePaidRequest(
-        requestWithPayment(payment.payload),
+        requestWithPayment(payment.payload, { routeAccess: "public" }),
         handler,
       ),
     ]);
@@ -3337,7 +3468,7 @@ describe("direct-mode server", () => {
     const initial = makeServer({ store, lockManager });
     const deposit = makeDepositPayment(initial);
     await initial.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     let claimBuilds = 0;
@@ -3369,7 +3500,7 @@ describe("direct-mode server", () => {
     store.arm("after-batch-claim");
 
     const settlement = topUpSetup.server.handlePaidRequest(
-      requestWithPayment(topUp.payload, { requestHash: "ba".repeat(32) }),
+      requestWithPayment(topUp.payload, { routeAccess: "public", requestHash: "ba".repeat(32) }),
       async () => {
         handlerCalls += 1;
         return { body: "topped", chargedAmount: "100" };
@@ -3401,7 +3532,7 @@ describe("direct-mode server", () => {
     const initial = makeServer({ store, lockManager });
     const deposit = makeDepositPayment(initial);
     await initial.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(store, deposit.channelId);
@@ -3437,7 +3568,7 @@ describe("direct-mode server", () => {
     const pendingClaim = claimSetup.server.executeClaim(deposit.channelId);
     await store.waitUntilBlocked();
     const settlement = await settlementSetup.server.handlePaidRequest(
-      requestWithPayment(voucher, { requestHash: "cb".repeat(32) }),
+      requestWithPayment(voucher, { routeAccess: "public", requestHash: "cb".repeat(32) }),
       async () => {
         handlerCalls += 1;
         return { chargedAmount: "100" };
@@ -3461,7 +3592,7 @@ describe("direct-mode server", () => {
       const initial = makeServer({ store, lockManager });
       const deposit = makeDepositPayment(initial);
       await initial.server.handlePaidRequest(
-        requestWithPayment(deposit.payload),
+        requestWithPayment(deposit.payload, { routeAccess: "public" }),
         async () => ({ chargedAmount: "100" }),
       );
       const before = await requireChannel(store, deposit.channelId);
@@ -3493,7 +3624,7 @@ describe("direct-mode server", () => {
       store.arm("before-batch-claim");
 
       const staleResponse = staleSetup.server.handlePaidRequest(
-        requestWithPayment(stale.payload, { requestHash: "da".repeat(32) }),
+        requestWithPayment(stale.payload, { routeAccess: "public", requestHash: "da".repeat(32) }),
         async () => {
           staleHandlers += 1;
           return { chargedAmount: "100" };
@@ -3501,7 +3632,7 @@ describe("direct-mode server", () => {
       );
       await store.waitUntilBlocked();
       const newerResponse = await newerSetup.server.handlePaidRequest(
-        requestWithPayment(newer, { requestHash: "db".repeat(32) }),
+        requestWithPayment(newer, { routeAccess: "public", requestHash: "db".repeat(32) }),
         async () => {
           newerHandlers += 1;
           return { body: "newer", chargedAmount: "100" };
@@ -3547,9 +3678,9 @@ describe("direct-mode server", () => {
     };
 
     const responses = await Promise.all([
-      exact.server.handlePaidRequest(requestWithPayment(exactPayment), handler),
+      exact.server.handlePaidRequest(requestWithPayment(exactPayment, { routeAccess: "public" }), handler),
       batch.server.handlePaidRequest(
-        requestWithPayment(batchPayment.payload),
+        requestWithPayment(batchPayment.payload, { routeAccess: "public" }),
         handler,
       ),
     ]);
@@ -3575,14 +3706,14 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
     const voucher = makeVoucherPayment(setup, channel);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => ({ body: "next", chargedAmount: "100" }),
     );
 
@@ -3618,7 +3749,7 @@ describe("direct-mode server", () => {
     });
     const deposit = makeDepositPayment(setup, { fundingAmount: "150" });
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const topUp = makeDepositPayment(setup, {
@@ -3628,7 +3759,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(topUp.payload),
+      requestWithPayment(topUp.payload, { routeAccess: "public" }),
       async () => ({ body: "topped", chargedAmount: "100" }),
     );
 
@@ -3662,7 +3793,7 @@ describe("direct-mode server", () => {
       });
       const deposit = makeDepositPayment(setup);
       await setup.server.handlePaidRequest(
-        requestWithPayment(deposit.payload),
+        requestWithPayment(deposit.payload, { routeAccess: "public" }),
         async () => ({ chargedAmount: "100" }),
       );
       const prior = await requireChannel(setup.store, deposit.channelId);
@@ -3674,7 +3805,7 @@ describe("direct-mode server", () => {
       let executed = false;
 
       const response = await setup.server.handlePaidRequest(
-        requestWithPayment(topUp.payload),
+        requestWithPayment(topUp.payload, { routeAccess: "public" }),
         async () => {
           executed = true;
           return { chargedAmount: "100" };
@@ -3693,7 +3824,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -3704,7 +3835,7 @@ describe("direct-mode server", () => {
     setup.chain.resetReadCounts();
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(underpaid),
+      requestWithPayment(underpaid, { routeAccess: "public" }),
       async () => {
         executed = true;
         return {};
@@ -3732,7 +3863,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executed = true;
         return {};
@@ -3754,7 +3885,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -3765,7 +3896,7 @@ describe("direct-mode server", () => {
     setup.chain.resetReadCounts();
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment),
+      requestWithPayment(payment, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -3779,7 +3910,7 @@ describe("direct-mode server", () => {
   it("rejects a captured batch presentation replayed against a different request", async () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
-    const request = requestWithPayment(payment.payload, {
+    const request = requestWithPayment(payment.payload, { routeAccess: "public",
       body: { operation: "first" },
     });
     request.body = { operation: "second" };
@@ -3807,7 +3938,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { chargedAmount: "100" };
@@ -3842,7 +3973,7 @@ describe("direct-mode server", () => {
       let executions = 0;
 
       const response = await setup.server.handlePaidRequest(
-        requestWithPayment(payment.payload),
+        requestWithPayment(payment.payload, { routeAccess: "public" }),
         async () => {
           executions += 1;
           return { body: "must not run", chargedAmount: "100" };
@@ -3869,7 +4000,7 @@ describe("direct-mode server", () => {
         if (payment.payload.payload.type !== "deposit-voucher") {
           throw new Error("expected deposit-voucher");
         }
-        const request = requestWithPayment(payment.payload, {
+        const request = requestWithPayment(payment.payload, { routeAccess: "public",
           requestHash: "aa".repeat(32),
         });
         const expiresAt = Date.parse(payment.payload.payload.presentation.expiresAt);
@@ -3921,7 +4052,7 @@ describe("direct-mode server", () => {
   it("rejects bad batch presentation signatures", async () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
-    const request = requestWithPayment(payment.payload);
+    const request = requestWithPayment(payment.payload, { routeAccess: "public" });
     const encoded = request.headers[PAYMENT_SIGNATURE_HEADER];
     const captured = JSON.parse(
       Buffer.from(encoded, "base64").toString("utf8"),
@@ -3965,7 +4096,7 @@ describe("direct-mode server", () => {
     };
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ body: "secret" }),
     );
 
@@ -3980,7 +4111,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         throw new Error("handler failed");
       },
@@ -3998,7 +4129,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "1.5" }),
     );
 
@@ -4020,14 +4151,14 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "cached", chargedAmount: "100" };
       },
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "wrong" };
@@ -4046,14 +4177,14 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "cached", chargedAmount: "100" };
       },
     );
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "wrong" };
@@ -4077,7 +4208,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup);
     let executions = 0;
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "cached", chargedAmount: "100" };
@@ -4093,7 +4224,7 @@ describe("direct-mode server", () => {
     variant.untrusted = "ignored";
     variant.extensions = { untrusted: { ignored: true } };
     const replay = await setup.server.handlePaidRequest(
-      requestWithPayment(variant, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(variant, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "wrong" };
@@ -4110,7 +4241,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(deposit.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         chargedAmount: "100",
       }),
@@ -4118,7 +4249,7 @@ describe("direct-mode server", () => {
     const channel = await requireChannel(setup.store, deposit.channelId);
     const voucher = makeVoucherPayment(setup, channel);
     await setup.server.handlePaidRequest(
-      requestWithPayment(voucher, { requestHash: "bb".repeat(32) }),
+      requestWithPayment(voucher, { routeAccess: "public", requestHash: "bb".repeat(32) }),
       async () => ({
         chargedAmount: "100",
       }),
@@ -4126,7 +4257,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const stale = await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(deposit.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -4151,7 +4282,7 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(deposit.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "cached", chargedAmount: "100" };
@@ -4160,7 +4291,7 @@ describe("direct-mode server", () => {
     const channel = await requireChannel(setup.store, deposit.channelId);
     const refreshed = makeVoucherPayment(setup, channel, { paymentIdentifier });
     const second = await setup.server.handlePaidRequest(
-      requestWithPayment(refreshed, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(refreshed, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executions += 1;
         return { body: "wrong" };
@@ -4181,7 +4312,7 @@ describe("direct-mode server", () => {
       paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0",
     });
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         body: "cached",
         chargedAmount: "100",
@@ -4194,7 +4325,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(tampered, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(tampered, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -4212,7 +4343,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup, { paymentIdentifier });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         body: "cached",
         chargedAmount: "100",
@@ -4239,7 +4370,7 @@ describe("direct-mode server", () => {
     let executions = 0;
     const run = () =>
       setup.server.handlePaidRequest(
-        requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+        requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
           return { body: "durable", chargedAmount: "100" };
@@ -4263,7 +4394,7 @@ describe("direct-mode server", () => {
     const store = new UnmarkedBatchRecoveryStore();
     const setup = makeServer({ store });
     const payment = makeDepositPayment(setup);
-    const request = requestWithPayment(payment.payload, {
+    const request = requestWithPayment(payment.payload, { routeAccess: "public",
       requestHash: "aa".repeat(32),
     });
     let executions = 0;
@@ -4315,7 +4446,7 @@ describe("direct-mode server", () => {
       if (payment.payload.payload.type !== "deposit-voucher") {
         throw new Error("expected deposit-voucher");
       }
-      const request = requestWithPayment(payment.payload, {
+      const request = requestWithPayment(payment.payload, { routeAccess: "public",
         requestHash: "aa".repeat(32),
       });
       let executions = 0;
@@ -4353,7 +4484,7 @@ describe("direct-mode server", () => {
     let executions = 0;
 
     const first = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executions += 1;
         return { chargedAmount: "100" };
@@ -4364,7 +4495,7 @@ describe("direct-mode server", () => {
     setup.chain.genesisAvailable = false;
 
     const retried = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executions += 1;
         return { chargedAmount: "100" };
@@ -4386,7 +4517,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { chargedAmount: "100" };
@@ -4406,14 +4537,14 @@ describe("direct-mode server", () => {
       paymentIdentifier: "pay_7d5d747be160e280504c099d984bcfe0",
     });
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         chargedAmount: "100",
       }),
     );
 
     const conflict = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { requestHash: "bb".repeat(32) }),
+      requestWithPayment(payment.payload, { routeAccess: "public", requestHash: "bb".repeat(32) }),
       async () => ({
         body: "wrong",
       }),
@@ -4438,14 +4569,14 @@ describe("direct-mode server", () => {
 
     const [a, b] = await Promise.all([
       setup.server.handlePaidRequest(
-        requestWithPayment(first.payload, { requestHash: "aa".repeat(32) }),
+        requestWithPayment(first.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
           return { chargedAmount: "100" };
         },
       ),
       setup.server.handlePaidRequest(
-        requestWithPayment(second.payload, { requestHash: "aa".repeat(32) }),
+        requestWithPayment(second.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
         async () => {
           executions += 1;
           return { chargedAmount: "100" };
@@ -4469,14 +4600,14 @@ describe("direct-mode server", () => {
       fundingTx: "88".repeat(32),
     });
     await setup.server.handlePaidRequest(
-      requestWithPayment(first.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(first.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         chargedAmount: "100",
       }),
     );
 
     const conflict = await setup.server.handlePaidRequest(
-      requestWithPayment(second.payload, { requestHash: "aa".repeat(32) }),
+      requestWithPayment(second.payload, { routeAccess: "public", requestHash: "aa".repeat(32) }),
       async () => ({
         body: "wrong",
       }),
@@ -4502,11 +4633,11 @@ describe("direct-mode server", () => {
     initial.chain.daa = "1000";
     const deposit = makeDepositPayment(initial);
     await initial.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(store, deposit.channelId);
-    const accepted = initial.server.buildPaymentRequired({
+    const accepted = initial.server.buildPaymentRequired({ routeAccess: "public",
       resource: RESOURCE,
       scheme: "batch-settlement",
       channel,
@@ -4532,7 +4663,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await refreshed.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -4557,7 +4688,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -4566,7 +4697,7 @@ describe("direct-mode server", () => {
     });
 
     const corrective = await setup.server.handlePaidRequest(
-      requestWithPayment(underpaid),
+      requestWithPayment(underpaid, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
     expect(corrective.status).toBe(402);
@@ -4582,7 +4713,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(retry),
+      requestWithPayment(retry, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -4593,7 +4724,7 @@ describe("direct-mode server", () => {
 
   it("accepts custom per-request payment amounts emitted by the server", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: RESOURCE,
       amount: "75",
     });
@@ -4604,7 +4735,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { paymentAmount: "75" }),
+      requestWithPayment(payment.payload, { routeAccess: "public", paymentAmount: "75" }),
       async () => ({
         body: "custom",
         chargedAmount: "75",
@@ -4619,7 +4750,7 @@ describe("direct-mode server", () => {
 
   it("rejects custom amount retries that do not declare the expected payment amount", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: RESOURCE,
       amount: "75",
     });
@@ -4630,7 +4761,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4642,7 +4773,7 @@ describe("direct-mode server", () => {
 
   it("preserves custom per-request amounts in corrective responses", async () => {
     const setup = makeServer({ amount: "100" });
-    const required = setup.server.buildPaymentRequired({
+    const required = setup.server.buildPaymentRequired({ routeAccess: "public",
       resource: RESOURCE,
       amount: "75",
     });
@@ -4653,7 +4784,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { paymentAmount: "75" }),
+      requestWithPayment(payment.payload, { routeAccess: "public", paymentAmount: "75" }),
       async () => ({
         body: "wrong",
       }),
@@ -4676,7 +4807,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup, { voucherAmount: "99" });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload, { trustedSecurityContext }),
+      requestWithPayment(payment.payload, { routeAccess: "authenticated", trustedSecurityContext }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4696,7 +4827,7 @@ describe("direct-mode server", () => {
     const firstServer = makeServer({ store, lockManager });
     const deposit = makeDepositPayment(firstServer);
     await firstServer.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(store, deposit.channelId);
@@ -4709,7 +4840,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await changedServer.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -4728,7 +4859,7 @@ describe("direct-mode server", () => {
     });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4742,7 +4873,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const retired = await requireChannel(setup.store, deposit.channelId);
@@ -4750,7 +4881,7 @@ describe("direct-mode server", () => {
     const retry = makeDepositPayment(setup, { voucherAmount: "170" });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(retry.payload),
+      requestWithPayment(retry.payload, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4763,7 +4894,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(deposit.payload),
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, deposit.channelId);
@@ -4771,7 +4902,7 @@ describe("direct-mode server", () => {
     const voucher = makeVoucherPayment(setup, channel);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4789,7 +4920,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup);
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "101" }),
     );
 
@@ -4836,7 +4967,7 @@ describe("direct-mode server", () => {
     };
 
     const response = await setup.server.handlePaidRequest(
-      requestWithRawPaymentPayload(payload),
+      requestWithRawPaymentPayload(payload, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -4849,7 +4980,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: "GET",
         url: RESOURCE.url,
         resource: RESOURCE,
@@ -4888,7 +5019,7 @@ describe("direct-mode server", () => {
     }
 
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: "GET",
         url: RESOURCE.url,
         resource: RESOURCE,
@@ -4911,6 +5042,7 @@ describe("direct-mode server", () => {
       },
     });
     const request = {
+      routeAccess: "authenticated" as const,
       method: "GET",
       url: RESOURCE.url,
       resource: RESOURCE,
@@ -4948,7 +5080,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: "GET",
         url: RESOURCE.url,
         resource: RESOURCE,
@@ -5015,7 +5147,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -5053,7 +5185,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -5081,7 +5213,7 @@ describe("direct-mode server", () => {
   it("rejects vouchers that consume the required claim reserve", async () => {
     const setup = makeServer({ minDepositSompi: "1000", amount: "995" });
     setup.chain.claimFee = "10";
-    const advertised = setup.server.buildPaymentRequired({ resource: RESOURCE })
+    const advertised = setup.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE })
       .accepts[0] as BatchPaymentRequirements;
     expect(advertised.extra.minDepositSompi).toBe("1005");
     const payment = makeDepositPayment(setup, {
@@ -5091,7 +5223,7 @@ describe("direct-mode server", () => {
     let executed = false;
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => {
         executed = true;
         return { body: "wrong" };
@@ -5115,7 +5247,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup, { voucherAmount: "990" });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "990" }),
     );
 
@@ -5134,7 +5266,7 @@ describe("direct-mode server", () => {
     const payment = makeDepositPayment(setup, { voucherAmount: "990" });
 
     const response = await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "990" }),
     );
 
@@ -5148,7 +5280,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, payment.channelId);
@@ -5176,7 +5308,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.setUtxo({
@@ -5222,7 +5354,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const beforeClaim = await requireChannel(setup.store, payment.channelId);
@@ -5270,7 +5402,7 @@ describe("direct-mode server", () => {
     const setup = makeServer();
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const channel = await requireChannel(setup.store, payment.channelId);
@@ -5322,7 +5454,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup, { voucherAmount: "300" });
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "300" }),
     );
     const opened = await requireChannel(setup.store, payment.channelId);
@@ -5385,7 +5517,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({
         chargedAmount: "100",
       }),
@@ -5419,7 +5551,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.setUtxo({
@@ -5455,7 +5587,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -5510,7 +5642,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
@@ -5520,7 +5652,7 @@ describe("direct-mode server", () => {
     const voucher = makeVoucherPayment(setup, channel);
 
     const paid = await setup.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -5548,7 +5680,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
@@ -5592,7 +5724,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     await expect(setup.server.executeClaim(payment.channelId)).rejects.toThrow(
@@ -5629,7 +5761,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.sendFailure = new Error("node unavailable");
@@ -5645,7 +5777,7 @@ describe("direct-mode server", () => {
     const channel = await requireChannel(setup.store, payment.channelId);
     const voucher = makeVoucherPayment(setup, channel);
     const paid = await setup.server.handlePaidRequest(
-      requestWithPayment(voucher),
+      requestWithPayment(voucher, { routeAccess: "public" }),
       async () => ({ body: "wrong" }),
     );
 
@@ -5673,7 +5805,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.sendFailure = new Error("node unavailable");
@@ -5727,7 +5859,7 @@ describe("direct-mode server", () => {
       finality: "confirmed",
     });
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.finality = "broadcast";
@@ -5784,7 +5916,7 @@ describe("direct-mode server", () => {
       acceptance: acceptedChainEvidence(deposit.fundingOutpoint.txid, 31),
     });
     await initial.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
 
@@ -5852,7 +5984,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(initial);
     await initial.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     initial.chain.finality = "broadcast";
@@ -5914,7 +6046,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.sendFailure = new Error("node unavailable");
@@ -5997,7 +6129,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.sendFailure = new Error("node unavailable");
@@ -6030,7 +6162,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.sendTransactionId = "66".repeat(32);
@@ -6060,7 +6192,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.useSendEvidenceOverride = true;
@@ -6092,7 +6224,7 @@ describe("direct-mode server", () => {
     setup.chain.finality = "broadcast";
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const broadcast = await setup.server.executeClaim(payment.channelId);
@@ -6151,7 +6283,7 @@ describe("direct-mode server", () => {
     setup.chain.finality = "broadcast";
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     const broadcast = await setup.server.executeClaim(payment.channelId);
@@ -6188,7 +6320,7 @@ describe("direct-mode server", () => {
     });
     const payment = makeDepositPayment(setup);
     await setup.server.handlePaidRequest(
-      requestWithPayment(payment.payload),
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
       async () => ({ chargedAmount: "100" }),
     );
     setup.chain.setUtxo({
@@ -6503,6 +6635,7 @@ function makeAdditivePayment(
         profile: "additive",
         transactionId,
         requestHash,
+        paymentIdentifier: options.paymentIdentifier ?? `exact_${requestHash}`,
         inputIndex: 1,
       }),
     },
@@ -6524,7 +6657,7 @@ function makeExactPayment(
   } = {},
 ): PaymentPayload {
   const paymentOutputIndex = options.paymentOutputIndex ?? 0;
-  const required = setup.server.buildPaymentRequired({
+  const required = setup.server.buildPaymentRequired({ routeAccess: "public",
     resource: RESOURCE,
     scheme: "exact",
   });
@@ -6550,6 +6683,7 @@ function makeExactPayment(
         profile: "standard-native",
         transactionId,
         requestHash,
+        paymentIdentifier: options.paymentIdentifier ?? `exact_${requestHash}`,
         inputIndex: 0,
         paymentOutputIndex,
       }),
@@ -6565,7 +6699,7 @@ function makeExactPayment(
 function makeStandardExactPayment(
   setup: ReturnType<typeof makeServer>,
 ): PaymentPayload {
-  const required = setup.server.buildPaymentRequired({
+  const required = setup.server.buildPaymentRequired({ routeAccess: "public",
     resource: RESOURCE,
     scheme: "exact",
   });
@@ -6587,6 +6721,7 @@ function makeStandardExactPayment(
         profile: "standard-native",
         transactionId: EXACT_TX_ID,
         requestHash,
+        paymentIdentifier: `exact_${requestHash}`,
         inputIndex: 0,
       }),
     },
@@ -6610,6 +6745,7 @@ function fakeExactAuthorization(input: {
   profile: "standard-native" | "additive";
   transactionId: Hash32Hex;
   requestHash: Hash32Hex;
+  paymentIdentifier: string;
   inputIndex: number;
   paymentOutputIndex?: number;
 }) {
@@ -6630,12 +6766,13 @@ function fakeExactAuthorization(input: {
     payToScriptPublicKey: input.accepted.extra.payToScriptPublicKey!,
     paymentRequirementsHash: sha256Hex(stableStringify(input.accepted)),
     requestHash: input.requestHash,
+    paymentIdentifier: input.paymentIdentifier,
     challengeId: input.accepted.extra.challengeId,
     inputIndex: input.inputIndex,
     expiresAt,
   });
   return {
-    version: "kaspa-x402-exact-request-authorization-v1" as const,
+    version: "kaspa-x402-exact-request-authorization-v2" as const,
     inputIndex: input.inputIndex,
     expiresAt,
     digest,
@@ -6655,9 +6792,8 @@ function makeDepositPayment(
     voucherAmount?: string;
   } = {},
 ): { payload: PaymentPayload; channelId: Hash32Hex } {
-  const required = setup.server.buildPaymentRequired({ resource: RESOURCE });
-  const accepted =
-    options.accepted ?? (required.accepts[0] as BatchPaymentRequirements);
+  const accepted = options.accepted ??
+    (setup.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE }).accepts[0] as BatchPaymentRequirements);
   const channelConfig: ChannelConfig = {
     network: accepted.network,
     asset: "KAS",
@@ -6725,7 +6861,7 @@ function makeVoucherPayment(
     paymentIdentifier?: string;
   } = {},
 ): PaymentPayload {
-  const required = setup.server.buildPaymentRequired({ resource: RESOURCE });
+  const required = setup.server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE });
   const accepted =
     options.accepted ?? (required.accepts[0] as BatchPaymentRequirements);
   const requiredAmount = (
@@ -6769,13 +6905,14 @@ function makeVoucherPayment(
 function requestWithPayment(
   paymentPayload: PaymentPayload,
   options: {
+    routeAccess: "public" | "authenticated";
     requestHash?: Hash32Hex;
     paymentAmount?: string;
     paymentScheme?: "exact" | "batch-settlement";
     paymentSchemes?: readonly ("exact" | "batch-settlement")[];
     body?: unknown;
     trustedSecurityContext?: TrustedSecurityContext;
-  } = {},
+  },
 ) {
   let requestPayment = paymentPayload;
   if (
@@ -6810,6 +6947,7 @@ function requestWithPayment(
     };
   }
   return {
+    routeAccess: options.routeAccess,
     url: RESOURCE.url,
     resource: RESOURCE,
     body: options.body,
@@ -6827,14 +6965,16 @@ function requestWithPayment(
 function requestWithRawPaymentPayload(
   paymentPayload: unknown,
   options: {
+    routeAccess: "public" | "authenticated";
     requestHash?: Hash32Hex;
     paymentAmount?: string;
     paymentScheme?: "exact" | "batch-settlement";
     paymentSchemes?: readonly ("exact" | "batch-settlement")[];
     body?: unknown;
-  } = {},
+  },
 ) {
   return {
+    routeAccess: options.routeAccess,
     url: RESOURCE.url,
     resource: RESOURCE,
     body: options.body,

@@ -173,6 +173,11 @@ export function normalizeExactSettlementAttempt(
   ) {
     throw new Error("exact settlement timestamps must be ISO date strings");
   }
+  if (!Number.isFinite(Date.parse(input.authorizationExpiresAt)) ||
+    (input.challengeExpiresAt !== undefined && !Number.isFinite(Date.parse(input.challengeExpiresAt))) ||
+    (input.grantExpiresAt !== undefined && !Number.isFinite(Date.parse(input.grantExpiresAt)))) {
+    throw new Error("exact settlement admission deadlines are invalid");
+  }
   const attempt: ExactSettlementAttemptRecord = {
     ...structuredClone(input),
     transactionId: input.transactionId.toLowerCase(),

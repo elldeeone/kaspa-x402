@@ -204,7 +204,7 @@ export async function handleGatewayRequest(
       state.incrementMetric(`requests_${profileMetric(profile)}`),
     );
     let result = await gateway.server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: request.method,
         url: url.toString(),
         headers: request.headers,
@@ -1423,7 +1423,7 @@ async function gatewayUnsupportedPaymentResponse(
     scheme === "batch-settlement"
   )
     return undefined;
-  const response = await server.paymentRequiredResponseAsync({
+  const response = await server.paymentRequiredResponseAsync({ routeAccess: "public",
     resource,
     amount: amountFor(config, profile),
     scheme: profile,

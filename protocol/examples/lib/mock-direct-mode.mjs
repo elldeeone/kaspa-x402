@@ -155,6 +155,11 @@ export function createMockDirectModeEnvironment() {
     fundingProvider,
     store: clientStore,
     fundingPolicy: {
+      requiredSource: "hot-wallet",
+      allowedOrigins: ["https://api.example.test"],
+      allowedExactProfiles: ["standard-native"],
+      allowedPayTo: [PAYOUT_ADDRESS],
+      maximumExactAmountSompi: "100000",
       batchPayment: {
         maximumBatchChargeSompi: "4000000",
         maximumInitialDepositSompi: "4000000",
@@ -229,7 +234,7 @@ export function createMockPaidFetch(server) {
     const url = String(input);
     const route = routeForUrl(url);
     const response = await server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: init.method ?? "GET",
         url,
         body: init.body ?? null,
@@ -488,6 +493,7 @@ class MockFundingProvider {
       payToScriptPublicKey: request.payToScriptPublicKey,
       paymentRequirementsHash: request.paymentRequirementsHash,
       requestHash: request.requestHash,
+      paymentIdentifier: request.paymentIdentifier,
       challengeId: request.head?.challengeId,
       inputIndex,
       expiresAt: request.authorizationExpiresAt,
@@ -502,7 +508,7 @@ class MockFundingProvider {
       transactionId,
       paymentOutputIndex,
       authorization: {
-        version: "kaspa-x402-exact-request-authorization-v1",
+        version: "kaspa-x402-exact-request-authorization-v2",
         inputIndex,
         expiresAt: request.authorizationExpiresAt,
         digest,

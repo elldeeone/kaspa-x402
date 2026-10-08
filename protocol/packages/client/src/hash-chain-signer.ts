@@ -118,6 +118,7 @@ export function signHashChainExactTransaction(input: {
     paymentOutputIndex: 0, amount: request.amount, payTo: request.payTo,
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash, requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: head.challengeId, inputIndex: 1,
     expiresAt: request.authorizationExpiresAt,
   });
@@ -142,7 +143,7 @@ export function signHashChainExactTransaction(input: {
     transactionId, paymentOutputIndex: 0,
     inputOutpoints: [head.expectedHeadOutpoint, funding.outpoint],
     authorization: {
-      version: "kaspa-x402-exact-request-authorization-v1", inputIndex: 1,
+      version: "kaspa-x402-exact-request-authorization-v2", inputIndex: 1,
       expiresAt: request.authorizationExpiresAt, digest,
       signature: Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), payerKey, schnorrAuxRand)).toString("hex"),
     },

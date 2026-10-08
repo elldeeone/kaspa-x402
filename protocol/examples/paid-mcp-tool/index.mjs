@@ -8,7 +8,7 @@ const audience = "https://mcp.example.test";
 async function callTool(params) {
   return handlePaidMcpToolCall(
     server,
-    {
+    { routeAccess: "public",
       audience,
       name: "quote",
       resource: {

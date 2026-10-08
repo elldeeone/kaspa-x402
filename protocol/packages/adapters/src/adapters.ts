@@ -1891,7 +1891,7 @@ function verifyExactRequestAuthorization(
 ): ExactTransactionVerification["requestAuthorization"] {
   const authorization = request.authorization;
   if (
-    authorization.version !== "kaspa-x402-exact-request-authorization-v1" ||
+    authorization.version !== "kaspa-x402-exact-request-authorization-v2" ||
     !Number.isInteger(authorization.inputIndex) ||
     authorization.inputIndex < 0 ||
     !/^[0-9a-fA-F]{128}$/.test(authorization.signature)
@@ -1913,6 +1913,7 @@ function verifyExactRequestAuthorization(
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: request.head?.challengeId,
     inputIndex: authorization.inputIndex,
     expiresAt: authorization.expiresAt,

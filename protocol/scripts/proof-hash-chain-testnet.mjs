@@ -186,7 +186,7 @@ try {
         return;
       }
       const resource = { url };
-      const answer = await server.handlePaidRequest({ method: req.method, url,
+      const answer = await server.handlePaidRequest({ routeAccess: "authenticated", method: req.method, url,
         headers: req.headers, resource, paymentScheme: "exact", trustedSecurityContext,
         signal: disconnect.signal },
         async () => ({ status: 200, body: { access: "granted", resource: req.url } }));
@@ -404,8 +404,11 @@ try {
     store: new MemoryChannelStore(),
     confirmationThreshold: 30,
     fundingPolicy: {
+      requiredSource: "hot-wallet",
       allowedExactProfiles: ["hash-chain-additive"],
       allowedOrigins: [origin],
+      allowedPayTo: grants.grants.map((grant) => addressForScript(sdk,
+        hashChainHeadScriptPublicKey({ ownerPublicKey, guard: grant.revealedGuard }))),
       maximumExactAmountSompi: "20000000",
     },
     hashChainGrantDestinationPolicy: grantDestinationPolicy,

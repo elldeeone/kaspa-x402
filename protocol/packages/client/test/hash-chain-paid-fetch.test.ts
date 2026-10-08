@@ -5,13 +5,19 @@ import { encodePaymentRequiredHeader, sha256Hex, stableStringify } from "@kaspa-
 import { describe, expect, it, vi } from "vitest";
 import { DirectModeClient, MemoryChannelStore, PendingExactPaymentError,
   signHashChainExactTransaction, type DirectModeClientOptions } from "../src/index.js";
-import type { ExactPaymentAttemptRecord } from "../src/types.js";
 
 const vector = JSON.parse(readFileSync(fileURLToPath(new URL("../../../vectors/x402-http/hash-chain-exact.json", import.meta.url)), "utf8"));
 const consensus = JSON.parse(readFileSync(fileURLToPath(new URL("../../../vectors/hash-chain/consensus-v1.json", import.meta.url)), "utf8")).expected;
 const payerKey = "07".repeat(32);
 const grantDestinationPolicy = {
   allowedOrigins: ["https://api.example.test"],
+} as const;
+const exactFundingPolicy = {
+  requiredSource: "hot-wallet",
+  allowedExactProfiles: ["hash-chain-additive"],
+  allowedOrigins: ["https://api.example.test"],
+  allowedPayTo: [vector.paymentPayload.accepted.payTo],
+  maximumExactAmountSompi: vector.paymentPayload.accepted.amount,
 } as const;
 
 describe("hash-chain paidFetch", () => {
@@ -68,10 +74,7 @@ describe("hash-chain paidFetch", () => {
       fundingProvider: provider,
       store: new MemoryChannelStore(),
       confirmationThreshold: 30,
-      fundingPolicy: {
-        allowedExactProfiles: ["hash-chain-additive"],
-        allowedOrigins: ["https://api.example.test"],
-      },
+      fundingPolicy: exactFundingPolicy,
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
       fetch: async (url, init) => {
         const headers = init?.headers as Record<string, string> | undefined;
@@ -161,10 +164,7 @@ describe("hash-chain paidFetch", () => {
         fundingProvider: provider,
         store,
         confirmationThreshold: 30,
-        fundingPolicy: {
-          allowedExactProfiles: ["hash-chain-additive"],
-          allowedOrigins: ["https://api.example.test"],
-        },
+        fundingPolicy: exactFundingPolicy,
         hashChainGrantDestinationPolicy: grantDestinationPolicy,
         exactPaymentReconciler: {
           async reconcileExactPayment(attempt) {
@@ -242,7 +242,7 @@ describe("hash-chain paidFetch", () => {
     }
   });
 
-  it("canonicalizes direct hash-chain requests before hashing or identifier derivation", async () => {
+  it("canonicalizes direct hash-chain requests before hashing and generates fresh identifiers", async () => {
     vi.stubGlobal("location", { href: "https://api.example.test/base" });
     try {
       const required = structuredClone(vector.paymentRequired);
@@ -256,12 +256,7 @@ describe("hash-chain paidFetch", () => {
         url: canonicalUrl,
         body: null,
       }));
-      const expectedIdentifier = sha256Hex(stableStringify({
-        scope: "kaspa:x402:exact-request-identifier:v1",
-        origin: "https://api.example.test",
-        url: canonicalUrl,
-        requestIdentity: { method: "GET", body: null },
-      }));
+      const identifiers: string[] = [];
       for (const input of [
         "https://api.example.test:443/hash-chain/file",
         "/hash-chain/file",
@@ -299,17 +294,16 @@ describe("hash-chain paidFetch", () => {
           } as unknown as DirectModeClientOptions["fundingProvider"],
           store: new InspectingStore(),
           confirmationThreshold: 30,
-          fundingPolicy: {
-            allowedExactProfiles: ["hash-chain-additive"],
-            allowedOrigins: ["https://api.example.test"],
-          },
+          fundingPolicy: exactFundingPolicy,
           hashChainGrantDestinationPolicy: grantDestinationPolicy,
         });
         await expect(client.createPayment(header, { url: input }))
           .rejects.toThrow("inspection complete");
         expect(claimRequestHash).toBe(expectedRequestHash);
-        expect(loadedIdentifier).toBe(expectedIdentifier);
+        expect(loadedIdentifier).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+        identifiers.push(loadedIdentifier!);
       }
+      expect(identifiers[0]).not.toBe(identifiers[1]);
     } finally {
       vi.unstubAllGlobals();
     }
@@ -338,10 +332,7 @@ describe("hash-chain paidFetch", () => {
       fundingProvider: provider,
       store: new MemoryChannelStore(),
       confirmationThreshold: 30,
-      fundingPolicy: {
-        allowedExactProfiles: ["hash-chain-additive"],
-        allowedOrigins: ["https://api.example.test"],
-      },
+      fundingPolicy: exactFundingPolicy,
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
       fetch: async (url) => ({
         status: 402,
@@ -355,108 +346,37 @@ describe("hash-chain paidFetch", () => {
     });
     await expect(client.paidFetch("https://api.example.test/hash-chain/file", {
       paymentIdentifier: "hash_chain_ssrf_0001",
-    })).rejects.toThrow("authorized request target");
+    })).rejects.toThrow("resource URL");
     expect({ grants, signed, sends }).toEqual({ grants: 0, signed: 0, sends: 0 });
   });
 
-  it("replays a pre-canonicalization default-port record without changing its proof", async () => {
-    const rawUrl = "https://api.example.test:443/hash-chain/file";
-    const canonicalUrl = "https://api.example.test/hash-chain/file";
-    const identifierFor = (url: string) => sha256Hex(stableStringify({
-      scope: "kaspa:x402:exact-request-identifier:v1",
-      origin: new URL(url).origin,
-      url,
-      requestIdentity: { method: "GET", body: null },
-    }));
-    const legacyIdentifier = identifierFor(rawUrl);
-    const canonicalIdentifier = identifierFor(canonicalUrl);
-    const attemptId = sha256Hex(stableStringify({
-      scope: "kaspa:x402:exact-attempt:v1",
-      paymentIdentifier: legacyIdentifier,
-    }));
-    const legacyRequestHash = sha256Hex(stableStringify({
-      method: "GET",
-      url: rawUrl,
-      body: null,
-    }));
-    const record = {
-      attemptId,
-      intentHash: "f1".repeat(32),
-      requestHash: legacyRequestHash,
-      origin: "https://api.example.test",
-      resourceUrl: rawUrl,
-      paymentIdentifier: legacyIdentifier,
-      transactionId: consensus.transactions.borrow1.transactionId,
-      inputOutpoints: consensus.transactions.borrow1.transaction.inputs.map(
-        (input: { previousOutpoint: { txid: string; index: number } }) =>
-          input.previousOutpoint,
-      ),
-      payment: {
-        paymentRequired: vector.paymentRequired,
-        accepted: vector.paymentPayload.accepted,
-        paymentPayload: vector.paymentPayload,
-        scheme: "exact",
-        transactionId: consensus.transactions.borrow1.transactionId,
-        exactAttemptId: attemptId,
-      },
-      status: "accepted",
-      providerFinalized: true,
-    } as ExactPaymentAttemptRecord;
-    class LegacyStore extends MemoryChannelStore {
-      collision = false;
-      override async loadExactPaymentAttemptByIdentifier(identifier: string) {
-        if (identifier === legacyIdentifier) return structuredClone(record);
-        if (this.collision && identifier === canonicalIdentifier) {
-          return {
-            ...structuredClone(record),
-            attemptId: "f2".repeat(32),
-          };
-        }
+  it("does not infer an exact retry identifier from a request URL", async () => {
+    let identifierLookups = 0;
+    class InspectingStore extends MemoryChannelStore {
+      override async loadExactPaymentAttemptByIdentifier() {
+        identifierLookups++;
         return undefined;
       }
     }
-    const store = new LegacyStore();
-    let requests = 0;
     const client = new DirectModeClient({
       addressCodec: {} as DirectModeClientOptions["addressCodec"],
       fundingProvider: {
         networkId: "kaspa:testnet-10",
         sourceKind: "hot-wallet",
       } as DirectModeClientOptions["fundingProvider"],
-      store,
+      store: new InspectingStore(),
       confirmationThreshold: 30,
-      fundingPolicy: { allowedExactProfiles: ["hash-chain-additive"] },
+      fundingPolicy: exactFundingPolicy,
       hashChainGrantDestinationPolicy: grantDestinationPolicy,
-      fetch: async (url, init) => {
-        requests++;
-        const headers = init?.headers as Record<string, string>;
-        expect(Object.keys(headers).some((key) => key.toLowerCase() === "payment-signature")).toBe(
-          true,
-        );
-        return {
-          status: 200,
-          url,
-          redirected: false,
-          headers: {
-            get: (key: string) =>
-              key.toLowerCase() === "payment-response" ? vector.headers.paymentResponse : null,
-          },
-        };
-      },
+      fetch: async (url) => ({
+        status: 200,
+        url,
+        redirected: false,
+        headers: { get: () => null },
+      }),
     });
-    await expect(client.paidFetch(canonicalUrl)).resolves.toMatchObject({
-      response: { status: 200 },
-    });
-    expect(requests).toBe(1);
-    await expect(client.paidFetch(canonicalUrl, {
-      paymentIdentifier: legacyIdentifier,
-      method: "POST",
-    })).rejects.toThrow("belongs to another request");
-    expect(requests).toBe(1);
-
-    store.collision = true;
-    await expect(client.paidFetch(canonicalUrl))
-      .rejects.toThrow("aliases belong to different");
-    expect(requests).toBe(1);
+    const response = await client.paidFetch(vector.paymentRequired.resource.url);
+    expect(response.response.status).toBe(200);
+    expect(identifierLookups).toBe(0);
   });
 });

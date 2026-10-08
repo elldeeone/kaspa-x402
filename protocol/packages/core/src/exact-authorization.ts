@@ -9,7 +9,7 @@ import type {
 } from "./types.js";
 
 export const EXACT_REQUEST_AUTHORIZATION_VERSION =
-  "kaspa-x402-exact-request-authorization-v1" as const;
+  "kaspa-x402-exact-request-authorization-v2" as const;
 
 export interface ExactRequestAuthorizationDigestInput {
   network: NetworkId;
@@ -21,6 +21,7 @@ export interface ExactRequestAuthorizationDigestInput {
   payToScriptPublicKey: string;
   paymentRequirementsHash: Hash32Hex;
   requestHash: Hash32Hex;
+  paymentIdentifier: string;
   challengeId?: Hash32Hex;
   inputIndex: number;
   expiresAt: string;
@@ -70,6 +71,7 @@ export function exactRequestAuthorizationPreimage(
     payToScriptPublicKey: input.payToScriptPublicKey.toLowerCase(),
     paymentRequirementsHash: input.paymentRequirementsHash.toLowerCase(),
     requestHash: input.requestHash.toLowerCase(),
+    paymentIdentifier: input.paymentIdentifier,
     challengeId: input.challengeId?.toLowerCase() ?? null,
     inputIndex: input.inputIndex,
     expiresAt: input.expiresAt,

@@ -124,7 +124,13 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
           async finalizeExactPaymentAttempt() {},
         },
         signer: {}, store: new (await import('@kaspa-x402/client')).MemoryChannelStore(), addressCodec: { scriptPublicKeyForAddress },
-        fundingPolicy: { allowedOrigins: [publicBaseUrl], allowedExactProfiles: ['hash-chain-additive'] },
+        fundingPolicy: {
+          requiredSource: 'hot-wallet',
+          allowedOrigins: [publicBaseUrl],
+          allowedExactProfiles: ['hash-chain-additive'],
+          allowedPayTo: [accepted.payTo],
+          maximumExactAmountSompi: accepted.amount,
+        },
         hashChainGrantDestinationPolicy: { allowedOrigins: [publicBaseUrl] }, confirmationThreshold: 30,
       });
       try { await client.createPayment(response.headers.get('PAYMENT-REQUIRED'), {

@@ -26,7 +26,6 @@ export interface PaidMcpToolCallOptions {
   paymentAttemptId?: Hash32Hex;
   /** Optional assertion; it must equal the canonical MCP tool-call fingerprint. */
   requestHash?: Hash32Hex;
-  origin?: string;
   /** Host-derived normalized claims, never raw credentials. */
   trustedSecurityContext?: TrustedSecurityContext;
   maxPaymentRetries?: number;
@@ -59,6 +58,9 @@ export async function paidMcpToolCall(
       "automatic corrective MCP payment retries are disabled; authorize a new payment explicitly",
     );
   }
+  if ("origin" in options) {
+    throw new KaspaX402Error("invalid_kaspa_x402_binding", "MCP audience cannot be overridden by an origin");
+  }
   const firstResult = await callTool(params);
   assertJsonResourceBudget(firstResult, { label: "MCP tool result" });
   const paymentRequired = readMcpPaymentRequired(firstResult);
@@ -84,9 +86,9 @@ export async function paidMcpToolCall(
     );
   }
   const requestHash = canonicalRequestHash;
-  const payment = await client.createPayment(header, {
+  const payment = await client.createMcpPayment(header, {
     url: paymentRequired.resource.url,
-    origin: options.origin ?? options.audience,
+    audience: options.audience,
     paymentIdentifier: options.paymentIdentifier,
     paymentAttemptId: options.paymentAttemptId,
     requestHash,

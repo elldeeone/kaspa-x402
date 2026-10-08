@@ -610,7 +610,7 @@ async function runExact({
   });
   let preBroadcastVerify;
   try {
-    await server.verifyPayment({
+    await server.verifyPayment({ routeAccess: "public",
       resource,
       paymentRequirements: payment.paymentPayload.accepted,
       paymentPayload: payment.paymentPayload,
@@ -635,7 +635,7 @@ async function runExact({
     return { status: 200, body: { ok: true, profile, label } };
   };
   const response = await server.handlePaidRequest(
-    requestWithPayment(payment.paymentPayload, {
+    requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url: resource.url,
       resource,
       scheme: "exact",
@@ -653,7 +653,7 @@ async function runExact({
   const settlementExtra = requireSettlementExtension(settlement);
   await client.applySettlement(payment, settlement);
   const duplicate = await server.handlePaidRequest(
-    requestWithPayment(payment.paymentPayload, {
+    requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url: resource.url,
       resource,
       scheme: "exact",
@@ -679,7 +679,7 @@ async function runExact({
     fundingPrivateKeyHex,
   });
   const replay = await server.handlePaidRequest(
-    requestWithPayment(replayPayload, {
+    requestWithPayment(replayPayload, { routeAccess: "public",
       url: `${resource.url}/replay`,
       resource,
       scheme: "exact",
@@ -768,6 +768,7 @@ function reauthorizeExactPayload({
     payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
     paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
     requestHash,
+    paymentIdentifier: replay.extensions["payment-identifier"].info.id,
     challengeId: replay.payload.challengeId,
     inputIndex: authorization.inputIndex,
     expiresAt: expiresAt ?? authorization.expiresAt,
@@ -823,7 +824,7 @@ async function runExpiredExactAuthorization({
   let handlerExecutions = 0;
   const broadcastsBefore = pendingBroadcasts.size;
   const response = await server.handlePaidRequest(
-    requestWithPayment(expired, {
+    requestWithPayment(expired, { routeAccess: "public",
       url: resource.url,
       resource,
       scheme: "exact",
@@ -867,7 +868,7 @@ async function exactChallenge({
       description: `Live ${label} ${profile} exact proof`,
     };
     const unpaid = await server.handlePaidRequest(
-      {
+      { routeAccess: "public",
         method: "GET",
         url: resource.url,
         body: null,
@@ -938,7 +939,7 @@ async function runAdditiveConflict({
   const responses = await Promise.all(
     payments.map((payment, index) =>
       server.handlePaidRequest(
-        requestWithPayment(payment.paymentPayload, {
+        requestWithPayment(payment.paymentPayload, { routeAccess: "public",
           url: resource.url,
           resource,
           scheme: "exact",
@@ -1035,7 +1036,7 @@ async function runInvalidExactSignature({ client, server, pendingBroadcasts }) {
   let handlerExecutions = 0;
   const broadcastsBefore = pendingBroadcasts.size;
   const response = await server.handlePaidRequest(
-    requestWithPayment(forged, {
+    requestWithPayment(forged, { routeAccess: "public",
       url: resource.url,
       resource,
       scheme: "exact",
@@ -1099,7 +1100,7 @@ async function runExactRestartRecovery({
   if (!requestHash)
     throw new Error("recovery payment did not include a request hash");
   let handlerExecutions = 0;
-  const request = requestWithPayment(payment.paymentPayload, {
+  const request = requestWithPayment(payment.paymentPayload, { routeAccess: "public",
     url: resource.url,
     resource,
     scheme: "exact",
@@ -1421,6 +1422,7 @@ function exactPaymentArtifact({
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: request.head?.challengeId,
     inputIndex: authorizationInputIndex,
     expiresAt: request.authorizationExpiresAt,
@@ -1432,7 +1434,7 @@ function exactPaymentArtifact({
     transactionId: transaction.id,
     inputOutpoints: exactTransactionInputOutpoints(transaction),
     authorization: {
-      version: "kaspa-x402-exact-request-authorization-v1",
+      version: "kaspa-x402-exact-request-authorization-v2",
       inputIndex: authorizationInputIndex,
       expiresAt: request.authorizationExpiresAt,
       digest,
@@ -1861,6 +1863,7 @@ function verifyRequestAuthorization({
     payToScriptPublicKey: request.payToScriptPublicKey,
     paymentRequirementsHash: request.paymentRequirementsHash,
     requestHash: request.requestHash,
+    paymentIdentifier: request.paymentIdentifier,
     challengeId: request.head?.challengeId,
     inputIndex: authorization.inputIndex,
     expiresAt: authorization.expiresAt,
@@ -2159,7 +2162,7 @@ async function runBatch(input) {
   };
   const firstHash = hash({ flow: "batch", request: 1 });
   const first = await client.createPayment(
-    paymentRequiredFor(server, {
+    paymentRequiredFor(server, { routeAccess: "public",
       resource: firstResource,
       amount: BATCH_REQUEST_AMOUNT,
       scheme: "batch-settlement",
@@ -2171,7 +2174,7 @@ async function runBatch(input) {
     },
   );
   const firstResponse = await server.handlePaidRequest(
-    requestWithPayment(first.paymentPayload, {
+    requestWithPayment(first.paymentPayload, { routeAccess: "public",
       url: firstResource.url,
       resource: firstResource,
       scheme: "batch-settlement",
@@ -2197,7 +2200,7 @@ async function runBatch(input) {
   };
   const secondHash = hash({ flow: "batch", request: 2 });
   const second = await client.createPayment(
-    paymentRequiredFor(server, {
+    paymentRequiredFor(server, { routeAccess: "public",
       resource: secondResource,
       amount: BATCH_REQUEST_AMOUNT,
       scheme: "batch-settlement",
@@ -2211,7 +2214,7 @@ async function runBatch(input) {
   if (second.openedChannel)
     throw new Error("batch voucher-only request opened a second channel");
   const secondResponse = await server.handlePaidRequest(
-    requestWithPayment(second.paymentPayload, {
+    requestWithPayment(second.paymentPayload, { routeAccess: "public",
       url: secondResource.url,
       resource: secondResource,
       scheme: "batch-settlement",
@@ -2280,7 +2283,7 @@ async function runBatch(input) {
   };
   const topUpHash = hash({ flow: "batch", request: 3, transition: "top-up" });
   const topUpPayment = await client.createPayment(
-    paymentRequiredFor(server, {
+    paymentRequiredFor(server, { routeAccess: "public",
       resource: topUpResource,
       amount: BATCH_TOP_UP_REQUEST_AMOUNT,
       scheme: "batch-settlement",
@@ -2309,7 +2312,7 @@ async function runBatch(input) {
     throw new Error("batch top-up artifact was not persisted");
   const topUpTransitionHead = batchReportHead(topUpPayment.channel);
   const topUpResponse = await server.handlePaidRequest(
-    requestWithPayment(topUpPayment.paymentPayload, {
+    requestWithPayment(topUpPayment.paymentPayload, { routeAccess: "public",
       url: topUpResource.url,
       resource: topUpResource,
       scheme: "batch-settlement",
@@ -4896,6 +4899,7 @@ function requestWithPayment(paymentPayload, input) {
 
 function requestWithPaymentHeader(paymentHeader, input) {
   return {
+    routeAccess: input.routeAccess,
     method: "GET",
     url: input.url,
     body: null,
