@@ -344,6 +344,10 @@ export async function runLiveProof(context) {
       store: clientStore,
       fundingPolicy: {
         requiredSource: "hot-wallet",
+        allowedOrigins: ["https://live.kaspa-x402.local"],
+        allowedExactProfiles: ["standard-native", "additive"],
+        allowedPayTo: [serverPayoutAddress, additiveHeads[0].record.payTo],
+        maximumExactAmountSompi: EXACT_AMOUNT,
         batchPayment: {
           maximumBatchChargeSompi: (BigInt(BATCH_DEPOSIT_AMOUNT) * 2n).toString(),
           maximumInitialDepositSompi: BATCH_DEPOSIT_AMOUNT,
