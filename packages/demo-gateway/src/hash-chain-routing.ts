@@ -14,6 +14,9 @@ let supportedCache: {
 let supportedLookup: {
   key: string;
   promise: Promise<SupportedKind[]>;
+  controller: AbortController;
+  consumers: number;
+  settled: boolean;
 } | undefined;
 
 export function hashChainStub(env: GatewayEnv) {
@@ -38,11 +41,12 @@ export async function routeHashChainRequest(request: Request, config: GatewayCon
     headers.set(HASH_CHAIN_CALLER_HEADER, bytesToHex(hmac(sha256,
       encoder.encode(config.adminToken), encoder.encode(`hash-chain-demo-caller:v1:${ip}`))));
   }
-  try { return await hashChainStub(env).handleHashChainRequest(new Request(request, { headers })); }
+  try { return await hashChainStub(env).fetch(new Request(request, { headers })); }
   catch { return unavailable(); }
 }
 
-export async function hostedHashChainSupportedKinds(config: GatewayConfig, env: GatewayEnv): Promise<SupportedKind[]> {
+export async function hostedHashChainSupportedKinds(config: GatewayConfig, env: GatewayEnv, signal?: AbortSignal): Promise<SupportedKind[]> {
+  signal?.throwIfAborted();
   if (!config.enabled || (!config.hashChainOrigin && !config.hashChainEnabled)) return [];
   const key = config.hashChainOrigin
     ? `proxy:${config.hashChainOrigin}:${config.hashChainProxyToken ?? ""}`
@@ -51,27 +55,46 @@ export async function hostedHashChainSupportedKinds(config: GatewayConfig, env: 
   if (supportedCache?.key === key && supportedCache.expiresAt > now) {
     return cloneKinds(supportedCache.kinds);
   }
-  if (supportedLookup?.key === key) {
-    return supportedLookup.promise.then(cloneKinds);
+  if (supportedLookup?.key !== key) {
+    const controller = new AbortController();
+    const promise = (async () => {
+      if (config.hashChainOrigin) return hashChainSupportedKinds(config, controller.signal);
+      try {
+        const response = await routeHashChainRequest(new Request(`${config.gatewayBaseUrl}/hash-chain/supported`, { signal: controller.signal }), config, env);
+        return response.ok ? ((await response.json()) as { kinds: SupportedKind[] }).kinds : [];
+      } catch { return []; }
+    })().then((kinds) => {
+      if (!controller.signal.aborted)
+        supportedCache = { key, expiresAt: Date.now() + HASH_CHAIN_SUPPORTED_CACHE_TTL_MS, kinds: cloneKinds(kinds) };
+      return kinds;
+    }).finally(() => {
+      if (supportedLookup?.promise === promise) {
+        supportedLookup.settled = true;
+        supportedLookup = undefined;
+      }
+    });
+    supportedLookup = { key, promise, controller, consumers: 0, settled: false };
   }
-  const promise = (async () => {
-    if (config.hashChainOrigin) return hashChainSupportedKinds(config);
-    try {
-      const response = await routeHashChainRequest(new Request(`${config.gatewayBaseUrl}/hash-chain/supported`), config, env);
-      return response.ok ? ((await response.json()) as { kinds: SupportedKind[] }).kinds : [];
-    } catch { return []; }
-  })().then((kinds) => {
-    supportedCache = {
-      key,
-      expiresAt: Date.now() + HASH_CHAIN_SUPPORTED_CACHE_TTL_MS,
-      kinds: cloneKinds(kinds),
-    };
-    return kinds;
-  }).finally(() => {
-    if (supportedLookup?.promise === promise) supportedLookup = undefined;
+  const lookup = supportedLookup;
+  lookup.consumers += 1;
+  let onAbort: (() => void) | undefined;
+  const aborted = new Promise<never>((_resolve, reject) => {
+    onAbort = () => reject(signal?.reason ?? new Error("supported lookup aborted"));
+    signal?.addEventListener("abort", onAbort, { once: true });
+    if (signal?.aborted) onAbort();
   });
-  supportedLookup = { key, promise };
-  return promise.then(cloneKinds);
+  try {
+    const kinds = await (signal ? Promise.race([lookup.promise, aborted]) : lookup.promise);
+    signal?.throwIfAborted();
+    return cloneKinds(kinds);
+  } finally {
+    if (onAbort) signal?.removeEventListener("abort", onAbort);
+    lookup.consumers -= 1;
+    if (lookup.consumers === 0 && !lookup.settled) {
+      lookup.controller.abort(new Error("supported lookup has no admitted callers"));
+      if (supportedLookup === lookup) supportedLookup = undefined;
+    }
+  }
 }
 
 function cloneKinds(kinds: SupportedKind[]): SupportedKind[] {

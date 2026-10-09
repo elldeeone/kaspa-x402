@@ -3330,6 +3330,36 @@ describe("direct-mode server", () => {
     expect(observed?.aborted).toBe(true);
   });
 
+  it("does not start batch settlement after cancellation during voucher verification", async () => {
+    // Failure mode: asynchronous voucher verification finishes after the gateway loses admission.
+    let markVerifying!: () => void;
+    const verifying = new Promise<void>((resolve) => { markVerifying = resolve; });
+    let releaseVerification!: () => void;
+    const verificationMayFinish = new Promise<void>((resolve) => { releaseVerification = resolve; });
+    const setup = makeServer({
+      voucherVerifier: {
+        async verifyVoucher({ digest, voucher }) {
+          markVerifying();
+          await verificationMayFinish;
+          return voucher.signature === `${digest}${digest}`;
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup);
+    const controller = new AbortController();
+    let handlerCalls = 0;
+    const pending = setup.server.handlePaidRequest(
+      { ...requestWithPayment(payment.payload, { routeAccess: "public" }), signal: controller.signal },
+      async () => { handlerCalls += 1; return { chargedAmount: "100" }; },
+    );
+    await verifying;
+    controller.abort(new Error("gateway admission expired"));
+    releaseVerification();
+    await expect(pending).resolves.toMatchObject({ status: 499, body: { error: "request_aborted" } });
+    expect(handlerCalls).toBe(0);
+    await expect(setup.store.loadChannel(payment.channelId)).resolves.toBeUndefined();
+  });
+
   it("rejects a salted channel alias for an already registered covenant", async () => {
     const setup = makeServer();
     const first = makeDepositPayment(setup, { salt: "31".repeat(32) });

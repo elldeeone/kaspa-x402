@@ -39,7 +39,7 @@ for (let index = 1; index <= 2; index++) recordTransaction(String(index).padStar
 const options = {
   name: 'kaspa-x402-hash-chain-worker-check',
   modules: true, scriptPath: path.resolve('packages/demo-gateway/dist/index.js'),
-  compatibilityDate: '2026-06-02', compatibilityFlags: ['nodejs_compat'],
+  compatibilityDate: '2026-06-02', compatibilityFlags: ['nodejs_compat', 'enable_request_signal', 'request_signal_passthrough'],
   durableObjects: { GATEWAY_STATE: { className: 'GatewayState', useSQLite: true,
     unsafeUniqueKey: 'kaspa-x402-hash-chain-worker-check' } },
   durableObjectsPersist: folder,

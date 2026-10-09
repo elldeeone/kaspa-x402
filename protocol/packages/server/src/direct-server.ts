@@ -1094,7 +1094,9 @@ export class DirectModeServer {
             request.signal,
           );
         }
+        if (request.signal?.aborted) return requestAbortedResponse();
         const runVerified = async () => {
+          if (request.signal?.aborted) return requestAbortedResponse();
           let recoveredExactHandlerResult: ProtectedHandlerResult | undefined;
           let recoveredBatchHandlerResult: ProtectedHandlerResult | undefined;
           let batchAttemptId: Hash32Hex | undefined;
@@ -1104,6 +1106,7 @@ export class DirectModeServer {
                 await this.#batchStore.loadBatchSettlementAttempt(
                   this.#batchSettlementAttemptId(verified, fingerprint),
                 );
+              if (request.signal?.aborted) return requestAbortedResponse();
               if (!existingAttempt)
                 verified = this.#prepareLiveDepositTransition(verified);
               const claim = existingAttempt
@@ -1113,6 +1116,7 @@ export class DirectModeServer {
                     fingerprint,
                     paymentIdentifier,
                   );
+              if (request.signal?.aborted) return requestAbortedResponse();
               batchAttemptId = claim.attempt.attemptId;
               recoveredBatchHandlerResult = claim.attempt.handlerResult;
               if (
@@ -1151,10 +1155,12 @@ export class DirectModeServer {
                     batchAttemptId,
                     new Date().toISOString(),
                   );
+                if (request.signal?.aborted) return requestAbortedResponse();
                 if (!handlerStarted)
                   return batchSettlementRecoveryRequiredResponse();
               }
             } catch (error) {
+              if (request.signal?.aborted) return requestAbortedResponse();
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return batchSettlementRecoveryRequiredResponse();
@@ -1253,6 +1259,7 @@ export class DirectModeServer {
             }
           }
           let handlerResult: ProtectedHandlerResult;
+          if (request.signal?.aborted) return requestAbortedResponse();
           if (recoveredExactHandlerResult || recoveredBatchHandlerResult) {
             handlerResult =
               recoveredExactHandlerResult ?? recoveredBatchHandlerResult!;

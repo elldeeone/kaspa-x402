@@ -418,6 +418,225 @@ describe("gateway canary", () => {
     expect(blockdagCalls).toBeGreaterThan(callsAfterFirst);
   });
 
+  it.each([
+    { scenario: "a thrown renewal with a global cap", failure: "throw", global: "1", caller: "1", secondIp: "203.0.113.11" },
+    { scenario: "a denied renewal with a per-caller cap", failure: "deny", global: "2", caller: "1", secondIp: "203.0.113.10" },
+    { scenario: "a stalled renewal at the confirmed expiry", failure: "stall", global: "1", caller: "1", secondIp: "203.0.113.11" },
+  ] as const)("stops protected work after $scenario", async ({ failure, global, caller, secondIp }) => {
+    // Failure modes: a logged renewal error leaves the first request active
+    // after expiry, or a later caller enters while that work is still active.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const acquiredAt = Date.now();
+    const storage = new FakeStorage();
+    let markFirstStarted!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    let finishFirst: () => void = () => undefined;
+    let active = 0;
+    let overlap = false;
+    let firstStoppedAt: number | undefined;
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GLOBAL_CONCURRENCY: global,
+      KASPA_X402_PER_CALLER_CONCURRENCY: caller,
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        renewalError: failure === "throw" ? new Error("coordinator renewal failed") : undefined,
+        renewalRejected: failure === "deny",
+        renewalHangs: failure === "stall",
+        hashChainRequest(request) {
+          if (!request.url.includes("slot=first")) {
+            overlap = active > 0;
+            return Promise.resolve(Response.json({ ok: true }));
+          }
+          active += 1;
+          markFirstStarted();
+          return new Promise<Response>((resolve) => {
+            let finished = false;
+            const finish = (response: Response) => {
+              if (finished) return;
+              finished = true;
+              active -= 1;
+              resolve(response);
+            };
+            finishFirst = () => finish(Response.json({ ok: true }));
+            request.signal.addEventListener("abort", () => {
+              firstStoppedAt = Date.now();
+              finish(Response.json({ error: "aborted" }, { status: 503 }));
+            }, { once: true });
+          });
+        },
+      }),
+    };
+    const call = (slot: string, ip: string) => handleGatewayRequest(
+      workerRequest(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip },
+      }), env, fakeContext());
+    const first = call("first", "203.0.113.10");
+    try {
+      await firstStarted;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await call("second", secondIp);
+      expect(second.status).toBe(200);
+      expect(overlap).toBe(false);
+      expect(firstStoppedAt).toBeLessThanOrEqual(acquiredAt + 300_000);
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishFirst();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
+  it("keeps a long protected request admitted while renewals succeed", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    const storage = new FakeStorage();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let finishFirst: () => void = () => undefined;
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        hashChainRequest(request) {
+          if (!request.url.includes("slot=first"))
+            return Promise.resolve(Response.json({ ok: true }));
+          markStarted();
+          return new Promise<Response>((resolve) => {
+            finishFirst = () => resolve(Response.json({ ok: true }));
+          });
+        },
+      }),
+    };
+    const call = (slot: string, ip: string) => handleGatewayRequest(
+      workerRequest(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip },
+      }), env, fakeContext());
+    const first = call("first", "203.0.113.10");
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await call("second", "203.0.113.11");
+      expect(second.status).toBe(503);
+      await expect(second.json()).resolves.toMatchObject({
+        error: "global_concurrency_exceeded",
+      });
+      finishFirst();
+      await expect(first).resolves.toMatchObject({ status: 200 });
+    } finally {
+      finishFirst();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
+  it("rejects work that finishes after the confirmed lease expiry when the deadline callback is delayed", async () => {
+    // Failure mode: another isolate prunes the lease before this isolate runs its deadline timer.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    const storage = new FakeStorage();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let finishFirst: () => void = () => undefined;
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        hashChainRequest(request) {
+          if (!request.url.includes("slot=first"))
+            return Promise.resolve(Response.json({ ok: true }));
+          markStarted();
+          return new Promise<Response>((resolve) => {
+            finishFirst = () => resolve(Response.json({ ok: true }));
+          });
+        },
+      }),
+    };
+    const call = (slot: string, ip: string) => handleGatewayRequest(
+      workerRequest(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip },
+      }), env, fakeContext());
+    const first = call("first", "203.0.113.10");
+    try {
+      await started;
+      vi.setSystemTime(new Date("2026-10-09T00:05:00.001Z"));
+      const second = await call("second", "203.0.113.11");
+      expect(second.status).toBe(200);
+      finishFirst();
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishFirst();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
+  it("cancels an in-flight supported-kind lookup before its lease can be reused", async () => {
+    // Failure mode: the supported lookup creates its own request and keeps working after admission is lost.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const acquiredAt = Date.now();
+    const storage = new FakeStorage();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let finishLookup: () => void = () => undefined;
+    let active = false;
+    let overlap = false;
+    let stoppedAt: number | undefined;
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GATEWAY_BASE_URL: "https://lease-supported.example.test",
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        renewalError: new Error("coordinator renewal failed"),
+        hashChainRequest(request) {
+          if (!request.url.endsWith("/hash-chain/supported")) {
+            overlap = active;
+            return Promise.resolve(Response.json({ ok: true }));
+          }
+          active = true;
+          markStarted();
+          return new Promise<Response>((resolve) => {
+            const finish = () => { active = false; resolve(Response.json({ kinds: [] })); };
+            finishLookup = finish;
+            request.signal.addEventListener("abort", () => {
+              stoppedAt = Date.now();
+              finish();
+            }, { once: true });
+          });
+        },
+      }),
+    };
+    const first = handleGatewayRequest(workerRequest("https://lease-supported.example.test/supported", {
+      headers: { "cf-connecting-ip": "203.0.113.10" },
+    }), env, fakeContext());
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await handleGatewayRequest(workerRequest("https://lease-supported.example.test/hash-chain/report", {
+        headers: { "cf-connecting-ip": "203.0.113.11" },
+      }), env, fakeContext());
+      expect(second.status).toBe(200);
+      expect(overlap).toBe(false);
+      expect(stoppedAt).toBeLessThanOrEqual(acquiredAt + 300_000);
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishLookup();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one caller from occupying another caller's durable lease", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
@@ -1153,7 +1372,13 @@ function fakeContext(): Pick<ExecutionContext, "waitUntil"> {
 
 function fakeNamespace(
   storage: GatewayStorage,
-  options: { admissionError?: Error } = {},
+  options: {
+    admissionError?: Error;
+    renewalError?: Error;
+    renewalRejected?: boolean;
+    renewalHangs?: boolean;
+    hashChainRequest?: (request: Request) => Promise<Response>;
+  } = {},
 ): GatewayEnv["GATEWAY_STATE"] {
   const ledger = new GatewayLedger(storage);
   return {
@@ -1173,10 +1398,20 @@ function fakeNamespace(
           if (options.admissionError) throw options.admissionError;
           return ledger.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
         },
+        renewPublicAdmission(token: string, callerKey: string, nowMs: number, ttlMs: number) {
+          if (options.renewalError) throw options.renewalError;
+          if (options.renewalRejected) return Promise.resolve(false);
+          if (options.renewalHangs) return new Promise<boolean>(() => undefined);
+          return ledger.renewPublicAdmission(token, callerKey, nowMs, ttlMs);
+        },
         releasePublicAdmission(token: string) {
           return ledger.releasePublicAdmission(token);
         },
-        async fetch(_input: RequestInfo | URL, init?: RequestInit) {
+        async fetch(input: RequestInfo | URL, init?: RequestInit) {
+          if (new URL(input instanceof Request ? input.url : String(input)).pathname.startsWith("/hash-chain/")) {
+            if (!options.hashChainRequest) throw new Error("hash-chain request is not configured");
+            return options.hashChainRequest(input instanceof Request ? input : new Request(input, init));
+          }
           const request = JSON.parse(
             String(init?.body ?? "{}"),
           ) as GatewayStateRequest;

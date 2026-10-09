@@ -29,10 +29,6 @@ export class GatewayState extends DurableObject<GatewayEnv> {
       this.#ledger, readGatewayConfig(this.env));
   }
 
-  handleHashChainRequest(request: Request): Promise<Response> {
-    return this.#hashChainService().fetch(request);
-  }
-
   registerHashChainHead(input: HashChainHeadRegistration) {
     return this.#hashChainService().register(input);
   }
@@ -52,11 +48,22 @@ export class GatewayState extends DurableObject<GatewayEnv> {
     return this.#ledger.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
   }
 
+  renewPublicAdmission(
+    token: string,
+    callerKey: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    return this.#ledger.renewPublicAdmission(token, callerKey, nowMs, ttlMs);
+  }
+
   releasePublicAdmission(token: string): Promise<void> {
     return this.#ledger.releasePublicAdmission(token);
   }
 
   async fetch(request: Request): Promise<Response> {
+    if (new URL(request.url).pathname.startsWith("/hash-chain/"))
+      return this.#hashChainService().fetch(request);
     if (request.method !== "POST")
       return new Response("method not allowed", { status: 405 });
     let payload: GatewayStateRequest;

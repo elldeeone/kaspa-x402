@@ -1400,6 +1400,34 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     });
   }
 
+  async renewPublicAdmission(
+    token: string,
+    callerKey: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    assertPublicAdmissionLeaseInput(token, callerKey, nowMs, ttlMs);
+    return this.#storage.transaction(async (txn) => {
+      const key = publicAdmissionKey();
+      const leases = readPublicAdmissionLeases(
+        await txn.get<PublicAdmissionState>(key),
+      );
+      const existing = leases[token];
+      if (!existing || existing.expiresAt <= nowMs) {
+        if (existing) {
+          delete leases[token];
+          await txn.put(key, { leases });
+        }
+        return false;
+      }
+      if (existing.callerKey !== callerKey)
+        throw new Error("public admission lease caller changed");
+      existing.expiresAt = nowMs + ttlMs;
+      await txn.put(key, { leases });
+      return true;
+    });
+  }
+
   async releasePublicAdmission(token: string): Promise<void> {
     assertPublicAdmissionToken(token);
     await this.#storage.transaction(async (txn) => {
@@ -1560,6 +1588,12 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
     callerLimit: number,
     ttlMs: number,
   ): Promise<GatewayPublicAdmissionResult>;
+  renewPublicAdmission(
+    token: string,
+    callerKey: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean>;
   releasePublicAdmission(token: string): Promise<void>;
   checkRateLimit(
     scope: string,
@@ -2633,13 +2667,7 @@ function assertPublicAdmissionInput(
   callerLimit: number,
   ttlMs: number,
 ): void {
-  assertPublicAdmissionToken(token);
-  if (!/^[0-9a-f]{64}$/.test(callerKey))
-    throw new Error("public admission caller key must be opaque hex");
-  if (!Number.isSafeInteger(nowMs) || nowMs < 0)
-    throw new Error(
-      "public admission time must be a non-negative safe integer",
-    );
+  assertPublicAdmissionLeaseInput(token, callerKey, nowMs, ttlMs);
   if (
     !Number.isSafeInteger(globalLimit) ||
     globalLimit < 1 ||
@@ -2648,6 +2676,21 @@ function assertPublicAdmissionInput(
     throw new Error("public admission limit must be between 1 and 256");
   if (!Number.isSafeInteger(callerLimit) || callerLimit < 1 || callerLimit > globalLimit)
     throw new Error("public caller admission limit must be between 1 and global limit");
+}
+
+function assertPublicAdmissionLeaseInput(
+  token: string,
+  callerKey: string,
+  nowMs: number,
+  ttlMs: number,
+): void {
+  assertPublicAdmissionToken(token);
+  if (!/^[0-9a-f]{64}$/.test(callerKey))
+    throw new Error("public admission caller key must be opaque hex");
+  if (!Number.isSafeInteger(nowMs) || nowMs < 0)
+    throw new Error(
+      "public admission time must be a non-negative safe integer",
+    );
   if (
     !Number.isSafeInteger(ttlMs) ||
     ttlMs < 1 ||

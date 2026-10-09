@@ -376,6 +376,15 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#stub.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
   }
 
+  renewPublicAdmission(
+    token: string,
+    callerKey: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    return this.#stub.renewPublicAdmission(token, callerKey, nowMs, ttlMs);
+  }
+
   releasePublicAdmission(token: string): Promise<void> {
     return this.#stub.releasePublicAdmission(token);
   }

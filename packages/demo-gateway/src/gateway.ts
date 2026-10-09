@@ -111,10 +111,14 @@ export async function handleGatewayRequest(
     );
     if (admission instanceof Response) return admission;
     try {
-      const response = await routeHashChainRequest(request, config, env);
-      const body = await response.arrayBuffer();
-      return new Response(body, { status: response.status,
-        headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+      return await runGatewayPublicWork(admission, request, config, async (signal) => {
+        const response = await routeHashChainRequest(
+          new Request(request, { signal }), config, env,
+        );
+        const body = await response.arrayBuffer();
+        return new Response(body, { status: response.status,
+          headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+      });
     } finally {
       await admission.release();
     }
@@ -147,15 +151,18 @@ export async function handleGatewayRequest(
     );
     if (admission instanceof Response) return admission;
     try {
-      const exactAvailable = await hostedExactAvailable(config, state);
-      return json(
-        {
-          ok: true,
-          enabled: config.enabled,
-          kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hostedHashChainSupportedKinds(config, env)],
-        },
-        { headers: corsHeaders(config) },
-      );
+      return await runGatewayPublicWork(admission, request, config, async (signal) => {
+        const exactAvailable = await hostedExactAvailable(config, state);
+        signal.throwIfAborted();
+        return json(
+          {
+            ok: true,
+            enabled: config.enabled,
+            kinds: [...gatewaySupportedKinds(config, exactAvailable), ...await hostedHashChainSupportedKinds(config, env, signal)],
+          },
+          { headers: corsHeaders(config) },
+        );
+      });
     } finally {
       await admission.release();
     }
@@ -199,141 +206,143 @@ export async function handleGatewayRequest(
   if (admission instanceof Response) return admission;
 
   try {
-    if (!paymentHeader) {
-      const quoteBounds = cachedQuoteBounds(config);
-      if (!quoteBounds)
-        return json({ ok: false, error: "quote_unavailable" },
-          { status: 503, headers: corsHeaders(config) });
-      const cachedDaa = await state.loadRecentPnnDaaScore(
-        Date.now(), quoteBounds.maxAgeMs,
-      );
-      if (!cachedDaa)
-        return json({ ok: false, error: "quote_unavailable" },
-          { status: 503, headers: corsHeaders(config) });
-      try {
-        if (profile === "exact" && config.exactProfile === "additive" &&
-            !(await hostedExactAvailable(config, state)))
-          return json({ ok: false, error: "exact_unavailable" },
+    return await runGatewayPublicWork(admission, request, config, async (signal) => {
+      if (!paymentHeader) {
+        const quoteBounds = cachedQuoteBounds(config);
+        if (!quoteBounds)
+          return json({ ok: false, error: "quote_unavailable" },
             { status: 503, headers: corsHeaders(config) });
-        const gateway = await createGateway(
-          config, state, cachedDaa, quoteBounds.reserveDaa,
+        const cachedDaa = await state.loadRecentPnnDaaScore(
+          Date.now(), quoteBounds.maxAgeMs,
         );
-        const offer = {
-          routeAccess: "public",
-          resource: resourceFor(url, profile),
-          amount: amountFor(config, profile),
-          scheme: profile,
-        } as const;
-        const response = profile === "exact" && config.exactProfile === "additive"
-          ? await gateway.server.paymentRequiredResponseAsync(offer)
-          : gateway.server.paymentRequiredResponse(offer);
-        if (profile === "exact" && config.exactProfile === "additive") {
-          const encoded = response.headers[PAYMENT_REQUIRED_HEADER];
-          const headId = encoded
-            ? (decodePaymentRequiredHeader(encoded).accepts[0] as { extra?: { headId?: unknown } } | undefined)?.extra?.headId
-            : undefined;
-          if (typeof headId !== "string" ||
-              !(await state.hasRecentExactHeadOfferObservation(headId, Date.now())))
+        if (!cachedDaa)
+          return json({ ok: false, error: "quote_unavailable" },
+            { status: 503, headers: corsHeaders(config) });
+        try {
+          if (profile === "exact" && config.exactProfile === "additive" &&
+              !(await hostedExactAvailable(config, state)))
             return json({ ok: false, error: "exact_unavailable" },
               { status: 503, headers: corsHeaders(config) });
+          const gateway = await createGateway(
+            config, state, cachedDaa, quoteBounds.reserveDaa,
+          );
+          const offer = {
+            routeAccess: "public",
+            resource: resourceFor(url, profile),
+            amount: amountFor(config, profile),
+            scheme: profile,
+          } as const;
+          const response = profile === "exact" && config.exactProfile === "additive"
+            ? await gateway.server.paymentRequiredResponseAsync(offer)
+            : gateway.server.paymentRequiredResponse(offer);
+          if (profile === "exact" && config.exactProfile === "additive") {
+            const encoded = response.headers[PAYMENT_REQUIRED_HEADER];
+            const headId = encoded
+              ? (decodePaymentRequiredHeader(encoded).accepts[0] as { extra?: { headId?: unknown } } | undefined)?.extra?.headId
+              : undefined;
+            if (typeof headId !== "string" ||
+                !(await state.hasRecentExactHeadOfferObservation(headId, Date.now())))
+              return json({ ok: false, error: "exact_unavailable" },
+                { status: 503, headers: corsHeaders(config) });
+          }
+          return serverResponse(response, config, request.method === "HEAD");
+        } catch {
+          return json({ ok: false, error: "quote_unavailable" },
+            { status: 503, headers: corsHeaders(config) });
         }
-        return serverResponse(response, config, request.method === "HEAD");
-      } catch {
-        return json({ ok: false, error: "quote_unavailable" },
-          { status: 503, headers: corsHeaders(config) });
       }
-    }
-    let gateway: { server: DirectModeServer };
-    try {
-      gateway = await createGateway(config, state);
-    } catch (error) {
-      return json(
-        { ok: false, error: errorMessage(error) },
-        { status: 503, headers: corsHeaders(config) },
-      );
-    }
-    const resource = resourceFor(url, profile);
-    const unsupported = await gatewayUnsupportedPaymentResponse(
-      request,
-      gateway.server,
-      resource,
-      profile,
-      config,
-    );
-    if (unsupported) {
-      context.waitUntil(state.incrementMetric("unsupported_payment_retries"));
-      return withCors(unsupported, config);
-    }
-
-    context.waitUntil(
-      state.incrementMetric(`requests_${profileMetric(profile)}`),
-    );
-    let result = await gateway.server.handlePaidRequest(
-      { routeAccess: "public",
-        admissionKey: admissionIdentity(request, config).key,
-        method: request.method,
-        url: url.toString(),
-        headers: request.headers,
+      let gateway: { server: DirectModeServer };
+      try {
+        gateway = await createGateway(config, state);
+      } catch (error) {
+        return json(
+          { ok: false, error: errorMessage(error) },
+          { status: 503, headers: corsHeaders(config) },
+        );
+      }
+      const resource = resourceFor(url, profile);
+      const unsupported = await gatewayUnsupportedPaymentResponse(
+        new Request(request, { signal }),
+        gateway.server,
         resource,
-        paymentAmount: amountFor(config, profile),
-        paymentScheme: profile,
-        signal: request.signal,
-      },
-      async ({ payment, requestFingerprint, paymentIdentifier }) => ({
-        status: 200,
-        headers: { "content-type": "application/json; charset=utf-8" },
-        body: {
-          ok: true,
-          network: config.network,
-          profile,
-          resource: resource.url,
-          requestFingerprint,
-          paymentIdentifier,
-          payment:
-            payment.scheme === "exact"
-              ? {
-                  scheme: payment.scheme,
-                  transactionId: payment.transactionId,
-                  paymentOutputIndex: payment.paymentOutputIndex,
-                  finality: payment.finality,
-                }
-              : {
-                  scheme: payment.scheme,
-                  channelId: payment.channel.channelId,
-                  openedChannel: payment.openedChannel,
-                  chargedCumulativeAmount:
-                    payment.channel.chargedCumulativeAmount,
-                },
+        profile,
+        config,
+      );
+      if (unsupported) {
+        context.waitUntil(state.incrementMetric("unsupported_payment_retries"));
+        return withCors(unsupported, config);
+      }
+
+      context.waitUntil(
+        state.incrementMetric(`requests_${profileMetric(profile)}`),
+      );
+      let result = await gateway.server.handlePaidRequest(
+        { routeAccess: "public",
+          admissionKey: admissionIdentity(request, config).key,
+          method: request.method,
+          url: url.toString(),
+          headers: request.headers,
+          resource,
+          paymentAmount: amountFor(config, profile),
+          paymentScheme: profile,
+          signal,
         },
-        chargedAmount: payment.accepted.amount,
-      }),
-    );
-
-    if (
-      profile === "exact" &&
-      config.exactProfile === "additive" &&
-      result.status === 503 &&
-      (result.body as { error?: unknown } | undefined)?.error ===
-        "invalid_payload" &&
-      !(await hostedExactAvailable(config, state))
-    ) {
-      result = {
-        status: 503,
-        headers: {},
-        body: { ok: false, error: "exact_unavailable" },
-      };
-    }
-
-    if (result.status === 402)
-      context.waitUntil(
-        state.incrementMetric(`offers_${profileMetric(profile)}`),
+        async ({ payment, requestFingerprint, paymentIdentifier }) => ({
+          status: 200,
+          headers: { "content-type": "application/json; charset=utf-8" },
+          body: {
+            ok: true,
+            network: config.network,
+            profile,
+            resource: resource.url,
+            requestFingerprint,
+            paymentIdentifier,
+            payment:
+              payment.scheme === "exact"
+                ? {
+                    scheme: payment.scheme,
+                    transactionId: payment.transactionId,
+                    paymentOutputIndex: payment.paymentOutputIndex,
+                    finality: payment.finality,
+                  }
+                : {
+                    scheme: payment.scheme,
+                    channelId: payment.channel.channelId,
+                    openedChannel: payment.openedChannel,
+                    chargedCumulativeAmount:
+                      payment.channel.chargedCumulativeAmount,
+                  },
+          },
+          chargedAmount: payment.accepted.amount,
+        }),
       );
-    else if (result.status >= 200 && result.status < 300)
-      context.waitUntil(
-        state.incrementMetric(`paid_${profileMetric(profile)}`),
-      );
-    else context.waitUntil(state.incrementMetric("errors_total"));
-    return serverResponse(result, config, request.method === "HEAD");
+
+      if (
+        profile === "exact" &&
+        config.exactProfile === "additive" &&
+        result.status === 503 &&
+        (result.body as { error?: unknown } | undefined)?.error ===
+          "invalid_payload" &&
+        !(await hostedExactAvailable(config, state))
+      ) {
+        result = {
+          status: 503,
+          headers: {},
+          body: { ok: false, error: "exact_unavailable" },
+        };
+      }
+
+      if (result.status === 402)
+        context.waitUntil(
+          state.incrementMetric(`offers_${profileMetric(profile)}`),
+        );
+      else if (result.status >= 200 && result.status < 300)
+        context.waitUntil(
+          state.incrementMetric(`paid_${profileMetric(profile)}`),
+        );
+      else context.waitUntil(state.incrementMetric("errors_total"));
+      return serverResponse(result, config, request.method === "HEAD");
+    });
   } finally {
     await admission.release();
   }
@@ -363,7 +372,46 @@ function validGatewayPaymentHeader(header: string): boolean {
 
 type GatewayPublicAdmission =
   | { allowed: false; retryAt: number; reason: "caller_concurrency_exceeded" | "global_concurrency_exceeded" }
-  | { allowed: true; release(): Promise<void> };
+  | { allowed: true; signal: AbortSignal; assertActive(): void; release(): Promise<void> };
+
+async function runGatewayPublicWork(
+  admission: Extract<GatewayPublicAdmission, { allowed: true }>,
+  request: Request,
+  config: GatewayConfig,
+  work: (signal: AbortSignal) => Promise<Response>,
+): Promise<Response> {
+  admission.assertActive();
+  if (admission.signal.aborted)
+    return json({ ok: false, error: "admission_unavailable" },
+      { status: 503, headers: corsHeaders(config) });
+  const signal = AbortSignal.any([request.signal, admission.signal]);
+  let onLeaseLost!: () => void;
+  const leaseLost = new Promise<never>((_resolve, reject) => {
+    onLeaseLost = () => reject(admission.signal.reason);
+    admission.signal.addEventListener("abort", onLeaseLost, { once: true });
+    if (admission.signal.aborted) onLeaseLost();
+  });
+  try {
+    const pending = Promise.resolve().then(() => {
+      signal.throwIfAborted();
+      return work(signal);
+    });
+    const response = await Promise.race([pending, leaseLost]);
+    admission.assertActive();
+    if (admission.signal.aborted)
+      return json({ ok: false, error: "admission_unavailable" },
+        { status: 503, headers: corsHeaders(config) });
+    return response;
+  } catch (error) {
+    admission.assertActive();
+    if (admission.signal.aborted)
+      return json({ ok: false, error: "admission_unavailable" },
+        { status: 503, headers: corsHeaders(config) });
+    throw error;
+  } finally {
+    admission.signal.removeEventListener("abort", onLeaseLost);
+  }
+}
 
 async function admitGatewayPublicRequest(
   request: Request,
@@ -447,10 +495,11 @@ async function acquireGatewayPublicAdmission(
   callerLimit: number,
 ): Promise<GatewayPublicAdmission> {
   const token = crypto.randomUUID();
+  const acquiredAt = Date.now();
   const acquired = await state.acquirePublicAdmission(
     token,
     callerKey,
-    Date.now(),
+    acquiredAt,
     globalLimit,
     callerLimit,
     GATEWAY_PUBLIC_ADMISSION_TTL_MS,
@@ -463,40 +512,66 @@ async function acquireGatewayPublicAdmission(
     };
   }
 
+  let confirmedExpiresAt = acquiredAt + GATEWAY_PUBLIC_ADMISSION_TTL_MS;
+  if (Date.now() >= confirmedExpiresAt) {
+    await state.releasePublicAdmission(token);
+    throw new Error("public admission lease expired before confirmation");
+  }
+
   let released = false;
-  let renewalInFlight: Promise<void> = Promise.resolve();
-  const renewal = setInterval(() => {
-    if (released) return;
-    renewalInFlight = renewalInFlight
-      .then(async () => {
-        const result = await state.acquirePublicAdmission(
-          token,
-          callerKey,
-          Date.now(),
-          globalLimit,
-          callerLimit,
-          GATEWAY_PUBLIC_ADMISSION_TTL_MS,
-        );
-        if (!result.allowed)
-          throw new Error("public admission lease renewal was rejected");
-      })
-      .catch((error: unknown) => {
-        console.error(
-          JSON.stringify({
-            event: "gateway_public_admission_renewal_failed",
-            error: errorMessage(error),
-          }),
-        );
-      });
+  let renewalInFlight = false;
+  const controller = new AbortController();
+  let deadline: ReturnType<typeof setTimeout>;
+  let renewal: ReturnType<typeof setInterval>;
+  const loseLease = (error: unknown) => {
+    if (released || controller.signal.aborted) return;
+    controller.abort(error);
+    clearInterval(renewal);
+    clearTimeout(deadline);
+    console.error(JSON.stringify({
+      event: "gateway_public_admission_renewal_failed",
+      error: errorMessage(error),
+    }));
+  };
+  const armDeadline = () => {
+    clearTimeout(deadline);
+    deadline = setTimeout(
+      () => loseLease(new Error("public admission lease expired")),
+      Math.max(0, confirmedExpiresAt - Date.now()),
+    );
+  };
+  renewal = setInterval(() => {
+    if (released || controller.signal.aborted || renewalInFlight) return;
+    renewalInFlight = true;
+    const renewedAt = Date.now();
+    void Promise.resolve().then(() => state.renewPublicAdmission(
+      token, callerKey, renewedAt, GATEWAY_PUBLIC_ADMISSION_TTL_MS,
+    )).then((renewed) => {
+      if (released || controller.signal.aborted) return;
+      if (!renewed || Date.now() >= confirmedExpiresAt) {
+        loseLease(new Error("public admission lease renewal was rejected"));
+        return;
+      }
+      confirmedExpiresAt = renewedAt + GATEWAY_PUBLIC_ADMISSION_TTL_MS;
+      armDeadline();
+    }).catch(loseLease).finally(() => {
+      renewalInFlight = false;
+    });
   }, Math.floor(GATEWAY_PUBLIC_ADMISSION_TTL_MS / 3));
+  armDeadline();
 
   return {
     allowed: true,
+    signal: controller.signal,
+    assertActive(): void {
+      if (!released && Date.now() >= confirmedExpiresAt)
+        loseLease(new Error("public admission lease expired"));
+    },
     async release(): Promise<void> {
       if (released) return;
       released = true;
       clearInterval(renewal);
-      await renewalInFlight;
+      clearTimeout(deadline);
       try {
         await state.releasePublicAdmission(token);
       } catch (error) {
