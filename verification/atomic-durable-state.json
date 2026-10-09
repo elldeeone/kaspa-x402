@@ -1,9 +1,9 @@
 {
   "schema": "kaspa-x402-atomic-durable-state-offline-proof/v1",
-  "generatedAtUtc": "2026-10-09T06:05:51.220Z",
+  "generatedAtUtc": "2026-10-09T06:07:08.027Z",
   "branch": "atomic-durable-state",
   "baseCommit": "36f5136cf42cc0ded681992a65fba5a6ddefface",
-  "trackedDiffSha256": "034df38abdf490000bdcb2420a6ba23d25fd422c885cc3dc501796b9d9e340a5",
+  "trackedDiffSha256": "54b66d6dab09b46d1093cfd143523f2b4973996f0eacddbdf2dda928445eb5d9",
   "verifierSha256": "020ddacdb0e73c3427946dd7dcca0256e6f322430588bb33d9d0402e0e206ddf",
   "command": [
     "npm",
@@ -24,9 +24,9 @@
   ],
   "exitCode": 0,
   "signal": null,
-  "stdoutSha256": "1147380d1b39957bbbb06eb2a11ca39a9c32765adce25c779623730ebc3fb0d2",
+  "stdoutSha256": "b98015638224089307905ea835a3983acc2c1e415fff4a8f867090ff9b47eeb4",
   "stderrSha256": "c1f8d7217fedfe68ab4342c3540e229eddc8f3cbb228de61ffc975a3eb65a5bf",
-  "stdout": "\n RUN  v4.1.11 /home/luke/projects/kaspa-x402\n\n·····················································································································································································································································································································································································································································································\n\n Test Files  9 passed (9)\n      Tests  469 passed (469)\n   Start at  06:05:46\n   Duration  4.62s (transform 4.80s, setup 0ms, import 7.26s, tests 6.60s, environment 1ms)\n\n",
+  "stdout": "\n RUN  v4.1.11 /home/luke/projects/kaspa-x402\n\n·····················································································································································································································································································································································································································································································\n\n Test Files  9 passed (9)\n      Tests  469 passed (469)\n   Start at  06:07:03\n   Duration  4.74s (transform 6.13s, setup 0ms, import 8.36s, tests 6.57s, environment 1ms)\n\n",
   "stderr": "npm notice run kaspa-x402@0.0.0 npx\nnpm notice run 'vitest' run protocol/packages/core/test/chain-truth.test.ts protocol/packages/client/test/direct-client.test.ts protocol/packages/adapters/test/adapters.test.ts protocol/packages/server/test/direct-server.test.ts protocol/packages/server/test/public-boundary.test.ts protocol/packages/server/test/server-state-store-contract.test.ts packages/demo-gateway/test/gateway.test.ts packages/demo-gateway/test/state.test.ts packages/demo-gateway/test/remote-state.test.ts --reporter=dot\n",
   "scope": "Offline component integration with deterministic fake chain and Durable Object state; no funded Testnet operation."
 }
