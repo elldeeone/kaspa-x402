@@ -949,6 +949,57 @@ describe("VerifiedExactSettlementReconciler", () => {
 });
 
 describe("KaspaPnnClient", () => {
+  it.each(["connect", "getServerInfo"] as const)(
+    "closes a PNN WebSocket when admission expires during %s",
+    async (stage) => {
+      // Failure modes: an abort waits for the connect/RPC timeout, the socket
+      // remains open, or a retry starts against a second endpoint.
+      const controller = new AbortController();
+      let markEntered!: () => void;
+      const entered = new Promise<void>((resolve) => { markEntered = resolve; });
+      let release!: () => void;
+      const stalled = new Promise<void>((resolve) => { release = resolve; });
+      let disconnects = 0;
+      let endpoints = 0;
+      const rpcFactory = mockPnnRpcFactory(() => {
+        endpoints += 1;
+        return {
+          async connect() {
+            if (stage === "connect") { markEntered(); await stalled; }
+          },
+          async disconnect() { disconnects += 1; release(); },
+          async getServerInfo() {
+            if (stage === "getServerInfo") { markEntered(); await stalled; }
+            return { networkId: "testnet-10", isSynced: true };
+          },
+          async submitTransaction() { throw new Error("unreachable"); },
+          async getUtxosByAddresses() { throw new Error("unreachable"); },
+        };
+      });
+      const pending = new KaspaPnnClient({
+        endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json",
+          "wss://pnn-b.example.test/kaspa/testnet-10/wrpc/json"],
+        timeoutMs: 1_000,
+        rpcFactory,
+      }).snapshotHashChainUtxos([], controller.signal)
+        .then(() => "completed", (error: Error) => error.message);
+      try {
+        await entered;
+        controller.abort(new Error("lease expired"));
+        const outcome = await Promise.race([
+          pending,
+          new Promise<string>((resolve) => setTimeout(() => resolve("still running"), 30)),
+        ]);
+        expect(outcome).toBe("lease expired");
+        expect(disconnects).toBe(1);
+        expect(endpoints).toBe(1);
+      } finally {
+        release();
+        await pending;
+      }
+    },
+  );
+
   it("submits exact artifacts through PNN and waits for accepted payment evidence", async () => {
     const exact = exactTransactionFixture();
     const book = new ScriptAddressBook();

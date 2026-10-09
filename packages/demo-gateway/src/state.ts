@@ -692,10 +692,24 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
       const attempt = await requireBatchAttempt(txn, attemptId);
       if (attempt.status !== "pending" || attempt.handlerStartedAt !== startedAt ||
           attempt.handlerResult || attempt.recoveryReason) return false;
+      const updatedAt = new Date().toISOString();
       await txn.put(batchAttemptKey(attempt.attemptId), {
         ...attempt,
         handlerStartedAt: undefined,
-        updatedAt: new Date().toISOString(),
+        updatedAt,
+      });
+      await updateChannelOperation(txn, attempt.channelId, attempt.attemptId, {
+        status: "reserved",
+        recoveryReason: undefined,
+        updatedAt,
+      });
+      await applyPaymentIdentifierTransition(txn, attempt.paymentIdentifier, {
+        kind: "update",
+        update: {
+          status: "reserved",
+          recoveryReason: undefined,
+          updatedAt,
+        },
       });
       return true;
     });

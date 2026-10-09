@@ -482,6 +482,41 @@ describe("gateway durable ledger", () => {
     });
   });
 
+  it("releases an identified batch attempt after a pre-handler abort across restart", async () => {
+    const storage = new FakeStorage();
+    const previous = channel();
+    let ledger = new GatewayLedger(storage);
+    await ledger.registerChannel(previous);
+    const claim: PaymentIdentifierReservationClaim = {
+      id: "payment-id",
+      fingerprint: REQUEST,
+      paymentPayloadHash: PAYLOAD,
+      paymentScopeId: CHANNEL_ID,
+      paymentKind: "batch-settlement",
+      ownerId: ATTEMPT,
+      payerId: "payer:test",
+      channelId: CHANNEL_ID,
+    };
+    await ledger.claimBatchSettlement(batchSettlementAttempt(previous, {
+      paymentIdentifier: claim,
+    }));
+    const startedAt = "2026-07-07T00:00:02.000Z";
+    await expect(ledger.beginBatchHandler(ATTEMPT, startedAt)).resolves.toBe(true);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.resetBatchHandlerBeforeExecution(ATTEMPT, startedAt))
+      .resolves.toBe(true);
+    await expect(ledger.loadPaymentIdentifierReservation(claim.id))
+      .resolves.toMatchObject({ status: "reserved" });
+    await expect(ledger.loadChannelOperation(CHANNEL_ID))
+      .resolves.toMatchObject({ status: "reserved" });
+    await expect(ledger.abandonBatchSettlement(
+      ATTEMPT, "presentation expired", "2026-07-07T00:00:03.000Z",
+    )).resolves.toBeUndefined();
+    await expect(ledger.loadPaymentIdentifierReservation(claim.id))
+      .resolves.toMatchObject({ status: "safely-released" });
+    await expect(ledger.loadChannelOperation(CHANNEL_ID)).resolves.toBeUndefined();
+  });
+
   it("rejects malformed batch settlement attempts before durable state changes", async () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const current = channel();

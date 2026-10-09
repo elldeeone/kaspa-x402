@@ -1182,21 +1182,39 @@ export class KaspaPnnClient {
       signal?.throwIfAborted();
       const rpc = this.#rpcFactory(endpoint, this.#timeoutMs);
       const endpointLabel = pnnEndpointLabel(endpoint);
+      let onAbort: (() => void) | undefined;
+      const aborted = signal && new Promise<never>((_resolve, reject) => {
+        onAbort = () => {
+          // JsonPnnRpc closes the socket and rejects its pending reads
+          // synchronously, before the admission slot can be released.
+          try { void rpc.disconnect().catch(() => undefined); } catch { /* close best effort */ }
+          try { signal.throwIfAborted(); } catch (error) { reject(error); }
+        };
+        signal.addEventListener("abort", onAbort, { once: true });
+        if (signal.aborted) onAbort();
+      });
       try {
-        await withTimeout(
-          rpc.connect(),
-          this.#timeoutMs,
-          `pnn connect ${endpointLabel}`,
-        );
-        signal?.throwIfAborted();
-        const result = await fn({ rpc, endpoint: endpointLabel });
+        const work = async () => {
+          signal?.throwIfAborted();
+          await withTimeout(
+            rpc.connect(),
+            this.#timeoutMs,
+            `pnn connect ${endpointLabel}`,
+          );
+          signal?.throwIfAborted();
+          return fn({ rpc, endpoint: endpointLabel });
+        };
+        const result = await (aborted
+          ? Promise.race([work(), aborted])
+          : work());
         signal?.throwIfAborted();
         return result;
       } catch (error) {
         signal?.throwIfAborted();
         errors.push(`${endpointLabel}: ${errorMessage(error)}`);
       } finally {
-        await rpc.disconnect().catch(() => undefined);
+        if (signal && onAbort) signal.removeEventListener("abort", onAbort);
+        if (!signal?.aborted) await rpc.disconnect().catch(() => undefined);
       }
     }
     throw invalidTransaction(`Kaspa PNN request failed: ${errors.join(" | ")}`);

@@ -543,10 +543,24 @@ export class MemoryServerChannelStore implements ServerStateStore {
     const attempt = this.#requireBatchAttempt(attemptId);
     if (attempt.status !== "pending" || attempt.handlerStartedAt !== startedAt ||
         attempt.handlerResult || attempt.recoveryReason) return false;
+    const updatedAt = new Date().toISOString();
     this.#batchAttempts.set(attempt.attemptId, {
       ...attempt,
       handlerStartedAt: undefined,
-      updatedAt: new Date().toISOString(),
+      updatedAt,
+    });
+    this.#updateChannelOperation(attempt.channelId, attempt.attemptId, {
+      status: "reserved",
+      recoveryReason: undefined,
+      updatedAt,
+    });
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "update",
+      update: {
+        status: "reserved",
+        recoveryReason: undefined,
+        updatedAt,
+      },
     });
     return true;
   }

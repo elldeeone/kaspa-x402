@@ -3381,6 +3381,43 @@ describe("direct-mode server", () => {
     expect(executions).toBe(1);
   });
 
+  it("releases an identified batch attempt that expires after pre-handler cancellation", async () => {
+    let now = Date.UTC(2030, 0, 1);
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const controller = new AbortController();
+      const store = new ExpiringBatchHandlerAdmissionStore();
+      store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+      const setup = makeServer({ store, requirePaymentIdentifier: true });
+      const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
+      const payment = makeDepositPayment(setup, { paymentIdentifier });
+      if (payment.payload.payload.type !== "deposit-voucher")
+        throw new Error("expected deposit voucher");
+      const request = requestWithPayment(payment.payload, {
+        routeAccess: "public", requestHash: "aa".repeat(32),
+      });
+      let executions = 0;
+      const handler = async () => { executions += 1; return { chargedAmount: "100" }; };
+
+      await expect(setup.server.handlePaidRequest(
+        { ...request, signal: controller.signal }, handler,
+      )).resolves.toMatchObject({ status: 499 });
+      now = Date.parse(payment.payload.payload.presentation.expiresAt) + 1;
+      await expect(setup.server.handlePaidRequest(request, handler))
+        .resolves.toMatchObject({ status: 402 });
+      await expect(store.abandonBatchSettlement(
+        store.attemptId!, "presentation expired after admission loss",
+        new Date(now).toISOString(),
+      )).resolves.toBeUndefined();
+      expect(executions).toBe(0);
+      await expect(store.loadPaymentIdentifierReservation(paymentIdentifier))
+        .resolves.toMatchObject({ status: "safely-released" });
+      await expect(store.loadChannelOperation(payment.channelId)).resolves.toBeUndefined();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
   it("retries exact work after admission expires during durable handler start", async () => {
     const controller = new AbortController();
     const store = new ExpiringExactHandlerAdmissionStore();
