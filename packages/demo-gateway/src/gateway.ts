@@ -1,5 +1,6 @@
 import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import {
+  bytesToHex,
   KASPA_X402_RESOURCE_BUDGET,
   assertJsonResourceBudget,
   decodeBoundedJsonBytes,
@@ -16,6 +17,8 @@ import {
   type ResourceInfo,
   type SupportedKind,
 } from "@kaspa-x402/core";
+import { hmac } from "@noble/hashes/hmac.js";
+import { sha256 } from "@noble/hashes/sha2.js";
 import {
   DirectModeServer,
   MemoryPublicBoundaryController,
@@ -59,6 +62,10 @@ const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
 const GATEWAY_PUBLIC_ADMISSION_TTL_MS = 5 * 60 * 1_000;
+// Reserve 7,200 DAA beyond age-based drift at Testnet-10's 10 DAA/second.
+const CACHED_QUOTE_DAA_CUSHION = 7_200n;
+const CACHED_QUOTE_MAX_AGE_MS = 30n * 60_000n;
+const TESTNET_10_DAA_PER_SECOND = 10n;
 // Fast per-isolate and fine-grained backstop. The outer GatewayState lease
 // enforces the configured request cap across the deployment.
 const gatewayPublicBoundary = new MemoryPublicBoundaryController({
@@ -85,7 +92,16 @@ export async function handleGatewayRequest(
     return new Response(null, { status: 204, headers: corsHeaders(config) });
 
   const state = new RemoteGatewayState(env.GATEWAY_STATE);
+  const paymentHeader = request.headers.get(PAYMENT_SIGNATURE_HEADER);
+  if (paymentHeader && new TextEncoder().encode(paymentHeader).byteLength >
+      KASPA_X402_RESOURCE_BUDGET.maxEncodedHeaderBytes) {
+    return json({ ok: false, error: "invalid_payload" },
+      { status: 400, headers: corsHeaders(config) });
+  }
   if (HASH_CHAIN_ROUTES.has(url.pathname)) {
+    if (request.method !== (url.pathname === "/hash-chain/grant" ? "POST" : "GET"))
+      return json({ ok: false, error: "method_not_allowed" },
+        { status: 405, headers: corsHeaders(config) });
     const admission = await admitGatewayPublicRequest(
       request,
       state,
@@ -162,6 +178,10 @@ export async function handleGatewayRequest(
       { status: 503, headers: corsHeaders(config) },
     );
   }
+  if (paymentHeader && !validGatewayPaymentHeader(paymentHeader)) {
+    return json({ ok: false, error: "invalid_payload" },
+      { status: 400, headers: corsHeaders(config) });
+  }
   if (profile === "exact" && !hostedExactConfigured(config)) {
     return json(
       { ok: false, error: "exact_unavailable" },
@@ -178,6 +198,50 @@ export async function handleGatewayRequest(
   if (admission instanceof Response) return admission;
 
   try {
+    if (!paymentHeader) {
+      const quoteBounds = cachedQuoteBounds(config);
+      if (!quoteBounds)
+        return json({ ok: false, error: "quote_unavailable" },
+          { status: 503, headers: corsHeaders(config) });
+      const cachedDaa = await state.loadRecentPnnDaaScore(
+        Date.now(), quoteBounds.maxAgeMs,
+      );
+      if (!cachedDaa)
+        return json({ ok: false, error: "quote_unavailable" },
+          { status: 503, headers: corsHeaders(config) });
+      try {
+        if (profile === "exact" && config.exactProfile === "additive" &&
+            !(await hostedExactAvailable(config, state)))
+          return json({ ok: false, error: "exact_unavailable" },
+            { status: 503, headers: corsHeaders(config) });
+        const gateway = await createGateway(
+          config, state, cachedDaa, quoteBounds.reserveDaa,
+        );
+        const offer = {
+          routeAccess: "public",
+          resource: resourceFor(url, profile),
+          amount: amountFor(config, profile),
+          scheme: profile,
+        } as const;
+        const response = profile === "exact" && config.exactProfile === "additive"
+          ? await gateway.server.paymentRequiredResponseAsync(offer)
+          : gateway.server.paymentRequiredResponse(offer);
+        if (profile === "exact" && config.exactProfile === "additive") {
+          const encoded = response.headers[PAYMENT_REQUIRED_HEADER];
+          const headId = encoded
+            ? (decodePaymentRequiredHeader(encoded).accepts[0] as { extra?: { headId?: unknown } } | undefined)?.extra?.headId
+            : undefined;
+          if (typeof headId !== "string" ||
+              !(await state.hasRecentExactHeadOfferObservation(headId, Date.now())))
+            return json({ ok: false, error: "exact_unavailable" },
+              { status: 503, headers: corsHeaders(config) });
+        }
+        return serverResponse(response, config, request.method === "HEAD");
+      } catch {
+        return json({ ok: false, error: "quote_unavailable" },
+          { status: 503, headers: corsHeaders(config) });
+      }
+    }
     let gateway: { server: DirectModeServer };
     try {
       gateway = await createGateway(config, state);
@@ -205,6 +269,7 @@ export async function handleGatewayRequest(
     );
     let result = await gateway.server.handlePaidRequest(
       { routeAccess: "public",
+        admissionKey: admissionIdentity(request, config).key,
         method: request.method,
         url: url.toString(),
         headers: request.headers,
@@ -273,8 +338,30 @@ export async function handleGatewayRequest(
   }
 }
 
+function validGatewayPaymentHeader(header: string): boolean {
+  try {
+    const decoded = decodeBoundedJsonHeader(header);
+    if (!decoded || typeof decoded !== "object" || Array.isArray(decoded)) return false;
+    const payment = decoded as Record<string, unknown>;
+    const accepted = payment.accepted;
+    if (payment.x402Version !== 2 || !accepted || typeof accepted !== "object" ||
+        Array.isArray(accepted) || !payment.payload ||
+        typeof payment.payload !== "object" || Array.isArray(payment.payload))
+      return false;
+    const scheme = (accepted as Record<string, unknown>).scheme;
+    const network = (accepted as Record<string, unknown>).network;
+    if (typeof scheme !== "string" || scheme.length === 0 ||
+        typeof network !== "string" || network.length === 0) return false;
+    if (scheme === "exact" || scheme === "batch-settlement")
+      decodePaymentSignatureHeader(header);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
 type GatewayPublicAdmission =
-  | { allowed: false; retryAt: number }
+  | { allowed: false; retryAt: number; reason: "caller_concurrency_exceeded" | "global_concurrency_exceeded" }
   | { allowed: true; release(): Promise<void> };
 
 async function admitGatewayPublicRequest(
@@ -283,10 +370,11 @@ async function admitGatewayPublicRequest(
   config: GatewayConfig,
   scope: PublicRateScope,
 ): Promise<Response | Extract<GatewayPublicAdmission, { allowed: true }>> {
+  const identity = admissionIdentity(request, config);
   const rate = await state.checkRateLimit(
-    rateScope(request, scope),
+    `${identity.key}:${scope}`,
     Date.now(),
-    config.rateLimitPerMinute,
+    identity.fallback ? Math.min(config.rateLimitPerMinute, 8) : config.rateLimitPerMinute,
     60_000,
   );
   if (!rate.allowed) {
@@ -313,6 +401,10 @@ async function admitGatewayPublicRequest(
     admission = await acquireGatewayPublicAdmission(
       state,
       config.globalConcurrency,
+      identity.key,
+      identity.fallback
+        ? Math.min(config.perCallerConcurrency, config.globalConcurrency, 2)
+        : Math.min(config.perCallerConcurrency, config.globalConcurrency),
     );
   } catch (error) {
     console.error(
@@ -330,11 +422,11 @@ async function admitGatewayPublicRequest(
     return json(
       {
         ok: false,
-        error: "global_concurrency_exceeded",
+        error: admission.reason,
         retryAt: new Date(admission.retryAt).toISOString(),
       },
       {
-        status: 503,
+        status: admission.reason === "caller_concurrency_exceeded" ? 429 : 503,
         headers: {
           ...corsHeaders(config),
           "retry-after": String(
@@ -349,19 +441,24 @@ async function admitGatewayPublicRequest(
 
 async function acquireGatewayPublicAdmission(
   state: GatewayStateClient,
-  limit: number,
+  globalLimit: number,
+  callerKey: string,
+  callerLimit: number,
 ): Promise<GatewayPublicAdmission> {
   const token = crypto.randomUUID();
   const acquired = await state.acquirePublicAdmission(
     token,
+    callerKey,
     Date.now(),
-    limit,
+    globalLimit,
+    callerLimit,
     GATEWAY_PUBLIC_ADMISSION_TTL_MS,
   );
   if (!acquired.allowed) {
     return {
       allowed: false,
       retryAt: acquired.retryAt ?? Date.now() + 1_000,
+      reason: acquired.reason ?? "global_concurrency_exceeded",
     };
   }
 
@@ -373,8 +470,10 @@ async function acquireGatewayPublicAdmission(
       .then(async () => {
         const result = await state.acquirePublicAdmission(
           token,
+          callerKey,
           Date.now(),
-          limit,
+          globalLimit,
+          callerLimit,
           GATEWAY_PUBLIC_ADMISSION_TTL_MS,
         );
         if (!result.allowed)
@@ -430,6 +529,11 @@ export async function runGatewayCanary(
   checks.push(
     await checked("kaspa-chain", async () => {
       const chain = await new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }).health();
+      if (config.enabled)
+        await new PnnChainEvidence(
+          new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }),
+          new ScriptAddressBook(), state,
+        ).getVirtualDaaScore();
       return {
         detail: "PNN chain health returned testnet-10 evidence",
         evidence: chain,
@@ -497,6 +601,26 @@ export async function runGatewayCanary(
     }),
   );
   if (config.enabled) {
+    if (config.exactProfile === "additive" && hostedExactConfigured(config)) {
+      const heads = (await state.listExactHeads())
+        .filter((head) => head.status === "available")
+        .slice(0, 8);
+      if (heads.length > 0) {
+        const cachedDaa = await state.loadRecentPnnDaaScore(Date.now());
+        if (cachedDaa) {
+          const gateway = await createGateway(config, state, cachedDaa);
+          for (const head of heads) {
+            try {
+              const current = await gateway.server.reconcileExactHead(head.headId);
+              if (current.status === "available")
+                await state.recordExactHeadOfferObservation(current);
+            } catch {
+              // An unverified head is excluded from unsigned offers.
+            }
+          }
+        }
+      }
+    }
     const exactAvailable = await hostedExactAvailable(config, state);
     if (exactAvailable) {
       checks.push(await supportedKindCheck(env, config, "exact"));
@@ -593,15 +717,32 @@ function gatewaySupportedKinds(
   return kinds;
 }
 
+function cachedQuoteBounds(
+  config: GatewayConfig,
+): { maxAgeMs: number; reserveDaa: bigint } | undefined {
+  const margin = BigInt(config.refundTimeoutDaaDelta) -
+    BigInt(config.minimumRefundLeadDaa);
+  if (margin <= CACHED_QUOTE_DAA_CUSHION) return undefined;
+  const availableAgeDaa = margin - CACHED_QUOTE_DAA_CUSHION - 1n;
+  const configuredMaxAgeMs = availableAgeDaa * 1_000n /
+    TESTNET_10_DAA_PER_SECOND;
+  const maxAgeMs = Number(configuredMaxAgeMs < CACHED_QUOTE_MAX_AGE_MS
+    ? configuredMaxAgeMs : CACHED_QUOTE_MAX_AGE_MS);
+  const ageDaa = (BigInt(maxAgeMs) * TESTNET_10_DAA_PER_SECOND + 999n) / 1_000n;
+  return { maxAgeMs, reserveDaa: CACHED_QUOTE_DAA_CUSHION + ageDaa };
+}
+
 async function createGateway(
   config: GatewayConfig,
   state: GatewayStateClient,
+  cachedDaa?: string,
+  quoteReserveDaa = 0n,
 ): Promise<{ server: DirectModeServer }> {
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
-  const currentDaa = BigInt(await evidence.getVirtualDaaScore());
+  const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore());
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -614,7 +755,7 @@ async function createGateway(
     await state.resolveBatchRefundTimeoutDaa(
       currentDaa.toString(),
       config.refundTimeoutDaaDelta,
-      config.minimumRefundLeadDaa,
+      (BigInt(config.minimumRefundLeadDaa) + quoteReserveDaa).toString(),
     ),
   );
   if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
@@ -643,9 +784,17 @@ async function createGateway(
     ),
     addressCodec,
     exactTransactionVerifier: evidence,
+    persistOwnedExactEvidence: async (verified, claim, signal) => {
+      if (claim.attempt.transactionId !== verified.transactionId) {
+        throw new Error("exact evidence owner does not match the verified transaction");
+      }
+      await evidence.persistOwnedEvidence(
+        verified.transactionId, verified.evidenceReceipt, signal,
+      );
+    },
     exactSettlementReconciler: new VerifiedExactSettlementReconciler(evidence),
     exactHeadReconciler: new VerifiedExactHeadReconciler(evidence),
-    reconcileExactHeadOnOffer: true,
+    reconcileExactHeadOnOffer: cachedDaa === undefined,
     lockManager: new DurableGatewayLockManager(state),
     acceptedFinality: "accepted",
     confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
@@ -1061,6 +1210,8 @@ async function exactHeadsAdminResponse(
         body.headId,
         (body.candidateTransactionIds ?? []) as string[],
       );
+      if (head.status === "available")
+        await state.recordExactHeadOfferObservation(head);
       return json(
         { ok: true, head, stats: await exactHeadStats(state) },
         { headers: corsHeaders(config) },
@@ -1539,9 +1690,36 @@ function profileMetric(profile: Profile): string {
   return profile === "exact" ? "exact" : "batch";
 }
 
-function rateScope(request: Request, profile: PublicRateScope): string {
-  const ip = request.headers.get("cf-connecting-ip")?.trim() || "unknown";
-  return `${ip}:${profile}`;
+function admissionIdentity(
+  request: Request,
+  config: GatewayConfig,
+): { key: string; fallback: boolean } {
+  const ip = request.headers.get("cf-connecting-ip")?.trim();
+  const cf = (request as Request & { cf?: unknown }).cf;
+  const normalizedIp = cf !== null && typeof cf === "object" && ip
+    ? normalizeIngressIp(ip) : undefined;
+  const key = config.admissionHmacKey;
+  if (!normalizedIp || !key) {
+    return { key: bytesToHex(sha256(new TextEncoder().encode("gateway-admission:aggregate:v1"))), fallback: true };
+  }
+  return {
+    key: bytesToHex(hmac(sha256, new TextEncoder().encode(key),
+      new TextEncoder().encode(`gateway-admission:v1:${normalizedIp}`))),
+    fallback: false,
+  };
+}
+
+function normalizeIngressIp(ip: string): string | undefined {
+  if (ip.length > 45) return undefined;
+  if (/^(?:\d{1,3}\.){3}\d{1,3}$/.test(ip))
+    return ip.split(".").every((part) => Number(part) <= 255 &&
+      (part === "0" || !part.startsWith("0"))) ? ip : undefined;
+  if (!/^[0-9a-f:]+$/i.test(ip) || !ip.includes(":")) return undefined;
+  try {
+    return new URL(`http://[${ip}]/`).hostname.slice(1, -1).toLowerCase();
+  } catch {
+    return undefined;
+  }
 }
 
 function secureAdminTransport(url: URL): boolean {

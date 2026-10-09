@@ -893,7 +893,9 @@ export class DirectModeServer {
     let permit: PublicBoundaryPermit;
     try {
       request = { ...request, trustedSecurityContext: paidRouteContext(request) };
-      permit = this.#publicBoundary.enterRequest(request.trustedSecurityContext);
+      permit = this.#publicBoundary.enterRequest(
+        request.trustedSecurityContext, request.admissionKey,
+      );
     } catch (error) {
       return error instanceof PublicBoundaryError
         ? publicBoundaryResponse(error)
@@ -1187,11 +1189,19 @@ export class DirectModeServer {
                 fingerprint,
                 paymentIdentifier,
               );
+              request.signal?.throwIfAborted();
+              if (verified.evidenceReceipt && this.#config.persistOwnedExactEvidence) {
+                await this.#config.persistOwnedExactEvidence(verified, claim, request.signal);
+              }
               verified = await this.#settleExactIfNeeded(
                 verified,
                 claim,
                 request.signal,
               );
+              request.signal?.throwIfAborted();
+              if (verified.evidenceReceipt && this.#config.persistOwnedExactEvidence) {
+                await this.#config.persistOwnedExactEvidence(verified, claim, request.signal);
+              }
               if (verified.profile === "hash-chain-additive") {
                 await this.#recordAcceptedHashChainPayment(
                   verified,
@@ -2645,6 +2655,9 @@ export class DirectModeServer {
         : {}),
       ...(verification.payerAddress
         ? { payerAddress: verification.payerAddress }
+        : {}),
+      ...(verification.evidenceReceipt
+        ? { evidenceReceipt: verification.evidenceReceipt }
         : {}),
       finality: verification.finality ?? "mempool",
       ...(verification.finality
@@ -6000,8 +6013,15 @@ function serverCovenantLineageRolledBack(
       transition.transactionId.toLowerCase(),
     ),
   );
+  const newlyAnchored = new Set(
+    previous.journal.slice(0,
+      Math.max(0, next.anchor.compactedEvents - previous.anchor.compactedEvents),
+    ).filter((event) => event.event === "accepted")
+      .map((event) => event.transition.transactionId.toLowerCase()),
+  );
   return canonicalCovenantTransitions(previous).some(
-    (transition) => !canonical.has(transition.transactionId.toLowerCase()),
+    (transition) => !canonical.has(transition.transactionId.toLowerCase()) &&
+      !newlyAnchored.has(transition.transactionId.toLowerCase()),
   );
 }
 

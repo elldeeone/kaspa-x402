@@ -19,6 +19,8 @@ export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
   Pick<GeneratedGatewayEnv, "GATEWAY_STATE"> & {
     KASPA_X402_ADMIN_TOKEN?: string;
     KASPA_X402_HASH_CHAIN_PROXY_TOKEN?: string;
+    KASPA_X402_ADMISSION_HMAC_KEY?: string;
+    KASPA_X402_PER_CALLER_CONCURRENCY?: string;
   };
 
 export interface GatewayConfig {
@@ -37,6 +39,8 @@ export interface GatewayConfig {
   claimFeeSompi: SompiString;
   rateLimitPerMinute: number;
   globalConcurrency: number;
+  perCallerConcurrency: number;
+  admissionHmacKey?: string;
   corsOrigin: string;
   siteBaseUrl: string;
   releaseVersion: string;
@@ -53,6 +57,14 @@ export interface GatewayConfig {
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
+  const enabled = bool(
+    env.KASPA_X402_GATEWAY_ENABLED ?? "false",
+    "KASPA_X402_GATEWAY_ENABLED",
+  );
+  const admissionHmacKey = env.KASPA_X402_ADMISSION_HMAC_KEY?.trim();
+  if (enabled && (!admissionHmacKey ||
+      new TextEncoder().encode(admissionHmacKey).byteLength < 32))
+    throw new Error("KASPA_X402_ADMISSION_HMAC_KEY must contain at least 32 secret bytes when the gateway is enabled");
   const network = env.KASPA_X402_NETWORK ?? "kaspa:testnet-10";
   if (network !== "kaspa:testnet-10") {
     throw new KaspaX402Error(
@@ -133,10 +145,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       hashChainOrigin: hashChainOrigin(env.KASPA_X402_HASH_CHAIN_ORIGIN),
       hashChainProxyToken: env.KASPA_X402_HASH_CHAIN_PROXY_TOKEN?.trim(),
     } : {}),
-    enabled: bool(
-      env.KASPA_X402_GATEWAY_ENABLED ?? "false",
-      "KASPA_X402_GATEWAY_ENABLED",
-    ),
+    enabled,
     network,
     payTo,
     serverPublicKey,
@@ -171,6 +180,15 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       1,
       256,
     ),
+    perCallerConcurrency: uint(
+      env.KASPA_X402_PER_CALLER_CONCURRENCY ?? "8",
+      "KASPA_X402_PER_CALLER_CONCURRENCY",
+      1,
+      256,
+    ),
+    ...(admissionHmacKey
+      ? { admissionHmacKey }
+      : {}),
     corsOrigin: env.KASPA_X402_CORS_ORIGIN ?? "https://kaspa-x402.org",
     siteBaseUrl: baseUrl(
       env.KASPA_X402_SITE_BASE_URL ?? "https://kaspa-x402.org",

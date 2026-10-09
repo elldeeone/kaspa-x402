@@ -43,11 +43,13 @@ export class GatewayState extends DurableObject<GatewayEnv> {
 
   acquirePublicAdmission(
     token: string,
+    callerKey: string,
     nowMs: number,
-    limit: number,
+    globalLimit: number,
+    callerLimit: number,
     ttlMs: number,
   ): Promise<GatewayPublicAdmissionResult> {
-    return this.#ledger.acquirePublicAdmission(token, nowMs, limit, ttlMs);
+    return this.#ledger.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
   }
 
   releasePublicAdmission(token: string): Promise<void> {
@@ -74,7 +76,7 @@ export class GatewayState extends DurableObject<GatewayEnv> {
       );
     }
     try {
-      const value = await dispatchGatewayState(this.#ledger, payload);
+      const value = await dispatchGatewayState(this.#ledger, payload, request.signal);
       return Response.json({ ok: true, value });
     } catch (error) {
       return Response.json(

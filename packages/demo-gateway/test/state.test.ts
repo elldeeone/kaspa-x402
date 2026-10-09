@@ -22,7 +22,9 @@ import {
 import {
   applyCovenantSelectedChainUpdate,
   createCovenantLineageState,
+  sha256Hex,
   type AcceptedTransactionEvidence,
+  type CovenantLineageState,
 } from "@kaspa-x402/core";
 import { DurableGatewayLockManager, GatewayLedger } from "../src/state.js";
 
@@ -46,6 +48,39 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("persists the 64-to-65 covenant compaction across Durable Object restart", async () => {
+    // Failure modes: the transaction wrapper rejects the new compact anchor,
+    // or restart reloads a stale journal/head after the replacement.
+    const first = channel();
+    let lineage = first.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    const at64: ServerChannelRecord = {
+      ...first,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    await ledger.registerChannel(at64);
+    await ledger.claimChannelOperation(channelOperation(at64, "recovery"));
+    const compacted = appendCompactionTopUp(lineage, 65);
+    const at65: ServerChannelRecord = {
+      ...at64,
+      version: "1",
+      lineage: compacted,
+      activeOutpoint: compacted.currentHead!.outpoint,
+      activeScriptPublicKey: compacted.currentHead!.scriptPublicKey,
+      fundingAmount: compacted.currentHead!.value,
+    };
+    await ledger.applyCovenantLineage(at64, at65, ATTEMPT);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.loadChannel(at64.channelId)).resolves.toEqual(at65);
+    await expect(ledger.loadChannelOperation(at64.channelId)).resolves.toBeUndefined();
+  });
+
   it("keeps bounded discovery checkpoints before a deposit and survives restart", async () => {
     const storage = new FakeStorage();
     let ledger = new GatewayLedger(storage);
@@ -65,6 +100,7 @@ describe("gateway durable ledger", () => {
   it("preserves PNN funding receipts across restarts and rejects conflicting origins", async () => {
     const storage = new FakeStorage();
     let ledger = new GatewayLedger(storage);
+    await ledger.claimExactSettlement(exactSettlementAttempt({ profile: "standard-native", head: undefined }));
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
       origins: [{ outpoint: { txid: FUNDING_TX, index: 0 }, amount: "1000", scriptPublicKey: SCRIPT, covenantId: null }] };
     await ledger.savePnnEvidence(record);
@@ -79,6 +115,7 @@ describe("gateway durable ledger", () => {
   it("rolls back a PNN receipt when its budget write fails and refuses excess capacity", async () => {
     const storage = new FakeStorage();
     const ledger = new GatewayLedger(storage);
+    await ledger.claimExactSettlement(exactSettlementAttempt({ profile: "standard-native", head: undefined }));
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" } };
     storage.failWriteAt(2);
     await expect(ledger.savePnnEvidence(record)).rejects.toThrow("injected storage write failure");
@@ -1140,23 +1177,25 @@ describe("gateway durable ledger", () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = "00000000-0000-4000-8000-000000000001";
     const second = "00000000-0000-4000-8000-000000000002";
+    const alice = "aa".repeat(32);
+    const bob = "bb".repeat(32);
 
     await expect(
-      ledger.acquirePublicAdmission(first, 1_000, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 1_000, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(first, 1_500, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 1_500, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(second, 1_600, 1, 1_000),
-    ).resolves.toEqual({ allowed: false, active: 1, retryAt: 2_500 });
+      ledger.acquirePublicAdmission(second, bob, 1_600, 1, 1, 1_000),
+    ).resolves.toEqual({ allowed: false, active: 1, retryAt: 2_500, reason: "global_concurrency_exceeded" });
 
     await ledger.releasePublicAdmission(first);
     await expect(
-      ledger.acquirePublicAdmission(second, 1_700, 1, 1_000),
+      ledger.acquirePublicAdmission(second, bob, 1_700, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(first, 2_700, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 2_700, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
   });
 
@@ -1167,13 +1206,17 @@ describe("gateway durable ledger", () => {
     const results = await Promise.all([
       firstLedger.acquirePublicAdmission(
         "00000000-0000-4000-8000-000000000001",
+        "aa".repeat(32),
         1_000,
+        1,
         1,
         1_000,
       ),
       secondLedger.acquirePublicAdmission(
         "00000000-0000-4000-8000-000000000002",
+        "bb".repeat(32),
         1_000,
+        1,
         1,
         1_000,
       ),
@@ -1383,6 +1426,48 @@ describe("gateway durable ledger", () => {
     );
   });
 });
+
+function appendCompactionTopUp(
+  state: CovenantLineageState,
+  index: number,
+): CovenantLineageState {
+  const head = state.currentHead;
+  if (!head) throw new Error("compaction fixture requires a live covenant head");
+  const transactionId = sha256Hex(`gateway-compaction-transaction:${index}`);
+  const blockHash = sha256Hex(`gateway-compaction-block:${index}`);
+  const checkpoint = { blockHash: "ef".repeat(32), blueScore: "1000", daaScore: "1000" };
+  return applyCovenantSelectedChainUpdate(state, {
+    fromCheckpoint: state.checkpoint,
+    checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: [],
+    addedChainBlocks: [{ blockHash, transitions: [{
+      kind: "top-up",
+      covenantId: state.manifest.genesis.covenantId,
+      templateId: state.manifest.bytecode.templateId,
+      consumedOutpoint: head.outpoint,
+      transactionId,
+      authorizedSuccessorCount: 1,
+      successor: {
+        covenantId: state.manifest.genesis.covenantId,
+        authorizingInput: 0,
+        outpoint: { txid: transactionId, index: 0 },
+        scriptPublicKey: head.scriptPublicKey,
+        value: (BigInt(head.value) + 1n).toString(),
+        claimedCumulativeAmount: head.claimedCumulativeAmount,
+      },
+      terminalOutput: null,
+      acceptance: {
+        status: "accepted",
+        transactionId,
+        acceptingBlockHash: blockHash,
+        acceptingBlockBlueScore: "971",
+        confirmationCount: 30,
+        checkpoint,
+      },
+    }] }],
+  });
+}
 
 function channel(
   overrides: Partial<ServerChannelRecord> = {},

@@ -1,0 +1,32 @@
+{
+  "schema": "kaspa-x402-atomic-durable-state-offline-proof/v1",
+  "generatedAtUtc": "2026-10-09T02:06:19.080Z",
+  "branch": "atomic-durable-state",
+  "baseCommit": "36f5136cf42cc0ded681992a65fba5a6ddefface",
+  "trackedDiffSha256": "ac33f2257c3ec26e66d61e39082e0f3a47f59c1c9a3f6e4c0b211bf895f20ddb",
+  "verifierSha256": "8c432b2da7d6f7000e63b646662a38d8ca9bee11a09b2f6640b9e05ea1d379a9",
+  "command": [
+    "npm",
+    "exec",
+    "--",
+    "vitest",
+    "run",
+    "protocol/packages/core/test/chain-truth.test.ts",
+    "protocol/packages/client/test/direct-client.test.ts",
+    "protocol/packages/adapters/test/adapters.test.ts",
+    "protocol/packages/server/test/direct-server.test.ts",
+    "protocol/packages/server/test/public-boundary.test.ts",
+    "protocol/packages/server/test/server-state-store-contract.test.ts",
+    "packages/demo-gateway/test/gateway.test.ts",
+    "packages/demo-gateway/test/state.test.ts",
+    "packages/demo-gateway/test/remote-state.test.ts",
+    "--reporter=dot"
+  ],
+  "exitCode": 0,
+  "signal": null,
+  "stdoutSha256": "8a982d7020084e1b9c5072716ef8eae8fa417dbf9ce96e7e5a021f94e2f40448",
+  "stderrSha256": "c1f8d7217fedfe68ab4342c3540e229eddc8f3cbb228de61ffc975a3eb65a5bf",
+  "stdout": "\n RUN  v4.1.11 /home/luke/projects/kaspa-x402\n\n···············································································································································································································································································································································································································································································\n\n Test Files  9 passed (9)\n      Tests  463 passed (463)\n   Start at  02:06:14\n   Duration  4.56s (transform 4.28s, setup 0ms, import 6.55s, tests 6.48s, environment 1ms)\n\n",
+  "stderr": "npm notice run kaspa-x402@0.0.0 npx\nnpm notice run 'vitest' run protocol/packages/core/test/chain-truth.test.ts protocol/packages/client/test/direct-client.test.ts protocol/packages/adapters/test/adapters.test.ts protocol/packages/server/test/direct-server.test.ts protocol/packages/server/test/public-boundary.test.ts protocol/packages/server/test/server-state-store-contract.test.ts packages/demo-gateway/test/gateway.test.ts packages/demo-gateway/test/state.test.ts packages/demo-gateway/test/remote-state.test.ts --reporter=dot\n",
+  "scope": "Offline component integration with deterministic fake chain and Durable Object state; no funded Testnet operation."
+}

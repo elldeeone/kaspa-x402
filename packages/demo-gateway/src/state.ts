@@ -86,6 +86,7 @@ type RateWindowRecord = {
 
 type PublicAdmissionRecord = {
   expiresAt: number;
+  callerKey: string;
 };
 
 type PublicAdmissionState = {
@@ -96,6 +97,7 @@ export interface GatewayPublicAdmissionResult {
   allowed: boolean;
   active: number;
   retryAt?: number;
+  reason?: "caller_concurrency_exceeded" | "global_concurrency_exceeded";
 }
 
 export interface GatewayDurableStateLimits {
@@ -198,6 +200,9 @@ export type GatewayStateMethod =
   | "markExactHeadUnavailable"
   | "applyExactHeadLineage"
   | "resolveBatchRefundTimeoutDaa"
+  | "loadRecentPnnDaaScore"
+  | "recordExactHeadOfferObservation"
+  | "hasRecentExactHeadOfferObservation"
   | "commitSettlement"
   | "commitExactPayment"
   | "loadOpenClaimAttempt"
@@ -244,6 +249,10 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     assertPnnTransactionId(checkpoint.blockHash);
     const bucket = BigInt(checkpoint.daaScore) / 300n;
     await this.#storage.transaction(async txn => {
+      const quote = await txn.get<{ daaScore: string; observedAt: number }>("pnn-quote-observation");
+      if (!quote || BigInt(checkpoint.daaScore) >= BigInt(quote.daaScore)) {
+        await txn.put("pnn-quote-observation", { daaScore: checkpoint.daaScore, observedAt: Date.now() });
+      }
       const checkpoints = await txn.get<ChainCheckpoint[]>("pnn-discovery-checkpoints") ?? [];
       // Keep the earliest observation in each roughly 30-second DAA bucket.
       // A bounded ring covers quote delivery and delayed deposit retries.
@@ -257,16 +266,33 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     });
   }
 
+  async loadRecentPnnDaaScore(
+    nowMs: number,
+    maxAgeMs = 30 * 60_000,
+  ): Promise<string | undefined> {
+    if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs < 0 || maxAgeMs > 30 * 60_000)
+      throw new Error("cached PNN DAA maximum age is invalid");
+    const quote = await this.#storage.get<{ daaScore: string; observedAt: number }>("pnn-quote-observation");
+    if (!quote || !Number.isSafeInteger(quote.observedAt) ||
+        quote.observedAt > nowMs || nowMs - quote.observedAt > maxAgeMs)
+      return undefined;
+    return parseSompiString(quote.daaScore).toString();
+  }
+
   async findPnnCheckpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {
     const checkpoints = await this.#storage.get<ChainCheckpoint[]>("pnn-discovery-checkpoints") ?? [];
     return cloneOrUndefined(checkpoints.reverse().find(item => BigInt(item.daaScore) < BigInt(daaScore)));
   }
 
-  async savePnnEvidence(record: PnnEvidenceRecord): Promise<void> {
+  async savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     assertPnnTransactionId(record.transactionId);
     const bytes = durableByteLength(record);
     if (bytes > 64 * 1024) throw new Error("PNN evidence exceeds the record byte limit");
     await this.#storage.transaction(async txn => {
+      signal?.throwIfAborted();
+      const owner = await txn.get<ExactSettlementAttemptRecord>(exactAttemptKey(record.transactionId));
+      if (!owner) throw new Error("PNN evidence has no durable exact settlement owner");
       const key = `pnn-evidence:${record.transactionId}`;
       const current = await txn.get<PnnEvidenceRecord>(key);
       if (current?.origins && JSON.stringify(current.origins) !== JSON.stringify(record.origins)) {
@@ -275,6 +301,7 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
       const budget = await txn.get<{ records: number; bytes: number }>("pnn-evidence:budget") ?? { records: 0, bytes: 0 };
       const next = { records: budget.records + (current ? 0 : 1), bytes: budget.bytes - (current ? durableByteLength(current) : 0) + bytes };
       if (next.records > 4096 || next.bytes > 64 * 1024 * 1024) throw new Error("PNN evidence capacity exhausted");
+      signal?.throwIfAborted();
       await txn.put(key, record);
       await txn.put("pnn-evidence:budget", next);
     });
@@ -734,6 +761,37 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     return cloneOrUndefined(
       await this.#storage.get<ExactHeadRecord>(exactHeadKey(headId)),
     );
+  }
+
+  async recordExactHeadOfferObservation(head: ExactHeadRecord): Promise<void> {
+    await this.#storage.transaction(async (txn) => {
+      const current = await txn.get<ExactHeadRecord>(exactHeadKey(head.headId));
+      if (!current || current.status !== "available" || head.status !== "available" ||
+          current.headId.toLowerCase() !== head.headId.toLowerCase() ||
+          current.version !== head.version ||
+          stableJson(current.currentOutpoint) !== stableJson(head.currentOutpoint) ||
+          current.currentAmount !== head.currentAmount ||
+          current.scriptPublicKey.toLowerCase() !== head.scriptPublicKey.toLowerCase() ||
+          current.redeemScript.toLowerCase() !== head.redeemScript.toLowerCase() ||
+          current.additiveThresholdSompi !== head.additiveThresholdSompi)
+        throw new Error("verified exact head changed before offer observation");
+      await txn.put(`exact-head-offer-observation:${head.headId.toLowerCase()}`, {
+        snapshot: stableJson(current), observedAt: this.#now(),
+      });
+    });
+  }
+
+  async hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const head = await txn.get<ExactHeadRecord>(exactHeadKey(headId));
+      const observation = await txn.get<{ snapshot: string; observedAt: number }>(
+        `exact-head-offer-observation:${headId.toLowerCase()}`,
+      );
+      return !!head && head.status === "available" && !!observation &&
+        observation.snapshot === stableJson(head) &&
+        Number.isSafeInteger(observation.observedAt) &&
+        observation.observedAt <= nowMs && nowMs - observation.observedAt <= 30 * 60_000;
+    });
   }
 
   async listExactHeads(): Promise<ExactHeadRecord[]> {
@@ -1200,11 +1258,13 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
 
   async acquirePublicAdmission(
     token: string,
+    callerKey: string,
     nowMs: number,
-    limit: number,
+    globalLimit: number,
+    callerLimit: number,
     ttlMs: number,
   ): Promise<GatewayPublicAdmissionResult> {
-    assertPublicAdmissionInput(token, nowMs, limit, ttlMs);
+    assertPublicAdmissionInput(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
     return this.#storage.transaction(async (txn) => {
       const key = publicAdmissionKey();
       const stored = await txn.get<PublicAdmissionState>(key);
@@ -1215,23 +1275,37 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
 
       const existing = leases[token];
       if (existing) {
+        if (existing.callerKey !== callerKey)
+          throw new Error("public admission lease caller changed");
         existing.expiresAt = nowMs + ttlMs;
         await txn.put(key, { leases });
         return { allowed: true, active: Object.keys(leases).length };
       }
 
       const active = Object.keys(leases).length;
-      if (active >= limit) {
+      const callerLeases = Object.values(leases).filter(
+        (lease) => lease.callerKey === callerKey,
+      );
+      if (callerLeases.length >= callerLimit) {
         return {
           allowed: false,
           active,
+          reason: "caller_concurrency_exceeded",
+          retryAt: Math.min(...callerLeases.map((lease) => lease.expiresAt)),
+        };
+      }
+      if (active >= globalLimit) {
+        return {
+          allowed: false,
+          active,
+          reason: "global_concurrency_exceeded",
           retryAt: Math.min(
             ...Object.values(leases).map((lease) => lease.expiresAt),
           ),
         };
       }
 
-      leases[token] = { expiresAt: nowMs + ttlMs };
+      leases[token] = { expiresAt: nowMs + ttlMs, callerKey };
       await txn.put(key, { leases });
       return { allowed: true, active: active + 1 };
     });
@@ -1375,6 +1449,8 @@ export class DurableGatewayLockManager implements ChannelLockManager {
 
 export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
   exactHeadStats(): Promise<ExactHeadStats>;
+  recordExactHeadOfferObservation(head: ExactHeadRecord): Promise<void>;
+  hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean>;
   acquireLock(
     key: string,
     token: string,
@@ -1384,8 +1460,10 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
   releaseLock(key: string, token: string): Promise<void>;
   acquirePublicAdmission(
     token: string,
+    callerKey: string,
     nowMs: number,
-    limit: number,
+    globalLimit: number,
+    callerLimit: number,
     ttlMs: number,
   ): Promise<GatewayPublicAdmissionResult>;
   releasePublicAdmission(token: string): Promise<void>;
@@ -1400,6 +1478,7 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
     refundDeltaDaa: string,
     minimumLeadDaa: string,
   ): Promise<string>;
+  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number): Promise<string | undefined>;
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
   saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
@@ -1409,10 +1488,11 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
 export async function dispatchGatewayState(
   ledger: GatewayLedger,
   request: GatewayStateRequest,
+  signal?: AbortSignal,
 ): Promise<unknown> {
   switch (request.method) {
     case "loadPnnEvidence": return ledger.loadPnnEvidence(readPayload<{ transactionId: string }>(request).transactionId);
-    case "savePnnEvidence": return ledger.savePnnEvidence(readPayload<{ record: PnnEvidenceRecord }>(request).record);
+    case "savePnnEvidence": return ledger.savePnnEvidence(readPayload<{ record: PnnEvidenceRecord }>(request).record, signal);
     case "recordPnnCheckpoint": return ledger.recordPnnCheckpoint(readPayload<{ checkpoint: ChainCheckpoint }>(request).checkpoint);
     case "findPnnCheckpointBefore": return ledger.findPnnCheckpointBefore(readPayload<{ daaScore: string }>(request).daaScore);
     case "loadChannel":
@@ -1645,6 +1725,18 @@ export async function dispatchGatewayState(
         payload.refundDeltaDaa,
         payload.minimumLeadDaa,
       );
+    }
+    case "loadRecentPnnDaaScore": {
+      const { nowMs, maxAgeMs } = readPayload<{
+        nowMs: number; maxAgeMs?: number;
+      }>(request);
+      return ledger.loadRecentPnnDaaScore(nowMs, maxAgeMs);
+    }
+    case "recordExactHeadOfferObservation":
+      return ledger.recordExactHeadOfferObservation(readPayload<{ head: ExactHeadRecord }>(request).head);
+    case "hasRecentExactHeadOfferObservation": {
+      const payload = readPayload<{ headId: string; nowMs: number }>(request);
+      return ledger.hasRecentExactHeadOfferObservation(payload.headId, payload.nowMs);
     }
     case "commitSettlement":
       return ledger.commitSettlement(
@@ -2434,21 +2526,27 @@ function assertDurableStateLimits(limits: GatewayDurableStateLimits): void {
 
 function assertPublicAdmissionInput(
   token: string,
+  callerKey: string,
   nowMs: number,
-  limit: number,
+  globalLimit: number,
+  callerLimit: number,
   ttlMs: number,
 ): void {
   assertPublicAdmissionToken(token);
+  if (!/^[0-9a-f]{64}$/.test(callerKey))
+    throw new Error("public admission caller key must be opaque hex");
   if (!Number.isSafeInteger(nowMs) || nowMs < 0)
     throw new Error(
       "public admission time must be a non-negative safe integer",
     );
   if (
-    !Number.isSafeInteger(limit) ||
-    limit < 1 ||
-    limit > MAX_PUBLIC_ADMISSION_LEASES
+    !Number.isSafeInteger(globalLimit) ||
+    globalLimit < 1 ||
+    globalLimit > MAX_PUBLIC_ADMISSION_LEASES
   )
     throw new Error("public admission limit must be between 1 and 256");
+  if (!Number.isSafeInteger(callerLimit) || callerLimit < 1 || callerLimit > globalLimit)
+    throw new Error("public caller admission limit must be between 1 and global limit");
   if (
     !Number.isSafeInteger(ttlMs) ||
     ttlMs < 1 ||
@@ -2485,9 +2583,10 @@ function readPublicAdmissionLeases(
   const leases: Record<string, PublicAdmissionRecord> = {};
   for (const [token, lease] of entries) {
     assertPublicAdmissionToken(token);
-    if (!lease || !Number.isSafeInteger(lease.expiresAt) || lease.expiresAt < 0)
+    if (!lease || !Number.isSafeInteger(lease.expiresAt) || lease.expiresAt < 0 ||
+        typeof lease.callerKey !== "string" || !/^[0-9a-f]{64}$/.test(lease.callerKey))
       throw new Error("public admission lease is invalid");
-    leases[token] = { expiresAt: lease.expiresAt };
+    leases[token] = { expiresAt: lease.expiresAt, callerKey: lease.callerKey };
   }
   return leases;
 }

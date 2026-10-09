@@ -63,6 +63,19 @@ These routes require a bearer token stored as a Worker secret.
 
 From the repository root, start an unpaid local integration target:
 
+Set `KASPA_X402_ADMISSION_HMAC_KEY` to a local secret with at least 32 bytes
+in the Worker's `.dev.vars` before enabling the gateway. For a deployment, set
+it with `wrangler secret put`. The Worker does not persist or log raw ingress
+IP addresses. Requests without valid Cloudflare ingress metadata use one
+bounded aggregate admission bucket. Unsigned paid routes use the last recent
+PNN canary checkpoint and return `503 quote_unavailable` until it is available.
+The gateway limits the checkpoint age using Testnet-10's 10 DAA/second rate
+and the configured refund margin, with another 7,200 DAA reserved before a
+quote. The default margin permits the full 30-minute cache window; a smaller
+margin requires a newer checkpoint. Unsigned quotes do not read a live node.
+For the development state reset, follow the
+[state-v2 clean cutover](./demo-operations.md#development-state-v2-clean-cutover).
+
 ```sh
 npx wrangler dev --local --config packages/demo-gateway/wrangler.jsonc \
   --ip 127.0.0.1 --port 8433 --local-upstream 127.0.0.1:8433 \

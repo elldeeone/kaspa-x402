@@ -569,7 +569,7 @@ describe("VerifiedKaspaChainProvider", () => {
     const provider = () => new VerifiedKaspaChainProvider(new PnnChainEvidence(pnn, book, store), book, "100");
     const utxo = await provider().getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
     expect(utxo?.covenantId).toBe(covenantId);
-    expect(find).toHaveBeenCalledWith(txid, { originDaaScore: "900" });
+    expect(find).toHaveBeenCalledWith(txid, { originDaaScore: "900" }, undefined);
     const genesis = await provider().verifyCovenantGenesis({ utxo: utxo!, payment: {} as never });
     expect(genesis?.authorizingInput).toEqual({ txid: authorizingTxid, index: 1 });
     expect(genesis?.totalOutputCount).toBe(1);
@@ -1642,9 +1642,27 @@ describe("VerifiedExactTransactionVerifier", () => {
     const durable = new MemoryEvidenceStore();
     const book = new ScriptAddressBook();
     const nodeVerifier = new PnnChainEvidence(pnn, book, durable);
-    await expect(nodeVerifier.verifyExactPayment(request)).resolves.toMatchObject({ transactionId: standard.transactionId });
+    const firstVerification = await nodeVerifier.verifyExactPayment(request);
+    expect(firstVerification.transactionId).toBe(standard.transactionId);
     expect(findSpy).not.toHaveBeenCalled();
+    expect(await durable.loadPnnEvidence(standard.transactionId)).toBeUndefined();
+    await durable.savePnnEvidence(firstVerification.evidenceReceipt);
     expect((await durable.loadPnnEvidence(standard.transactionId))?.origins).toEqual([origin]);
+
+    let releaseLateRead!: () => void;
+    const lateRead = new Promise<void>((resolve) => { releaseLateRead = resolve; });
+    const lateStore = new MemoryEvidenceStore();
+    const canceled = new AbortController();
+    snapshotSpy.mockImplementationOnce(async () => {
+      await lateRead;
+      return { utxos: [origin], checkpoint };
+    });
+    const lateVerification = new PnnChainEvidence(pnn, book, lateStore)
+      .verifyExactPayment({ ...request, signal: canceled.signal });
+    canceled.abort();
+    releaseLateRead();
+    await expect(lateVerification).rejects.toThrow();
+    expect(await lateStore.loadPnnEvidence(standard.transactionId)).toBeUndefined();
 
     snapshotSpy.mockResolvedValue({ utxos: [{ ...origin, amount: String(BigInt(origin.amount) + 1n) }], checkpoint });
     await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("does not match trusted chain state");
@@ -1652,10 +1670,13 @@ describe("VerifiedExactTransactionVerifier", () => {
     await expect(nodeVerifier.getTransaction(standard.transactionId)).resolves.toMatchObject({ transaction_id: standard.transactionId });
     await expect(nodeVerifier.acceptedTransactionEvidence(standard.transactionId)).resolves.toEqual(receipt);
     expect(confirmSpy).toHaveBeenCalledTimes(1);
+    await nodeVerifier.persistOwnedEvidence(standard.transactionId, firstVerification.evidenceReceipt);
     expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
     const restarted = new PnnChainEvidence(pnn, book, durable);
-    await expect(restarted.verifyExactPayment(request)).resolves.toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
-    expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint });
+    const resumedVerification = await restarted.verifyExactPayment(request);
+    expect(resumedVerification).toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
+    await restarted.persistOwnedEvidence(standard.transactionId, resumedVerification.evidenceReceipt);
+    expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint }, undefined);
     expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
     confirmSpy.mockRejectedValue(new Error("accepting block left the selected chain"));
     await expect(restarted.verifyExactPayment(request)).rejects.toThrow("left the selected chain");

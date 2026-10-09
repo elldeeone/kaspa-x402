@@ -347,6 +347,8 @@ export interface ExactTransactionVerification {
   };
   /** Canonical KIP-10 continuation verified from the signed transaction. */
   continuation?: ExactHeadContinuation;
+  /** Authenticated adapter receipt, held in memory until the settlement claim owns it. */
+  evidenceReceipt?: unknown;
 }
 
 export interface ExactTransactionVerifier {
@@ -961,6 +963,11 @@ export interface ExactServerConfig {
   chainProvider: ExactServerChainProvider;
   addressCodec: AddressCodec;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  persistOwnedExactEvidence?: (
+    verification: VerifiedExactPayment,
+    claim: ExactSettlementClaimResult,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
   /** Private issuer; the root server bundle only uses its structural interface. */
@@ -1065,6 +1072,8 @@ export interface DirectPaymentSettlementOptions extends DirectPaymentVerificatio
 
 export interface PaidRequest {
   routeAccess: PaidRouteAccess;
+  /** Host-derived opaque admission identity, separate from payment authorization. */
+  admissionKey?: string;
   method?: string;
   url: string;
   headers?: HeaderSource;
@@ -1138,6 +1147,7 @@ export interface VerifiedExactPayment {
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
   observedFinality?: "mempool" | "accepted" | "confirmed";
+  evidenceReceipt?: unknown;
   /** Expired authorization accepted only to resume an immutable durable attempt. */
   recoveryOnly?: boolean;
 }

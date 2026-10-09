@@ -27,6 +27,12 @@ import {
 import type { GatewayEnv } from "../src/config.js";
 
 const FUNDING_TX = "88".repeat(32);
+
+function workerRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  const request = new globalThis.Request(input, init);
+  Object.defineProperty(request, "cf", { value: { colo: "SYD" } });
+  return request;
+}
 const SCRIPT = "0000" + "99".repeat(34);
 const KIP10_REDEEM_SCRIPT = buildKip10AdditiveRedeemScript({
   ownerPublicKey: "aa".repeat(32),
@@ -52,6 +58,7 @@ const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_SITE_BASE_URL: "https://kaspa-x402.org",
   KASPA_X402_RELEASE_VERSION: "1.0.0-rc.2",
   KASPA_X402_GATEWAY_BASE_URL: "https://demo.kaspa-x402.org",
+  KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
 };
 
 describe("gateway canary", () => {
@@ -102,7 +109,7 @@ describe("gateway canary", () => {
     stubCanaryFetches();
 
     const response = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch"),
+      workerRequest("https://demo.kaspa-x402.org/batch"),
       env,
       fakeContext(),
     );
@@ -265,12 +272,12 @@ describe("gateway canary", () => {
 
     const missing = await requestJson(env, "/missing");
     const method = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch", { method: "POST" }),
+      workerRequest("https://demo.kaspa-x402.org/batch", { method: "POST" }),
       env,
       fakeContext(),
     );
     const firstResponse = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch", {
+      workerRequest("https://demo.kaspa-x402.org/batch", {
         headers: { "cf-connecting-ip": "203.0.113.10" },
       }),
       env,
@@ -279,7 +286,7 @@ describe("gateway canary", () => {
     const fetchesAfterAllowedRequest = fetchMock.mock.calls.length;
     const chainReadsAfterAllowedRequest = vi.mocked(PnnChainEvidence.prototype.getVirtualDaaScore).mock.calls.length;
     const limitedResponse = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch", {
+      workerRequest("https://demo.kaspa-x402.org/batch", {
         headers: { "cf-connecting-ip": "203.0.113.10" },
       }),
       env,
@@ -300,7 +307,7 @@ describe("gateway canary", () => {
       error: "method_not_allowed",
     });
     expect(firstResponse.status).toBe(402);
-    expect(chainReadsAfterAllowedRequest).toBeGreaterThan(0);
+    expect(chainReadsAfterAllowedRequest).toBe(0);
     expect(PnnChainEvidence.prototype.getVirtualDaaScore).toHaveBeenCalledTimes(chainReadsAfterAllowedRequest);
     expect(fetchesAfterAllowedRequest).toBe(0);
     expect(limited).toMatchObject({
@@ -331,15 +338,24 @@ describe("gateway canary", () => {
       if (blockdagCalls === 1) { markFirstStarted(); await firstMayFinish; }
       return "507000000";
     });
+    const foreignPayment = btoa(JSON.stringify({
+      x402Version: 2,
+      accepted: { scheme: "evm", network: "eip155:1" },
+      payload: {},
+    }));
 
     const first = handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch"),
+      workerRequest("https://demo.kaspa-x402.org/batch", {
+        headers: { "cf-connecting-ip": "203.0.113.10", [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
+      }),
       env,
       fakeContext(),
     );
     await firstStarted;
     const rejected = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch"),
+      workerRequest("https://demo.kaspa-x402.org/batch", {
+        headers: { "cf-connecting-ip": "203.0.113.11", [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
+      }),
       env,
       fakeContext(),
     );
@@ -356,12 +372,287 @@ describe("gateway canary", () => {
     const callsAfterFirst = blockdagCalls;
     await expect(
       handleGatewayRequest(
-        new Request("https://demo.kaspa-x402.org/batch"),
+        workerRequest("https://demo.kaspa-x402.org/batch", {
+          headers: { [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
+        }),
         env,
         fakeContext(),
       ),
     ).resolves.toMatchObject({ status: 402 });
     expect(blockdagCalls).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it("keeps one caller from occupying another caller's durable lease", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",
+      KASPA_X402_HASH_CHAIN_PROXY_TOKEN: "proxy-test-value",
+      KASPA_X402_GLOBAL_CONCURRENCY: "2",
+      KASPA_X402_PER_CALLER_CONCURRENCY: "1",
+      KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
+    };
+    let markFirstStarted!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const firstMayFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("slot=first")) {
+        markFirstStarted();
+        await firstMayFinish;
+      }
+      return Response.json({ ok: true });
+    }));
+    const request = (slot: string, ip: string) => handleGatewayRequest(
+      workerRequest(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip },
+      }),
+      env,
+      fakeContext(),
+    );
+
+    const first = request("first", "203.0.113.10");
+    await firstStarted;
+    try {
+      const saturated = await request("second", "203.0.113.10");
+      expect(saturated.status).toBe(429);
+      await expect(saturated.json()).resolves.toMatchObject({ error: "caller_concurrency_exceeded" });
+      const unrelated = await request("other", "203.0.113.11");
+      expect(unrelated.status).toBe(200);
+    } finally {
+      releaseFirst();
+      await first;
+    }
+  });
+
+  it("normalizes equivalent IPv6 ingress addresses to one caller lease", async () => {
+    // Failure modes: alternate IPv6 spellings evade the per-caller cap or
+    // raw forwarding headers influence the trusted admission identity.
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",
+      KASPA_X402_HASH_CHAIN_PROXY_TOKEN: "proxy-test-value",
+      KASPA_X402_GLOBAL_CONCURRENCY: "2",
+      KASPA_X402_PER_CALLER_CONCURRENCY: "1",
+    };
+    let started!: () => void;
+    let finish!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { started = resolve; });
+    const firstMayFinish = new Promise<void>((resolve) => { finish = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("slot=first")) {
+        started();
+        await firstMayFinish;
+      }
+      return Response.json({ ok: true });
+    }));
+    const request = (slot: string, ip: string) => handleGatewayRequest(
+      workerRequest(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip, "x-forwarded-for": "192.0.2.250" },
+      }), env, fakeContext());
+    const first = request("first", "2001:0db8::1");
+    await firstStarted;
+    try {
+      const second = await request("second", "2001:db8:0:0:0:0:0:1");
+      expect(second.status).toBe(429);
+      await expect(second.json()).resolves.toMatchObject({ error: "caller_concurrency_exceeded" });
+    } finally {
+      finish();
+      await first;
+    }
+  });
+
+  it("uses one bounded aggregate when Cloudflare ingress metadata is absent", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",
+      KASPA_X402_HASH_CHAIN_PROXY_TOKEN: "proxy-test-value",
+      KASPA_X402_GLOBAL_CONCURRENCY: "2",
+      KASPA_X402_PER_CALLER_CONCURRENCY: "1",
+    };
+    let markFirstStarted!: () => void;
+    let releaseFirst!: () => void;
+    const firstStarted = new Promise<void>((resolve) => { markFirstStarted = resolve; });
+    const firstMayFinish = new Promise<void>((resolve) => { releaseFirst = resolve; });
+    vi.stubGlobal("fetch", vi.fn(async (input: RequestInfo | URL) => {
+      if (String(input).includes("slot=first")) {
+        markFirstStarted();
+        await firstMayFinish;
+      }
+      return Response.json({ ok: true });
+    }));
+    const request = (slot: string, ip: string) => handleGatewayRequest(
+      new globalThis.Request(`https://demo.kaspa-x402.org/hash-chain/report?slot=${slot}`, {
+        headers: { "cf-connecting-ip": ip, "x-forwarded-for": "192.0.2.250" },
+      }), env, fakeContext(),
+    );
+    const first = request("first", "203.0.113.20");
+    await firstStarted;
+    try {
+      const second = await request("second", "203.0.113.21");
+      expect(second.status).toBe(429);
+      await expect(second.json()).resolves.toMatchObject({ error: "caller_concurrency_exceeded" });
+    } finally {
+      releaseFirst();
+      await first;
+    }
+  });
+
+  it("rejects an unsigned paid request before PNN work", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
+    };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore")
+      .mockResolvedValue("507000000");
+    const response = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/batch", {
+        headers: { "cf-connecting-ip": "203.0.113.12" },
+      }),
+      env,
+      fakeContext(),
+    );
+    expect(response.status).toBe(402);
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("rejects a short malformed payment header before PNN work", async () => {
+    // Failure modes: a small invalid header passes the size check and starts
+    // a chain read; a foreign scheme loses its corrective 402 response.
+    const storage = new FakeStorage();
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore")
+      .mockResolvedValue("507000000");
+    const response = await handleGatewayRequest(workerRequest(
+      "https://demo.kaspa-x402.org/batch", {
+        headers: { [PAYMENT_SIGNATURE_HEADER]: "invalid-payment" },
+      }), env, fakeContext());
+    expect(response.status).toBe(400);
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("withholds unsigned quotes when a cached DAA cannot preserve refund lead", async () => {
+    // Failure modes: stale DAA plus a tiny configured margin produces a
+    // timeout below the required lead, or the request performs a PNN read.
+    const storage = new FakeStorage();
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_REFUND_TIMEOUT_DAA_DELTA: "1001",
+      KASPA_X402_MINIMUM_REFUND_LEAD_DAA: "1000",
+    };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore")
+      .mockResolvedValue("507000000");
+    const response = await handleGatewayRequest(workerRequest(
+      "https://demo.kaspa-x402.org/batch"), env, fakeContext());
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: "quote_unavailable" });
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("fails closed when the cached DAA is too old for an allowed refund margin", async () => {
+    // Failure modes: 30 minutes is treated as safe for every margin, or an
+    // unsigned request starts a live PNN read to compensate for stale state.
+    const now = Date.UTC(2026, 9, 9);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const storage = new FakeStorage();
+    await storage.put("pnn-quote-observation", {
+      daaScore: "507000000", observedAt: now - 5 * 60_000,
+    });
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_REFUND_TIMEOUT_DAA_DELTA: "9000",
+      KASPA_X402_MINIMUM_REFUND_LEAD_DAA: "1000",
+    };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore");
+    const response = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/batch"), env, fakeContext(),
+    );
+    expect(response.status).toBe(503);
+    await expect(response.json()).resolves.toMatchObject({ error: "quote_unavailable" });
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("uses a recent cached DAA to issue a nondefault quote the paid path can retain", async () => {
+    // Failure modes: a stored timeout just above the cached head is reused,
+    // then paid handling rolls it and rejects the quote's pinned timeout.
+    const now = Date.UTC(2026, 9, 9);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const storage = new FakeStorage();
+    await storage.put("pnn-quote-observation", {
+      daaScore: "507000000", observedAt: now - 30_000,
+    });
+    const ledger = new GatewayLedger(storage);
+    await ledger.resolveBatchRefundTimeoutDaa("506992001", "9000", "1000");
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_REFUND_TIMEOUT_DAA_DELTA: "9000",
+      KASPA_X402_MINIMUM_REFUND_LEAD_DAA: "1000",
+    };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore");
+    const response = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/batch"), env, fakeContext(),
+    );
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers.get(PAYMENT_REQUIRED_HEADER)!);
+    const offeredTimeout = required.accepts[0]!.extra!.refundTimeoutDaa;
+    if (typeof offeredTimeout !== "string") throw new Error("missing offered refund timeout");
+    expect(offeredTimeout).toBe("507009000");
+    const paidHeadDaa = 507000000n + 30n * 10n;
+    expect(paidHeadDaa + 1000n).toBeLessThan(BigInt(offeredTimeout));
+    await expect(ledger.resolveBatchRefundTimeoutDaa(paidHeadDaa.toString(), "9000", "1000"))
+      .resolves.toBe(offeredTimeout);
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("keeps the default quote available near the 30-minute cache limit", async () => {
+    const now = Date.UTC(2026, 9, 9);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const storage = new FakeStorage();
+    await storage.put("pnn-quote-observation", {
+      daaScore: "507000000", observedAt: now - 29 * 60_000,
+    });
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
+    const pnnRead = vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore");
+    const response = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/batch"), env, fakeContext(),
+    );
+    expect(response.status).toBe(402);
+    const required = decodePaymentRequiredHeader(response.headers.get(PAYMENT_REQUIRED_HEADER)!);
+    const timeout = required.accepts[0]!.extra!.refundTimeoutDaa;
+    if (typeof timeout !== "string") throw new Error("missing offered refund timeout");
+    const offeredTimeout = BigInt(timeout);
+    expect(507000000n + 29n * 60n * 10n + 1000n).toBeLessThan(offeredTimeout);
+    expect(pnnRead).not.toHaveBeenCalled();
+  });
+
+  it("keeps missing and stale cached DAA states unavailable", async () => {
+    const now = Date.UTC(2026, 9, 9);
+    vi.spyOn(Date, "now").mockReturnValue(now);
+    const storage = new FakeStorage();
+    const env: GatewayEnv = { ...BASE_ENV, GATEWAY_STATE: fakeNamespace(storage) };
+    await storage.delete("pnn-quote-observation");
+    await expect(requestJson(env, "/batch")).resolves.toMatchObject({
+      status: 503, body: { error: "quote_unavailable" },
+    });
+    await storage.put("pnn-quote-observation", {
+      daaScore: "507000000", observedAt: now - 30 * 60_000 - 1,
+    });
+    await expect(requestJson(env, "/batch")).resolves.toMatchObject({
+      status: 503, body: { error: "quote_unavailable" },
+    });
   });
 
   it("fails closed before chain access when global admission is unavailable", async () => {
@@ -377,7 +668,7 @@ describe("gateway canary", () => {
     vi.stubGlobal("fetch", fetchMock);
 
     const response = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/batch"),
+      workerRequest("https://demo.kaspa-x402.org/batch"),
       env,
       fakeContext(),
     );
@@ -399,7 +690,7 @@ describe("gateway canary", () => {
     };
 
     const unauthorized = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
         body: JSON.stringify({ record: exactHead() }),
       }),
@@ -409,7 +700,7 @@ describe("gateway canary", () => {
     expect(unauthorized.status).toBe(401);
 
     const cleartext = await handleGatewayRequest(
-      new Request("http://demo.kaspa-x402.org/admin/exact-heads", {
+      workerRequest("http://demo.kaspa-x402.org/admin/exact-heads", {
         headers: { authorization: "Bearer admin-token" },
       }),
       env,
@@ -422,7 +713,7 @@ describe("gateway canary", () => {
     });
 
     const registered = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
         headers: { authorization: "Bearer admin-token" },
         body: JSON.stringify({ record: exactHead() }),
@@ -483,7 +774,7 @@ describe("gateway canary", () => {
     );
 
     const exact = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/exact"),
+      workerRequest("https://demo.kaspa-x402.org/exact"),
       env,
       fakeContext(),
     );
@@ -505,6 +796,7 @@ describe("gateway canary", () => {
       KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
       KASPA_X402_PNN_ENDPOINTS:
         "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
+      KASPA_X402_ADMIN_TOKEN: "admin-token",
     };
     stubCanaryFetches();
 
@@ -519,7 +811,7 @@ describe("gateway canary", () => {
       body: { ok: false, error: "exact_unavailable" },
     });
     const registration = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-heads/register", {
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/register", {
         method: "POST",
         headers: { authorization: "Bearer admin-token" },
         body: JSON.stringify({ record: exactHead() }),
@@ -546,6 +838,18 @@ describe("gateway canary", () => {
     );
 
     stubAdditiveHeadFetches("current");
+    await expect(requestJson(env, "/exact")).resolves.toMatchObject({
+      status: 503,
+      body: { error: "exact_unavailable" },
+    });
+    const reconciled = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({ headId: "90".repeat(32) }),
+      }), env, fakeContext(),
+    );
+    expect(reconciled.status).toBe(200);
     await expect(requestJson(env, "/exact")).resolves.toMatchObject({
       status: 402,
     });
@@ -574,7 +878,7 @@ describe("gateway canary", () => {
     );
 
     const response = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/exact", {
+      workerRequest("https://demo.kaspa-x402.org/exact", {
         headers: { [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
       }),
       env,
@@ -622,11 +926,22 @@ describe("gateway canary", () => {
     });
     await expect(
       new GatewayLedger(storage).listExactHeads(),
+    ).resolves.toMatchObject([{ status: "available" }]);
+    const missing = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
+        method: "POST",
+        headers: { authorization: "Bearer admin-token" },
+        body: JSON.stringify({ headId: "90".repeat(32) }),
+      }), env, fakeContext(),
+    );
+    expect(missing.status).toBe(200);
+    await expect(
+      new GatewayLedger(storage).listExactHeads(),
     ).resolves.toMatchObject([{ status: "unavailable" }]);
 
     stubAdditiveHeadFetches("advanced");
     const recovered = await handleGatewayRequest(
-      new Request("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
+      workerRequest("https://demo.kaspa-x402.org/admin/exact-heads/reconcile", {
         method: "POST",
         headers: { authorization: "Bearer admin-token" },
         body: JSON.stringify({
@@ -657,7 +972,7 @@ describe("gateway request transport budget", () => {
   it("accepts the byte maximum and rejects maximum plus one while streaming", async () => {
     await expect(
       readRequestJsonWithLimit(
-        new Request("https://demo.kaspa-x402.org/admin", {
+        workerRequest("https://demo.kaspa-x402.org/admin", {
           method: "POST",
           body: '{"x":""}',
         }),
@@ -668,7 +983,7 @@ describe("gateway request transport budget", () => {
 
     await expect(
       readRequestJsonWithLimit(
-        new Request("https://demo.kaspa-x402.org/admin", {
+        workerRequest("https://demo.kaspa-x402.org/admin", {
           method: "POST",
           body: '{"x":"a"}',
         }),
@@ -684,7 +999,7 @@ async function requestJson(
   path: string,
 ): Promise<{ status: number; body: unknown }> {
   const response = await handleGatewayRequest(
-    new Request(`https://demo.kaspa-x402.org${path}`),
+    workerRequest(`https://demo.kaspa-x402.org${path}`),
     env,
     fakeContext(),
   );
@@ -813,12 +1128,14 @@ function fakeNamespace(
       return {
         acquirePublicAdmission(
           token: string,
+          callerKey: string,
           nowMs: number,
-          limit: number,
+          globalLimit: number,
+          callerLimit: number,
           ttlMs: number,
         ) {
           if (options.admissionError) throw options.admissionError;
-          return ledger.acquirePublicAdmission(token, nowMs, limit, ttlMs);
+          return ledger.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
         },
         releasePublicAdmission(token: string) {
           return ledger.releasePublicAdmission(token);
@@ -837,6 +1154,14 @@ function fakeNamespace(
 
 class FakeStorage implements GatewayStorage {
   #values = new Map<string, unknown>();
+
+  constructor() {
+    // A scheduled chain observation is available before unsigned quote delivery.
+    this.#values.set("pnn-quote-observation", {
+      daaScore: "507000000",
+      observedAt: Date.now(),
+    });
+  }
 
   async get<T = unknown>(key: string): Promise<T | undefined> {
     return cloneOrUndefined(this.#values.get(key) as T | undefined);
