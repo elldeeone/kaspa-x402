@@ -120,7 +120,7 @@ export class HashChainDemoService {
       );
     }
     const url = new URL(new URL(request.url).pathname + new URL(request.url).search, this.config.gatewayBaseUrl).href;
-    const answer = await server.handlePaidRequest({
+    const answer = await server.handlePaidRequest({ routeAccess: "authenticated",
       method: "GET", url, headers: Object.fromEntries(request.headers), paymentScheme: "exact",
       resource: { url, description: "Native-KAS hash-chain demo report", mimeType: "application/json" },
       trustedSecurityContext, signal: request.signal,

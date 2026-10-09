@@ -14,7 +14,7 @@ export type ExactAdditiveTemplateId = "kaspa-x402-kip10-additive-v1";
 export type ExactProfile = "standard-native" | "additive" | "hash-chain-additive";
 
 export interface ExactRequestAuthorization extends JsonRecord {
-  version: "kaspa-x402-exact-request-authorization-v1";
+  version: "kaspa-x402-exact-request-authorization-v2";
   inputIndex: number;
   expiresAt: string;
   digest: Hash32Hex;

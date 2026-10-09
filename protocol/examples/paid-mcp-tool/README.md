@@ -32,6 +32,7 @@ const params = decodeMcpToolCallParams(rawParams);
 const result = await handlePaidMcpToolCall(
   directModeServer,
   {
+    routeAccess: "public",
     audience: "https://mcp.example.test",
     name: "quote",
     resource: {

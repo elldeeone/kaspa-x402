@@ -2664,6 +2664,7 @@ function exactSettlementAttemptFixture(
     paymentRequirementsHash: "55".repeat(32),
     paymentPayloadHash: "66".repeat(32),
     requestAuthorizationId: "77".repeat(32),
+    authorizationExpiresAt: "2099-01-01T00:00:00.000Z",
     payToScriptPublicKey: exact.headScriptPublicKey,
     transaction: exact.artifact,
     requiredFinality: "accepted",
@@ -2786,6 +2787,7 @@ function exactAuthorizationFields(input: {
     payToScriptPublicKey: input.payToScriptPublicKey,
     paymentRequirementsHash,
     requestHash,
+    paymentIdentifier: "adapter_exact_payment_0001",
     challengeId: input.challengeId,
     inputIndex: input.inputIndex,
     expiresAt,
@@ -2793,8 +2795,9 @@ function exactAuthorizationFields(input: {
   return {
     requestHash,
     paymentRequirementsHash,
+    paymentIdentifier: "adapter_exact_payment_0001",
     authorization: {
-      version: "kaspa-x402-exact-request-authorization-v1" as const,
+      version: "kaspa-x402-exact-request-authorization-v2" as const,
       inputIndex: input.inputIndex,
       expiresAt,
       digest,

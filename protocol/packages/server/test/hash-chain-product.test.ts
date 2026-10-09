@@ -137,8 +137,8 @@ describe("native-KAS hash-chain x402 product path", () => {
       const server = new DirectModeServer(config);
       let protectedCalls = 0;
       const trustedSecurityContext = { principal: "hash-chain-product-test", tenant: "merchant-test" };
-      const anonymousRoute = { url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" as const };
-      const fallback = await server.handlePaidRequest({
+      const anonymousRoute = { routeAccess: "public" as const, url: RESOURCE.url, resource: RESOURCE, paymentScheme: "exact" as const };
+      const fallback = await server.handlePaidRequest({ routeAccess: "public",
         url: RESOURCE.url,
         resource: RESOURCE,
         paymentSchemes: ["exact", "batch-settlement"],
@@ -161,6 +161,7 @@ describe("native-KAS hash-chain x402 product path", () => {
         const deniedUrl = `${RESOURCE.url}?denied=${index}`;
         const denied = await server.handlePaidRequest({
           ...anonymousRoute,
+          routeAccess: "authenticated",
           url: deniedUrl,
           resource: { url: deniedUrl },
           trustedSecurityContext: {
@@ -173,7 +174,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(headReads).toBe(0);
       expect(admissionCalls).toBe(65);
       challengeEligible = true;
-      const route = { ...anonymousRoute, trustedSecurityContext };
+      const route = { ...anonymousRoute, routeAccess: "authenticated" as const, trustedSecurityContext };
       const unpaid = await server.handlePaidRequest(route, async () => { protectedCalls++; return { body: "paid" }; });
       expect(unpaid.status).toBe(402);
       expect(headReads).toBe(1);
@@ -257,6 +258,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       if (!extra.payToScriptPublicKey) throw new Error("missing payment script");
       const signingRequest = {
           attemptId: "a1".repeat(32), intentHash: "a2".repeat(32),
+          paymentIdentifier: "hash_chain_product_0001",
           network: "kaspa:testnet-10", profile: "hash-chain-additive",
           origin: "https://api.example.test", resourceUrl: RESOURCE.url,
           amount: accepted.amount, payTo: accepted.payTo,
@@ -301,7 +303,7 @@ describe("native-KAS hash-chain x402 product path", () => {
           covenantId: COVENANT_ID, authorizingInput: 0 } };
       const readsBeforeStolenProof = originBatches;
       const callsBeforeStolenProof = verifierCalls;
-      await expect(server.verifyPayment({ paymentPayload: { ...payment,
+      await expect(server.verifyPayment({ routeAccess: "public", paymentPayload: { ...payment,
         payload: { ...payment.payload, transaction: stolen.transaction,
           authorization: stolen.authorization, payerAddress: "kaspatest:thief" } } as never,
         paymentRequirements: accepted, resource: RESOURCE, requestHash })).rejects.toThrow("assigned grant");
@@ -325,7 +327,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       });
       const callsBeforeCompetingProof = verifierCalls;
       const readsBeforeCompetingProof = originBatches;
-      await expect(server.verifyPayment({
+      await expect(server.verifyPayment({ routeAccess: "public",
         paymentPayload: {
           ...payment,
           payload: {
@@ -347,7 +349,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       headUnspent = false;
       await expect(server.claimHashChainGrant(claim, trustedSecurityContext)).rejects.toThrow("authoritative selected UTXO");
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
-      await server.verifyPayment({ paymentPayload: payment as never, paymentRequirements: accepted,
+      await server.verifyPayment({ routeAccess: "public", paymentPayload: payment as never, paymentRequirements: accepted,
         resource: RESOURCE, requestHash });
       store.failAfterAccept = true;
       const interrupted = await server.handlePaidRequest(paidRoute, async () => { protectedCalls++; return { body: "paid" }; });
@@ -364,6 +366,8 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(staleAttempt.status).toBe(503);
       expect(protectedCalls).toBe(0);
       expect(issuer.getCurrent(HEAD_ID).phase).toBe("hold");
+      expiryClock.mockRestore();
+      expiryClock = undefined;
       selected = selectedPayment;
       const paid = await server.handlePaidRequest(paidRoute, async () => { protectedCalls++; return { body: "paid" }; });
       expect(paid.status).toBe(200);

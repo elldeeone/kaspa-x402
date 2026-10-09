@@ -53,6 +53,7 @@ const paymentRequired = {
 const signed = signHashChainExactTransaction({
   request: {
     attemptId: "93".repeat(32), intentHash: "94".repeat(32),
+    paymentIdentifier,
     network: "kaspa:testnet-10", profile: "hash-chain-additive",
     origin: "https://api.example.test", resourceUrl: resource.url,
     amount: accepted.amount, payTo, payToScriptPublicKey: nextScript,

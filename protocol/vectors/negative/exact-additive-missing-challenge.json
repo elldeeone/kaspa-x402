@@ -42,7 +42,7 @@
       "paymentOutputIndex": 0,
       "requestHash": "9292929292929292929292929292929292929292929292929292929292929292",
       "authorization": {
-        "version": "kaspa-x402-exact-request-authorization-v1",
+        "version": "kaspa-x402-exact-request-authorization-v2",
         "inputIndex": 1,
         "expiresAt": "2099-01-01T00:00:00.000Z",
         "digest": "9393939393939393939393939393939393939393939393939393939393939393",

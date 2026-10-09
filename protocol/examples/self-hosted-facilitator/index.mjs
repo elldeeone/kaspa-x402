@@ -15,7 +15,7 @@ const requestHash = mockRequestHash({
   body: null,
 });
 const unpaid = await server.handlePaidRequest(
-  {
+  { routeAccess: "public",
     method: "GET",
     url: resource.url,
     resource,
@@ -38,11 +38,11 @@ const payment = await client.createPayment(
   },
 );
 
-const supported = await handleFacilitatorRequest(facilitator, {
+const supported = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
   method: "GET",
   path: "/supported",
 });
-const verify = await handleFacilitatorRequest(facilitator, {
+const verify = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
   method: "POST",
   path: "/verify",
   body: {
@@ -53,7 +53,7 @@ const verify = await handleFacilitatorRequest(facilitator, {
     requestHash,
   },
 });
-const settle = await handleFacilitatorRequest(facilitator, {
+const settle = await handleFacilitatorRequest(facilitator, { routeAccess: "public",
   method: "POST",
   path: "/settle",
   body: {

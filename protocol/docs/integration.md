@@ -22,6 +22,15 @@ const server = new DirectModeServer({
 });
 ```
 
+Every paid HTTP or MCP route must declare `routeAccess: "public"` or
+`routeAccess: "authenticated"` when it calls the server. An authenticated
+route must also pass `trustedSecurityContext` with host-derived claims on
+every challenge, verification, settlement and paid request. The server rejects
+an authenticated call without this context before it reads payment or replay
+state. Use `public` only for a route that intentionally serves all callers
+without an authenticated principal. Facilitator verify and settle calls use
+the same explicit policy.
+
 The default offer is exact when batch is absent. A batch offer, payment or
 administrative operation cannot run without batch configuration. Exact
 verification, acceptance before protected work, and durable replay/recovery
@@ -40,7 +49,9 @@ const client = new DirectModeClient({
   store,                   // ExactPaymentAttemptStore
   exactPaymentReconciler,
   fundingPolicy: {
+    requiredSource: "hot-wallet",
     allowedOrigins: ["https://merchant.example"],
+    allowedExactProfiles: ["standard-native"],
     allowedPayTo: [merchantAddress],
     maximumExactAmountSompi: "20000000",
   },
@@ -51,6 +62,10 @@ An exact provider supplies durable artifact preparation/finalization and the
 profile's signing/broadcast operations. It needs no escrow builder, voucher
 signer, channel discovery or refund machinery. Merchant responses acknowledge
 the retry; trusted reconciliation decides whether a disclosed artifact was paid.
+The client requires all five policy bounds shown above or an explicit
+`authorizeExactPayment` callback before wallet work.
+Use `createPayment` for HTTP and `paidMcpToolCall` for MCP. The latter supplies
+the host-authenticated audience to the separate MCP payment entry point.
 
 ## Enable batch
 

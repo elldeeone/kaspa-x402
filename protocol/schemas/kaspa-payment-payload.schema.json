@@ -49,7 +49,7 @@
       "required": ["version", "inputIndex", "expiresAt", "digest", "signature"],
       "properties": {
         "version": {
-          "const": "kaspa-x402-exact-request-authorization-v1"
+          "const": "kaspa-x402-exact-request-authorization-v2"
         },
         "inputIndex": {
           "type": "integer",

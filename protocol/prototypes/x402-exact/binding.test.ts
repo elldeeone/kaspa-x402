@@ -208,13 +208,13 @@ describe.each(PROFILES)("upstream exact integration: %s", (profile) => {
     expect(app.counts()).toMatchObject({ broadcasts: 1, handlers: 1 });
   });
 
-  it("does not repeat protected work if an opaque payment identifier changes", async () => {
+  it("rejects a changed signed payment identifier without repeating protected work", async () => {
     const app = await setup(profile);
     const payment = await app.makePayment();
     await app.dispatch(payment);
     const identifier = payment.extensions!["payment-identifier"] as { info: { id: string } };
     identifier.info.id = "another_payment_identifier";
-    expect(await app.dispatch(payment)).toMatchObject({ type: "success" });
+    expect(await app.dispatch(payment)).toMatchObject({ type: "payment-error" });
     expect(app.counts()).toMatchObject({ broadcasts: 1, handlers: 1 });
   });
 

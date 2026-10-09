@@ -78,7 +78,7 @@ export function createHashChainDemoHandler({ issuer, headId, publicBaseUrl, payT
     const caller = request.headers.get(CALLER_HEADER);
     if (!/^[0-9a-f]{64}$/.test(caller ?? '')) return json({ error: 'hash_chain_unavailable' }, 503);
     const trustedSecurityContext = { principal: `public-hash-chain-demo:${caller}` };
-    const answer = await server.handlePaidRequest({
+    const answer = await server.handlePaidRequest({ routeAccess: "authenticated",
       method: 'GET', url, headers: Object.fromEntries(request.headers),
       resource: { url, description: 'Native-KAS hash-chain demo report', mimeType: 'application/json' },
       paymentScheme: 'exact', trustedSecurityContext, signal: request.signal,

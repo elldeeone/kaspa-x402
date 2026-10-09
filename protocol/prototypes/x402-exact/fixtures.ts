@@ -72,6 +72,7 @@ export function digestFor(payment: PaymentPayload, transactionId: string): strin
     payToScriptPublicKey: accepted.extra.payToScriptPublicKey!,
     paymentRequirementsHash: sha256Hex(stableStringify(accepted)),
     requestHash: payload.requestHash,
+    paymentIdentifier: (payment.extensions?.["payment-identifier"] as { info: { id: string } }).info.id,
     challengeId: payload.challengeId,
     inputIndex: payload.authorization.inputIndex,
     expiresAt: payload.authorization.expiresAt,

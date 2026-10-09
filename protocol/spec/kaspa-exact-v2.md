@@ -412,7 +412,7 @@ Both profiles use one bounded transaction-artifact envelope:
     "paymentOutputIndex": 0,
     "requestHash": "<normalized request hash>",
     "authorization": {
-      "version": "kaspa-x402-exact-request-authorization-v1",
+      "version": "kaspa-x402-exact-request-authorization-v2",
       "digest": "<32-byte digest>",
       "inputIndex": 0,
       "expiresAt": "2026-07-14T09:00:00.000Z",
@@ -433,7 +433,7 @@ authoritative input UTXOs and valid signatures.
 `requestHash` and `authorization` are mandatory for both profiles. The
 authorization digest binds the canonical transaction id, selected profile,
 payment output index, amount, `payTo`, canonical recipient script, accepted
-requirements hash, normalized request hash, additive challenge when present,
+requirements hash, normalized request hash, payment identifier, additive challenge when present,
 authorizing payer input index, and expiry. The signer MUST be the public key
 proven by that authoritative standard P2PK funding input. The additive head
 input cannot authorize the payer request.
@@ -480,7 +480,7 @@ Construct this object, using lowercase hex for every hex field and explicit
 
 ```json
 {
-  "scope": "kaspa-x402-exact-request-authorization-v1",
+  "scope": "kaspa-x402-exact-request-authorization-v2",
   "network": "kaspa:testnet-10",
   "profile": "additive",
   "transactionId": "<lowercase transaction id>",
@@ -490,6 +490,7 @@ Construct this object, using lowercase hex for every hex field and explicit
   "payToScriptPublicKey": "<lowercase serialized script>",
   "paymentRequirementsHash": "<lowercase hash>",
   "requestHash": "<lowercase hash>",
+  "paymentIdentifier": "<logical payment identifier>",
   "challengeId": "<lowercase hash or null>",
   "inputIndex": 1,
   "expiresAt": "2099-01-01T00:00:00.000Z"
@@ -518,19 +519,22 @@ Let `now` be the verifier's current time:
 - an additive client MUST select the earlier of that value and the advertised
   `challengeExpiresAt`.
 
-The resource server or facilitator checks authorization ordering before
-protected work. It MUST re-evaluate expiry against the current time after any
-awaited transaction verification and before creating a new settlement. The
-additive head/challenge provider checks challenge liveness and head state. An
-adapter may repeat these checks but cannot weaken them.
+The resource server or facilitator checks authorization ordering before a new
+settlement claim. It MUST re-evaluate authorization, challenge, and delivered
+grant expiry after awaited transaction verification and atomically when the
+durable settlement claim is created. The additive head/challenge provider checks
+challenge liveness and head state. An adapter may repeat these checks but cannot
+weaken them.
 
-Expiry prevents a new settlement or protected-handler execution. It does not
-invalidate recovery for an exactly matching immutable attempt whose transaction
-was already durably accepted. That exception may only resume persisted handler
-or commit state; it MUST NOT reconstruct or rebroadcast a transaction. An
-implementation MAY verify enough of an expired artifact to identify that exact
-attempt, but MUST NOT execute the protected handler or create a new settlement
-when no matching accepted record exists.
+Expiry prevents a new settlement claim. Once a claim was durably created while
+the deadlines were live and its transaction reaches accepted finality, the
+matching request MAY start or resume protected work after expiry. The handler
+still runs at most once, and an identical retry may complete the persisted
+payment and response. This exception MUST NOT create a new claim, reconstruct
+or rebroadcast a transaction, or serve a different request. An implementation
+MAY verify enough of an expired artifact to identify that exact accepted
+attempt, but MUST NOT execute protected work when no matching accepted record
+exists.
 
 The committed interoperability vector fixes a reference clock and supplies
 positive and negative expiry cases so results do not depend on the test
@@ -616,8 +620,11 @@ A corrective 402 is a new offer, not permission for a wallet to sign another
 payment automatically. The v1 RC2 clients accept `maxPaymentRetries: 0` only.
 Every replacement exact transaction requires a fresh explicit caller or wallet
 authorization. Each logical payment has a stable attempt ID derived from its
-stable payment identifier; when the caller omits that identifier, the client
-derives it from the canonical request identity. A separate immutable intent
+stable payment identifier. When the caller omits that identifier, the client
+generates a fresh cryptographically random identifier for that attempt. Callers
+that need recovery across process restarts MUST retain and resupply the identifier.
+The identifier is durably stored with the signed payment and bound by its
+request-authorization signature. A separate immutable intent
 hash binds that attempt to the canonical request and accepted payment terms.
 
 Funding providers MUST atomically create or load one durable signed artifact
@@ -625,8 +632,15 @@ for `(attemptId, intentHash)`. An identical retry MUST return the byte-identical
 artifact. Reusing an attempt ID with changed intent MUST fail before signing,
 and the client MUST durably retain the artifact before disclosing it. Providers
 MUST pair that operation with idempotent finalization so reserved inputs are
-released only after trusted terminal evidence. Deployments SHOULD also pin
-allowed origins, profiles, recipients, and a maximum amount before signing.
+released only after trusted terminal evidence. Before funding, grant acquisition,
+transaction construction, signing, persistence, or broadcast, an unattended
+client MUST have either a complete funding policy or an explicit authorization
+callback for this exact request. The complete policy pins the funding source,
+HTTP origins or MCP audiences, profiles, recipients, and maximum amount. For
+HTTP, the client MUST derive the origin and resource from the actual canonical
+request URL and reject a conflicting advertised resource URL or caller origin.
+The HTTP payment entry point MUST reject an MCP audience. MCP uses a separate
+entry point with a host-authenticated audience and its own allowlist.
 
 The durable artifact MUST retain the exact funding input outpoints it spends.
 A conflicting spend proves permanent absence only when trusted confirmed
@@ -764,6 +778,12 @@ On success, `amount` MUST equal the accepted requirement amount and
 ## Idempotency and replay
 
 Servers MUST require the x402 `payment-identifier` extension for exact.
+
+Authenticated paid routes MUST receive a stable host-derived security context
+with an opaque principal identifier. The same normalized context MUST bind the
+challenge, verification, replay lookup, handler admission, and cached response.
+Credential values MUST NOT enter this context. Every accepted scalar
+`handlerState` key, including `__proto__`, participates in its canonical hash.
 
 - The identifier MUST bind to the normalized request fingerprint and selected
   exact profile.

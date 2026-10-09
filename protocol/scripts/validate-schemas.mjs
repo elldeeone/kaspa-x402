@@ -1467,7 +1467,7 @@ function assertExactInteropVector(ajv, file, vector) {
 
   const authorization = vector.requestAuthorization;
   const authorizationPreimage = stableStringify({
-    scope: "kaspa-x402-exact-request-authorization-v1",
+    scope: "kaspa-x402-exact-request-authorization-v2",
     ...authorization.input,
   });
   assertEqual(

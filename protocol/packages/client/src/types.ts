@@ -133,9 +133,12 @@ export interface ExactPaymentRequest {
   attemptId: Hash32Hex;
   /** Hash of every immutable request and accepted-payment term. */
   intentHash: Hash32Hex;
+  paymentIdentifier: string;
   network: NetworkId;
   profile: ExactProfile;
   origin: string;
+  /** Authenticated MCP audience; absent for HTTP requests. */
+  audience?: string;
   resourceUrl: string;
   amount: SompiString;
   payTo: string;
@@ -321,6 +324,7 @@ export interface FundingProvider {
 export interface FundingPolicy {
   requiredSource?: FundingSourceKind;
   allowedOrigins?: readonly string[];
+  allowedMcpAudiences?: readonly string[];
   allowedExactProfiles?: readonly ExactProfile[];
   allowedPayTo?: readonly string[];
   maximumExactAmountSompi?: SompiString;
@@ -622,6 +626,8 @@ export interface PaymentRequestContext {
   method?: string;
   body?: unknown;
   origin?: string;
+  /** Host-authenticated MCP audience, separate from an HTTP request origin. */
+  audience?: string;
   paymentIdentifier?: string;
   requestHash?: Hash32Hex;
   /** Optional assertion of the attempt ID derived from paymentIdentifier. */
@@ -806,6 +812,11 @@ export interface ExactClientOptions {
   supportedNetworks?: readonly NetworkId[];
   allowMainnet?: boolean;
   fundingPolicy?: FundingPolicy;
+  /** Explicit approval bound to the complete immutable exact spending intent. */
+  authorizeExactPayment?: (request: {
+    intent: Readonly<ExactPaymentRequest>;
+    intentDigest: Hash32Hex;
+  }) => Promise<{ intentDigest: Hash32Hex } | null> | { intentDigest: Hash32Hex } | null;
   fetch?: FetchLike;
   exactPaymentReconciler?: ExactPaymentReconciler;
   /** Required before any hash-chain wallet or grant operation. */

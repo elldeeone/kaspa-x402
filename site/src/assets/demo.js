@@ -480,7 +480,7 @@ function buildExactPaymentRetry(accepted) {
       payerAddress: ui.address.value.trim() || undefined,
       requestHash: "0".repeat(64),
       authorization: {
-        version: "kaspa-x402-exact-request-authorization-v1",
+        version: "kaspa-x402-exact-request-authorization-v2",
         inputIndex: 0,
         expiresAt: "2099-01-01T00:00:00.000Z",
         digest: "1".repeat(64),

@@ -6,6 +6,7 @@ import { schnorr } from "@noble/curves/secp256k1.js";
 import {
   bytesToHex,
   exactRequestAuthorizationDigest,
+  paymentIdentifierExtension,
   sha256Hex,
   stableStringify,
 } from "@kaspa-x402/core";
@@ -27,6 +28,7 @@ if (!headInput || !payerInput)
 const headId = "90".repeat(32);
 const challengeId = "91".repeat(32);
 const requestHash = "99".repeat(32);
+const paymentIdentifier = "exact_http_vector_0001";
 const transactionEncoding = "kaspa-sdk-safe-json-v2.0.0";
 const headRedeemScript = headInput.signatureScript.slice(4);
 const payTo =
@@ -99,12 +101,13 @@ const authorizationDigest = exactRequestAuthorizationDigest({
   payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
   paymentRequirementsHash,
   requestHash,
+  paymentIdentifier,
   challengeId,
   inputIndex: 1,
   expiresAt: authorizationExpiresAt,
 });
 const authorization = {
-  version: "kaspa-x402-exact-request-authorization-v1",
+  version: "kaspa-x402-exact-request-authorization-v2",
   inputIndex: 1,
   expiresAt: authorizationExpiresAt,
   digest: authorizationDigest,
@@ -124,6 +127,7 @@ const paymentRequired = {
     mimeType: "application/octet-stream",
   },
   accepts: [accepted],
+  extensions: { "payment-identifier": paymentIdentifierExtension({ required: true }) },
 };
 const paymentPayload = {
   x402Version: 2,
@@ -139,6 +143,7 @@ const paymentPayload = {
     requestHash,
     authorization,
   },
+  extensions: { "payment-identifier": paymentIdentifierExtension({ required: true, id: paymentIdentifier }) },
 };
 const settlementResponse = {
   success: true,

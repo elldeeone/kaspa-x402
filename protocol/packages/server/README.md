@@ -5,6 +5,12 @@ For exact-only setup and the batch configuration migration, start with
 [SDK configuration](../../docs/integration.md).
 Server SDK for direct-mode Kaspa x402 payments.
 
+Every paid request, challenge, direct verification, settlement and MCP tool
+call must declare `routeAccess: "public"` or `routeAccess: "authenticated"`.
+Authenticated routes must pass host-derived `trustedSecurityContext` on every
+call, including retries. The server rejects missing context before payment
+work or cached-response lookup.
+
 Status: release candidate. This package targets testnet iteration and reference server
 flows; production deployments need independent review, durable storage, key
 management, and the mainnet gates in the repository docs.
@@ -63,8 +69,9 @@ transaction lineage, and incomplete or pruned continuity fails closed.
 
 Node, indexer, address-codec, signature-verifier, transaction-builder, settlement-transaction-verifier, and state-store behavior is injected through typed adapters. Exact-only hosts implement `ExactServerStateStore`; enabling batch requires the full `ServerStateStore`. Both need durable transactional storage following [the server store contract](../../docs/server-store-contract.md). Amounts on the wire remain decimal sompi strings.
 
-Exact handlers run after accepted chain settlement and durable settlement
-reservation. The handler result and final response are persisted afterward.
+Exact handlers run after accepted chain settlement and a settlement claim made
+while authorization was live. An identical accepted attempt may finish after
+authorization expiry. The handler result and final response are persisted afterward.
 Batch handlers run after verified authorization and durable ownership reservation,
 before the charge and response commit. Handlers with non-repeatable side effects
 should require the

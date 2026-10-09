@@ -81,6 +81,11 @@ ownership survives restart and is never evicted. Safely released identifier
 records remain quota-accounted until bounded expiry or atomic reuse; their
 retention indexes must be deleted with the record.
 
+The atomic exact settlement claim checks authorization, challenge, and
+delivered grant deadlines against the store's current time. An identical claim
+made while those deadlines were live may finish after accepted finality even if
+they have since expired. An expired new claim must fail.
+
 ## Additive Exact Heads
 
 `registerExactHead` must enforce unique head ids and unique current outpoints.

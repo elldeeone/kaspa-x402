@@ -40,6 +40,7 @@ const facilitator = new DirectModeFacilitator({
 });
 
 const response = await handleFacilitatorRequest(facilitator, {
+  routeAccess: "public",
   method: "POST",
   path: "/verify",
   body: {
@@ -54,6 +55,8 @@ const response = await handleFacilitatorRequest(facilitator, {
 
 When this object is built from a Fetch `Request`, also pass
 `signal: request.signal` so disconnects cancel verifier and chain-adapter work.
+For an authenticated route, set `routeAccess: "authenticated"` and pass
+host-derived `trustedSecurityContext` with the request.
 
 The package does not ship a hosted URL, signer, wallet, RPC client, or database. Production deployments should provide durable server state, authenticated settlement callers, and explicit signer metadata if they advertise signers through `/supported`.
 

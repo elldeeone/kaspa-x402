@@ -105,6 +105,7 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
     },
     store: new MemoryChannelStore(),
     fundingPolicy: {
+      requiredSource: 'hot-wallet',
       allowedOrigins: [origin],
       allowedExactProfiles: ['hash-chain-additive'],
       maximumExactAmountSompi: quote.accepted.amount,

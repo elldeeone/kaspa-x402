@@ -23,6 +23,22 @@ import {
 } from "../src/index.js";
 
 describe("versioned resource budget", () => {
+  it("keeps reserved handler-state claims in the trusted context digest", () => {
+    const withClaim = {
+      principal: "payer:one",
+      handlerState: JSON.parse('{"__proto__":"authorized"}'),
+    };
+    const withoutClaim = { principal: "payer:one", handlerState: {} };
+    expect(Object.keys(canonicalTrustedSecurityContext(withClaim).handlerState as object))
+      .toContain("__proto__");
+    expect(trustedSecurityContextHash(withClaim)).not.toBe(
+      trustedSecurityContextHash(withoutClaim),
+    );
+    expect(bindRequestHashToTrustedContext("ab".repeat(32), withClaim)).not.toBe(
+      bindRequestHashToTrustedContext("ab".repeat(32), withoutClaim),
+    );
+  });
+
   it("reserves one MCP metadata property for the settlement response", () => {
     expect(() =>
       assertMcpPaymentResponseCapacity({

@@ -17,6 +17,7 @@ const payerPublicKey = Buffer.from(schnorr.getPublicKey(Buffer.from(payerPrivate
 function request() {
   return {
     attemptId: "a1".repeat(32), intentHash: "a2".repeat(32),
+    paymentIdentifier: "hash_chain_signer_0001",
     network: "kaspa:testnet-10" as const, profile: "hash-chain-additive" as const,
     origin: "https://api.example.test", resourceUrl: "https://api.example.test/data",
     amount: borrow.amount, payTo: "kaspatest:pzjuqtpm8h09dy96xqzcrcgw4qrzd8xr8uu7r89gnte875h8r6x4xs5h4ygzq",

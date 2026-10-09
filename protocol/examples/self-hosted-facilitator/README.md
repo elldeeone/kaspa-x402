@@ -33,6 +33,7 @@ export async function handleRequest(request: Request): Promise<Response> {
     return Response.json({ error: "invalid_payload" }, { status: 400 });
   }
   const result = await handleFacilitatorRequest(facilitator, {
+    routeAccess: "public",
     method: request.method,
     path: url.pathname,
     body,
@@ -46,7 +47,7 @@ export async function handleRequest(request: Request): Promise<Response> {
 }
 ```
 
-The same configured server state must back direct mode and facilitator mode if both are enabled for the same resource. Settlement callers should be authenticated before production use.
+The same configured server state must back direct mode and facilitator mode if both are enabled for the same resource. An authenticated host route must use `routeAccess: "authenticated"` and pass host-derived `trustedSecurityContext` with each request.
 
 The runnable script performs:
 

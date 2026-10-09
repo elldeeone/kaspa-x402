@@ -10,7 +10,7 @@ const exact = await client.paidFetch("https://api.example.test/download", {
 });
 
 const [serverChannel] = await serverStore.listChannels();
-const freshRequirement = server.buildPaymentRequired({
+const freshRequirement = server.buildPaymentRequired({ routeAccess: "public",
   resource: { url: "https://api.example.test/metered" },
   amount: "50000",
   scheme: "batch-settlement",
@@ -21,7 +21,7 @@ const exactReplay = await facilitator.verify({
   paymentRequirements: exact.payment.accepted,
   resource: { url: "https://api.example.test/download" },
   requestHash: mockHash("exact-replay-other-request"),
-});
+}, "public");
 const refundable = await client.listRefundableChannels("1001");
 
 console.log(

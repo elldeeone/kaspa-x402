@@ -365,7 +365,7 @@ The paid request carries a full signed transaction as proof:
     "challengeId": "<32-byte challenge id>",
     "requestHash": "<normalized request hash>",
     "authorization": {
-      "version": "kaspa-x402-exact-request-authorization-v1",
+      "version": "kaspa-x402-exact-request-authorization-v2",
       "digest": "<32-byte digest>",
       "inputIndex": 1,
       "expiresAt": "2026-09-22T12:05:00.000Z",
@@ -380,7 +380,7 @@ requirements; the server MUST reject altered or unissued offers. It
 independently computes `requestHash`; it MUST NOT trust only
 `payload.requestHash`. The payer's
 separate request-authorization signature uses the existing
-[`kaspa-x402-exact-request-authorization-v1`](kaspa-exact-v2.md#canonical-request-authorization)
+[`kaspa-x402-exact-request-authorization-v2`](kaspa-exact-v2.md#canonical-request-authorization)
 digest with `profile = "hash-chain-additive"`, output index 0, this
 binding's successor `payTo`, the complete requirements hash, the grant's
 `challengeId`, the recomputed transaction ID, payer funding input index,
@@ -393,15 +393,19 @@ The transaction ID MUST be recomputed from the canonical transaction;
 client-supplied IDs, UTXO values, finality or fee claims are not authority.
 `authorization.expiresAt` and `challengeExpiresAt` MUST be live for a new
 proof claim, and the former MUST be no later than the latter and the
-`maxTimeoutSeconds` window. A previously accepted immutable attempt may be
-recovered after expiry only under the existing exact replay rules; expiry
-never authorizes a new handler run. A client MUST recheck both expiries
-immediately before every broadcast and MUST NOT broadcast an expired attempt;
+`maxTimeoutSeconds` window. A server settlement claim created while those
+deadlines and the delivered grant were live may complete the same immutable
+request after accepted finality, even if a deadline has passed. An identical
+accepted attempt may start or resume its one handler run after expiry; an
+expired attempt cannot create a new settlement claim. A client MUST recheck
+both expiries immediately before every broadcast. It MUST NOT broadcast an
+expired attempt;
 it may only reconcile that exact transaction through trusted chain evidence.
 Clients should allow time for network
-acceptance before expiry. A payment that becomes final only after its
-presentation window closes has no automatic resource entitlement or refund
-under this binding; that consequence must be exposed before wallet approval.
+acceptance before expiry. A payment with a timely durable server settlement
+claim remains eligible for delivery if acceptance follows expiry. A payment
+without that claim has no automatic resource entitlement or refund under this
+binding; that consequence must be exposed before wallet approval.
 
 ## Settlement, replay, and finality
 

@@ -96,7 +96,12 @@ export function canonicalTrustedSecurityContext(
           "trusted security context handler state contains a non-finite number",
         );
       }
-      handlerState[key] = value;
+      Object.defineProperty(handlerState, key, {
+        value,
+        enumerable: true,
+        writable: true,
+        configurable: true,
+      });
     }
   }
 

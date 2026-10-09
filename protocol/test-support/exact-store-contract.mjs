@@ -860,6 +860,7 @@ function exactSettlementAttempt(overrides = {}) {
     paymentRequirementsHash: REQUIREMENTS,
     paymentPayloadHash: PAYLOAD,
     requestAuthorizationId: "17".repeat(32),
+    authorizationExpiresAt: "2099-01-01T00:00:00.000Z",
     payToScriptPublicKey: HEAD_SCRIPT_PUBLIC_KEY,
     transaction: "signed-additive-transaction",
     requiredFinality: "accepted",
