@@ -513,6 +513,7 @@ export class DirectModeServer {
           this.#config.network,
         );
       for (let selectionAttempt = 0; selectionAttempt < 2; selectionAttempt++) {
+        options.signal?.throwIfAborted();
         const selectionKey = sha256Hex(
           stableStringify({
             scope: "kaspa:x402:additive-head-selection:v1",
@@ -531,7 +532,8 @@ export class DirectModeServer {
           minimumAdditiveThresholdSompi:
             this.#config.minimumExactAdditiveThresholdSompi,
           selectionKey,
-        });
+        }, options.signal);
+        options.signal?.throwIfAborted();
         if (!head) break;
         if (this.#config.reconcileExactHeadOnOffer) {
           try {

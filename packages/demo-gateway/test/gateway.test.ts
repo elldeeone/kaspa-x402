@@ -637,6 +637,79 @@ describe("gateway canary", () => {
     }
   });
 
+  it.each([
+    { route: "/batch", method: "loadRecentPnnDaaScore", profile: "standard-native" },
+    { route: "/batch", method: "resolveBatchRefundTimeoutDaa", profile: "standard-native" },
+    { route: "/supported", method: "exactHeadStats", profile: "additive" },
+    { route: "/exact", method: "selectExactHead", profile: "additive" },
+  ] as const)("cancels a stalled $method state call before admitting new work", async ({ route, method, profile }) => {
+    // Failure mode: a lost lease races the response while a signal-less state call remains active.
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const acquiredAt = Date.now();
+    const storage = new FakeStorage();
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let finishStateCall: () => void = () => undefined;
+    let active = false;
+    let overlap = false;
+    let stoppedAt: number | undefined;
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      KASPA_X402_EXACT_PROFILE: profile,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        renewalError: new Error("coordinator renewal failed"),
+        stateRequest(name, signal) {
+          if (method === "selectExactHead" && name === "exactHeadStats")
+            return Promise.resolve(Response.json({ ok: true, value: {
+              total: 1, available: 1, claimed: 0, unavailable: 0, retired: 0,
+            } }));
+          if (name !== method) return undefined;
+          active = true;
+          markStarted();
+          return new Promise<Response>((resolve) => {
+            const value = method === "exactHeadStats"
+              ? { total: 0, available: 0, claimed: 0, unavailable: 0, retired: 0 }
+              : method === "loadRecentPnnDaaScore" ? "507000000" : "507036000";
+            const finish = () => { active = false; resolve(Response.json({ ok: true, value })); };
+            finishStateCall = finish;
+            signal?.addEventListener("abort", () => {
+              stoppedAt = Date.now();
+              finish();
+            }, { once: true });
+          });
+        },
+        hashChainRequest() {
+          overlap = active;
+          return Promise.resolve(Response.json({ ok: true }));
+        },
+      }),
+    };
+    const first = handleGatewayRequest(workerRequest(`https://demo.kaspa-x402.org${route}`, {
+      headers: { "cf-connecting-ip": "203.0.113.10" },
+    }), env, fakeContext());
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/status", {
+        headers: { "cf-connecting-ip": "203.0.113.11" },
+      }), env, fakeContext());
+      expect(second.status).toBe(200);
+      expect(overlap).toBe(false);
+      expect(stoppedAt).toBeLessThanOrEqual(acquiredAt + 300_000);
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishStateCall();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
   it("keeps one caller from occupying another caller's durable lease", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {
@@ -1378,6 +1451,7 @@ function fakeNamespace(
     renewalRejected?: boolean;
     renewalHangs?: boolean;
     hashChainRequest?: (request: Request) => Promise<Response>;
+    stateRequest?: (method: string, signal?: AbortSignal) => Promise<Response> | undefined;
   } = {},
 ): GatewayEnv["GATEWAY_STATE"] {
   const ledger = new GatewayLedger(storage);
@@ -1415,6 +1489,8 @@ function fakeNamespace(
           const request = JSON.parse(
             String(init?.body ?? "{}"),
           ) as GatewayStateRequest;
+          const intercepted = options.stateRequest?.(request.method, init?.signal ?? undefined);
+          if (intercepted) return intercepted;
           const value = await dispatchGatewayState(ledger, request);
           return Response.json({ ok: true, value });
         },

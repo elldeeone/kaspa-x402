@@ -190,22 +190,23 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("recordExactHeadOfferObservation", { head });
   }
 
-  hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean> {
-    return this.#call("hasRecentExactHeadOfferObservation", { headId, nowMs });
+  hasRecentExactHeadOfferObservation(headId: string, nowMs: number, signal?: AbortSignal): Promise<boolean> {
+    return this.#call("hasRecentExactHeadOfferObservation", { headId, nowMs }, signal);
   }
 
   listExactHeads(): Promise<ExactHeadRecord[]> {
     return this.#call("listExactHeads");
   }
 
-  exactHeadStats(): Promise<ExactHeadStats> {
-    return this.#call("exactHeadStats");
+  exactHeadStats(signal?: AbortSignal): Promise<ExactHeadStats> {
+    return this.#call("exactHeadStats", undefined, signal);
   }
 
   selectExactHead(
     request: ExactHeadSelectionRequest,
+    signal?: AbortSignal,
   ): Promise<ExactHeadRecord | undefined> {
-    return this.#call("selectExactHead", { request });
+    return this.#call("selectExactHead", { request }, signal);
   }
 
   claimExactSettlement(
@@ -319,16 +320,17 @@ export class RemoteGatewayState implements GatewayStateClient {
     currentDaa: string,
     refundDeltaDaa: string,
     minimumLeadDaa: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     return this.#call("resolveBatchRefundTimeoutDaa", {
       currentDaa,
       refundDeltaDaa,
       minimumLeadDaa,
-    });
+    }, signal);
   }
 
-  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number): Promise<string | undefined> {
-    return this.#call("loadRecentPnnDaaScore", { nowMs, maxAgeMs });
+  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number, signal?: AbortSignal): Promise<string | undefined> {
+    return this.#call("loadRecentPnnDaaScore", { nowMs, maxAgeMs }, signal);
   }
 
   loadOpenClaimAttempt(
@@ -442,6 +444,7 @@ export class RemoteGatewayState implements GatewayStateClient {
     });
     signal?.throwIfAborted();
     const result = await response.json<GatewayStateResponse<T>>();
+    signal?.throwIfAborted();
     if (!response.ok) throw new Error(`gateway state method failed: ${method}`);
     if (!result.ok) throw new Error(result.error);
     return result.value as T;

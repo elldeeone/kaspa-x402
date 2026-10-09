@@ -756,6 +756,7 @@ export interface ExactHeadStore {
   /** Read-only selection: issuing a 402 must not mutate or lease the head. */
   selectExactHead(
     request: ExactHeadSelectionRequest,
+    signal?: AbortSignal,
   ): Promise<ExactHeadRecord | undefined>;
   /** Atomically claims a transaction and, for additive exact, its expected head snapshot. */
   claimExactSettlement(

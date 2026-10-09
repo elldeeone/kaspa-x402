@@ -145,6 +145,9 @@ try {
   for (const route of ['/exact/report', '/batch/report']) {
     assert.equal((await worker.dispatchFetch(base + route)).status, 402, `existing ${route} offer`);
   }
+  assert.equal((await worker.dispatchFetch(`${base}/hash-chain`, {
+    headers: { 'cf-connecting-ip': '198.51.100.2' },
+  })).status, 402, 'hash-chain route alias must keep serving a quote');
   for (let index = 0; index < 4; index++) assert.equal((await worker.dispatchFetch(`${base}/hash-chain/report?quota=${index}`, {
     headers: { 'cf-connecting-ip': '198.51.100.1' },
   })).status, 402);

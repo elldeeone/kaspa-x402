@@ -279,10 +279,13 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
   async loadRecentPnnDaaScore(
     nowMs: number,
     maxAgeMs = 30 * 60_000,
+    signal?: AbortSignal,
   ): Promise<string | undefined> {
+    signal?.throwIfAborted();
     if (!Number.isSafeInteger(maxAgeMs) || maxAgeMs < 0 || maxAgeMs > 30 * 60_000)
       throw new Error("cached PNN DAA maximum age is invalid");
     const quote = await this.#storage.get<{ daaScore: string; observedAt: number }>("pnn-quote-observation");
+    signal?.throwIfAborted();
     if (!quote || !Number.isSafeInteger(quote.observedAt) ||
         quote.observedAt > nowMs || nowMs - quote.observedAt > maxAgeMs)
       return undefined;
@@ -850,12 +853,14 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     });
   }
 
-  async hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean> {
+  async hasRecentExactHeadOfferObservation(headId: string, nowMs: number, signal?: AbortSignal): Promise<boolean> {
+    signal?.throwIfAborted();
     return this.#storage.transaction(async (txn) => {
       const head = await txn.get<ExactHeadRecord>(exactHeadKey(headId));
       const observation = await txn.get<{ snapshot: string; observedAt: number }>(
         `exact-head-offer-observation:${headId.toLowerCase()}`,
       );
+      signal?.throwIfAborted();
       return !!head && head.status === "available" && !!observation &&
         observation.snapshot === stableJson(head) &&
         Number.isSafeInteger(observation.observedAt) &&
@@ -873,9 +878,11 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
       .sort((left, right) => left.headId.localeCompare(right.headId));
   }
 
-  async exactHeadStats(): Promise<ExactHeadStats> {
+  async exactHeadStats(signal?: AbortSignal): Promise<ExactHeadStats> {
+    signal?.throwIfAborted();
     return this.#storage.transaction(async (txn) => {
       const stats = await loadOrRebuildExactHeadStats(txn);
+      signal?.throwIfAborted();
       await txn.put(exactHeadStatsKey(), stats);
       return clone(stats);
     });
@@ -883,7 +890,9 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
 
   async selectExactHead(
     request: ExactHeadSelectionRequest,
+    signal?: AbortSignal,
   ): Promise<ExactHeadRecord | undefined> {
+    signal?.throwIfAborted();
     return this.#storage.transaction(async (txn) => {
       const range = exactHeadSelectionIndexRange(request);
       const indexed = await txn.list<ExactHeadSelectionIndexRecord>({
@@ -892,9 +901,11 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
         end: range.end,
         limit: EXACT_HEAD_SELECTION_WINDOW,
       });
+      signal?.throwIfAborted();
       const candidates: ExactHeadRecord[] = [];
       for (const entry of indexed.values()) {
         const head = await txn.get<ExactHeadRecord>(exactHeadKey(entry.headId));
+        signal?.throwIfAborted();
         if (head && exactHeadMatchesSelection(head, request)) {
           candidates.push(head);
         }
@@ -1473,7 +1484,9 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     currentDaa: string,
     refundDeltaDaa: string,
     minimumLeadDaa: string,
+    signal?: AbortSignal,
   ): Promise<string> {
+    signal?.throwIfAborted();
     const current = parseSompiString(currentDaa);
     const delta = parseSompiString(refundDeltaDaa);
     const minimumLead = parseSompiString(minimumLeadDaa);
@@ -1483,6 +1496,7 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     return this.#storage.transaction(async (txn) => {
       const key = batchRefundTimeoutKey();
       const stored = await txn.get<string>(key);
+      signal?.throwIfAborted();
       if (stored !== undefined) {
         const timeout = parseSompiString(stored);
         if (current + minimumLead < timeout && timeout <= next)
@@ -1570,9 +1584,9 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
     receipt: PnnEvidenceRecord,
     signal?: AbortSignal,
   ): Promise<ExactSettlementClaimResult>;
-  exactHeadStats(): Promise<ExactHeadStats>;
+  exactHeadStats(signal?: AbortSignal): Promise<ExactHeadStats>;
   recordExactHeadOfferObservation(head: ExactHeadRecord): Promise<void>;
-  hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean>;
+  hasRecentExactHeadOfferObservation(headId: string, nowMs: number, signal?: AbortSignal): Promise<boolean>;
   acquireLock(
     key: string,
     token: string,
@@ -1605,8 +1619,9 @@ export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
     currentDaa: string,
     refundDeltaDaa: string,
     minimumLeadDaa: string,
+    signal?: AbortSignal,
   ): Promise<string>;
-  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number): Promise<string | undefined>;
+  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number, signal?: AbortSignal): Promise<string | undefined>;
   loadCanaryReport(): Promise<GatewayCanaryReport | undefined>;
   saveCanaryReport(report: GatewayCanaryReport): Promise<void>;
   incrementMetric(name: string, amount?: number): Promise<void>;
@@ -1754,10 +1769,11 @@ export async function dispatchGatewayState(
     case "listExactHeads":
       return ledger.listExactHeads();
     case "exactHeadStats":
-      return ledger.exactHeadStats();
+      return ledger.exactHeadStats(signal);
     case "selectExactHead":
       return ledger.selectExactHead(
         readPayload<{ request: ExactHeadSelectionRequest }>(request).request,
+        signal,
       );
     case "claimExactSettlementWithEvidence": {
       const payload = readPayload<{
@@ -1859,19 +1875,20 @@ export async function dispatchGatewayState(
         payload.currentDaa,
         payload.refundDeltaDaa,
         payload.minimumLeadDaa,
+        signal,
       );
     }
     case "loadRecentPnnDaaScore": {
       const { nowMs, maxAgeMs } = readPayload<{
         nowMs: number; maxAgeMs?: number;
       }>(request);
-      return ledger.loadRecentPnnDaaScore(nowMs, maxAgeMs);
+      return ledger.loadRecentPnnDaaScore(nowMs, maxAgeMs, signal);
     }
     case "recordExactHeadOfferObservation":
       return ledger.recordExactHeadOfferObservation(readPayload<{ head: ExactHeadRecord }>(request).head);
     case "hasRecentExactHeadOfferObservation": {
       const payload = readPayload<{ headId: string; nowMs: number }>(request);
-      return ledger.hasRecentExactHeadOfferObservation(payload.headId, payload.nowMs);
+      return ledger.hasRecentExactHeadOfferObservation(payload.headId, payload.nowMs, signal);
     }
     case "commitSettlement":
       return ledger.commitSettlement(

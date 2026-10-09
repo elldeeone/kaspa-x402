@@ -152,7 +152,7 @@ export async function handleGatewayRequest(
     if (admission instanceof Response) return admission;
     try {
       return await runGatewayPublicWork(admission, request, config, async (signal) => {
-        const exactAvailable = await hostedExactAvailable(config, state);
+        const exactAvailable = await hostedExactAvailable(config, state, signal);
         signal.throwIfAborted();
         return json(
           {
@@ -213,24 +213,26 @@ export async function handleGatewayRequest(
           return json({ ok: false, error: "quote_unavailable" },
             { status: 503, headers: corsHeaders(config) });
         const cachedDaa = await state.loadRecentPnnDaaScore(
-          Date.now(), quoteBounds.maxAgeMs,
+          Date.now(), quoteBounds.maxAgeMs, signal,
         );
+        signal.throwIfAborted();
         if (!cachedDaa)
           return json({ ok: false, error: "quote_unavailable" },
             { status: 503, headers: corsHeaders(config) });
         try {
           if (profile === "exact" && config.exactProfile === "additive" &&
-              !(await hostedExactAvailable(config, state)))
+              !(await hostedExactAvailable(config, state, signal)))
             return json({ ok: false, error: "exact_unavailable" },
               { status: 503, headers: corsHeaders(config) });
           const gateway = await createGateway(
-            config, state, cachedDaa, quoteBounds.reserveDaa,
+            config, state, cachedDaa, quoteBounds.reserveDaa, signal,
           );
           const offer = {
             routeAccess: "public",
             resource: resourceFor(url, profile),
             amount: amountFor(config, profile),
             scheme: profile,
+            signal,
           } as const;
           const response = profile === "exact" && config.exactProfile === "additive"
             ? await gateway.server.paymentRequiredResponseAsync(offer)
@@ -241,7 +243,7 @@ export async function handleGatewayRequest(
               ? (decodePaymentRequiredHeader(encoded).accepts[0] as { extra?: { headId?: unknown } } | undefined)?.extra?.headId
               : undefined;
             if (typeof headId !== "string" ||
-                !(await state.hasRecentExactHeadOfferObservation(headId, Date.now())))
+                !(await state.hasRecentExactHeadOfferObservation(headId, Date.now(), signal)))
               return json({ ok: false, error: "exact_unavailable" },
                 { status: 503, headers: corsHeaders(config) });
           }
@@ -253,7 +255,7 @@ export async function handleGatewayRequest(
       }
       let gateway: { server: DirectModeServer };
       try {
-        gateway = await createGateway(config, state);
+        gateway = await createGateway(config, state, undefined, 0n, signal);
       } catch (error) {
         return json(
           { ok: false, error: errorMessage(error) },
@@ -746,10 +748,13 @@ export async function runGatewayCanary(
 async function hostedExactAvailable(
   config: GatewayConfig,
   state: GatewayStateClient,
+  signal?: AbortSignal,
 ): Promise<boolean> {
+  signal?.throwIfAborted();
   if (!hostedExactConfigured(config)) return false;
   if (config.exactProfile === "standard-native") return true;
-  const stats = await exactHeadStats(state);
+  const stats = await state.exactHeadStats(signal);
+  signal?.throwIfAborted();
   return stats.available > 0;
 }
 
@@ -817,12 +822,15 @@ async function createGateway(
   state: GatewayStateClient,
   cachedDaa?: string,
   quoteReserveDaa = 0n,
+  signal?: AbortSignal,
 ): Promise<{ server: DirectModeServer }> {
+  signal?.throwIfAborted();
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
   const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore());
+  signal?.throwIfAborted();
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
     KASPA_LOCK_TIME_THRESHOLD
@@ -836,8 +844,10 @@ async function createGateway(
       currentDaa.toString(),
       config.refundTimeoutDaaDelta,
       (BigInt(config.minimumRefundLeadDaa) + quoteReserveDaa).toString(),
+      signal,
     ),
   );
+  signal?.throwIfAborted();
   if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
     throw new Error(
       "computed refund DAA crosses the consensus timestamp boundary",
@@ -1037,8 +1047,8 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.exactHeadStats();
   }
 
-  selectExactHead(request: Parameters<ServerStateStore["selectExactHead"]>[0]) {
-    return this.#inner.selectExactHead(request);
+  selectExactHead(request: Parameters<ServerStateStore["selectExactHead"]>[0], signal?: AbortSignal) {
+    return this.#inner.selectExactHead(request, signal);
   }
 
   claimExactSettlement(

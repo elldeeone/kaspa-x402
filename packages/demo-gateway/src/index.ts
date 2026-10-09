@@ -62,7 +62,8 @@ export class GatewayState extends DurableObject<GatewayEnv> {
   }
 
   async fetch(request: Request): Promise<Response> {
-    if (new URL(request.url).pathname.startsWith("/hash-chain/"))
+    const path = new URL(request.url).pathname;
+    if (path === "/hash-chain" || path.startsWith("/hash-chain/"))
       return this.#hashChainService().fetch(request);
     if (request.method !== "POST")
       return new Response("method not allowed", { status: 405 });
