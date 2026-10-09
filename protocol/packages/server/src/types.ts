@@ -761,6 +761,12 @@ export interface ExactHeadStore {
   claimExactSettlement(
     attempt: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementClaimResult>;
+  /** Claim and persist verification evidence in one durable transaction. */
+  claimExactSettlementWithEvidence?(
+    attempt: ExactSettlementAttemptRecord,
+    evidenceReceipt: unknown,
+    signal?: AbortSignal,
+  ): Promise<ExactSettlementClaimResult>;
   loadExactSettlementAttempt(
     transactionId: Hash32Hex,
   ): Promise<ExactSettlementAttemptRecord | undefined>;
@@ -963,6 +969,7 @@ export interface ExactServerConfig {
   chainProvider: ExactServerChainProvider;
   addressCodec: AddressCodec;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  /** Refreshes an already atomically claimed receipt after settlement. */
   persistOwnedExactEvidence?: (
     verification: VerifiedExactPayment,
     claim: ExactSettlementClaimResult,

@@ -1188,11 +1188,9 @@ export class DirectModeServer {
                 verified,
                 fingerprint,
                 paymentIdentifier,
+                request.signal,
               );
               request.signal?.throwIfAborted();
-              if (verified.evidenceReceipt && this.#config.persistOwnedExactEvidence) {
-                await this.#config.persistOwnedExactEvidence(verified, claim, request.signal);
-              }
               verified = await this.#settleExactIfNeeded(
                 verified,
                 claim,
@@ -3722,6 +3720,7 @@ export class DirectModeServer {
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
     paymentIdentifier?: string,
+    signal?: AbortSignal,
   ): Promise<ExactSettlementClaimResult> {
     const now = new Date().toISOString();
     const attempt = this.#buildExactSettlementAttempt(
@@ -3731,6 +3730,14 @@ export class DirectModeServer {
       now,
     );
     try {
+      signal?.throwIfAborted();
+      if (verified.evidenceReceipt !== undefined) {
+        if (!this.#config.store.claimExactSettlementWithEvidence)
+          throw new Error("atomic exact evidence claim store is required");
+        return await this.#config.store.claimExactSettlementWithEvidence(
+          attempt, verified.evidenceReceipt, signal,
+        );
+      }
       return await this.#config.store.claimExactSettlement(attempt);
     } catch (error) {
       throw new KaspaX402Error(

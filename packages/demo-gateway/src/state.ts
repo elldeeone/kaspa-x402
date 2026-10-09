@@ -132,9 +132,18 @@ type DurableBudgetRecord = {
   safelyReleased?: boolean;
 };
 
+type PnnEvidenceBudget = {
+  records: number;
+  bytes: number;
+  reservedBytes: number;
+};
+
 const MAX_RATE_SCOPES_PER_WINDOW = 1_024;
 const MAX_PUBLIC_ADMISSION_LEASES = 256;
 const MAX_PUBLIC_ADMISSION_TTL_MS = 10 * 60 * 1_000;
+const MAX_PNN_EVIDENCE_RECORD_BYTES = 64 * 1024;
+const MAX_PNN_EVIDENCE_RECORDS = 4_096;
+const MAX_PNN_EVIDENCE_TOTAL_BYTES = 64 * 1024 * 1024;
 export const GATEWAY_COORDINATION_DOMAIN = "demo-gateway-state:v1.0.0-rc.2";
 const DEFAULT_DURABLE_STATE_LIMITS: GatewayDurableStateLimits = {
   maxRecords: 10_000,
@@ -190,6 +199,7 @@ export type GatewayStateMethod =
   | "exactHeadStats"
   | "selectExactHead"
   | "claimExactSettlement"
+  | "claimExactSettlementWithEvidence"
   | "loadExactSettlementAttempt"
   | "recordExactSettlementBroadcast"
   | "acceptExactSettlement"
@@ -286,25 +296,84 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
 
   async savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void> {
     signal?.throwIfAborted();
-    assertPnnTransactionId(record.transactionId);
-    const bytes = durableByteLength(record);
-    if (bytes > 64 * 1024) throw new Error("PNN evidence exceeds the record byte limit");
     await this.#storage.transaction(async txn => {
       signal?.throwIfAborted();
       const owner = await txn.get<ExactSettlementAttemptRecord>(exactAttemptKey(record.transactionId));
       if (!owner) throw new Error("PNN evidence has no durable exact settlement owner");
-      const key = `pnn-evidence:${record.transactionId}`;
-      const current = await txn.get<PnnEvidenceRecord>(key);
-      if (current?.origins && JSON.stringify(current.origins) !== JSON.stringify(record.origins)) {
-        throw new Error("PNN receipt conflicts with its durable funding snapshot");
-      }
-      const budget = await txn.get<{ records: number; bytes: number }>("pnn-evidence:budget") ?? { records: 0, bytes: 0 };
-      const next = { records: budget.records + (current ? 0 : 1), bytes: budget.bytes - (current ? durableByteLength(current) : 0) + bytes };
-      if (next.records > 4096 || next.bytes > 64 * 1024 * 1024) throw new Error("PNN evidence capacity exhausted");
+      if (!await txn.get<PnnEvidenceRecord>(`pnn-evidence:${record.transactionId}`))
+        throw new Error("PNN evidence has no atomic settlement claim");
+      await this.#putPnnEvidence(txn, record, false);
       signal?.throwIfAborted();
-      await txn.put(key, record);
-      await txn.put("pnn-evidence:budget", next);
     });
+  }
+
+  async #putPnnEvidence(
+    txn: GatewayTransaction,
+    record: PnnEvidenceRecord,
+    reserveForClaim: boolean,
+  ): Promise<void> {
+    assertPnnTransactionId(record.transactionId);
+    const bytes = durableByteLength(record);
+    if (bytes > MAX_PNN_EVIDENCE_RECORD_BYTES)
+      throw new Error("PNN evidence exceeds the record byte limit");
+    const key = `pnn-evidence:${record.transactionId}`;
+    const reservationKey = `pnn-evidence-reservation:${record.transactionId}`;
+    const current = await txn.get<PnnEvidenceRecord>(key);
+    if (current?.origins && JSON.stringify(current.origins) !== JSON.stringify(record.origins))
+      throw new Error("PNN receipt conflicts with its durable funding snapshot");
+    const currentReservation = await txn.get<number>(reservationKey);
+    if (currentReservation !== undefined &&
+        (!Number.isSafeInteger(currentReservation) || currentReservation < 0 ||
+         currentReservation > MAX_PNN_EVIDENCE_RECORD_BYTES))
+      throw new Error("PNN evidence reservation is invalid");
+    const budget = await txn.get<PnnEvidenceBudget>("pnn-evidence:budget") ??
+      { records: 0, bytes: 0, reservedBytes: 0 };
+    assertPnnEvidenceBudget(budget);
+    // An open claim holds the full record limit so accepted readback can grow
+    // without exhausting aggregate capacity after the payment has been claimed.
+    const nextReservation = reserveForClaim || currentReservation !== undefined
+      ? MAX_PNN_EVIDENCE_RECORD_BYTES - bytes : 0;
+    const next = {
+      records: budget.records + (current ? 0 : 1),
+      bytes: budget.bytes - (current ? durableByteLength(current) : 0) + bytes,
+      reservedBytes: budget.reservedBytes - (currentReservation ?? 0) + nextReservation,
+    };
+    if (next.records > MAX_PNN_EVIDENCE_RECORDS ||
+        next.bytes + next.reservedBytes > MAX_PNN_EVIDENCE_TOTAL_BYTES)
+      throw new Error("PNN evidence capacity exhausted");
+    assertPnnEvidenceBudget(next);
+    await txn.put(key, clone(record));
+    if (nextReservation > 0) await txn.put(reservationKey, nextReservation);
+    else if (currentReservation !== undefined) await txn.delete(reservationKey);
+    await txn.put("pnn-evidence:budget", next);
+  }
+
+  async #finishPnnEvidenceClaim(
+    txn: GatewayTransaction,
+    transactionId: string,
+    abandoned: boolean,
+  ): Promise<void> {
+    const reservationKey = `pnn-evidence-reservation:${transactionId}`;
+    const reservedBytes = await txn.get<number>(reservationKey);
+    if (reservedBytes === undefined) return;
+    if (!Number.isSafeInteger(reservedBytes) || reservedBytes < 0 ||
+        reservedBytes > MAX_PNN_EVIDENCE_RECORD_BYTES)
+      throw new Error("PNN evidence reservation is invalid");
+    const key = `pnn-evidence:${transactionId}`;
+    const record = await txn.get<PnnEvidenceRecord>(key);
+    if (!record) throw new Error("claimed PNN evidence is missing");
+    const budget = await txn.get<PnnEvidenceBudget>("pnn-evidence:budget");
+    if (!budget) throw new Error("PNN evidence budget is missing");
+    assertPnnEvidenceBudget(budget);
+    const next = {
+      records: budget.records - (abandoned ? 1 : 0),
+      bytes: budget.bytes - (abandoned ? durableByteLength(record) : 0),
+      reservedBytes: budget.reservedBytes - reservedBytes,
+    };
+    assertPnnEvidenceBudget(next);
+    await txn.put("pnn-evidence:budget", next);
+    await txn.delete(reservationKey);
+    if (abandoned) await txn.delete(key);
   }
 
   async loadChannel(
@@ -844,6 +913,16 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     return this.#applyExactTransition({ kind: "claim", args: [input] });
   }
 
+  async claimExactSettlementWithEvidence(
+    input: ExactSettlementAttemptRecord,
+    receipt: PnnEvidenceRecord,
+    signal?: AbortSignal,
+  ): Promise<ExactSettlementClaimResult> {
+    if (receipt.transactionId !== input.transactionId)
+      throw new Error("PNN evidence does not match exact settlement claim");
+    return this.#applyExactTransition({ kind: "claim", args: [input] }, receipt, signal);
+  }
+
   async loadExactSettlementAttempt(
     transactionId: string,
   ): Promise<ExactSettlementAttemptRecord | undefined> {
@@ -936,7 +1015,10 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
 
   async #applyExactTransition<C extends ExactTransitionCommand>(
     command: C,
+    evidence?: PnnEvidenceRecord,
+    signal?: AbortSignal,
   ): Promise<ExactTransitionResult<C>> {
+    signal?.throwIfAborted();
     command = clone(command);
     const initial = exactTransitionScope(command);
     if (command.kind === "claim") {
@@ -981,6 +1063,8 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
         snapshot.maxHeads = this.#limits.maxExactHeads;
       }
       const changes = prepareExactTransition(command, snapshot);
+      if (evidence && changes.attempt)
+        await this.#putPnnEvidence(txn, evidence, true);
       const budget = changes.budget;
       if (budget?.kind === "admit") {
         const next = budget.attempt;
@@ -1022,6 +1106,10 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
           exactAttemptKey(changes.attempt.transactionId),
           clone(changes.attempt),
         );
+      if (command.kind === "commit" || command.kind === "abandon")
+        await this.#finishPnnEvidenceClaim(
+          txn, changes.transactionId!, changes.attempt === null,
+        );
       if (budget?.kind === "terminal") {
         await terminalizeDurableBudget(
           txn,
@@ -1034,6 +1122,7 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
         );
       } else if (budget?.kind === "delete")
         await deleteDurableBudget(txn, `exact:${budget.transactionId}`);
+      signal?.throwIfAborted();
       return changes.result;
     });
   }
@@ -1448,6 +1537,11 @@ export class DurableGatewayLockManager implements ChannelLockManager {
 }
 
 export type GatewayStateClient = ServerStateStore & PnnEvidenceStore & {
+  claimExactSettlementWithEvidence(
+    attempt: ExactSettlementAttemptRecord,
+    receipt: PnnEvidenceRecord,
+    signal?: AbortSignal,
+  ): Promise<ExactSettlementClaimResult>;
   exactHeadStats(): Promise<ExactHeadStats>;
   recordExactHeadOfferObservation(head: ExactHeadRecord): Promise<void>;
   hasRecentExactHeadOfferObservation(headId: string, nowMs: number): Promise<boolean>;
@@ -1631,6 +1725,13 @@ export async function dispatchGatewayState(
       return ledger.selectExactHead(
         readPayload<{ request: ExactHeadSelectionRequest }>(request).request,
       );
+    case "claimExactSettlementWithEvidence": {
+      const payload = readPayload<{
+        record: ExactSettlementAttemptRecord;
+        receipt: PnnEvidenceRecord;
+      }>(request);
+      return ledger.claimExactSettlementWithEvidence(payload.record, payload.receipt, signal);
+    }
     case "claimExactSettlement":
       return ledger.claimExactSettlement(
         readPayload<{ record: ExactSettlementAttemptRecord }>(request).record,
@@ -2641,4 +2742,12 @@ function isNonzeroLowerHash32(value: string): boolean {
 
 function assertPnnTransactionId(value: string): void {
   if (!/^[0-9a-f]{64}$/.test(value)) throw new Error("invalid PNN evidence transaction id");
+}
+
+function assertPnnEvidenceBudget(budget: PnnEvidenceBudget): void {
+  if (![budget.records, budget.bytes, budget.reservedBytes].every(
+    (value) => Number.isSafeInteger(value) && value >= 0,
+  ) || budget.records > MAX_PNN_EVIDENCE_RECORDS ||
+      budget.bytes + budget.reservedBytes > MAX_PNN_EVIDENCE_TOTAL_BYTES)
+    throw new Error("PNN evidence budget is invalid");
 }

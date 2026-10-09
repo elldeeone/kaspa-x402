@@ -100,6 +100,42 @@ describe("gateway canary", () => {
     ).resolves.toEqual(report);
   });
 
+  it("refreshes offer evidence for the ninth available additive head", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const heads = Array.from({ length: 9 }, (_, index) => ({
+      ...exactHead(),
+      headId: (0x90 + index).toString(16).repeat(32),
+      currentOutpoint: {
+        txid: (0x80 + index).toString(16).repeat(32), index: 0,
+      },
+    }));
+    for (const head of heads) await ledger.registerExactHead(head);
+    await ledger.recordPnnCheckpoint({
+      blockHash: "ab".repeat(32), blueScore: "507000000", daaScore: "507000000",
+    });
+    vi.spyOn(PnnChainEvidence.prototype, "getUtxosForAddress")
+      .mockResolvedValue(heads.map((head) => ({
+        outpoint: head.currentOutpoint,
+        amount: head.currentAmount,
+        scriptPublicKey: head.scriptPublicKey,
+      })));
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_EXACT_PROFILE: "additive",
+      KASPA_X402_PAY_TO: KIP10_ADDRESS,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+    };
+    stubCanaryFetches();
+
+    await runGatewayCanary(env, "scheduled");
+
+    await expect(ledger.hasRecentExactHeadOfferObservation(
+      heads[8]!.headId, Date.now(),
+    )).resolves.toBe(true);
+  });
+
   it("advertises the deterministic batch claim reserve", async () => {
     const storage = new FakeStorage();
     const env: GatewayEnv = {

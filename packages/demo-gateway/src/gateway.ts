@@ -1,4 +1,4 @@
-import { PnnChainEvidence } from "@kaspa-x402/adapters";
+import { PnnChainEvidence, type PnnEvidenceRecord } from "@kaspa-x402/adapters";
 import {
   bytesToHex,
   KASPA_X402_RESOURCE_BUDGET,
@@ -61,6 +61,7 @@ type WaitUntilContext = Pick<ExecutionContext, "waitUntil">;
 const MAX_CANARY_DOC_BYTES = 64 * 1024;
 const MAX_CANARY_JSON_BYTES = 64 * 1024;
 const MAX_ADMIN_JSON_BYTES = 64 * 1024;
+const CANARY_HEAD_RECONCILE_CONCURRENCY = 8;
 const GATEWAY_PUBLIC_ADMISSION_TTL_MS = 5 * 60 * 1_000;
 // Reserve 7,200 DAA beyond age-based drift at Testnet-10's 10 DAA/second.
 const CACHED_QUOTE_DAA_CUSHION = 7_200n;
@@ -603,20 +604,24 @@ export async function runGatewayCanary(
   if (config.enabled) {
     if (config.exactProfile === "additive" && hostedExactConfigured(config)) {
       const heads = (await state.listExactHeads())
-        .filter((head) => head.status === "available")
-        .slice(0, 8);
+        .filter((head) => head.status === "available");
       if (heads.length > 0) {
         const cachedDaa = await state.loadRecentPnnDaaScore(Date.now());
         if (cachedDaa) {
           const gateway = await createGateway(config, state, cachedDaa);
-          for (const head of heads) {
-            try {
-              const current = await gateway.server.reconcileExactHead(head.headId);
-              if (current.status === "available")
-                await state.recordExactHeadOfferObservation(current);
-            } catch {
-              // An unverified head is excluded from unsigned offers.
-            }
+          for (let offset = 0; offset < heads.length;
+            offset += CANARY_HEAD_RECONCILE_CONCURRENCY) {
+            await Promise.all(heads.slice(
+              offset, offset + CANARY_HEAD_RECONCILE_CONCURRENCY,
+            ).map(async (head) => {
+              try {
+                const current = await gateway.server.reconcileExactHead(head.headId);
+                if (current.status === "available")
+                  await state.recordExactHeadOfferObservation(current);
+              } catch {
+                // An unverified head is excluded from unsigned offers.
+              }
+            }));
           }
         }
       }
@@ -965,6 +970,16 @@ class AddressRecordingStore implements ServerStateStore {
     record: Parameters<ServerStateStore["claimExactSettlement"]>[0],
   ) {
     return this.#inner.claimExactSettlement(record);
+  }
+
+  claimExactSettlementWithEvidence(
+    record: Parameters<ServerStateStore["claimExactSettlement"]>[0],
+    receipt: unknown,
+    signal?: AbortSignal,
+  ) {
+    return this.#inner.claimExactSettlementWithEvidence(
+      record, receipt as PnnEvidenceRecord, signal,
+    );
   }
 
   loadExactSettlementAttempt(transactionId: string) {

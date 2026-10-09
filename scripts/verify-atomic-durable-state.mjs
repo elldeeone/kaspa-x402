@@ -35,12 +35,16 @@ const git = (...args) => {
 const hash = (value) => createHash("sha256").update(value).digest("hex");
 const stdout = run.stdout ?? "";
 const stderr = run.stderr ?? "";
+const baseCommit = git("merge-base", "HEAD", "origin/main");
 const artifact = {
   schema: "kaspa-x402-atomic-durable-state-offline-proof/v1",
   generatedAtUtc: new Date().toISOString(),
   branch: git("branch", "--show-current"),
-  baseCommit: git("rev-parse", "HEAD"),
-  trackedDiffSha256: hash(git("diff", "--binary")),
+  baseCommit,
+  trackedDiffSha256: hash(git(
+    "diff", "--binary", baseCommit, "--", ".",
+    ":(exclude)verification/atomic-durable-state.json",
+  )),
   verifierSha256: hash(readFileSync(fileURLToPath(import.meta.url))),
   command: ["npm", ...args],
   exitCode: run.status,

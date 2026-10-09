@@ -214,6 +214,14 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("claimExactSettlement", { record });
   }
 
+  claimExactSettlementWithEvidence(
+    record: ExactSettlementAttemptRecord,
+    receipt: PnnEvidenceRecord,
+    signal?: AbortSignal,
+  ): Promise<ExactSettlementClaimResult> {
+    return this.#call("claimExactSettlementWithEvidence", { record, receipt }, signal);
+  }
+
   loadExactSettlementAttempt(
     transactionId: string,
   ): Promise<ExactSettlementAttemptRecord | undefined> {

@@ -100,10 +100,11 @@ describe("gateway durable ledger", () => {
   it("preserves PNN funding receipts across restarts and rejects conflicting origins", async () => {
     const storage = new FakeStorage();
     let ledger = new GatewayLedger(storage);
-    await ledger.claimExactSettlement(exactSettlementAttempt({ profile: "standard-native", head: undefined }));
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
       origins: [{ outpoint: { txid: FUNDING_TX, index: 0 }, amount: "1000", scriptPublicKey: SCRIPT, covenantId: null }] };
-    await ledger.savePnnEvidence(record);
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), record,
+    );
     ledger = new GatewayLedger(storage);
     await expect(ledger.loadPnnEvidence(TX)).resolves.toEqual(record);
     const before = storage.snapshot();
@@ -112,19 +113,97 @@ describe("gateway durable ledger", () => {
     expect(storage.snapshot()).toEqual(before);
   });
 
-  it("rolls back a PNN receipt when its budget write fails and refuses excess capacity", async () => {
+  it("rolls back the exact claim when its PNN budget write fails", async () => {
     const storage = new FakeStorage();
     const ledger = new GatewayLedger(storage);
-    await ledger.claimExactSettlement(exactSettlementAttempt({ profile: "standard-native", head: undefined }));
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" } };
-    storage.failWriteAt(2);
-    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("injected storage write failure");
+    storage.failWriteForKey("pnn-evidence:budget");
+    await expect(ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), record,
+    )).rejects.toThrow("injected storage write failure");
     await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
     await expect(storage.get("pnn-evidence:budget")).resolves.toBeUndefined();
-    await storage.put("pnn-evidence:budget", { records: 4096, bytes: 0 });
-    const before = storage.snapshot();
-    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("capacity exhausted");
-    expect(storage.snapshot()).toEqual(before);
+  });
+
+  it("rejects a saturated evidence budget before claiming an additive head", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    await ledger.registerExactHead(exactHead());
+    await storage.put("pnn-evidence:budget", { records: 4096, bytes: 0, reservedBytes: 0 });
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await expect(ledger.claimExactSettlementWithEvidence(exactSettlementAttempt(), receipt))
+      .rejects.toThrow("capacity exhausted");
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 4096, bytes: 0, reservedBytes: 0,
+    });
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "available", version: "0",
+    });
+  });
+
+  it("keeps room for accepted evidence when the budget fills at claim time", async () => {
+    const storage = new FakeStorage();
+    const originalBudget = {
+      records: 1_000, bytes: 64 * 1024 * 1024 - 64 * 1024, reservedBytes: 0,
+    };
+    await storage.put("pnn-evidence:budget", originalBudget);
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:01.000Z");
+    const accepted = {
+      ...receipt,
+      transaction: { transaction_id: TX, is_accepted: true, inputs: [], outputs: [] },
+    };
+    await expect(ledger.savePnnEvidence(accepted)).resolves.toBeUndefined();
+    await expect(new GatewayLedger(storage).loadPnnEvidence(TX)).resolves.toEqual(accepted);
+    const budget = await storage.get<typeof originalBudget>("pnn-evidence:budget");
+    expect(budget!.records).toBe(1_001);
+    expect(budget!.bytes + budget!.reservedBytes).toBe(64 * 1024 * 1024);
+    const acceptedBudget = await storage.get<typeof originalBudget>("pnn-evidence:budget");
+    await expect(ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    )).resolves.toMatchObject({ created: false });
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toEqual(accepted);
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual(acceptedBudget);
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await ledger.recordExactHandlerResult(
+      TX, { chargedAmount: "20000000" }, "2026-07-07T00:00:03.000Z",
+    );
+    await ledger.commitExactPayment({
+      payment: exactPayment({ profile: "standard-native", amount: "20000000" }),
+    });
+    await expect(storage.get<typeof originalBudget>("pnn-evidence:budget"))
+      .resolves.toMatchObject({ records: 1_001, reservedBytes: 0 });
+  });
+
+  it("releases PNN capacity when an unaccepted settlement is abandoned", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.abandonExactSettlement(
+      TX, "trusted rejection before broadcast", "2026-07-07T00:00:01.000Z",
+    );
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 0, bytes: 0, reservedBytes: 0,
+    });
   });
 
   it("rejects independently provisioned additive heads at max plus one", async () => {
