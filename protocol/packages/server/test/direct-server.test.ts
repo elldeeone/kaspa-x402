@@ -5045,6 +5045,26 @@ describe("direct-mode server", () => {
     expect(other.status).toBe(402);
   });
 
+  it("keeps authenticated host quotas separate without an explicit admission key", async () => {
+    const setup = makeServer({
+      publicBoundaryPolicy: { callerQuota: 1, callerQuotaWindowMs: 60_000 },
+    });
+    const request = (principal: string) => setup.server.handlePaidRequest({
+      routeAccess: "authenticated",
+      method: "GET",
+      url: RESOURCE.url,
+      resource: RESOURCE,
+      paymentScheme: "exact",
+      trustedSecurityContext: { principal },
+    }, async () => ({ body: "unreachable" }));
+
+    expect((await request("payer-a")).status).toBe(402);
+    await expect(request("payer-a")).resolves.toMatchObject({
+      status: 429, body: { error: "caller_quota_exceeded" },
+    });
+    expect((await request("payer-b")).status).toBe(402);
+  });
+
   it("returns a controlled timeout without reaching protected work", async () => {
     const setup = makeServer({
       publicBoundaryPolicy: { adapterTimeoutMs: 10 },

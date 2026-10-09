@@ -206,6 +206,33 @@ describe("gateway durable ledger", () => {
     });
   });
 
+  it("releases an exact-limit PNN receipt when its settlement is abandoned", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+      transaction: { transaction_id: TX, is_accepted: true, payload: "" },
+    };
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if ((64 * 1024 - bytes(receipt)) % 2 !== 0)
+      receipt.checkpoint.daaScore = "2000";
+    receipt.transaction.payload = "ab".repeat((64 * 1024 - bytes(receipt)) / 2);
+    expect(bytes(receipt)).toBe(64 * 1024);
+
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.abandonExactSettlement(
+      TX, "trusted rejection before broadcast", "2026-07-07T00:00:01.000Z",
+    );
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 0, bytes: 0, reservedBytes: 0,
+    });
+  });
+
   it("rejects independently provisioned additive heads at max plus one", async () => {
     const ledger = new GatewayLedger(new FakeStorage(), {
       limits: { maxExactHeads: 2 },

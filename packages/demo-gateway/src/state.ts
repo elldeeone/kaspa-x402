@@ -343,8 +343,8 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
       throw new Error("PNN evidence capacity exhausted");
     assertPnnEvidenceBudget(next);
     await txn.put(key, clone(record));
-    if (nextReservation > 0) await txn.put(reservationKey, nextReservation);
-    else if (currentReservation !== undefined) await txn.delete(reservationKey);
+    if (reserveForClaim || currentReservation !== undefined)
+      await txn.put(reservationKey, nextReservation);
     await txn.put("pnn-evidence:budget", next);
   }
 

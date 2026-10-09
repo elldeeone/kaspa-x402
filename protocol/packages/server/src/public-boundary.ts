@@ -88,12 +88,12 @@ export class MemoryPublicBoundaryController
     assertPublicBoundaryPolicy(this.#policy);
   }
 
-  enterRequest(_context?: TrustedSecurityContext, admissionKey?: string): PublicBoundaryPermit {
+  enterRequest(context?: TrustedSecurityContext, admissionKey?: string): PublicBoundaryPermit {
     if (admissionKey !== undefined && !/^[0-9a-f]{64}$/.test(admissionKey))
       throw new PublicBoundaryError("caller_quota_exceeded", "trusted admission key is invalid");
-    const aggregate = !admissionKey;
+    const aggregate = admissionKey === undefined && context === undefined;
     return this.#enterRequestKey(
-      admissionKey ?? "anonymous-aggregate",
+      admissionKey ?? (context ? publicBoundaryCallerKey(context) : "anonymous-aggregate"),
       aggregate,
     );
   }
