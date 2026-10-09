@@ -699,6 +699,8 @@ export interface BatchSettlementAttemptStore {
   ): Promise<BatchSettlementAttemptRecord | undefined>;
   /** Returns true exactly once, preventing protected-handler replay. */
   beginBatchHandler(attemptId: Hash32Hex, startedAt: string): Promise<boolean>;
+  /** Clears this admission only when its protected handler has not run. */
+  resetBatchHandlerBeforeExecution(attemptId: Hash32Hex, startedAt: string): Promise<boolean>;
   /** Persists protected work before settlement commit so retries can resume safely. */
   recordBatchHandlerResult(
     attemptId: Hash32Hex,
@@ -787,6 +789,8 @@ export interface ExactHeadStore {
     transactionId: Hash32Hex,
     startedAt: string,
   ): Promise<boolean>;
+  /** Clears this admission only when its protected handler has not run. */
+  resetExactHandlerBeforeExecution(transactionId: Hash32Hex, startedAt: string): Promise<boolean>;
   /** Persists protected work before the payment/response commit so retries can resume safely. */
   recordExactHandlerResult(
     transactionId: Hash32Hex,

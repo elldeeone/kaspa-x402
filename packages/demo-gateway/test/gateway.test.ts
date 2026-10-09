@@ -1,7 +1,7 @@
 import { KaspaPnnClient } from "@kaspa-x402/adapters";
 import { PnnChainEvidence } from "@kaspa-x402/adapters";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
-import { decodePaymentRequiredHeader } from "@kaspa-x402/core";
+import { decodePaymentRequiredHeader, encodePaymentSignatureHeader, type PaymentPayload } from "@kaspa-x402/core";
 import {
   buildKip10AdditiveRedeemScript,
   payToScriptHashScript,
@@ -16,6 +16,7 @@ import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_SIGNATURE_HEADER,
+  DirectModeServer,
   type ExactHeadRecord,
 } from "@kaspa-x402/server";
 import {
@@ -416,6 +417,173 @@ describe("gateway canary", () => {
       ),
     ).resolves.toMatchObject({ status: 402 });
     expect(blockdagCalls).toBeGreaterThan(callsAfterFirst);
+  });
+
+  it("stops a paid PNN setup read before admitting another caller after lease expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const acquiredAt = Date.now();
+    const storage = new FakeStorage();
+    let started!: () => void;
+    const readStarted = new Promise<void>((resolve) => { started = resolve; });
+    let finishRead: () => void = () => undefined;
+    let active = 0;
+    let stoppedAt: number | undefined;
+    let overlap = false;
+    vi.spyOn(PnnChainEvidence.prototype, "getVirtualDaaScore")
+      .mockImplementation((signal?: AbortSignal) => {
+        active += 1;
+        started();
+        return new Promise<string>((resolve) => {
+          const finish = () => {
+            if (active === 0) return;
+            active -= 1;
+            stoppedAt = Date.now();
+            resolve("507000000");
+          };
+          finishRead = finish;
+          signal?.addEventListener("abort", finish, { once: true });
+        });
+      });
+    const env: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        renewalError: new Error("coordinator renewal failed"),
+        hashChainRequest() {
+          overlap = active > 0;
+          return Promise.resolve(Response.json({ ok: true }));
+        },
+      }),
+    };
+    const foreignPayment = btoa(JSON.stringify({
+      x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {},
+    }));
+    const first = handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/batch", {
+      headers: { "cf-connecting-ip": "203.0.113.10", [PAYMENT_SIGNATURE_HEADER]: foreignPayment },
+    }), env, fakeContext());
+    try {
+      await readStarted;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await handleGatewayRequest(workerRequest(
+        "https://demo.kaspa-x402.org/hash-chain/status", {
+          headers: { "cf-connecting-ip": "203.0.113.11" },
+        }), env, fakeContext());
+      expect(second.status).toBe(200);
+      expect(overlap).toBe(false);
+      expect(stoppedAt).toBeLessThanOrEqual(acquiredAt + 300_000);
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishRead();
+      await first;
+      vi.useRealTimers();
+    }
+  });
+
+  it("stops the paid additive availability read after lease expiry", async () => {
+    vi.useFakeTimers();
+    vi.setSystemTime(new Date("2026-10-09T00:00:00.000Z"));
+    vi.spyOn(console, "error").mockImplementation(() => undefined);
+    const acquiredAt = Date.now();
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    await ledger.registerExactHead(exactHead());
+    await ledger.recordExactHeadOfferObservation(exactHead());
+    const baseEnv: GatewayEnv = {
+      ...BASE_ENV,
+      KASPA_X402_EXACT_PROFILE: "additive",
+      KASPA_X402_PAY_TO: KIP10_ADDRESS,
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      GATEWAY_STATE: fakeNamespace(storage),
+    };
+    const offer = await handleGatewayRequest(
+      workerRequest("https://demo.kaspa-x402.org/exact"), baseEnv, fakeContext(),
+    );
+    expect(offer.status).toBe(402);
+    const accepted = decodePaymentRequiredHeader(
+      offer.headers.get(PAYMENT_REQUIRED_HEADER)!,
+    ).accepts[0];
+    if (accepted?.scheme !== "exact") throw new Error("expected exact offer");
+    const payment = encodePaymentSignatureHeader({
+      x402Version: 2,
+      accepted,
+      payload: {
+        type: "exact-transaction",
+        profile: "additive",
+        challengeId: accepted.extra.challengeId,
+        payerAddress: "kaspatest:refund",
+        transaction: "77".repeat(32),
+        transactionEncoding: "kaspa-sdk-safe-json-v2.0.0",
+        paymentOutputIndex: 0,
+        requestHash: "aa".repeat(32),
+        authorization: {
+          version: "kaspa-x402-exact-request-authorization-v2",
+          inputIndex: 0,
+          expiresAt: new Date(Date.now() + 60_000).toISOString(),
+          digest: "bb".repeat(32),
+          signature: "cc".repeat(64),
+        },
+      },
+    } as PaymentPayload);
+    vi.spyOn(DirectModeServer.prototype, "handlePaidRequest").mockResolvedValue({
+      status: 503, headers: {}, body: { error: "invalid_payload" },
+    });
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    let finishRead: () => void = () => undefined;
+    let active = false;
+    let overlap = false;
+    let stoppedAt: number | undefined;
+    const env: GatewayEnv = {
+      ...baseEnv,
+      KASPA_X402_GLOBAL_CONCURRENCY: "1",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        renewalError: new Error("coordinator renewal failed"),
+        stateRequest(method, signal) {
+          if (method !== "exactHeadStats") return undefined;
+          active = true;
+          markStarted();
+          return new Promise<Response>((resolve) => {
+            const finish = () => { active = false; resolve(Response.json({ ok: true, value: {
+              total: 0, available: 0, claimed: 0, unavailable: 0, retired: 0,
+            } })); };
+            finishRead = finish;
+            signal?.addEventListener("abort", () => {
+              stoppedAt = Date.now();
+              finish();
+            }, { once: true });
+          });
+        },
+        hashChainRequest() {
+          overlap = active;
+          return Promise.resolve(Response.json({ ok: true }));
+        },
+      }),
+    };
+    const first = handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/exact", {
+      headers: { "cf-connecting-ip": "203.0.113.10", [PAYMENT_SIGNATURE_HEADER]: payment },
+    }), env, fakeContext());
+    try {
+      await started;
+      await vi.advanceTimersByTimeAsync(300_001);
+      const second = await handleGatewayRequest(workerRequest(
+        "https://demo.kaspa-x402.org/hash-chain/status", {
+          headers: { "cf-connecting-ip": "203.0.113.11" },
+        }), env, fakeContext());
+      expect(second.status).toBe(200);
+      expect(overlap).toBe(false);
+      expect(stoppedAt).toBeLessThanOrEqual(acquiredAt + 300_000);
+      await expect(first).resolves.toMatchObject({ status: 503 });
+    } finally {
+      finishRead();
+      await first;
+      vi.useRealTimers();
+    }
   });
 
   it.each([

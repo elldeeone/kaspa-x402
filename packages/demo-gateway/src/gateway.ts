@@ -325,7 +325,7 @@ export async function handleGatewayRequest(
         result.status === 503 &&
         (result.body as { error?: unknown } | undefined)?.error ===
           "invalid_payload" &&
-        !(await hostedExactAvailable(config, state))
+        !(await hostedExactAvailable(config, state, signal))
       ) {
         result = {
           status: 503,
@@ -829,7 +829,7 @@ async function createGateway(
   const addressCodec = new NativeAddressCodec(book);
   const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
-  const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore());
+  const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore(signal));
   signal?.throwIfAborted();
   if (
     currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
@@ -989,6 +989,10 @@ class AddressRecordingStore implements ServerStateStore {
     return this.#inner.beginBatchHandler(attemptId, startedAt);
   }
 
+  resetBatchHandlerBeforeExecution(attemptId: string, startedAt: string) {
+    return this.#inner.resetBatchHandlerBeforeExecution(attemptId, startedAt);
+  }
+
   recordBatchHandlerResult(
     attemptId: string,
     result: Parameters<ServerStateStore["recordBatchHandlerResult"]>[1],
@@ -1097,6 +1101,10 @@ class AddressRecordingStore implements ServerStateStore {
 
   beginExactHandler(transactionId: string, startedAt: string) {
     return this.#inner.beginExactHandler(transactionId, startedAt);
+  }
+
+  resetExactHandlerBeforeExecution(transactionId: string, startedAt: string) {
+    return this.#inner.resetExactHandlerBeforeExecution(transactionId, startedAt);
   }
 
   recordExactHandlerResult(

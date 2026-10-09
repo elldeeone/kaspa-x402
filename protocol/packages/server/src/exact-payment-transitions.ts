@@ -32,6 +32,7 @@ type ExactTransitionMethods = {
   broadcast: "recordExactSettlementBroadcast";
   accept: "acceptExactSettlement";
   "begin-handler": "beginExactHandler";
+  "reset-handler": "resetExactHandlerBeforeExecution";
   "record-result": "recordExactHandlerResult";
   recovery: "markExactHandlerRecoveryRequired";
   abandon: "abandonExactSettlement";
@@ -387,6 +388,21 @@ export function prepareExactTransition(
           ...attempt,
           handlerStartedAt: startedAt,
           updatedAt: startedAt,
+        }),
+        result: true,
+      };
+    }
+    case "reset-handler": {
+      const [, startedAt] = command.args;
+      if (attempt.status !== "accepted" ||
+          attempt.handlerStartedAt !== startedAt ||
+          attempt.handlerResult || attempt.recoveryReason)
+        return { result: false };
+      return {
+        ...pending({
+          ...attempt,
+          handlerStartedAt: undefined,
+          updatedAt: snapshot.now,
         }),
         result: true,
       };

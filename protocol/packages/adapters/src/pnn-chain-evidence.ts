@@ -45,7 +45,7 @@ export interface PnnEvidenceStore {
     transactionId: string,
   ): Promise<PnnEvidenceRecord | undefined>;
   savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void>;
-  recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void>;
+  recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void>;
   findPnnCheckpointBefore(
     daaScore: string,
   ): Promise<ChainCheckpoint | undefined>;
@@ -287,11 +287,15 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       .map(observedUtxo);
   }
 
-  async getVirtualDaaScore(): Promise<string> {
-    const snapshot = await this.pnn.snapshotHashChainUtxos([], this.#signal);
+  async getVirtualDaaScore(signal?: AbortSignal): Promise<string> {
+    const liveSignal = signal ?? this.#signal;
+    liveSignal?.throwIfAborted();
+    const snapshot = await this.pnn.snapshotHashChainUtxos([], liveSignal);
+    liveSignal?.throwIfAborted();
     if (!snapshot.checkpoint.daaScore)
       throw unavailable("PNN checkpoint lacks DAA score");
-    await this.store.recordPnnCheckpoint(snapshot.checkpoint);
+    await this.store.recordPnnCheckpoint(snapshot.checkpoint, liveSignal);
+    liveSignal?.throwIfAborted();
     return snapshot.checkpoint.daaScore;
   }
 

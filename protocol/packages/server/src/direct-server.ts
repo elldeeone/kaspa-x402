@@ -1102,6 +1102,21 @@ export class DirectModeServer {
           let recoveredExactHandlerResult: ProtectedHandlerResult | undefined;
           let recoveredBatchHandlerResult: ProtectedHandlerResult | undefined;
           let batchAttemptId: Hash32Hex | undefined;
+          let batchHandlerStartedAt: string | undefined;
+          let exactHandlerStartedAt: string | undefined;
+          let exactHandlerTransactionId: Hash32Hex | undefined;
+          let handlerInvoked = false;
+          const resetBeforeExecution = async () => {
+            if (handlerInvoked) return;
+            if (batchAttemptId && batchHandlerStartedAt)
+              await this.#batchStore.resetBatchHandlerBeforeExecution(
+                batchAttemptId, batchHandlerStartedAt,
+              );
+            if (exactHandlerStartedAt && exactHandlerTransactionId)
+              await this.#config.store.resetExactHandlerBeforeExecution(
+                exactHandlerTransactionId, exactHandlerStartedAt,
+              );
+          };
           if (verified.scheme === "batch-settlement") {
             try {
               const existingAttempt =
@@ -1152,17 +1167,24 @@ export class DirectModeServer {
                     request.signal,
                   );
                 }
+                batchHandlerStartedAt = uniqueHandlerStartTime();
                 const handlerStarted =
                   await this.#batchStore.beginBatchHandler(
                     batchAttemptId,
-                    new Date().toISOString(),
+                    batchHandlerStartedAt,
                   );
-                if (request.signal?.aborted) return requestAbortedResponse();
+                if (request.signal?.aborted) {
+                  await resetBeforeExecution();
+                  return requestAbortedResponse();
+                }
                 if (!handlerStarted)
                   return batchSettlementRecoveryRequiredResponse();
               }
             } catch (error) {
-              if (request.signal?.aborted) return requestAbortedResponse();
+              if (request.signal?.aborted) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return batchSettlementRecoveryRequiredResponse();
@@ -1232,10 +1254,12 @@ export class DirectModeServer {
                 };
               }
               if (!recoveredExactHandlerResult) {
+                exactHandlerStartedAt = uniqueHandlerStartTime();
+                exactHandlerTransactionId = verified.transactionId;
                 const handlerStarted =
                   await this.#config.store.beginExactHandler(
                     verified.transactionId,
-                    new Date().toISOString(),
+                    exactHandlerStartedAt,
                   );
                 if (!handlerStarted) {
                   return {
@@ -1246,6 +1270,10 @@ export class DirectModeServer {
                 }
               }
             } catch (error) {
+              if (request.signal?.aborted) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return this.#settlementCorrectiveResponse(
@@ -1261,7 +1289,10 @@ export class DirectModeServer {
             }
           }
           let handlerResult: ProtectedHandlerResult;
-          if (request.signal?.aborted) return requestAbortedResponse();
+          if (request.signal?.aborted) {
+            await resetBeforeExecution();
+            return requestAbortedResponse();
+          }
           if (recoveredExactHandlerResult || recoveredBatchHandlerResult) {
             handlerResult =
               recoveredExactHandlerResult ?? recoveredBatchHandlerResult!;
@@ -1283,6 +1314,7 @@ export class DirectModeServer {
                       return { status: "expired", reason: expiryError };
                     }
                   }
+                  handlerInvoked = true;
                   return Promise.resolve(
                     handler({
                       request: { ...request, signal },
@@ -1306,6 +1338,10 @@ export class DirectModeServer {
               }
               handlerResult = execution.result;
             } catch {
+              if (request.signal?.aborted && !handlerInvoked) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (verified.scheme === "exact") {
                 await this.#config.store.markExactHandlerRecoveryRequired(
                   verified.transactionId,
@@ -6290,6 +6326,16 @@ function requestAbortedResponse(): ServerResponse {
     headers: {},
     body: { error: "request_aborted" },
   };
+}
+
+function uniqueHandlerStartTime(): string {
+  // Extra fractional digits keep the compare-and-reset owner unique across
+  // Worker isolates, including requests admitted in the same millisecond.
+  const nonce = crypto.getRandomValues(new Uint32Array(2));
+  return new Date().toISOString().replace(
+    /Z$/,
+    `${nonce[0]!.toString().padStart(10, "0")}${nonce[1]!.toString().padStart(10, "0")}Z`,
+  );
 }
 
 function boundaryError(error: unknown): Error {

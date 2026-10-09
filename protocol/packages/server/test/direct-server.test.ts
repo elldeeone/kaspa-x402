@@ -3360,6 +3360,49 @@ describe("direct-mode server", () => {
     await expect(setup.store.loadChannel(payment.channelId)).resolves.toBeUndefined();
   });
 
+  it("retries batch work after admission expires during durable handler start", async () => {
+    const controller = new AbortController();
+    const store = new ExpiringBatchHandlerAdmissionStore();
+    store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+    const setup = makeServer({ store });
+    const payment = makeDepositPayment(setup);
+    const request = requestWithPayment(payment.payload, {
+      routeAccess: "public", requestHash: "aa".repeat(32),
+    });
+    let executions = 0;
+    const handler = async () => { executions += 1; return { body: "served", chargedAmount: "100" }; };
+
+    await expect(setup.server.handlePaidRequest(
+      { ...request, signal: controller.signal }, handler,
+    )).resolves.toMatchObject({ status: 499 });
+    expect(executions).toBe(0);
+    await expect(setup.server.handlePaidRequest(request, handler))
+      .resolves.toMatchObject({ status: 200, body: "served" });
+    expect(executions).toBe(1);
+  });
+
+  it("retries exact work after admission expires during durable handler start", async () => {
+    const controller = new AbortController();
+    const store = new ExpiringExactHandlerAdmissionStore();
+    store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+    const setup = makeServer({ store });
+    const requestHash = "12".repeat(32);
+    const payment = makeExactPayment(setup, { requestHash });
+    const request = requestWithPayment(payment, {
+      routeAccess: "public", paymentScheme: "exact", requestHash,
+    });
+    let executions = 0;
+    const handler = async () => { executions += 1; return { body: "served" }; };
+
+    await expect(setup.server.handlePaidRequest(
+      { ...request, signal: controller.signal }, handler,
+    )).resolves.toMatchObject({ status: 499 });
+    expect(executions).toBe(0);
+    await expect(setup.server.handlePaidRequest(request, handler))
+      .resolves.toMatchObject({ status: 200, body: "served" });
+    expect(executions).toBe(1);
+  });
+
   it("rejects a salted channel alias for an already registered covenant", async () => {
     const setup = makeServer();
     const first = makeDepositPayment(setup, { salt: "31".repeat(32) });
@@ -7461,6 +7504,16 @@ class ExpiringBatchHandlerAdmissionStore extends MemoryServerChannelStore {
       this.attemptId = attemptId;
       this.afterHandlerAdmission?.();
     }
+    return started;
+  }
+}
+
+class ExpiringExactHandlerAdmissionStore extends MemoryServerChannelStore {
+  afterHandlerAdmission?: () => void;
+
+  override async beginExactHandler(transactionId: Hash32Hex, startedAt: string): Promise<boolean> {
+    const started = await super.beginExactHandler(transactionId, startedAt);
+    if (started) this.afterHandlerAdmission?.();
     return started;
   }
 }

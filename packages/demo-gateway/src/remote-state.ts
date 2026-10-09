@@ -124,6 +124,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("beginBatchHandler", { attemptId, startedAt });
   }
 
+  resetBatchHandlerBeforeExecution(attemptId: string, startedAt: string): Promise<boolean> {
+    return this.#call("resetBatchHandlerBeforeExecution", { attemptId, startedAt });
+  }
+
   recordBatchHandlerResult(
     attemptId: string,
     result: ProtectedHandlerResult,
@@ -258,6 +262,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     startedAt: string,
   ): Promise<boolean> {
     return this.#call("beginExactHandler", { transactionId, startedAt });
+  }
+
+  resetExactHandlerBeforeExecution(transactionId: string, startedAt: string): Promise<boolean> {
+    return this.#call("resetExactHandlerBeforeExecution", { transactionId, startedAt });
   }
 
   recordExactHandlerResult(
@@ -409,8 +417,8 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("savePnnEvidence", { record }, signal);
   }
 
-  recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void> {
-    return this.#call("recordPnnCheckpoint", { checkpoint });
+  recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void> {
+    return this.#call("recordPnnCheckpoint", { checkpoint }, signal);
   }
 
   findPnnCheckpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {

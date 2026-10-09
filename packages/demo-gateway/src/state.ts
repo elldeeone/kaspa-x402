@@ -187,6 +187,7 @@ export type GatewayStateMethod =
   | "claimBatchSettlement"
   | "loadBatchSettlementAttempt"
   | "beginBatchHandler"
+  | "resetBatchHandlerBeforeExecution"
   | "recordBatchHandlerResult"
   | "markBatchHandlerRecoveryRequired"
   | "abandonBatchSettlement"
@@ -204,6 +205,7 @@ export type GatewayStateMethod =
   | "recordExactSettlementBroadcast"
   | "acceptExactSettlement"
   | "beginExactHandler"
+  | "resetExactHandlerBeforeExecution"
   | "recordExactHandlerResult"
   | "markExactHandlerRecoveryRequired"
   | "abandonExactSettlement"
@@ -255,10 +257,12 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     return cloneOrUndefined(await this.#storage.get<PnnEvidenceRecord>(`pnn-evidence:${transactionId}`));
   }
 
-  async recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void> {
+  async recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
     assertPnnTransactionId(checkpoint.blockHash);
     const bucket = BigInt(checkpoint.daaScore) / 300n;
     await this.#storage.transaction(async txn => {
+      signal?.throwIfAborted();
       const quote = await txn.get<{ daaScore: string; observedAt: number }>("pnn-quote-observation");
       if (!quote || BigInt(checkpoint.daaScore) >= BigInt(quote.daaScore)) {
         await txn.put("pnn-quote-observation", { daaScore: checkpoint.daaScore, observedAt: Date.now() });
@@ -268,11 +272,15 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
       // A bounded ring covers quote delivery and delayed deposit retries.
       const index = checkpoints.findIndex(item => BigInt(item.daaScore) / 300n === bucket);
       if (index >= 0) {
-        if (BigInt(checkpoints[index]!.daaScore) <= BigInt(checkpoint.daaScore)) return;
+        if (BigInt(checkpoints[index]!.daaScore) <= BigInt(checkpoint.daaScore)) {
+          signal?.throwIfAborted();
+          return;
+        }
         checkpoints[index] = checkpoint;
       } else checkpoints.push(checkpoint);
       checkpoints.sort((a, b) => BigInt(a.daaScore) < BigInt(b.daaScore) ? -1 : 1);
       await txn.put("pnn-discovery-checkpoints", checkpoints.slice(-128));
+      signal?.throwIfAborted();
     });
   }
 
@@ -676,6 +684,23 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
     });
   }
 
+  async resetBatchHandlerBeforeExecution(
+    attemptId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    return this.#storage.transaction(async (txn) => {
+      const attempt = await requireBatchAttempt(txn, attemptId);
+      if (attempt.status !== "pending" || attempt.handlerStartedAt !== startedAt ||
+          attempt.handlerResult || attempt.recoveryReason) return false;
+      await txn.put(batchAttemptKey(attempt.attemptId), {
+        ...attempt,
+        handlerStartedAt: undefined,
+        updatedAt: new Date().toISOString(),
+      });
+      return true;
+    });
+  }
+
   async recordBatchHandlerResult(
     attemptId: string,
     result: ProtectedHandlerResult,
@@ -972,6 +997,16 @@ export class GatewayLedger implements ServerStateStore, PnnEvidenceStore {
   ): Promise<boolean> {
     return this.#applyExactTransition({
       kind: "begin-handler",
+      args: [transactionId, startedAt],
+    });
+  }
+
+  async resetExactHandlerBeforeExecution(
+    transactionId: string,
+    startedAt: string,
+  ): Promise<boolean> {
+    return this.#applyExactTransition({
+      kind: "reset-handler",
       args: [transactionId, startedAt],
     });
   }
@@ -1636,7 +1671,7 @@ export async function dispatchGatewayState(
   switch (request.method) {
     case "loadPnnEvidence": return ledger.loadPnnEvidence(readPayload<{ transactionId: string }>(request).transactionId);
     case "savePnnEvidence": return ledger.savePnnEvidence(readPayload<{ record: PnnEvidenceRecord }>(request).record, signal);
-    case "recordPnnCheckpoint": return ledger.recordPnnCheckpoint(readPayload<{ checkpoint: ChainCheckpoint }>(request).checkpoint);
+    case "recordPnnCheckpoint": return ledger.recordPnnCheckpoint(readPayload<{ checkpoint: ChainCheckpoint }>(request).checkpoint, signal);
     case "findPnnCheckpointBefore": return ledger.findPnnCheckpointBefore(readPayload<{ daaScore: string }>(request).daaScore);
     case "loadChannel":
       return ledger.loadChannel(
@@ -1709,6 +1744,10 @@ export async function dispatchGatewayState(
         request,
       );
       return ledger.beginBatchHandler(payload.attemptId, payload.startedAt);
+    }
+    case "resetBatchHandlerBeforeExecution": {
+      const payload = readPayload<{ attemptId: string; startedAt: string }>(request);
+      return ledger.resetBatchHandlerBeforeExecution(payload.attemptId, payload.startedAt);
     }
     case "recordBatchHandlerResult": {
       const payload = readPayload<{
@@ -1819,6 +1858,10 @@ export async function dispatchGatewayState(
         request,
       );
       return ledger.beginExactHandler(payload.transactionId, payload.startedAt);
+    }
+    case "resetExactHandlerBeforeExecution": {
+      const payload = readPayload<{ transactionId: string; startedAt: string }>(request);
+      return ledger.resetExactHandlerBeforeExecution(payload.transactionId, payload.startedAt);
     }
     case "recordExactHandlerResult": {
       const payload = readPayload<{
