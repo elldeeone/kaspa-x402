@@ -66,6 +66,7 @@ import {
   type ParsePaymentRequiredOptions,
 } from "./payment-required.js";
 import { assertHashChainGrantDestination } from "./hash-chain-grant-url.js";
+import { BOUND_FETCH_AUTHORITY } from "./bound-fetch-authority.js";
 import { ChannelCasConflictError } from "./channel-store.js";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -344,12 +345,22 @@ export class DirectModeClient {
     input: string,
     init: HttpRequestInitLike = {},
   ): Promise<PaidFetchResult> {
-    const fetch = this.#options.fetch ?? globalFetchLike();
-    const requestInit = { ...init, redirect: "error" as const };
-    const originalRequestUrl = input;
     const requestUrl = canonicalRequestUrl(input);
+    assertPaidFetchDestination(input, requestUrl, this.#options.fundingPolicy?.allowedOrigins);
+    const browserBase = (globalThis as { location?: { href?: string } }).location?.href;
+    const browserManagedTransport = browserBase &&
+      new URL(browserBase).protocol === "https:" &&
+      new URL(browserBase).origin === new URL(requestUrl).origin;
+    if (!browserManagedTransport &&
+        (this.#options.fetch as unknown as Record<symbol, unknown> | undefined)?.[BOUND_FETCH_AUTHORITY] !== true)
+      throw new KaspaX402Error("invalid_kaspa_x402_payload",
+        "paidFetch requires a dial-time bounded transport outside its browser origin");
+    const fetch = this.#options.fetch ?? globalFetchLike();
+    const requestInit = { ...init, redirect: "error" as const, cache: "no-store" as const };
+    const originalRequestUrl = input;
     const requestContext: PaymentRequestContext = {
       url: requestUrl, paymentIdentifier: init.paymentIdentifier,
+      signal: init.signal,
       requestHash: init.requestHash, paymentAttemptId: init.paymentAttemptId,
       method: init.method, body: init.body,
       trustedSecurityContext: init.trustedSecurityContext,
@@ -1607,7 +1618,7 @@ export class DirectModeClient {
       }
     }
     const transactionExact =
-      await this.#createExactTransaction(transactionRequest);
+      await this.#createExactTransaction(transactionRequest, context.signal);
     this.#assertExactResult(transactionExact, transactionRequest);
     const identity = transactionExact.payerAddress
       ? undefined
@@ -1742,6 +1753,7 @@ export class DirectModeClient {
 
   async #createExactTransaction(
     request: ExactPaymentRequest,
+    signal?: AbortSignal,
   ): Promise<ExactTransactionPaymentResult> {
     if (request.profile === "hash-chain-additive") {
       const provider = this.#options.fundingProvider;
@@ -1757,6 +1769,7 @@ export class DirectModeClient {
       const grant = await provider.claimHashChainGrant({
         network: "kaspa:testnet-10", head, requestHash: request.requestHash,
         payerPublicKey: identity.publicKey, resourceUrl: request.resourceUrl,
+        signal,
         destinationPolicy: this.#options.hashChainGrantDestinationPolicy!,
       });
       assertDeliveredHashChainGrant(grant, head);
@@ -3896,6 +3909,35 @@ function canonicalRequestUrl(url: string): string {
       "request URL must be absolute outside a browser context",
     );
   }
+}
+
+function assertPaidFetchDestination(
+  input: string, canonical: string, allowedOrigins?: readonly string[],
+): void {
+  const fail = (message: string): never => {
+    throw new KaspaX402Error("invalid_kaspa_x402_payload", message);
+  };
+  const url = new URL(canonical);
+  const original = new URL(input, canonical);
+  if (url.protocol !== "https:") fail("paidFetch requires HTTPS");
+  if (original.username || original.password || original.hash)
+    fail("paidFetch destination must not contain credentials or fragments");
+  const hostname = url.hostname.toLowerCase();
+  if (hostname === "localhost" || hostname.endsWith(".localhost") ||
+      hostname.endsWith(".local") || hostname.endsWith(".internal"))
+    fail("paidFetch does not accept local network destinations");
+  if (hostname.startsWith("[") || /^(?:\d{1,3}\.){3}\d{1,3}$/.test(hostname))
+    fail("paidFetch does not accept literal IP destinations");
+  if (!allowedOrigins?.length || allowedOrigins.length > 64 ||
+      !allowedOrigins.some((origin) => {
+        try {
+          const allowed = new URL(origin);
+          return allowed.protocol === "https:" && !allowed.username &&
+            !allowed.password && !allowed.hash && !allowed.search &&
+            allowed.pathname === "/" && allowed.origin === url.origin &&
+            origin.replace(/\/$/, "") === allowed.origin;
+        } catch { return false; }
+      })) fail("paidFetch destination is not explicitly allowlisted");
 }
 
 function canonicalPaymentContext(

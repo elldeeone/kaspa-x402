@@ -1,7 +1,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { schnorr } from "@noble/curves/secp256k1.js";
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 import { hashChainHeadScriptPublicKey, parseHashChainHeadRedeemScript } from "@kaspa-x402/covenant";
 import { claimHashChainGrantViaHttp, signHashChainExactTransaction } from "../src/index.js";
 
@@ -178,5 +178,107 @@ describe("hash-chain payer signing and HTTP grant claim", () => {
       new Response(JSON.stringify(base.grant), {
         headers: { "cache-control": "no-store" },
       }))).resolves.toMatchObject({ grantId: base.grant.grantId });
+  });
+
+  it("bounds declared and streamed grant bodies before parsing", async () => {
+    const base = request();
+    const claim = { network: "kaspa:testnet-10" as const, head: base.hashChainHead,
+      resourceUrl: base.resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] } };
+    const sign = () => "00".repeat(64);
+    await expect(claimHashChainGrantViaHttp(claim, sign, async () => {
+      const response = new Response(new ReadableStream({ pull(controller) { controller.enqueue(new Uint8Array([123, 125])); controller.close(); } }),
+        { headers: { "cache-control": "no-store", "content-length": "1000000" } });
+      return response;
+    })).rejects.toThrow(/length|large|limit|bytes/i);
+    let cancelled = false;
+    await expect(claimHashChainGrantViaHttp(claim, sign, async () =>
+      new Response(new ReadableStream({
+        start(controller) { controller.enqueue(new Uint8Array(100_000)); },
+        cancel() { cancelled = true; },
+      }), { headers: { "cache-control": "no-store" } }),
+    )).rejects.toThrow(/large|limit|bytes/i);
+    expect(cancelled).toBe(true);
+  });
+
+  it("rejects malformed UTF-8 and incomplete grant schemas", async () => {
+    const base = request();
+    const claim = { network: "kaspa:testnet-10" as const, head: base.hashChainHead,
+      resourceUrl: base.resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] } };
+    await expect(claimHashChainGrantViaHttp(claim, () => "00".repeat(64), async () =>
+      new Response(new Uint8Array([0xff]), { headers: { "cache-control": "no-store" } }),
+    )).rejects.toThrow();
+    await expect(claimHashChainGrantViaHttp(claim, () => "00".repeat(64), async () =>
+      new Response(JSON.stringify({ ...base.grant, extra: true }),
+        { headers: { "cache-control": "no-store" } }),
+    )).rejects.toThrow(/grant|schema|invalid/i);
+  });
+
+  it("cancels an endless grant at the mandatory deadline and on caller abort", async () => {
+    const base = request();
+    const controller = new AbortController();
+    const claim = { network: "kaspa:testnet-10" as const, head: base.hashChainHead,
+      resourceUrl: base.resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] },
+      signal: controller.signal };
+    let cancelled = 0;
+    let markStarted!: () => void;
+    const started = new Promise<void>((resolve) => { markStarted = resolve; });
+    const endless = async () => {
+      markStarted();
+      return new Response(new ReadableStream({
+        cancel() { cancelled += 1; },
+      }), { headers: { "cache-control": "no-store" } });
+    };
+    const pending = claimHashChainGrantViaHttp(claim, () => "00".repeat(64), endless);
+    await started;
+    controller.abort(new Error("caller stopped"));
+    await expect(pending).rejects.toThrow("caller stopped");
+    expect(cancelled).toBe(1);
+
+    vi.useFakeTimers();
+    try {
+      const deadline = claimHashChainGrantViaHttp({ ...claim, signal: undefined },
+        () => "00".repeat(64), endless);
+      const rejected = expect(deadline).rejects.toThrow("deadline exceeded");
+      await vi.advanceTimersByTimeAsync(10_000);
+      await rejected;
+      expect(cancelled).toBe(2);
+    } finally { vi.useRealTimers(); }
+  });
+
+  it("rejects a pre-aborted grant before waiting on a stalled signer", async () => {
+    const base = request();
+    const controller = new AbortController();
+    controller.abort(new Error("caller stopped before claim"));
+    let fetches = 0;
+    const claim = claimHashChainGrantViaHttp({
+      network: "kaspa:testnet-10", head: base.hashChainHead,
+      resourceUrl: base.resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] },
+      signal: controller.signal,
+    }, () => new Promise<string>(() => undefined), async () => {
+      fetches++;
+      return new Response("{}");
+    });
+    await expect(Promise.race([
+      claim,
+      new Promise<never>((_resolve, reject) =>
+        setTimeout(() => reject(new Error("grant did not promptly reject")), 100)),
+    ])).rejects.toThrow("caller stopped before claim");
+    expect(fetches).toBe(0);
+  });
+
+  it("rejects an over-depth grant JSON below the byte cap", async () => {
+    const base = request();
+    const claim = { network: "kaspa:testnet-10" as const, head: base.hashChainHead,
+      resourceUrl: base.resourceUrl, requestHash: "bb".repeat(32), payerPublicKey,
+      destinationPolicy: { allowedOrigins: ["https://api.example.test"] } };
+    let nested: unknown = base.grant;
+    for (let index = 0; index < 40; index += 1) nested = { next: nested };
+    await expect(claimHashChainGrantViaHttp(claim, () => "00".repeat(64), async () =>
+      new Response(JSON.stringify(nested), { headers: { "cache-control": "no-store" } }),
+    )).rejects.toThrow(/depth/i);
   });
 });

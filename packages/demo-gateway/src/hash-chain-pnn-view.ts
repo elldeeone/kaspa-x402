@@ -32,7 +32,7 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     signal?.throwIfAborted();
     const addresses = [addressForScriptPublicKey(script, "kaspa:testnet-10")];
     if (claim) addresses.push(addressForScriptPublicKey(`000020${claim.payerPublicKey}ac`, "kaspa:testnet-10"));
-    const snapshot = await this.pnn.snapshotHashChainUtxos(addresses);
+    const snapshot = await this.pnn.snapshotHashChainUtxos(addresses, signal);
     signal?.throwIfAborted();
     const matching = snapshot.utxos.filter((item) => sameOutpoint(item.outpoint, outpoint));
     if (matching.length > 1) throw new Error("PNN returned duplicate head UTXOs");
@@ -71,7 +71,7 @@ export class HashChainPnnView implements ExactTransactionVerifier {
         const cached = this.#accepted(id);
         if (cached) return await this.isSelected(id, { signal }) ? cached.transaction : null;
         if (!snapshot) return null;
-        const accepted = await this.pnn.findHashChainPayment(id, snapshot.checkpoint);
+        const accepted = await this.pnn.findHashChainPayment(id, snapshot.checkpoint, signal);
         signal?.throwIfAborted();
         if (accepted) this.storage.sql.exec(
           "INSERT OR IGNORE INTO hash_chain_acceptance(transaction_id, acceptance) VALUES(?, ?)", id, JSON.stringify(accepted));
@@ -84,7 +84,7 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     signal?.throwIfAborted();
     const accepted = this.#accepted(id);
     if (!accepted) return false;
-    await this.pnn.confirmAcceptedTransaction(accepted.evidence, 1);
+    await this.pnn.confirmAcceptedTransaction(accepted.evidence, 1, signal);
     signal?.throwIfAborted();
     return true;
   }

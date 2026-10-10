@@ -5,11 +5,6 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { unstable_readConfig } from "wrangler";
 
-import {
-  decodePaymentRequiredHeader,
-  ESCROW_BINDING_ID,
-  ESCROW_TEMPLATE_ID,
-} from "../protocol/packages/core/dist/index.js";
 import { readBoundedResponseText } from "../protocol/scripts/read-bounded-response.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -59,8 +54,8 @@ const worker = new Miniflare(convertV4MiniflareOptions
 
 try {
   const missing = await getJson(`${base}/batch`);
-  assert(missing.status === 503 && missing.body.error === "quote_unavailable",
-    "missing cached DAA did not fail closed");
+  assert(missing.status === 503 && missing.body.error === "payment_transport_unavailable",
+    "Worker without bounded PNN transport advertised a paid route");
   const bindings = await worker.getBindings();
   const namespace = bindings.GATEWAY_STATE;
   const state = namespace.get(namespace.idFromName("demo-gateway-state-v2"));
@@ -90,106 +85,38 @@ async function smokeGateway(baseUrl) {
   const supported = await getJson(`${baseUrl}/supported`);
   const exact = await getJson(`${baseUrl}/exact`);
   const batch = await getJson(`${baseUrl}/batch`);
-  const exactRequired = exact.status === 402
-    ? decodePaymentRequiredHeader(exact.headers.get("PAYMENT-REQUIRED")) : undefined;
-  const batchRequired = batch.status === 402
-    ? decodePaymentRequiredHeader(batch.headers.get("PAYMENT-REQUIRED")) : undefined;
-  const unsupportedHeader = btoa(
-    JSON.stringify({
-      x402Version: 2,
-      accepted: { scheme: "evm", network: "eip155:1" },
-      payload: {},
-    }),
-  );
   const head = await smokeFetch(`${baseUrl}/batch`, { method: "HEAD" });
-  const unsignedPnnReads = pnnReads;
-  assert(unsignedPnnReads === 0, "unsigned quotes performed a PNN read");
   const unsupported = await getJson(`${baseUrl}/batch`, {
-    headers: { "PAYMENT-SIGNATURE": unsupportedHeader },
+    headers: { "PAYMENT-SIGNATURE": btoa(JSON.stringify({
+      x402Version: 2, accepted: { scheme: "evm", network: "eip155:1" }, payload: {},
+    })) },
   });
-  const correctiveRequired = unsupported.status === 402
-    ? decodePaymentRequiredHeader(unsupported.headers.get("PAYMENT-REQUIRED")) : undefined;
-
-  assert(
-    health.status === 200 && health.body.ok === true,
-    "health endpoint failed",
-  );
-  assert(health.body.enabled === true, "health did not report enabled gateway");
-  assert(
-    health.body.releaseVersion === "1.0.0-rc.2",
-    `unexpected release ${health.body.releaseVersion}`,
-  );
-  assert(exact.status === 402, `exact quote failed with ${exact.status}`);
-  assert(exactRequired?.resource?.url === `${baseUrl}/exact`, "exact resource changed");
-  assert(exactRequired?.accepts[0]?.scheme === "exact" &&
-    exactRequired.accepts[0].amount === "20000000" &&
-    exactRequired.accepts[0].maxTimeoutSeconds === 300 &&
-    exactRequired.accepts[0].extra?.binding === "kaspa-exact-v2" &&
-    exactRequired.accepts[0].extra?.profile === "standard-native",
-    "exact offer terms changed");
-  assert(batch.status === 402, `batch quote failed with ${batch.status}`);
-  assert(batchRequired?.resource?.url === `${baseUrl}/batch`, "batch resource changed");
-  assert(batchRequired?.accepts[0]?.scheme === "batch-settlement" &&
-    batchRequired.accepts[0].amount === "500" &&
-    batchRequired.accepts[0].maxTimeoutSeconds === 300 &&
-    batchRequired.accepts[0].extra?.binding === ESCROW_BINDING_ID &&
-    batchRequired.accepts[0].extra?.templateId === ESCROW_TEMPLATE_ID &&
-    batchRequired.accepts[0].extra?.claimReserveSompi === "10000000" &&
-    batchRequired.accepts[0].extra?.minDepositSompi === "20000000" &&
-    batchRequired.accepts[0].extra?.refundTimeoutDaa === "37000",
-    "batch offer terms changed");
-  assert(unsupported.status === 402 && unsupported.body.error === "unsupported_scheme",
-    "unsupported signed request did not receive a corrective offer");
-  assert(correctiveRequired?.error === "unsupported_scheme" &&
-    correctiveRequired.accepts[0]?.scheme === "batch-settlement" &&
-    correctiveRequired.accepts[0]?.extra?.binding === ESCROW_BINDING_ID,
-    "unsupported payment correction did not contain batch offer terms");
-  assert(head.status === 402, `expected HEAD 402, got ${head.status}`);
-  assert(head.headers.has("PAYMENT-REQUIRED") && (await head.text()) === "",
-    "HEAD omitted payment terms or returned a body");
-  assert(
-    supported.body.enabled === true,
-    "supported endpoint did not report enabled gateway",
-  );
-  assert(
-    Array.isArray(supported.body.kinds) && supported.body.kinds.length === 2,
-    "supported kinds changed",
-  );
-  const supportedBatch = supported.body.kinds.find(
-    (kind) => kind.scheme === "batch-settlement",
-  );
-  assert(
-    supportedBatch?.extra?.binding === ESCROW_BINDING_ID &&
-      supportedBatch?.extra?.templateId === ESCROW_TEMPLATE_ID,
-    "supported endpoint did not expose the v1 RC2 KIP-20 batch kind",
-  );
-
+  assert(health.status === 200 && health.body.ok === true &&
+    health.body.enabled === true && health.body.releaseVersion === "1.0.0-rc.2",
+    "health endpoint failed");
+  assert(supported.status === 200 && supported.body.enabled === true &&
+    Array.isArray(supported.body.kinds) && supported.body.kinds.length === 0,
+    "Worker advertised paid support without bounded PNN transport");
+  for (const [name, response] of [["exact", exact], ["batch", batch],
+    ["signed batch", unsupported]]) {
+    assert(response.status === 503 &&
+      response.body.error === "payment_transport_unavailable" &&
+      !response.headers.has("PAYMENT-REQUIRED"),
+    `${name} advertised an unusable payment route`);
+  }
+  assert(head.status === 503 && !head.headers.has("PAYMENT-REQUIRED") &&
+    (await head.text()) === "", "HEAD advertised unusable payment terms");
+  assert(pnnReads === 0, "unavailable paid routes performed PNN reads");
   return {
     url: baseUrl,
-    health: {
-      releaseVersion: health.body.releaseVersion,
-      chainBroadcastMode: health.body.chainBroadcastMode,
-    },
-    supported: supported.body.kinds.map(
-      (kind) => `${kind.scheme}:${kind.network}`,
-    ),
-    exact: {
-      status: exact.status,
-      profile: exactRequired.accepts[0].extra.profile,
-      amount: exactRequired.accepts[0].amount,
-      binding: exactRequired.accepts[0].extra.binding,
-    },
-    batch: {
-      status: batch.status,
-      amount: batchRequired.accepts[0].amount,
-      binding: batchRequired.accepts[0].extra.binding,
-      templateId: batchRequired.accepts[0].extra.templateId,
-      claimReserveSompi: batchRequired.accepts[0].extra.claimReserveSompi,
-      refundTimeoutDaa: batchRequired.accepts[0].extra.refundTimeoutDaa,
-    },
-    unsupported: unsupported.body.error,
+    health: { releaseVersion: health.body.releaseVersion,
+      chainBroadcastMode: health.body.chainBroadcastMode },
+    supported: supported.body.kinds,
+    exact: { status: exact.status, error: exact.body.error },
+    batch: { status: batch.status, error: batch.body.error },
+    unsupported: { status: unsupported.status, error: unsupported.body.error },
     headStatus: head.status,
-    pnnReadsAfterUnsignedQuotes: unsignedPnnReads,
+    pnnReads,
   };
 }
 

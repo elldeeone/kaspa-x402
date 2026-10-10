@@ -162,6 +162,7 @@ describe("gateway config", () => {
       readGatewayConfig({
         ...BASE_ENV,
         KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
+        KASPA_X402_ALLOW_INSECURE_LOOPBACK: "true",
         KASPA_X402_PNN_ENDPOINTS:
           "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json, ws://127.0.0.1:17210",
         KASPA_X402_PNN_TIMEOUT_MS: "20000",
@@ -171,7 +172,7 @@ describe("gateway config", () => {
       chainBroadcastMode: "pnn",
       pnnEndpoints: [
         "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json",
-        "ws://127.0.0.1:17210",
+        "ws://127.0.0.1:17210/",
       ],
       pnnTimeoutMs: 20000,
       pnnAttempts: 3,
@@ -198,7 +199,24 @@ describe("gateway config", () => {
         KASPA_X402_PNN_ENDPOINTS:
           "ws://example.test/kaspa/testnet-10/wrpc/json",
       }),
-    ).toThrow("KASPA_X402_PNN_ENDPOINTS must use wss except for localhost");
+    ).toThrow("Kaspa pnn endpoint must use wss:");
+  });
+
+  it("requires explicit literal-loopback development for cleartext PNN", () => {
+    expect(() => readGatewayConfig({ ...BASE_ENV,
+      KASPA_X402_PNN_ENDPOINTS: "ws://127.0.0.1:17210",
+    })).toThrow();
+    for (const endpoint of ["ws://localhost:17210", "ws://127.0.0.2:17210",
+      "ws://my-localhost.example.test:17210"]) {
+      expect(() => readGatewayConfig({ ...BASE_ENV,
+        KASPA_X402_ALLOW_INSECURE_LOOPBACK: "true",
+        KASPA_X402_PNN_ENDPOINTS: endpoint,
+      })).toThrow();
+    }
+    expect(readGatewayConfig({ ...BASE_ENV,
+      KASPA_X402_ALLOW_INSECURE_LOOPBACK: "true",
+      KASPA_X402_PNN_ENDPOINTS: "ws://127.0.0.1:17210",
+    }).pnnEndpoints).toEqual(["ws://127.0.0.1:17210/"]);
   });
 
   it("rejects credential-bearing and fragmented PNN endpoints", () => {
@@ -222,6 +240,6 @@ describe("gateway config", () => {
         ...BASE_ENV,
         KASPA_X402_PNN_ENDPOINTS: "wss://user:secret@pnn.example.test",
       }),
-    ).toThrow("KASPA_X402_PNN_ENDPOINTS must not contain credentials");
+    ).toThrow("Kaspa pnn endpoint must not contain credentials");
   });
 });

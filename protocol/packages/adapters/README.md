@@ -33,6 +33,15 @@ The evidence object keeps mutable request-local snapshots. It can serve both
 `VerifiedKaspaChainProvider` and exact verification. RPC confirms network ID,
 acceptance and selected-chain continuity; it is a trust boundary, not a light client.
 The PNN adapter currently requires Testnet-10 and full transaction/UTXO RPC data.
+It requires WSS and a transport that caps frames and reassembled messages before
+delivery. Node hosts can use `createNodeBoundedPnnWebSocket` from
+`@kaspa-x402/adapters/pnn-node` as `boundedWebSocketFactory`. Direct browser and
+Worker WebSockets do not expose this limit and therefore fail closed; a Worker
+gateway needs a controlled bounded proxy before PNN routes can operate.
+An injected `rpcFactory` is also a trusted transport authority and must carry
+the `kaspa-x402:bounded-pnn-rpc:v1` symbol to attest to equivalent limits.
+Local `ws:`/`http:` node URLs require `allowInsecureLoopback: true` and a literal
+`127.0.0.1` or `[::1]` address. REST uses HTTPS by default and rejects redirects.
 
 Implement `PnnEvidenceStore` to persist funding origins, receipts and discovery
 checkpoints. Save records atomically, preserve their original funding snapshot,

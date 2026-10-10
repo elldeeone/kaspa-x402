@@ -59,6 +59,7 @@ import {
   scriptPublicKeyForAddress,
   verifyKaspaSchnorrDigest,
 } from "./kaspa-native.js";
+import { trustedNodeUrl } from "./trusted-node-url.js";
 
 export type ChainEvidenceClient = Pick<KaspaRestClient, "getTransaction" | "getUtxosForAddress" | "getVirtualDaaScore" | "observeAcceptedUtxo" | "acceptedTransactionEvidence" | "submitTransaction" | "waitForTransactionAccepted">;
 
@@ -116,6 +117,9 @@ type PnnRpcFactory = (endpoint: string, timeoutMs: number) => PnnRpc;
 
 type KaspaPnnClientOptions = {
   endpoints: string[];
+  allowInsecureLoopback?: boolean;
+  /** Must enforce frame and reassembled-message limits before message delivery. */
+  boundedWebSocketFactory?: (endpoint: string, maxBytes: number) => WebSocket;
   timeoutMs?: number;
   attempts?: number;
   rpcFactory?: PnnRpcFactory;
@@ -743,12 +747,25 @@ export class KaspaPnnClient {
   readonly #sleep: SleepLike;
 
   constructor(options: KaspaPnnClientOptions) {
-    this.#endpoints = options.endpoints;
+    if (options.rpcFactory &&
+        (options.rpcFactory as unknown as Record<symbol, unknown>)[
+          Symbol.for("kaspa-x402:bounded-pnn-rpc:v1")] !== true)
+      throw new Error("Kaspa PNN RPC factory lacks bounded transport authority");
+    if (options.boundedWebSocketFactory &&
+        (options.boundedWebSocketFactory as unknown as Record<symbol, unknown>)[
+          Symbol.for("kaspa-x402:bounded-pnn-websocket:v1")] !== true)
+      throw new Error("Kaspa PNN transport lacks a pre-delivery limit authority");
+    this.#endpoints = options.endpoints.map((endpoint) =>
+      trustedNodeUrl(endpoint, "pnn", options.allowInsecureLoopback).href);
     this.#timeoutMs = options.timeoutMs ?? 15_000;
     this.#attempts = options.attempts ?? 2;
     this.#rpcFactory =
       options.rpcFactory ??
-      ((endpoint, timeoutMs) => new JsonPnnRpc(endpoint, timeoutMs));
+      ((endpoint, timeoutMs) => {
+        if (!options.boundedWebSocketFactory)
+          throw new Error("Kaspa PNN requires a pre-delivery bounded WebSocket transport");
+        return new JsonPnnRpc(endpoint, timeoutMs, options.boundedWebSocketFactory);
+      });
     this.#sleep = options.sleep ?? sleep;
   }
 
@@ -776,17 +793,20 @@ export class KaspaPnnClient {
     utxos: PnnUtxo[];
     checkpoint: ChainCheckpoint;
   }> {
-    return this.#withRpc(async ({ rpc, endpoint }) => {
+    return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
+      signal.throwIfAborted();
       if (!rpc.getBlockDagInfo || !rpc.getBlock) throw invalidTransaction("PNN checkpoint methods are required");
-      const checkpoint = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const checkpoint = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
       const result = await withTimeout(rpc.getUtxosByAddresses(addresses), this.#timeoutMs, "pnn snapshot hash-chain origins");
+      signal.throwIfAborted();
       if (!Array.isArray(result.entries) || result.entries.length > MAX_PNN_UTXO_ENTRIES) {
         throw invalidTransaction("PNN origin snapshot is incomplete or exceeds the UTXO limit");
       }
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(
         rpc.getBlock({ hash: checkpoint.blockHash, includeTransactions: false }), this.#timeoutMs,
         "pnn recheck origin checkpoint"), checkpoint.blockHash, "origin checkpoint");
+      signal.throwIfAborted();
       if (!sameChainCheckpoint(checkpoint, verified)) throw invalidTransaction("PNN origin checkpoint changed");
       return { utxos: result.entries.map(pnnUtxo), checkpoint };
     }, signal);
@@ -797,20 +817,23 @@ export class KaspaPnnClient {
     from?: ChainCheckpoint;
     originDaaScore?: string;
   } = {}, signal?: AbortSignal): Promise<{ raw: unknown; evidence: AcceptedTransactionEvidence } | null> {
-    return this.#withRpc(async ({ rpc, endpoint }) => {
+    return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
+      signal.throwIfAborted();
       if (!rpc.getBlock || !rpc.getBlockDagInfo || !rpc.getVirtualChainFromBlock || !rpc.getVirtualChainFromBlockV2) {
         throw invalidTransaction("PNN selected-chain methods are required");
       }
-      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
       let from = options.from;
       if (!from) {
         let hash = before.blockHash;
         const deadline = Date.now() + this.#timeoutMs;
         for (let count = 0; count < 1024; count++) {
+          signal.throwIfAborted();
           if (Date.now() > deadline) throw invalidTransaction("PNN origin discovery deadline exceeded");
           const block = unwrapRecord(await withTimeout(rpc.getBlock({ hash, includeTransactions: false }),
             this.#timeoutMs, "pnn origin checkpoint"), "block");
+          signal.throwIfAborted();
           const checkpoint = pnnSelectedBlockCheckpoint({ block }, hash, "origin discovery");
           if (count > 0 && (options.originDaaScore !== undefined
             ? BigInt(checkpoint.daaScore!) < BigInt(options.originDaaScore)
@@ -823,10 +846,11 @@ export class KaspaPnnClient {
         }
         if (!from) throw invalidTransaction("PNN origin discovery exceeded the bounded history window");
       }
-      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs);
+      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
       if (!acceptingHash) return null;
       const acceptingRaw = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
         this.#timeoutMs, "pnn accepting block");
+      signal.throwIfAborted();
       const accepting = pnnSelectedBlockCheckpoint(acceptingRaw, acceptingHash, "accepting block");
       const parent = hashValue(requiredRecord(unwrapRecord(acceptingRaw, "block").verboseData,
         "PNN accepting block data").selectedParentHash, "PNN accepting block parent");
@@ -834,10 +858,11 @@ export class KaspaPnnClient {
       if (distance <= 1n) return null;
       if (distance > BigInt(Number.MAX_SAFE_INTEGER)) throw invalidTransaction("PNN acceptance distance exceeds the safe bound");
       const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n),
-        this.#timeoutMs, "Full", acceptingHash);
+        this.#timeoutMs, "Full", acceptingHash, undefined, signal);
       if (selected.removedChainBlockHashes.includes(from.blockHash)) throw invalidTransaction("PNN origin checkpoint left the selected chain");
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
         this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
+      signal.throwIfAborted();
       if (!sameChainCheckpoint(before, verified)) throw invalidTransaction("PNN acceptance checkpoint changed");
       const raw = selected.addedChainBlocks.find(block => block.blockHash === acceptingHash)?.transactions
         .find(transaction => pnnAcceptedTransactionId(transaction) === transactionId.toLowerCase());
@@ -849,20 +874,22 @@ export class KaspaPnnClient {
   }
 
   /** Read the accepted transaction itself, including its covenant successor. */
-  async findHashChainPayment(transactionId: string, from: ChainCheckpoint): Promise<{
+  async findHashChainPayment(transactionId: string, from: ChainCheckpoint, signal?: AbortSignal): Promise<{
     transaction: HashChainSelectedTransaction;
     evidence: AcceptedTransactionEvidence;
   } | null> {
-    return this.#withRpc(async ({ rpc, endpoint }) => {
+    return this.#withRpc(async ({ rpc, endpoint, signal: active }) => {
       await this.#checkedServerInfo(rpc, endpoint);
+      active.throwIfAborted();
       if (!rpc.getBlockDagInfo || !rpc.getBlock || !rpc.getVirtualChainFromBlockV2 || !rpc.getVirtualChainFromBlock) {
         throw invalidTransaction("PNN selected-chain V2 methods are required");
       }
-      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
-      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs);
+      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
+      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, active);
       if (!acceptingHash) return null;
       const rawAccepting = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
         this.#timeoutMs, "pnn read hash-chain accepting block");
+      active.throwIfAborted();
       const accepting = pnnSelectedBlockCheckpoint(rawAccepting, acceptingHash, "hash-chain accepting block");
       const distance = BigInt(before.blueScore) - BigInt(accepting.blueScore);
       if (distance <= 1n) return null;
@@ -870,11 +897,12 @@ export class KaspaPnnClient {
       const verbose = requiredRecord(unwrapRecord(rawAccepting, "block").verboseData, "PNN accepting block verbose data");
       const parent = hashValue(verbose.selectedParentHash, "PNN accepting block selected parent");
       // Limit full transaction data to the accepting block, as in cached-payment confirmation.
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n), this.#timeoutMs, "High", acceptingHash);
-      const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, Number(distance - 1n), this.#timeoutMs, "High", acceptingHash, undefined, active);
+      const after = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(
         rpc.getBlock({ hash: before.blockHash, includeTransactions: false }), this.#timeoutMs,
         "pnn recheck hash-chain checkpoint"), before.blockHash, "hash-chain checkpoint");
+      active.throwIfAborted();
       if (selected.removedChainBlockHashes.includes(from.blockHash) || !sameChainCheckpoint(before, verified) ||
         BigInt(after.blueScore) < BigInt(before.blueScore)) throw invalidTransaction("PNN hash-chain checkpoint changed");
       for (const block of selected.addedChainBlocks) {
@@ -899,7 +927,7 @@ export class KaspaPnnClient {
         };
       }
       return null;
-    });
+    }, signal);
   }
 
   async submitTransaction(
@@ -954,8 +982,9 @@ export class KaspaPnnClient {
     if (!Number.isSafeInteger(request.minConfirmationCount) || request.minConfirmationCount < 1) {
       throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
     }
-    return this.#withRpc(async ({ rpc, endpoint }) => {
+    return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
+      signal.throwIfAborted();
       if (
         !rpc.getVirtualChainFromBlockV2 ||
         !rpc.getBlockDagInfo ||
@@ -966,7 +995,8 @@ export class KaspaPnnClient {
         );
       }
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        signal.throwIfAborted();
+        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
         const selected = await pnnSelectedChainFromCheckpoint(
           rpc,
           request.lineage.checkpoint.blockHash,
@@ -975,13 +1005,15 @@ export class KaspaPnnClient {
           "High",
           before.blockHash,
           MAX_LINEAGE_REMOVED_BLOCKS,
+          signal,
         );
-        const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        const after = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
         const rawVerifiedCheckpoint = await withTimeout(
           rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
           this.#timeoutMs,
           "pnn recheck lineage checkpoint",
         );
+        signal.throwIfAborted();
         const verifiedCheckpoint = pnnSelectedBlockCheckpoint(
           rawVerifiedCheckpoint,
           before.blockHash,
@@ -998,7 +1030,7 @@ export class KaspaPnnClient {
       throw invalidTransaction(
         "Kaspa PNN lineage proof checkpoint changed during every bounded read",
       );
-    });
+    }, request.signal);
   }
 
   async confirmAcceptedTransaction(
@@ -1009,8 +1041,9 @@ export class KaspaPnnClient {
     if (!Number.isSafeInteger(minConfirmationCount) || minConfirmationCount < 1) {
       throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
     }
-    return this.#withRpc(async ({ rpc, endpoint }) => {
+    return this.#withRpc(async ({ rpc, endpoint, signal: active }) => {
       await this.#checkedServerInfo(rpc, endpoint);
+      active.throwIfAborted();
       if (
         !rpc.getVirtualChainFromBlockV2 ||
         !rpc.getBlockDagInfo ||
@@ -1021,7 +1054,8 @@ export class KaspaPnnClient {
         );
       }
       for (let attempt = 0; attempt < 3; attempt += 1) {
-        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+        active.throwIfAborted();
+        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
         const rawAcceptingBlock = await withTimeout(
           rpc.getBlock({
             hash: evidence.acceptingBlockHash,
@@ -1030,6 +1064,7 @@ export class KaspaPnnClient {
           this.#timeoutMs,
           "pnn getBlock accepting block",
         );
+        active.throwIfAborted();
         const acceptingBlock = unwrapRecord(rawAcceptingBlock, "block");
         const verbose = requiredRecord(
           acceptingBlock.verboseData ?? acceptingBlock.verbose_data,
@@ -1070,7 +1105,7 @@ export class KaspaPnnClient {
         const confirmationDistance =
           BigInt(before.blueScore) - BigInt(acceptingBlockBlueScore);
         if (confirmationDistance <= BigInt(minConfirmationCount)) {
-          const after = await pnnChainCheckpoint(rpc, this.#timeoutMs);
+          const after = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
           if (sameChainCheckpoint(before, after)) {
             throw invalidTransaction(
               "Kaspa PNN accepting block has not reached the configured selected-chain depth",
@@ -1095,6 +1130,8 @@ export class KaspaPnnClient {
           this.#timeoutMs,
           "Low",
           evidence.acceptingBlockHash,
+          undefined,
+          active,
         );
         const proofBlock = selected.addedChainBlocks.find(
           (block) => block.blockHash === evidence.acceptingBlockHash.toLowerCase(),
@@ -1139,6 +1176,7 @@ export class KaspaPnnClient {
               "pnn recheck proof checkpoint",
             ),
           ]);
+        active.throwIfAborted();
         const verifiedAcceptingBlock = pnnSelectedBlockCheckpoint(
           rawVerifiedAcceptingBlock,
           evidence.acceptingBlockHash,
@@ -1171,50 +1209,94 @@ export class KaspaPnnClient {
   }
 
   async #withRpc<T>(
-    fn: (input: { rpc: PnnRpc; endpoint: string }) => Promise<T>,
+    fn: (input: { rpc: PnnRpc; endpoint: string; signal: AbortSignal }) => Promise<T>,
     signal?: AbortSignal,
   ): Promise<T> {
-    signal?.throwIfAborted();
+    const total = AbortSignal.timeout(55_000);
+    const parent = signal ? AbortSignal.any([signal, total]) : total;
+    parent.throwIfAborted();
     if (this.#endpoints.length === 0)
       throw invalidTransaction("Kaspa PNN endpoints are not configured");
     const errors: string[] = [];
     for (const endpoint of this.#endpoints) {
-      signal?.throwIfAborted();
+      parent.throwIfAborted();
       const rpc = this.#rpcFactory(endpoint, this.#timeoutMs);
+      const attempt = new AbortController();
+      const active = AbortSignal.any([parent, attempt.signal]);
       const endpointLabel = pnnEndpointLabel(endpoint);
+      const rawInFlight = new Set<Promise<unknown>>();
+      const trackedRpc = new Proxy(rpc, {
+        get(target, property) {
+          const method = Reflect.get(target, property, target);
+          if (property === "disconnect" || typeof method !== "function") return method;
+          return (...args: unknown[]) => {
+            const raw = Reflect.apply(method, target, args);
+            const settled = Promise.resolve(raw);
+            rawInFlight.add(settled);
+            void settled.then(
+              () => { rawInFlight.delete(settled); },
+              () => { rawInFlight.delete(settled); },
+            );
+            return raw;
+          };
+        },
+      });
       let onAbort: (() => void) | undefined;
-      const aborted = signal && new Promise<never>((_resolve, reject) => {
+      let disconnecting: Promise<void> | undefined;
+      let workPromise: Promise<T> | undefined;
+      const disconnect = () => {
+        if (!disconnecting) {
+          try { disconnecting = Promise.resolve(rpc.disconnect()); }
+          catch (error) { disconnecting = Promise.reject(error); }
+        }
+        return disconnecting;
+      };
+      const aborted = new Promise<never>((_resolve, reject) => {
         onAbort = () => {
           // JsonPnnRpc closes the socket and rejects its pending reads
-          // synchronously, before the admission slot can be released.
-          try { void rpc.disconnect().catch(() => undefined); } catch { /* close best effort */ }
-          try { signal.throwIfAborted(); } catch (error) { reject(error); }
+          // synchronously; await asynchronous adapters before releasing admission.
+          // Observe rejection now; the original promise is checked in finally.
+          void disconnect().catch(() => undefined);
+          try { active.throwIfAborted(); } catch (error) { reject(error); }
         };
-        signal.addEventListener("abort", onAbort, { once: true });
-        if (signal.aborted) onAbort();
+        active.addEventListener("abort", onAbort, { once: true });
+        if (active.aborted) onAbort();
       });
       try {
         const work = async () => {
-          signal?.throwIfAborted();
+          active.throwIfAborted();
           await withTimeout(
-            rpc.connect(),
+            trackedRpc.connect(),
             this.#timeoutMs,
             `pnn connect ${endpointLabel}`,
           );
-          signal?.throwIfAborted();
-          return fn({ rpc, endpoint: endpointLabel });
+          active.throwIfAborted();
+          return fn({ rpc: trackedRpc, endpoint: endpointLabel, signal: active });
         };
-        const result = await (aborted
-          ? Promise.race([work(), aborted])
-          : work());
-        signal?.throwIfAborted();
+        workPromise = work();
+        const result = await Promise.race([workPromise, aborted]);
+        active.throwIfAborted();
         return result;
       } catch (error) {
-        signal?.throwIfAborted();
+        attempt.abort(error);
+        parent.throwIfAborted();
         errors.push(`${endpointLabel}: ${errorMessage(error)}`);
       } finally {
-        if (signal && onAbort) signal.removeEventListener("abort", onAbort);
-        if (!signal?.aborted) await rpc.disconnect().catch(() => undefined);
+        if (onAbort) active.removeEventListener("abort", onAbort);
+        try {
+          await disconnect();
+        } catch (error) {
+          // A failed disconnect cannot confirm cancellation. Keep the caller's
+          // admission occupied until the in-flight operation actually settles.
+          if (workPromise) {
+            try { await workPromise; } catch { /* The disconnect failure is decisive. */ }
+          }
+          // withTimeout may have settled workPromise before the raw RPC call.
+          await Promise.allSettled(rawInFlight);
+          throw invalidTransaction(
+            `Kaspa PNN disconnect failed at ${endpointLabel}: ${errorMessage(error)}`,
+          );
+        }
       }
     }
     throw invalidTransaction(`Kaspa PNN request failed: ${errors.join(" | ")}`);
@@ -1288,10 +1370,14 @@ export class KaspaPnnClient {
   }
 }
 
-class JsonPnnRpc implements PnnRpc {
+export class JsonPnnRpc implements PnnRpc {
   readonly #endpoint: string;
   readonly #timeoutMs: number;
+  readonly #socketFactory: (endpoint: string, maxBytes: number) => WebSocket;
   #ws: WebSocket | undefined;
+  #receivedBytes = 0;
+  #receivedMessages = 0;
+  #unsolicitedMessages = 0;
   #nextId = 1;
   readonly #pending = new Map<
     number,
@@ -1302,16 +1388,18 @@ class JsonPnnRpc implements PnnRpc {
     }
   >();
 
-  constructor(endpoint: string, timeoutMs: number) {
+  constructor(endpoint: string, timeoutMs: number,
+    socketFactory: (endpoint: string, maxBytes: number) => WebSocket) {
     this.#endpoint = endpoint;
     this.#timeoutMs = timeoutMs;
+    this.#socketFactory = socketFactory;
   }
 
   connect(): Promise<void> {
-    if (this.#ws && this.#ws.readyState === WebSocket.OPEN)
+    if (this.#ws && this.#ws.readyState === 1)
       return Promise.resolve();
     return new Promise((resolve, reject) => {
-      const ws = new WebSocket(this.#endpoint);
+      const ws = this.#socketFactory(this.#endpoint, MAX_PNN_MESSAGE_BYTES);
       this.#ws = ws;
       let settled = false;
       const cleanup = () => {
@@ -1344,7 +1432,7 @@ class JsonPnnRpc implements PnnRpc {
           this.#rejectPending("pnn websocket closed"),
         );
         ws.addEventListener("error", () =>
-          this.#rejectPending("pnn websocket error"),
+          this.#failConnection("pnn websocket error"),
         );
         resolve();
       };
@@ -1372,8 +1460,8 @@ class JsonPnnRpc implements PnnRpc {
     this.#rejectPending("pnn websocket disconnected");
     if (
       this.#ws &&
-      this.#ws.readyState !== WebSocket.CLOSED &&
-      this.#ws.readyState !== WebSocket.CLOSING
+      this.#ws.readyState !== 3 &&
+      this.#ws.readyState !== 2
     ) {
       this.#ws.close();
     }
@@ -1429,7 +1517,7 @@ class JsonPnnRpc implements PnnRpc {
 
   #request<T>(method: string, params: unknown): Promise<T> {
     const ws = this.#ws;
-    if (!ws || ws.readyState !== WebSocket.OPEN)
+    if (!ws || ws.readyState !== 1)
       return Promise.reject(new Error("pnn websocket is not connected"));
     const id = this.#nextId;
     this.#nextId += 1;
@@ -1449,26 +1537,31 @@ class JsonPnnRpc implements PnnRpc {
 
   #handleMessage(event: MessageEvent): void {
     if (typeof event.data !== "string") {
-      this.#rejectPending("pnn websocket returned a non-text message");
+      this.#failConnection("pnn websocket returned a non-text message");
       return;
     }
-    if (
-      event.data.length > MAX_PNN_MESSAGE_BYTES ||
-      new TextEncoder().encode(event.data).byteLength > MAX_PNN_MESSAGE_BYTES
-    ) {
-      this.#rejectPending("pnn websocket response exceeded the size limit");
+    const bytes = boundedUtf8Length(event.data, MAX_PNN_MESSAGE_BYTES);
+    this.#receivedMessages += 1;
+    this.#receivedBytes += bytes;
+    if (bytes > MAX_PNN_MESSAGE_BYTES || this.#receivedBytes > 16 * MAX_PNN_MESSAGE_BYTES ||
+        this.#receivedMessages > 256) {
+      this.#failConnection("pnn websocket response exceeded the connection limit");
       return;
     }
     const message = parseJson(event.data);
     if (!isRecord(message)) {
-      this.#rejectPending("pnn websocket returned malformed JSON");
+      this.#failConnection("pnn websocket returned malformed JSON");
       return;
     }
     const id = typeof message.id === "number" ? message.id : undefined;
-    if (id === undefined) return;
-    const pending = this.#pending.get(id);
-    if (!pending) return;
-    this.#pending.delete(id);
+    const pending = id === undefined ? undefined : this.#pending.get(id);
+    if (!pending) {
+      this.#unsolicitedMessages += 1;
+      if (this.#unsolicitedMessages > 4)
+        this.#failConnection("pnn websocket sent unsolicited messages");
+      return;
+    }
+    this.#pending.delete(id!);
     clearTimeout(pending.timeoutId);
     if (message.error !== undefined) {
       pending.reject(new Error(pnnErrorMessage(message.error)));
@@ -1484,6 +1577,25 @@ class JsonPnnRpc implements PnnRpc {
       pending.reject(new Error(message));
     }
   }
+
+  #failConnection(message: string): void {
+    this.#rejectPending(message);
+    try { this.#ws?.close(1009, "pnn transport limit"); } catch { /* already closed */ }
+  }
+}
+
+function boundedUtf8Length(value: string, limit: number): number {
+  let bytes = 0;
+  for (let index = 0; index < value.length && bytes <= limit; index += 1) {
+    const code = value.charCodeAt(index);
+    if (code < 0x80) bytes += 1;
+    else if (code < 0x800) bytes += 2;
+    else if (code >= 0xd800 && code <= 0xdbff && index + 1 < value.length &&
+      value.charCodeAt(index + 1) >= 0xdc00 && value.charCodeAt(index + 1) <= 0xdfff) {
+      bytes += 4; index += 1;
+    } else bytes += 3;
+  }
+  return bytes;
 }
 
 function pnnEndpointLabel(endpoint: string): string {
@@ -1991,9 +2103,12 @@ export class KaspaRestClient {
       acceptancePollMs?: number;
       maxResponseBytes?: number;
       maxUtxosPerAddress?: number;
+      allowInsecureLoopback?: boolean;
     } = {},
   ) {
-    this.#baseUrl = baseUrl.replace(/\/+$/, "");
+    const approved = trustedNodeUrl(baseUrl, "rest", options.allowInsecureLoopback);
+    if (approved.search) throw new Error("Kaspa REST base URL must not contain a query");
+    this.#baseUrl = approved.href.replace(/\/+$/, "");
     this.#fetch =
       options.fetch ?? ((input, init) => globalThis.fetch(input, init));
     this.#timeoutMs = options.timeoutMs ?? 8_000;
@@ -2319,14 +2434,20 @@ export class KaspaRestClient {
     const controller = new AbortController();
     const timeout = setTimeout(() => controller.abort(), this.#timeoutMs);
     try {
-      const response = await this.#fetch(`${this.#baseUrl}${path}`, {
+      const requestedUrl = `${this.#baseUrl}${path}`;
+      const response = await this.#fetch(requestedUrl, {
         ...init,
+        redirect: "error",
         headers: { accept: "application/json" },
         ...("headers" in init
           ? { headers: { accept: "application/json", ...init.headers } }
           : {}),
         signal: controller.signal,
       });
+      if (response.status >= 300 && response.status < 400)
+        throw invalidTransaction("Kaspa REST redirect is forbidden");
+      if (response.redirected || !response.url || response.url !== requestedUrl)
+        throw invalidTransaction("Kaspa REST response URL differs from the requested URL");
       if (response.status === 404) throw new RestNotFoundError(path);
       const text = await readBoundedResponseText(
         response,
@@ -2590,12 +2711,15 @@ function pnnUtxo(entry: unknown): PnnUtxo {
 async function pnnChainCheckpoint(
   rpc: PnnRpc,
   timeoutMs: number,
+  signal?: AbortSignal,
 ): Promise<ChainCheckpoint> {
+  signal?.throwIfAborted();
   const rawInfo = await withTimeout(
     rpc.getBlockDagInfo!(),
     timeoutMs,
     "pnn getBlockDagInfo",
   );
+  signal?.throwIfAborted();
   const info = unwrapRecord(rawInfo, "blockDagInfo");
   const sink = hashValue(info.sink, "Kaspa PNN selected-chain sink");
   const rawBlock = await withTimeout(
@@ -2603,6 +2727,7 @@ async function pnnChainCheckpoint(
     timeoutMs,
     "pnn getBlock checkpoint",
   );
+  signal?.throwIfAborted();
   const block = unwrapRecord(rawBlock, "block");
   const header = requiredRecord(
     block.header,
@@ -2678,7 +2803,9 @@ async function pnnSelectedChainFromCheckpoint(
   dataVerbosityLevel: "Low" | "High" | "Full",
   stopAfterBlockHash?: Hash32Hex,
   maxRemovedBlocks?: number,
+  signal?: AbortSignal,
 ): Promise<PnnSelectedChain> {
+  signal?.throwIfAborted();
   if (initialHash === stopAfterBlockHash) {
     return { removedChainBlockHashes: [], addedChainBlocks: [] };
   }
@@ -2695,6 +2822,7 @@ async function pnnSelectedChainFromCheckpoint(
   let responseBytes = 0;
   let startHash = initialHash;
   for (let page = 0; page < 64; page += 1) {
+    signal?.throwIfAborted();
     const raw = await withTimeout(
       rpc.getVirtualChainFromBlockV2!({
         startHash,
@@ -2704,6 +2832,7 @@ async function pnnSelectedChainFromCheckpoint(
       timeoutMs,
       "pnn getVirtualChainFromBlockV2",
     );
+    signal?.throwIfAborted();
     let encodedRaw: string | undefined;
     try {
       encodedRaw = JSON.stringify(raw);
@@ -2816,13 +2945,15 @@ async function pnnSelectedChainFromCheckpoint(
 }
 
 /** Locate acceptance using small ID lists before requesting covenant details. */
-async function pnnFindAcceptingBlock(rpc: PnnRpc, transactionId: string, initialHash: string, timeoutMs: number): Promise<string | null> {
+async function pnnFindAcceptingBlock(rpc: PnnRpc, transactionId: string, initialHash: string, timeoutMs: number, signal?: AbortSignal): Promise<string | null> {
   let startHash = initialHash;
   const seen = new Set<string>();
   let bytes = 0;
   for (let page = 0; page < 64; page++) {
+    signal?.throwIfAborted();
     const raw = await withTimeout(rpc.getVirtualChainFromBlock!({ startHash,
       includeAcceptedTransactionIds: true, minConfirmationCount: 1 }), timeoutMs, "pnn locate hash-chain acceptance");
+    signal?.throwIfAborted();
     bytes += new TextEncoder().encode(JSON.stringify(raw)).byteLength;
     if (bytes > MAX_PNN_SELECTED_CHAIN_BYTES) throw invalidTransaction("PNN acceptance ID lists exceed the byte limit");
     const response = unwrapRecord(raw, "virtualChainFromBlockResponse");

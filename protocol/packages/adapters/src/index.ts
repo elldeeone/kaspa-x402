@@ -19,3 +19,4 @@ export {
   type PnnUtxo,
 } from "./adapters.js";
 export { PnnChainEvidence, type PnnEvidenceRecord, type PnnEvidenceStore } from "./pnn-chain-evidence.js";
+export { trustedNodeUrl } from "./trusted-node-url.js";

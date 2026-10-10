@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,15 +21,21 @@ const outDir = path.join(root, SITE_DIST);
 const chrome = process.env.CHROME_BIN || findChrome();
 const demoConnectTimeoutMs = Number(process.env.KASPA_X402_BROWSER_CONNECT_TIMEOUT_MS ?? 75_000);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-chrome-"));
+const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-demo-tls-"));
+execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+  "-keyout", path.join(tlsDir, "key.pem"), "-out", path.join(tlsDir, "cert.pem"),
+  "-days", "1", "-subj", "/CN=demo.kaspa-x402.org"], { stdio: "ignore" });
 const remotePort = await openPort();
 let hashFixture;
 const server = await startServer();
-const baseUrl = `http://127.0.0.1:${server.address().port}`;
+const baseUrl = `https://demo.kaspa-x402.org:${server.address().port}`;
 hashFixture = await createHashChainDemoFixture(baseUrl);
 const chromeProcess = spawn(chrome, [
   "--headless=new",
   "--no-sandbox",
   "--disable-gpu",
+  "--ignore-certificate-errors",
+  "--host-resolver-rules=MAP demo.kaspa-x402.org 127.0.0.1",
   "--remote-debugging-address=127.0.0.1",
   `--remote-debugging-port=${remotePort}`,
   `--user-data-dir=${userDataDir}`,
@@ -52,6 +59,7 @@ try {
     maxRetries: 10,
     retryDelay: 100,
   });
+  fs.rmSync(tlsDir, { recursive: true, force: true });
 }
 
 async function waitForProcessExit(process, timeoutMs = 5_000) {
@@ -230,7 +238,7 @@ function demoExerciseExpression() {
       if (value) return value;
       await sleep(100);
     }
-    throw new Error('Timed out waiting for ' + label + '; status=' + byId('demo-status').value);
+    throw new Error('Timed out waiting for ' + label + '; status=' + byId('demo-status').value + '; hashStatus=' + byId('demo-hash-status').value);
   };
   await click('demo-init', 500);
   await waitFor(() => byId('demo-status').value.includes('SDK loaded') || byId('demo-status').value.includes('already loaded'), 'sdk load');
@@ -403,7 +411,10 @@ async function waitForLoadEvent(ws) {
 
 async function startServer() {
   if (!fs.existsSync(outDir)) throw new Error("site/dist is missing; run npm run site:build first");
-  const server = http.createServer(async (request, response) => {
+  const server = https.createServer({
+    key: fs.readFileSync(path.join(tlsDir, "key.pem")),
+    cert: fs.readFileSync(path.join(tlsDir, "cert.pem")),
+  }, async (request, response) => {
     const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
     if (url.pathname.startsWith('/hash-chain/') || url.pathname.startsWith('/__hash-demo/')) {
       try {

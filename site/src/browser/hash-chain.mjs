@@ -58,6 +58,21 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
     funding = candidates[0];
     return funding;
   }
+  const paidTransport = async (input, init) => {
+    if (firstQuote && !new Headers(init?.headers).has('PAYMENT-SIGNATURE')) {
+      firstQuote = false;
+      const response = new Response('{}', {
+        status: 402,
+        headers: { 'PAYMENT-REQUIRED': quote.header },
+      });
+      Object.defineProperty(response, 'url', { value: input });
+      return response;
+    }
+    return fetcher(input, init);
+  };
+  const boundFetchAuthority = Symbol.for('kaspa-x402:bound-paid-fetch:v1');
+  if (fetcher[boundFetchAuthority] === true)
+    Object.defineProperty(paidTransport, boundFetchAuthority, { value: true });
   const client = new DirectModeClient({
     addressCodec: { scriptPublicKeyForAddress },
     fundingProvider: {
@@ -113,18 +128,7 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
     },
     hashChainGrantDestinationPolicy: { allowedOrigins: [origin] },
     confirmationThreshold: 30,
-    fetch: async (input, init) => {
-      if (firstQuote && !new Headers(init?.headers).has('PAYMENT-SIGNATURE')) {
-        firstQuote = false;
-        const response = new Response('{}', {
-          status: 402,
-          headers: { 'PAYMENT-REQUIRED': quote.header },
-        });
-        Object.defineProperty(response, 'url', { value: input });
-        return response;
-      }
-      return fetcher(input, init);
-    },
+    fetch: paidTransport,
   });
   return {
     async run() {

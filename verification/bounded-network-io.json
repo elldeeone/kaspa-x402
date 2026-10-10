@@ -1,0 +1,279 @@
+{
+  "schema": "kaspa-x402-bounded-network-io-proof/v1",
+  "branch": "bound-network-io",
+  "baseSha": "7231e842d8ba69190ff11868554b9bf71d7c5082",
+  "headSha": "7231e842d8ba69190ff11868554b9bf71d7c5082",
+  "sourceSha256": "98a08bdf927d3ab5ddcdc6701cab596a852daf0b5d14d5611f010bde2c17a938",
+  "sourceFiles": [
+    "package-lock.json",
+    "packages/demo-gateway/README.md",
+    "packages/demo-gateway/src/config.ts",
+    "packages/demo-gateway/src/gateway.ts",
+    "packages/demo-gateway/src/hash-chain-pnn-view.ts",
+    "packages/demo-gateway/src/hash-chain-proxy.ts",
+    "packages/demo-gateway/src/hash-chain-routing.ts",
+    "packages/demo-gateway/src/hash-chain-service.ts",
+    "packages/demo-gateway/test/config.test.ts",
+    "packages/demo-gateway/test/gateway.test.ts",
+    "packages/demo-gateway/test/hash-chain-proxy.test.ts",
+    "protocol/README.md",
+    "protocol/examples/lib/mock-direct-mode.mjs",
+    "protocol/package-lock.json",
+    "protocol/packages/adapters/README.md",
+    "protocol/packages/adapters/package.json",
+    "protocol/packages/adapters/src/adapters.ts",
+    "protocol/packages/adapters/src/index.ts",
+    "protocol/packages/adapters/src/pnn-node-websocket.ts",
+    "protocol/packages/adapters/src/trusted-node-url.ts",
+    "protocol/packages/adapters/test/adapters.test.ts",
+    "protocol/packages/adapters/test/pnn-transport.test.ts",
+    "protocol/packages/client/README.md",
+    "protocol/packages/client/package.json",
+    "protocol/packages/client/src/bound-fetch-authority.ts",
+    "protocol/packages/client/src/bounded-json-response.ts",
+    "protocol/packages/client/src/direct-client.ts",
+    "protocol/packages/client/src/hash-chain-grant-http.ts",
+    "protocol/packages/client/src/node-bounded-fetch.ts",
+    "protocol/packages/client/src/types.ts",
+    "protocol/packages/client/test/direct-client.test.ts",
+    "protocol/packages/client/test/hash-chain-paid-fetch.test.ts",
+    "protocol/packages/client/test/hash-chain-signer.test.ts",
+    "protocol/packages/client/test/node-paid-fetch.test.ts",
+    "protocol/packages/server/src/direct-server.ts",
+    "protocol/packages/server/src/types.ts",
+    "protocol/packages/server/test/direct-server.test.ts",
+    "protocol/scripts/proof-hash-chain-testnet.mjs",
+    "scripts/check-browser-demo.mjs",
+    "scripts/check-demo-gateway.mjs",
+    "scripts/check-hash-chain-worker.mjs",
+    "scripts/hash-chain-demo.test.mjs",
+    "scripts/verify-bounded-network-io.mjs",
+    "scripts/verify-bounded-network-io.test.mjs",
+    "site/src/browser/hash-chain.mjs",
+    "verification/bounded-network-io-failure-modes.md"
+  ],
+  "findings": {
+    "csf_689da0dd966372097af326a6": [
+      "protocol/packages/client/test/direct-client.test.ts",
+      "protocol/packages/client/test/node-paid-fetch.test.ts"
+    ],
+    "csf_199510e80943b5cda1071693": [
+      "protocol/packages/server/test/direct-server.test.ts",
+      "packages/demo-gateway/test/hash-chain-proxy.test.ts"
+    ],
+    "csf_689a4f7a8fa42f9dbe77436c": [
+      "protocol/packages/client/test/hash-chain-signer.test.ts",
+      "protocol/packages/client/test/hash-chain-paid-fetch.test.ts",
+      "scripts/check-browser-demo.mjs"
+    ],
+    "csf_4564c6b425bf5f62466a19b4": [
+      "protocol/packages/adapters/test/pnn-transport.test.ts"
+    ],
+    "csf_acd63ad25d9834f933474e9e": [
+      "protocol/packages/adapters/test/adapters.test.ts",
+      "packages/demo-gateway/test/gateway.test.ts"
+    ],
+    "csf_497321332bb308753976b608": [
+      "protocol/packages/adapters/test/adapters.test.ts"
+    ],
+    "csf_b4008edd75e4b62fd74fba41": [
+      "protocol/packages/adapters/test/adapters.test.ts",
+      "packages/demo-gateway/test/config.test.ts"
+    ]
+  },
+  "supportedRuntimeTransport": {
+    "node": "ws maxPayload enforces frames and reassembled messages before MessageEvent; real socket regression covers oversize, fragmentation, cumulative and unsolicited traffic, and normal health; injected RPC factories require explicit bounded authority",
+    "browser": "Direct untrusted JSON PNN adapter has no bounded browser factory and fails closed; browser demo uses the separate Kaspa WASM RPC transport",
+    "worker": "Direct untrusted JSON PNN adapter has no bounded Worker factory and fails closed; a controlled bounded proxy is required for hosted PNN operation"
+  },
+  "commands": [
+    {
+      "argv": [
+        "node",
+        "--test",
+        "scripts/verify-bounded-network-io.test.mjs"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 1
+    },
+    {
+      "argv": [
+        "npx",
+        "vitest",
+        "run",
+        "protocol/packages/client/test/direct-client.test.ts",
+        "protocol/packages/client/test/hash-chain-paid-fetch.test.ts",
+        "protocol/packages/client/test/node-paid-fetch.test.ts",
+        "protocol/packages/client/test/hash-chain-signer.test.ts",
+        "protocol/packages/adapters/test/adapters.test.ts",
+        "protocol/packages/adapters/test/pnn-transport.test.ts",
+        "protocol/packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/test/config.test.ts",
+        "packages/demo-gateway/test/hash-chain-proxy.test.ts",
+        "packages/demo-gateway/test/gateway.test.ts"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 463
+    },
+    {
+      "argv": [
+        "npm",
+        "--prefix",
+        "protocol",
+        "run",
+        "verify"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 886
+    },
+    {
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 1026
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "site:build"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "site:check"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 4
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "validate:schemas"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:protocol-isolation"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 1046
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:host-isolation"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 144
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:browser-demo"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:pnn-browser"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:worker-types"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:demo-gateway"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:hash-chain-demo"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 5
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:hash-chain-worker"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "proof:offline"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:diff"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    }
+  ],
+  "totalPassingTests": 1026,
+  "limitations": [
+    "Offline, isolated-browser, and single configured node proof only; no funded Testnet transaction was sent",
+    "Hosted Worker omits paid offers and returns 503 for paid routes until a bounded PNN transport is provided; a separately configured hash-chain proxy can remain available",
+    "The separate browser Kaspa WASM RPC transport has no pre-delivery limit proof in this artifact; direct JSON PNN use in browsers is unsupported",
+    "Independent network corroboration remains PR4 scope"
+  ]
+}
