@@ -108,6 +108,15 @@ function pnnObservedBroadcast(transactionId: string) {
 
 const originalFetch = globalThis.fetch;
 
+function restFetch(fetcher: typeof fetch): typeof fetch {
+  return async function (this: unknown, input, init) {
+    const response = await fetcher.call(this, input, init);
+    if (!response.url)
+      Object.defineProperty(response, "url", { value: input.toString() });
+    return response;
+  };
+}
+
 afterEach(() => {
   globalThis.fetch = originalFetch;
   vi.restoreAllMocks();
@@ -115,10 +124,79 @@ afterEach(() => {
 });
 
 describe("KaspaRestClient", () => {
+  it("rejects remote cleartext and pins every REST request to the configured origin", async () => {
+    expect(() => new KaspaRestClient("http://remote.example.test")).toThrow();
+    expect(() => new KaspaRestClient("https://user:pass@api.example.test")).toThrow();
+    expect(() => new KaspaRestClient("https://api.example.test/#fragment")).toThrow();
+    expect(() => new KaspaRestClient("http://127.0.0.1:17210")).toThrow();
+    expect(() => new KaspaRestClient("http://localhost:17210", {
+      allowInsecureLoopback: true,
+    })).toThrow();
+    expect(() => new KaspaRestClient("http://127.0.0.1:17210", {
+      allowInsecureLoopback: true,
+    })).not.toThrow();
+    expect(() => new KaspaPnnClient({ endpoints: ["ws://remote.example.test"] })).toThrow();
+    expect(() => new KaspaPnnClient({ endpoints: ["ws://localhost:17210"],
+      allowInsecureLoopback: true,
+    })).toThrow();
+    expect(() => new KaspaPnnClient({ endpoints: ["ws://127.0.0.1:17210"],
+      allowInsecureLoopback: true,
+    })).not.toThrow();
+    const seen: RequestInit[] = [];
+    const client = new KaspaRestClient("https://api.example.test", {
+      fetch: (async (_url: string, init?: RequestInit) => {
+        seen.push(init ?? {});
+        return new Response("", { status: 307,
+          headers: { location: "http://169.254.169.254/latest/meta-data" } });
+      }) as typeof fetch,
+    });
+    await expect(client.health()).rejects.toThrow();
+    expect(seen).toHaveLength(1);
+    expect(seen[0]?.redirect).toBe("error");
+  });
+
+  it("rejects a fetch adapter that returns another effective REST URL", async () => {
+    const client = new KaspaRestClient("https://api.example.test", {
+      fetch: (async () => Object.defineProperty(Response.json({ networkName: "kaspa-testnet-10" }),
+        "url", { value: "https://other.example.test/info/blockdag" })) as typeof fetch,
+    });
+    await expect(client.health()).rejects.toThrow(/origin|URL|redirect/i);
+  });
+
+  it.each(["", "https://api.example.test/other", "https://api.example.test/info/blockdag?changed=1"])(
+    "rejects an empty or changed effective REST URL: %s", async (effectiveUrl) => {
+      const client = new KaspaRestClient("https://api.example.test", {
+        fetch: (async () => Object.defineProperty(Response.json({ networkName: "kaspa-testnet-10" }),
+          "url", { value: effectiveUrl })) as typeof fetch,
+      });
+      await expect(client.health()).rejects.toThrow(/URL|redirect/i);
+    },
+  );
+
+  it.each([301, 302, 303, 307, 308])(
+    "rejects REST %i redirects for evidence GET and transaction POST", async (status) => {
+      const requests: Array<{ url: string; init?: RequestInit }> = [];
+      const fetchMock = (async (url: string, init?: RequestInit) => {
+        requests.push({ url, init });
+        return new Response(null, { status,
+          headers: { location: "http://169.254.169.254/latest/meta-data/" } });
+      }) as typeof fetch;
+      const client = new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) });
+      await expect(client.health()).rejects.toThrow("redirect");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.init?.redirect).toBe("error");
+      requests.length = 0;
+      await expect(client.submitTransaction(exactTransactionFixture().artifact)).rejects.toThrow("redirect");
+      expect(requests).toHaveLength(1);
+      expect(requests[0]?.url).toBe("https://api.example.test/transactions");
+      expect(requests[0]?.init?.method).toBe("POST");
+      expect(requests[0]?.init?.redirect).toBe("error");
+    },
+  );
   it("calls the default Worker fetch through globalThis", async () => {
     const { KaspaRestClient } = await import("../src/index.js");
     const calls: unknown[] = [];
-    globalThis.fetch = vi.fn(function (
+    globalThis.fetch = restFetch(vi.fn(function (
       this: unknown,
       input: Parameters<typeof fetch>[0],
     ) {
@@ -133,7 +211,7 @@ describe("KaspaRestClient", () => {
           { headers: { "content-type": "application/json" } },
         ),
       );
-    }) as typeof fetch;
+    }) as typeof fetch);
 
     const health = await new KaspaRestClient(
       "https://api.example.test",
@@ -146,7 +224,7 @@ describe("KaspaRestClient", () => {
   it("bounds REST response bytes and address UTXO entries", async () => {
     const oversized = new KaspaRestClient("https://api.example.test", {
       maxResponseBytes: 32,
-      fetch: vi.fn(
+      fetch: restFetch(vi.fn(
         async () =>
           new Response(
             JSON.stringify({
@@ -154,7 +232,7 @@ describe("KaspaRestClient", () => {
               virtualDaaScore: "123",
             }),
           ),
-      ) as typeof fetch,
+      ) as typeof fetch),
     });
     await expect(oversized.health()).rejects.toThrow("exceeds 32 bytes");
 
@@ -167,7 +245,7 @@ describe("KaspaRestClient", () => {
     };
     const tooMany = new KaspaRestClient("https://api.example.test", {
       maxUtxosPerAddress: 1,
-      fetch: vi.fn(async () => Response.json([entry, entry])) as typeof fetch,
+      fetch: restFetch(vi.fn(async () => Response.json([entry, entry])) as typeof fetch),
     });
     await expect(tooMany.getUtxosForAddress("kaspatest:qtest")).rejects.toThrow(
       "exceeds 1 entries",
@@ -251,7 +329,7 @@ describe("VerifiedKaspaChainProvider", () => {
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
     const utxo = await new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       book,
       "100",
     ).getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
@@ -350,7 +428,7 @@ describe("VerifiedKaspaChainProvider", () => {
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
     const utxo = await new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       book,
       "100",
     ).getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
@@ -396,7 +474,7 @@ describe("VerifiedKaspaChainProvider", () => {
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
 
     const utxo = await new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       book,
       "100",
     ).getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
@@ -472,7 +550,7 @@ describe("VerifiedKaspaChainProvider", () => {
     book.record("0000aa", "kaspatest:qother");
 
     const utxo = await new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       book,
       "100",
     ).getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
@@ -519,7 +597,7 @@ describe("VerifiedKaspaChainProvider", () => {
       );
     }) as typeof fetch;
     const provider = new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       new ScriptAddressBook(),
       "100",
     );
@@ -619,7 +697,7 @@ describe("VerifiedKaspaChainProvider", () => {
       ),
     ) as typeof fetch;
     const provider = new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       new ScriptAddressBook(),
       "100",
     );
@@ -686,7 +764,7 @@ describe("VerifiedKaspaChainProvider", () => {
       ),
     ) as typeof fetch;
     const provider = new VerifiedKaspaChainProvider(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       new ScriptAddressBook(),
       "100",
     );
@@ -747,7 +825,7 @@ describe("VerifiedKaspaChainProvider", () => {
 
     const result = await new VerifiedKaspaChainProvider(
       new KaspaRestClient("https://api.example.test", {
-        fetch: fetchMock,
+        fetch: restFetch(fetchMock),
         acceptancePollMs: 0,
         acceptanceTimeoutMs: 100,
       }),
@@ -804,7 +882,7 @@ describe("VerifiedExactHeadReconciler", () => {
 
     await expect(
       new VerifiedExactHeadReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactHead(head),
     ).resolves.toEqual({
       status: "current",
@@ -840,7 +918,7 @@ describe("VerifiedExactHeadReconciler", () => {
 
     await expect(
       new VerifiedExactHeadReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactHead(head, [exact.txid]),
     ).resolves.toEqual({
       status: "advanced",
@@ -881,7 +959,7 @@ describe("VerifiedExactHeadReconciler", () => {
 
     await expect(
       new VerifiedExactHeadReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactHead(head, [exact.txid]),
     ).resolves.toMatchObject({
       status: "unknown",
@@ -899,7 +977,7 @@ describe("VerifiedExactSettlementReconciler", () => {
 
     await expect(
       new VerifiedExactSettlementReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactSettlement(attempt),
     ).resolves.toEqual({
       status: "accepted",
@@ -919,7 +997,7 @@ describe("VerifiedExactSettlementReconciler", () => {
 
     await expect(
       new VerifiedExactSettlementReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
     ).resolves.toMatchObject({
       status: "unknown",
@@ -940,7 +1018,7 @@ describe("VerifiedExactSettlementReconciler", () => {
 
     await expect(
       new VerifiedExactSettlementReconciler(
-        new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+        new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
       ).reconcileExactSettlement(exactSettlementAttemptFixture(exact)),
     ).rejects.toThrow(
       "accepted transaction output amount does not match exact artifact",
@@ -949,6 +1027,227 @@ describe("VerifiedExactSettlementReconciler", () => {
 });
 
 describe("KaspaPnnClient", () => {
+  it("waits for PNN disconnect before releasing an aborted request", async () => {
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let rejectRead!: (error: Error) => void;
+    let closed = false;
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() {
+        await new Promise((resolve) => setTimeout(resolve, 20));
+        closed = true;
+        rejectRead(new Error("socket closed"));
+      },
+      getServerInfo() {
+        entered();
+        return new Promise((_, reject) => { rejectRead = reject; });
+      },
+      async submitTransaction() { throw new Error("unreachable"); },
+      async getUtxosByAddresses() { throw new Error("unreachable"); },
+    }));
+    const pending = new KaspaPnnClient({ endpoints: ["wss://pnn.example.test"],
+      rpcFactory, timeoutMs: 500 }).snapshotHashChainUtxos([], controller.signal);
+    await started;
+    controller.abort(new Error("lease expired"));
+    await expect(pending).rejects.toThrow("lease expired");
+    expect(closed).toBe(true);
+  });
+
+  it("holds caller admission when an approved PNN disconnect fails with a read in flight", async () => {
+    // Failure modes: disconnect rejects while a read is active, the caller settles
+    // before the read, or a second endpoint starts while the first is still active.
+    const controller = new AbortController();
+    let entered!: () => void;
+    const started = new Promise<void>((resolve) => { entered = resolve; });
+    let finishRead!: () => void;
+    const read = new Promise<void>((resolve) => { finishRead = resolve; });
+    let readActive = false;
+    let admissionReleased = false;
+    let disconnects = 0;
+    let fallbackStarted = false;
+    const rpcFactory = mockPnnRpcFactory((endpoint) => {
+      if (endpoint.includes("fallback")) fallbackStarted = true;
+      return {
+        async connect() {},
+        async disconnect() { disconnects++; throw new Error("disconnect failed"); },
+        async getServerInfo() {
+          readActive = true;
+          entered();
+          try { await read; }
+          finally { readActive = false; }
+          throw new Error("read finished");
+        },
+        async submitTransaction() { throw new Error("unreachable"); },
+        async getUtxosByAddresses() { throw new Error("unreachable"); },
+      };
+    });
+    const pending = new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test", "wss://fallback.example.test"],
+      rpcFactory,
+      timeoutMs: 500,
+    }).snapshotHashChainUtxos([], controller.signal);
+    void pending.finally(() => { admissionReleased = true; }).catch(() => undefined);
+    try {
+      await started;
+      controller.abort(new Error("lease expired"));
+      await new Promise((resolve) => setTimeout(resolve, 20));
+      expect(disconnects).toBe(1);
+      expect(readActive).toBe(true);
+      expect(admissionReleased).toBe(false);
+      expect(fallbackStarted).toBe(false);
+    } finally {
+      finishRead();
+    }
+    await expect(pending).rejects.toThrow("disconnect failed");
+    expect(readActive).toBe(false);
+    expect(admissionReleased).toBe(true);
+    expect(fallbackStarted).toBe(false);
+  });
+
+  it.each(["connect", "getServerInfo"] as const)(
+    "holds caller admission after a timed-out %s when PNN disconnect fails", async (stage) => {
+      // Failure modes: the timeout wrapper settles before the raw RPC call,
+      // disconnect fails, or a fallback starts while the first call is active.
+      let finishRaw!: () => void;
+      const raw = new Promise<void>((resolve) => { finishRaw = resolve; });
+      let rawActive = false;
+      let admissionReleased = false;
+      let disconnects = 0;
+      let fallbackStarted = false;
+      const rpcFactory = mockPnnRpcFactory((endpoint) => {
+        if (endpoint.includes("fallback")) fallbackStarted = true;
+        return {
+          async connect() {
+            if (stage !== "connect") return;
+            rawActive = true;
+            try { await raw; }
+            finally { rawActive = false; }
+          },
+          async disconnect() { disconnects++; throw new Error("disconnect failed"); },
+          async getServerInfo() {
+            if (stage === "getServerInfo") {
+              rawActive = true;
+              try { await raw; }
+              finally { rawActive = false; }
+            }
+            return { networkId: "testnet-10", isSynced: true };
+          },
+          async submitTransaction() { throw new Error("unreachable"); },
+          async getUtxosByAddresses() { throw new Error("unreachable"); },
+        };
+      });
+      const pending = new KaspaPnnClient({
+        endpoints: ["wss://pnn.example.test", "wss://fallback.example.test"],
+        rpcFactory,
+        timeoutMs: 20,
+      }).health();
+      void pending.finally(() => { admissionReleased = true; }).catch(() => undefined);
+      try {
+        await vi.waitFor(() => expect(disconnects).toBe(1));
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(rawActive).toBe(true);
+        expect(admissionReleased).toBe(false);
+        expect(fallbackStarted).toBe(false);
+      } finally {
+        finishRaw();
+      }
+      await expect(pending).rejects.toThrow("disconnect failed");
+      expect(rawActive).toBe(false);
+      expect(admissionReleased).toBe(true);
+      expect(fallbackStarted).toBe(false);
+    },
+  );
+
+  it("promptly settles a timed-out PNN read after successful disconnect", async () => {
+    let finishRaw!: () => void;
+    const raw = new Promise<void>((resolve) => { finishRaw = resolve; });
+    let rawActive = false;
+    let admissionReleased = false;
+    let disconnects = 0;
+    const rpcFactory = mockPnnRpcFactory(() => ({
+      async connect() {},
+      async disconnect() { disconnects++; },
+      async getServerInfo() {
+        rawActive = true;
+        try { await raw; }
+        finally { rawActive = false; }
+        return { networkId: "testnet-10", isSynced: true };
+      },
+      async submitTransaction() { throw new Error("unreachable"); },
+      async getUtxosByAddresses() { throw new Error("unreachable"); },
+    }));
+    const pending = new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test"], rpcFactory, timeoutMs: 20,
+    }).health();
+    void pending.finally(() => { admissionReleased = true; }).catch(() => undefined);
+    try {
+      await vi.waitFor(() => expect(disconnects).toBe(1));
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      expect(rawActive).toBe(true);
+      expect(admissionReleased).toBe(true);
+    } finally {
+      finishRaw();
+    }
+    await expect(pending).rejects.toThrow("timed out");
+  });
+
+  it.each(["snapshot", "payment", "confirmation", "lineage"] as const)(
+    "stops %s PNN reads when the caller loses its lease", async (operation) => {
+      const controller = new AbortController();
+      let entered!: () => void;
+      const started = new Promise<void>((resolve) => { entered = resolve; });
+      let release!: () => void;
+      const stalled = new Promise<void>((resolve) => { release = resolve; });
+      let readsAfterAbort = 0;
+      const rpcFactory = mockPnnRpcFactory(() => ({
+        async connect() {},
+        async disconnect() { release(); },
+        async getServerInfo() {
+          entered();
+          await stalled;
+          return { networkId: "testnet-10", isSynced: true };
+        },
+        async getBlockDagInfo() {
+          if (controller.signal.aborted) readsAfterAbort++;
+          throw new Error("checkpoint read should not start");
+        },
+        async getBlock() { throw new Error("unreachable"); },
+        async getVirtualChainFromBlock() { throw new Error("unreachable"); },
+        async getVirtualChainFromBlockV2() { throw new Error("unreachable"); },
+        async submitTransaction() { throw new Error("unreachable"); },
+        async getUtxosByAddresses() { throw new Error("unreachable"); },
+      }));
+      const pnn = new KaspaPnnClient({ endpoints: ["wss://pnn.example.test"],
+        timeoutMs: 500, rpcFactory });
+      const checkpoint = { blockHash: "ee".repeat(32), blueScore: "1000", daaScore: "1000" };
+      const payment = pnn.findHashChainPayment.bind(pnn) as unknown as
+        (id: string, from: typeof checkpoint, signal: AbortSignal) => Promise<unknown>;
+      const pending = operation === "snapshot"
+        ? pnn.snapshotHashChainUtxos([], controller.signal)
+        : operation === "payment"
+          ? payment("aa".repeat(32), checkpoint, controller.signal)
+          : operation === "confirmation"
+            ? pnn.confirmAcceptedTransaction(acceptedEvidence("aa".repeat(32)), 1, controller.signal)
+            : pnn.discoverCovenantLineage({
+                network: "kaspa:testnet-10",
+                covenantId: batchChannel({}).covenantId,
+                templateId: batchChannel({}).channelConfig.templateId,
+                lineage: batchChannel({}).lineage,
+                minConfirmationCount: 1,
+                signal: controller.signal,
+              });
+      try {
+        await started;
+        controller.abort(new Error("lease expired"));
+        await expect(pending).rejects.toThrow("lease expired");
+        await new Promise((resolve) => setTimeout(resolve, 0));
+        expect(readsAfterAbort).toBe(0);
+      } finally { release(); }
+    },
+  );
+
   it.each(["connect", "getServerInfo"] as const)(
     "closes a PNN WebSocket when admission expires during %s",
     async (stage) => {
@@ -1425,6 +1724,45 @@ describe("KaspaPnnClient", () => {
     expect(page).toBeGreaterThan(1);
   });
 
+  it("stops selected-chain pagination after parent cancellation", async () => {
+    const current = batchChannel({});
+    const fixture = pnnLineageFixture(current);
+    const controller = new AbortController();
+    let release!: () => void;
+    const firstPage = new Promise<void>((resolve) => { release = resolve; });
+    let pages = 0;
+    const rpc: MockPnnRpc = {
+      ...fixture.rpc,
+      async getVirtualChainFromBlockV2() {
+        pages += 1;
+        if (pages === 1) await firstPage;
+        return {
+          removedChainBlockHashes: [],
+          addedChainBlockHashes: pages === 1 ? ["ab".repeat(32)] : [],
+          chainBlockAcceptedTransactions: pages === 1 ? [{
+            chainBlockHeader: { hash: "ab".repeat(32), blueScore: "1090", daaScore: "1090" },
+            acceptedTransactions: [],
+          }] : [],
+        };
+      },
+    };
+    const request = { network: "kaspa:testnet-10" as const,
+      covenantId: current.covenantId,
+      templateId: current.channelConfig.templateId,
+      lineage: current.lineage, minConfirmationCount: 30,
+      signal: controller.signal };
+    const pending = new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test"], timeoutMs: 100,
+      rpcFactory: mockPnnRpcFactory(() => rpc),
+    }).discoverCovenantLineage(request);
+    await vi.waitFor(() => expect(pages).toBe(1));
+    controller.abort(new Error("parent cancelled"));
+    release();
+    await expect(pending).rejects.toThrow();
+    await new Promise((resolve) => setTimeout(resolve, 0));
+    expect(pages).toBe(1);
+  });
+
   it("rejects PNN endpoints on the wrong network", async () => {
     const rpcFactory = mockPnnRpcFactory(() => ({
       async connect() {},
@@ -1640,7 +1978,7 @@ describe("VerifiedExactTransactionVerifier", () => {
     });
     const verifier = new VerifiedExactTransactionVerifier(
       new KaspaRestClient("https://api.example.test", {
-        fetch: fetchMock as typeof fetch,
+        fetch: restFetch(fetchMock) as typeof fetch,
       }),
     );
     const payTo = addressForScriptPublicKey(
@@ -2032,7 +2370,7 @@ describe("VerifiedExactTransactionVerifier", () => {
       throw new Error(`unexpected REST request ${url.pathname}`);
     }) as typeof fetch;
     const verifier = new VerifiedExactTransactionVerifier(
-      new KaspaRestClient("https://api.example.test", { fetch: fetchMock }),
+      new KaspaRestClient("https://api.example.test", { fetch: restFetch(fetchMock) }),
     );
     const headInput = additive.transaction.inputs[0]!;
     const redeemScript = headInput.signatureScript.slice(4);
@@ -2465,7 +2803,9 @@ type MockPnnRpc = {
 };
 
 function mockPnnRpcFactory(factory: (endpoint: string) => MockPnnRpc) {
-  return (endpoint: string) => factory(endpoint);
+  const bounded = (endpoint: string) => factory(endpoint);
+  Object.defineProperty(bounded, Symbol.for("kaspa-x402:bounded-pnn-rpc:v1"), { value: true });
+  return bounded;
 }
 
 function pnnPaymentUtxo(exact: ReturnType<typeof exactTransactionFixture>) {
@@ -2826,12 +3166,12 @@ function refreshAdditiveArtifact(artifact: AdditiveSafeArtifact): void {
 function offlineExactVerifier(): VerifiedExactTransactionVerifier {
   return new VerifiedExactTransactionVerifier(
     new KaspaRestClient("https://api.example.test", {
-      fetch: vi.fn(
+      fetch: restFetch(vi.fn(
         async () =>
           new Response(JSON.stringify({ detail: "Transaction not found" }), {
             status: 404,
           }),
-      ) as typeof fetch,
+      ) as typeof fetch),
     }),
   );
 }

@@ -293,6 +293,7 @@ export class DirectModeServer {
     return {
       status,
       headers: {
+        "cache-control": "private, no-store, max-age=0",
         [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(
           this.buildPaymentRequired(options),
         ),
@@ -339,6 +340,7 @@ export class DirectModeServer {
     return {
       status,
       headers: {
+        "cache-control": "private, no-store, max-age=0",
         [PAYMENT_REQUIRED_HEADER]: encodePaymentRequiredHeader(paymentRequired),
       },
     };
@@ -908,7 +910,7 @@ export class DirectModeServer {
           };
     }
     try {
-      return await this.#handlePaidRequest(request, handler);
+      return noStorePaidResponse(await this.#handlePaidRequest(request, handler));
     } catch (error) {
       if (error instanceof PublicBoundaryError)
         return publicBoundaryResponse(error);
@@ -3567,14 +3569,15 @@ export class DirectModeServer {
       return batchSettlementRecoveryRequiredResponse(500);
     }
     const { channel, settlement } = pending;
-    const response: ServerResponse = {
+    const response: ServerResponse = noStorePaidResponse({
       status: handlerResult.status ?? 200,
       headers: {
         ...(handlerResult.headers ?? {}),
         [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(settlement),
+        "cache-control": "private, no-store, max-age=0",
       },
       body: handlerResult.body,
-    };
+    });
     try {
       await this.#batchStore.commitSettlement({
         batchAttemptId,
@@ -3618,16 +3621,17 @@ export class DirectModeServer {
       chargedAmount,
       fingerprint,
     );
-    const response: ServerResponse = {
+    const response: ServerResponse = noStorePaidResponse({
       status: handlerResult.status ?? 200,
       headers: {
         ...(handlerResult.headers ?? {}),
         [PAYMENT_RESPONSE_HEADER]: encodePaymentResponseHeader(
           pending.settlement,
         ),
+        "cache-control": "private, no-store, max-age=0",
       },
       body: handlerResult.body,
-    };
+    });
     try {
       await this.#config.store.commitExactPayment({
         payment: { ...pending.payment, response },
@@ -4479,8 +4483,9 @@ export class DirectModeServer {
   async #reconcileChannelSnapshot(
     channel: ServerChannelRecord,
   ): Promise<ServerChannelRecord> {
-    const update = await this.#runAdapter("chain-provider", () =>
+    const update = await this.#runAdapter("chain-provider", (signal) =>
       this.#batchChain.discoverCovenantLineage({
+        signal,
         network: channel.channelConfig.network,
         covenantId: channel.covenantId,
         templateId: channel.channelConfig.templateId,
@@ -6318,6 +6323,14 @@ function publicBoundaryResponse(error: unknown): ServerResponse {
     headers: { "retry-after": "1" },
     body: { error: error.reason },
   };
+}
+
+function noStorePaidResponse(response: ServerResponse): ServerResponse {
+  const headers = Object.fromEntries(Object.entries(response.headers).filter(
+    ([name]) => name.toLowerCase() !== "cache-control"));
+  return { ...response, headers: {
+    ...headers, "cache-control": "private, no-store, max-age=0",
+  } };
 }
 
 function requestAbortedResponse(): ServerResponse {

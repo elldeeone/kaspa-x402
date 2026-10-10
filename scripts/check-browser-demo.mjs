@@ -1,6 +1,7 @@
 import { execFileSync, spawn } from "node:child_process";
 import fs from "node:fs";
 import http from "node:http";
+import https from "node:https";
 import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
@@ -20,15 +21,21 @@ const outDir = path.join(root, SITE_DIST);
 const chrome = process.env.CHROME_BIN || findChrome();
 const demoConnectTimeoutMs = Number(process.env.KASPA_X402_BROWSER_CONNECT_TIMEOUT_MS ?? 75_000);
 const userDataDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-chrome-"));
+const tlsDir = fs.mkdtempSync(path.join(os.tmpdir(), "kaspa-x402-demo-tls-"));
+execFileSync("openssl", ["req", "-x509", "-newkey", "rsa:2048", "-nodes",
+  "-keyout", path.join(tlsDir, "key.pem"), "-out", path.join(tlsDir, "cert.pem"),
+  "-days", "1", "-subj", "/CN=demo.kaspa-x402.org"], { stdio: "ignore" });
 const remotePort = await openPort();
 let hashFixture;
 const server = await startServer();
-const baseUrl = `http://127.0.0.1:${server.address().port}`;
+const baseUrl = `https://demo.kaspa-x402.org:${server.address().port}`;
 hashFixture = await createHashChainDemoFixture(baseUrl);
 const chromeProcess = spawn(chrome, [
   "--headless=new",
   "--no-sandbox",
   "--disable-gpu",
+  "--ignore-certificate-errors",
+  "--host-resolver-rules=MAP kaspa-x402.org 127.0.0.1,MAP demo.kaspa-x402.org 127.0.0.1",
   "--remote-debugging-address=127.0.0.1",
   `--remote-debugging-port=${remotePort}`,
   `--user-data-dir=${userDataDir}`,
@@ -37,7 +44,8 @@ const chromeProcess = spawn(chrome, [
 
 try {
   await waitForDevtools(remotePort);
-  const result = await exerciseDemo(remotePort, `${baseUrl}/demo/`);
+  const result = await exerciseDemo(remotePort,
+    `https://kaspa-x402.org:${server.address().port}/demo/`);
   assert(hashFixture.broadcasts === 2, "browser hash-chain retry rebroadcast or payment was skipped");
   assert(hashFixture.state.headVersion === 2, "browser payments did not advance the shared head twice");
   console.log(JSON.stringify({ ok: true, ...result }, null, 2));
@@ -52,6 +60,7 @@ try {
     maxRetries: 10,
     retryDelay: 100,
   });
+  fs.rmSync(tlsDir, { recursive: true, force: true });
 }
 
 async function waitForProcessExit(process, timeoutMs = 5_000) {
@@ -113,7 +122,7 @@ async function exerciseDemo(port, url) {
   ws.close();
 
   if (result.result?.exceptionDetails) {
-    throw new Error(`browser demo threw: ${JSON.stringify(result.result.exceptionDetails)}`);
+    throw new Error(`browser demo threw: ${JSON.stringify(result.result.exceptionDetails)}; events=${JSON.stringify(events.slice(-12))}`);
   }
   const value = result.result.result.value;
   assertBrowserResult(value);
@@ -145,6 +154,8 @@ async function exerciseDemo(port, url) {
 }
 
 function assertBrowserResult(value) {
+  assert(value.pageOrigin.startsWith("https://kaspa-x402.org:"), "browser page did not load from the apex origin");
+  assert(value.paymentOrigin === baseUrl, "browser payment did not target the separate gateway origin");
   assert(value.hashChain.amount === "140000000", "browser hash-chain successor amount is wrong");
   assert(value.hashChain.retryMatched, "browser hash-chain retry changed the payment");
   assert(value.addressPrefix === "kaspatest:", `unexpected address prefix: ${value.addressPrefix}`);
@@ -230,7 +241,7 @@ function demoExerciseExpression() {
       if (value) return value;
       await sleep(100);
     }
-    throw new Error('Timed out waiting for ' + label + '; status=' + byId('demo-status').value);
+    throw new Error('Timed out waiting for ' + label + '; status=' + byId('demo-status').value + '; hashStatus=' + byId('demo-hash-status').value);
   };
   await click('demo-init', 500);
   await waitFor(() => byId('demo-status').value.includes('SDK loaded') || byId('demo-status').value.includes('already loaded'), 'sdk load');
@@ -305,9 +316,11 @@ function demoExerciseExpression() {
   // Route the live panel to the local simulated chain while keeping the actual
   // DOM handlers, browser signer, SDK transaction serialization, and issuer.
   const NativeURL = globalThis.URL;
+  let paymentOrigin;
   globalThis.URL = class extends NativeURL {
     constructor(input, base) {
-      super(input, base === 'https://demo.kaspa-x402.org' ? location.origin : base);
+      super(input, base === 'https://demo.kaspa-x402.org' ? ${JSON.stringify(baseUrl)} : base);
+      if (base === 'https://demo.kaspa-x402.org') paymentOrigin = this.origin;
     }
   };
   const fakeRpc = {
@@ -345,6 +358,8 @@ function demoExerciseExpression() {
   globalThis.URL = NativeURL;
   await click('demo-reset');
   return {
+    pageOrigin: location.origin,
+    paymentOrigin,
     hashChain: { amount: hashResult.headAfter.amount, retryMatched: hashRetry.transactionId === hashResult.transactionId },
     addressPrefix: address.slice(0, 10),
     requiredBytes: required.length,
@@ -403,10 +418,28 @@ async function waitForLoadEvent(ws) {
 
 async function startServer() {
   if (!fs.existsSync(outDir)) throw new Error("site/dist is missing; run npm run site:build first");
-  const server = http.createServer(async (request, response) => {
-    const url = new URL(request.url ?? "/", `http://${request.headers.host ?? "localhost"}`);
+  const server = https.createServer({
+    key: fs.readFileSync(path.join(tlsDir, "key.pem")),
+    cert: fs.readFileSync(path.join(tlsDir, "cert.pem")),
+  }, async (request, response) => {
+    const url = new URL(request.url ?? "/", `https://${request.headers.host ?? "localhost"}`);
     if (url.pathname.startsWith('/hash-chain/') || url.pathname.startsWith('/__hash-demo/')) {
       try {
+        const apexOrigin = `https://kaspa-x402.org:${server.address().port}`;
+        const gatewayOrigin = `https://demo.kaspa-x402.org:${server.address().port}`;
+        const corsHeaders = {
+          'access-control-allow-origin': apexOrigin,
+          'access-control-allow-methods': 'GET, POST, OPTIONS',
+          'access-control-allow-headers': 'PAYMENT-SIGNATURE, CONTENT-TYPE, CACHE-CONTROL',
+          'access-control-expose-headers': 'PAYMENT-REQUIRED, PAYMENT-RESPONSE, X-KASPA-X402-DEMO-CALLER',
+          vary: 'Origin',
+        };
+        if (url.pathname.startsWith('/hash-chain/') && url.origin !== gatewayOrigin) {
+          response.writeHead(404); response.end(); return;
+        }
+        if (url.pathname.startsWith('/hash-chain/') && request.method === 'OPTIONS') {
+          response.writeHead(204, corsHeaders); response.end(); return;
+        }
         let body = '';
         for await (const chunk of request) {
           body += chunk;
@@ -418,7 +451,7 @@ async function startServer() {
         }
         const result = await hashFixture.fetch(new Request(url, { method: request.method,
           headers: request.headers, ...(body ? { body } : {}) }));
-        response.writeHead(result.status, Object.fromEntries(result.headers)); response.end(await result.text());
+        response.writeHead(result.status, { ...Object.fromEntries(result.headers), ...corsHeaders }); response.end(await result.text());
       } catch (error) {
         response.writeHead(500, { 'content-type': 'application/json' }); response.end(JSON.stringify({ error: error.message }));
       }
@@ -430,7 +463,10 @@ async function startServer() {
       response.end("Not found\n");
       return;
     }
-    response.writeHead(200, { "Content-Type": contentType(file), ...headersForPath(url.pathname) });
+    const headers = headersForPath(url.pathname);
+    if (headers['Content-Security-Policy']) headers['Content-Security-Policy'] =
+      headers['Content-Security-Policy'].replace('https://demo.kaspa-x402.org', baseUrl);
+    response.writeHead(200, { "Content-Type": contentType(file), ...headers });
     fs.createReadStream(file).pipe(response);
   });
   await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve));

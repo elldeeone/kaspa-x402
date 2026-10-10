@@ -1,5 +1,4 @@
 #!/usr/bin/env node
-import { createServer } from "node:http";
 import { createRequire } from "node:module";
 import { createHash, randomBytes } from "node:crypto";
 import fs from "node:fs";
@@ -85,7 +84,6 @@ const fundingPublicKey = Buffer.from(schnorr.getPublicKey(Buffer.from(fundingPri
 const fundingScript = scriptHex(sdk.payToAddressScript(fundingAddress));
 const rpc = new sdk.RpcClient({ url: options.rpcUrl, networkId: "testnet-10" });
 let issuer;
-let http;
 try {
   await rpc.connect({ timeoutDuration: 15_000, retries: 2 });
   const info = await rpc.getServerInfo();
@@ -167,41 +165,29 @@ try {
   const reserved = new Set([outpointKey(genesisFunding.outpoint)]);
   const trustedSecurityContext = { principal: "hash-chain-live-proof" };
   let server;
-  http = createServer(async (req, res) => {
-    const disconnect = new AbortController();
-    const abortDisconnected = () => {
-      if (!res.writableEnded) disconnect.abort(new Error("HTTP caller disconnected"));
-    };
-    req.once("aborted", abortDisconnected);
-    res.once("close", abortDisconnected);
-    try {
-      const url = `http://127.0.0.1:${http.address().port}${req.url}`;
-      if (req.url === "/hash-chain/grant") {
-        const body = await readBody(req, 4096);
-        const answer = await handleHashChainGrantClaimHttp(server,
-          new Request(url, { method: req.method, headers: req.headers, body,
-            signal: disconnect.signal }), trustedSecurityContext);
-        res.writeHead(answer.status, Object.fromEntries(answer.headers));
-        res.end(await answer.text());
-        return;
-      }
-      const resource = { url };
-      const answer = await server.handlePaidRequest({ routeAccess: "authenticated", method: req.method, url,
-        headers: req.headers, resource, paymentScheme: "exact", trustedSecurityContext,
-        signal: disconnect.signal },
-        async () => ({ status: 200, body: { access: "granted", resource: req.url } }));
-      res.writeHead(answer.status, answer.headers);
-      res.end(JSON.stringify(answer.body));
-    } catch {
-      res.writeHead(503, { "cache-control": "no-store" });
-      res.end(JSON.stringify({ error: "request_failed" }));
-    } finally {
-      req.off("aborted", abortDisconnected);
-      res.off("close", abortDisconnected);
+  // The live chain proof uses an in-process HTTP fixture. No paid request
+  // dials a local/private address or weakens the production destination rule.
+  const origin = "https://proof.kaspa-x402.org";
+  const localFetch = async (input, init) => {
+    const request = new Request(input, init);
+    const target = new URL(request.url);
+    if (target.origin !== origin) throw new Error("proof fixture destination changed");
+    let response;
+    if (target.pathname === "/hash-chain/grant") {
+      response = await handleHashChainGrantClaimHttp(server, request, trustedSecurityContext);
+    } else {
+      const answer = await server.handlePaidRequest({ routeAccess: "authenticated",
+        method: request.method, url: request.url, headers: Object.fromEntries(request.headers),
+        resource: { url: request.url }, paymentScheme: "exact", trustedSecurityContext,
+        signal: request.signal },
+        async () => ({ status: 200, body: { access: "granted", resource: target.pathname } }));
+      response = new Response(JSON.stringify(answer.body), { status: answer.status,
+        headers: answer.headers });
     }
-  });
-  await new Promise((resolve) => http.listen(0, "127.0.0.1", resolve));
-  const origin = `http://127.0.0.1:${http.address().port}`;
+    Object.defineProperty(response, "url", { value: request.url });
+    return response;
+  };
+  Object.defineProperty(localFetch, Symbol.for("kaspa-x402:bound-paid-fetch:v1"), { value: true });
   const grantDestinationPolicy = { allowedOrigins: [origin] };
   server = new DirectModeServer({
     network: "kaspa:testnet-10",
@@ -250,7 +236,8 @@ try {
     async getPublicIdentity() { return { address: fundingAddress, publicKey: fundingPublicKey }; },
     async claimHashChainGrant(request) {
       return claimHashChainGrantViaHttp(request, (digest) =>
-        Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.from(fundingPrivateKeyHex, "hex"))).toString("hex"));
+        Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.from(fundingPrivateKeyHex, "hex"))).toString("hex"),
+        localFetch);
     },
     async payHashChainTransaction(request) {
       const file = path.join(outputDir, `attempt-${request.attemptId}.json`);
@@ -412,7 +399,7 @@ try {
       maximumExactAmountSompi: "20000000",
     },
     hashChainGrantDestinationPolicy: grantDestinationPolicy,
-    fetch,
+    fetch: localFetch,
   });
   for (let i = 1; i <= 2; i++) {
     const url = `${origin}/resource/${i}`;
@@ -454,7 +441,7 @@ try {
   }
 
   const abandonUrl = `${origin}/resource/abandoned`;
-  const abandonedResponse = await fetch(abandonUrl);
+  const abandonedResponse = await localFetch(abandonUrl);
   if (abandonedResponse.status !== 402) throw new Error("abandonment challenge was not offered");
   const abandonedRequired = decodePaymentRequiredHeader(abandonedResponse.headers.get("PAYMENT-REQUIRED"));
   const abandoned = abandonedRequired.accepts[0];
@@ -473,7 +460,8 @@ try {
       challengeId: abandoned.extra.challengeId, challengeExpiresAt: abandoned.extra.challengeExpiresAt },
     resourceUrl: abandonUrl, requestHash: abandonHash, payerPublicKey: fundingPublicKey,
     destinationPolicy: grantDestinationPolicy },
-    (digest) => Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.from(fundingPrivateKeyHex, "hex"))).toString("hex"));
+    (digest) => Buffer.from(schnorr.sign(Buffer.from(digest, "hex"), Buffer.from(fundingPrivateKeyHex, "hex"))).toString("hex"),
+    localFetch);
   report.stages.push("grant-delivered-and-abandoned");
   report.abandonedGrant = { grantId: abandonedGrant.grantId, headVersion: abandonedGrant.headVersion,
     headOutpoint: abandoned.extra.expectedHeadOutpoint, expiresAt: abandonedGrant.expiresAt };
@@ -548,7 +536,6 @@ try {
   process.exitCode = 1;
 } finally {
   issuer?.close();
-  if (http) await new Promise((resolve) => http.close(resolve));
   await rpc.disconnect().catch(() => {});
 }
 
@@ -649,14 +636,6 @@ async function submitReference(rpc, sdk, signed) {
   if (transaction.id.toLowerCase() !== signed.id) throw new Error("Kaspa SDK transaction ID differs from canonical v1 ID");
   const accepted = await rpc.submitTransaction({ transaction, allowOrphan: false });
   if (String(accepted.transactionId).toLowerCase() !== signed.id) throw new Error("node returned a different transaction ID");
-}
-async function readBody(request, limit) {
-  let text = "";
-  for await (const chunk of request) {
-    text += chunk.toString("utf8");
-    if (text.length > limit) throw new Error("request too large");
-  }
-  return text;
 }
 function sleep(ms) { return new Promise((resolve) => setTimeout(resolve, ms)); }
 

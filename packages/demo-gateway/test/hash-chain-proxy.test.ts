@@ -87,7 +87,7 @@ describe("hash-chain demo proxy", () => {
     expect(response.headers.get("x-kaspa-x402-demo-caller")).toMatch(/^[0-9a-f]{64}$/);
     expect(response.headers.has("set-cookie")).toBe(false);
     expect(response.headers.has("x-private")).toBe(false);
-    expect(response.headers.get("cache-control")).toBe("no-store");
+    expect(response.headers.get("cache-control")).toBe("private, no-store, max-age=0");
   });
   it("keeps caller admission stable across resource and grant requests and separates IPs", async () => {
     const callers: (string | null)[] = [];
