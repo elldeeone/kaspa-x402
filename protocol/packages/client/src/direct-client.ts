@@ -66,7 +66,7 @@ import {
   type ParsePaymentRequiredOptions,
 } from "./payment-required.js";
 import { assertHashChainGrantDestination } from "./hash-chain-grant-url.js";
-import { BOUND_FETCH_AUTHORITY } from "./bound-fetch-authority.js";
+import { BOUND_FETCH_AUTHORITY, BROWSER_FETCH_AUTHORITY } from "./bound-fetch-authority.js";
 import { ChannelCasConflictError } from "./channel-store.js";
 import {
   PAYMENT_REQUIRED_HEADER,
@@ -350,7 +350,9 @@ export class DirectModeClient {
     const browserBase = (globalThis as { location?: { href?: string } }).location?.href;
     const browserManagedTransport = browserBase &&
       new URL(browserBase).protocol === "https:" &&
-      new URL(browserBase).origin === new URL(requestUrl).origin;
+      (new URL(browserBase).origin === new URL(requestUrl).origin ||
+        ((globalThis as { window?: unknown }).window === globalThis &&
+          (this.#options.fetch as unknown as Record<symbol, unknown> | undefined)?.[BROWSER_FETCH_AUTHORITY] === true));
     if (!browserManagedTransport &&
         (this.#options.fetch as unknown as Record<symbol, unknown> | undefined)?.[BOUND_FETCH_AUTHORITY] !== true)
       throw new KaspaX402Error("invalid_kaspa_x402_payload",

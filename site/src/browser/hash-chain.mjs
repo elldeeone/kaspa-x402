@@ -2,7 +2,7 @@ import { schnorr } from '@noble/curves/secp256k1.js';
 import { Buffer } from 'buffer';
 import {
   DirectModeClient, MemoryChannelStore, PendingExactPaymentError,
-  claimHashChainGrantViaHttp, signHashChainExactTransaction,
+  claimHashChainGrantViaHttp, createBrowserAuthorizedFetch, signHashChainExactTransaction,
 } from '@kaspa-x402/client';
 import { decodePaymentRequiredHeader, validateKaspaPaymentRequirement } from '@kaspa-x402/core';
 import { scriptPublicKeyForAddress, addressForScriptPublicKey } from '@kaspa-x402/adapters/native';
@@ -31,13 +31,14 @@ export function readHashChainQuote(response) {
 }
 
 /** One in-memory logical payment. Retry always retains its signed transaction. */
-export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url, quote, fetcher = fetch }) {
+export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url, quote, fetcher }) {
   const key = Buffer.from(privateKey, 'hex');
   const payerPublicKey = Buffer.from(schnorr.getPublicKey(key)).toString('hex');
   const payerScript = `000020${payerPublicKey}ac`;
   const attempts = new Map();
   const submitted = new Set();
   const origin = new URL(url).origin;
+  const transportFetch = fetcher ?? createBrowserAuthorizedFetch({ allowedOrigins: [origin] });
   const paymentIdentifier = globalThis.crypto.randomUUID().replaceAll('-', '_');
   let firstQuote = true;
   let funding;
@@ -68,11 +69,14 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
       Object.defineProperty(response, 'url', { value: input });
       return response;
     }
-    return fetcher(input, init);
+    return transportFetch(input, init);
   };
   const boundFetchAuthority = Symbol.for('kaspa-x402:bound-paid-fetch:v1');
-  if (fetcher[boundFetchAuthority] === true)
+  const browserFetchAuthority = Symbol.for('kaspa-x402:browser-authorized-paid-fetch:v1');
+  if (transportFetch[boundFetchAuthority] === true)
     Object.defineProperty(paidTransport, boundFetchAuthority, { value: true });
+  if (transportFetch[browserFetchAuthority] === true)
+    Object.defineProperty(paidTransport, browserFetchAuthority, { value: true });
   const client = new DirectModeClient({
     addressCodec: { scriptPublicKeyForAddress },
     fundingProvider: {
@@ -87,7 +91,7 @@ export function createHashChainDemoPayment({ sdk, rpc, privateKey, address, url,
         return claimHashChainGrantViaHttp(
           request,
           (digest) => Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), key)).toString('hex'),
-          fetcher,
+          transportFetch,
         );
       },
       async payHashChainTransaction(request) {

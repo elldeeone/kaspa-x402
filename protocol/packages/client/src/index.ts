@@ -1,4 +1,5 @@
 export * from "./channel-store.js";
+export * from "./browser-authorized-fetch.js";
 export * from "./direct-client.js";
 export * from "./hash-chain-grant-http.js";
 export * from "./hash-chain-grant-url.js";
