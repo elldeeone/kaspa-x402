@@ -39,13 +39,14 @@ for (let index = 1; index <= 2; index++) recordTransaction(String(index).padStar
 const options = {
   name: 'kaspa-x402-hash-chain-worker-check',
   modules: true, scriptPath: path.resolve('packages/demo-gateway/dist/index.js'),
-  compatibilityDate: '2026-06-02', compatibilityFlags: ['nodejs_compat'],
+  compatibilityDate: '2026-06-02', compatibilityFlags: ['nodejs_compat', 'enable_request_signal', 'request_signal_passthrough'],
   durableObjects: { GATEWAY_STATE: { className: 'GatewayState', useSQLite: true,
     unsafeUniqueKey: 'kaspa-x402-hash-chain-worker-check' } },
   durableObjectsPersist: folder,
   resourcePersistencePath: folder,
   bindings: {
     KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HASH_CHAIN_ENABLED: 'true',
+    KASPA_X402_ADMISSION_HMAC_KEY: 'test-admission-key-with-at-least-32-bytes',
     KASPA_X402_ADMIN_TOKEN: admin,
     KASPA_X402_PAY_TO: addressForScriptPublicKey(payerScript, 'kaspa:testnet-10'),
     KASPA_X402_SERVER_PUBLIC_KEY: owner, KASPA_X402_GATEWAY_BASE_URL: base,
@@ -118,12 +119,35 @@ try {
   const registered = await register(registration);
   assert.equal(registered.status, 200, await registered.text());
   assert.equal((await register(registration)).status, 409, 're-registering a head must not reissue keys');
+  const bindings = await worker.getBindings();
+  const namespace = bindings.GATEWAY_STATE;
+  const stateStub = namespace.get(namespace.idFromName('demo-gateway-state-v2'));
+  const stateCall = async (method, payload) => {
+    const response = await stateStub.fetch('https://gateway-state/rpc', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: JSON.stringify({ method, payload }),
+    });
+    assert.equal(response.status, 200);
+    const result = await response.json();
+    assert.equal(result.ok, true, result.error);
+    return result.value;
+  };
+  await stateCall('recordPnnCheckpoint', {
+    checkpoint: { blockHash, blueScore: '1000', daaScore: '1000' },
+  });
+  for (const available of await stateCall('listExactHeads')) {
+    if (available.status === 'available')
+      await stateCall('recordExactHeadOfferObservation', { head: available });
+  }
   const supported = await (await worker.dispatchFetch(`${base}/supported`)).json();
   assert.deepEqual(supported.kinds.map((kind) => kind.extra.profile ?? kind.scheme),
     ['standard-native', 'batch-settlement', 'hash-chain-additive']);
   for (const route of ['/exact/report', '/batch/report']) {
     assert.equal((await worker.dispatchFetch(base + route)).status, 402, `existing ${route} offer`);
   }
+  assert.equal((await worker.dispatchFetch(`${base}/hash-chain`, {
+    headers: { 'cf-connecting-ip': '198.51.100.2' },
+  })).status, 402, 'hash-chain route alias must keep serving a quote');
   for (let index = 0; index < 4; index++) assert.equal((await worker.dispatchFetch(`${base}/hash-chain/report?quota=${index}`, {
     headers: { 'cf-connecting-ip': '198.51.100.1' },
   })).status, 402);

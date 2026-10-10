@@ -1,4 +1,5 @@
 import { exactClientStore, exactClientFunding } from "./exact-dependencies.js";
+import { appendCompactionTopUp, compactionTopUpUpdate } from "../../core/test/compaction-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -46,6 +47,7 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   DirectModeClient,
+  ChannelCasConflictError,
   MemoryChannelStore,
   PendingExactPaymentError,
   PAYMENT_REQUIRED_HEADER,
@@ -1995,7 +1997,7 @@ describe("direct-mode client", () => {
       }),
     ).rejects.toThrow("transaction id does not match");
     await expect(
-      store.saveChannel({ ...captured!, status: "suspicious" }),
+      store.saveChannel(captured!, { ...captured!, status: "suspicious" }),
     ).rejects.toThrow("open funding transition");
     await expect(
       client.createPayment(
@@ -2630,10 +2632,6 @@ describe("direct-mode client", () => {
       firstPayment,
       makeSettlement(firstPayment.channel!, "100"),
     );
-    const [withoutProof] = await store.loadChannels({});
-    if (!withoutProof) throw new Error("missing stored channel");
-    await store.saveChannel({ ...withoutProof, latestVoucher: undefined });
-
     const payment = await client.createPayment(
       encodePaymentRequiredHeader(
         makeRequired({
@@ -2723,7 +2721,7 @@ describe("direct-mode client", () => {
             ],
           };
     const reconciled = await client.reconcileChannel(stored.id);
-    await store.saveChannel({
+    await store.saveChannel(reconciled, {
       ...reconciled,
       chargedCumulativeAmount: "300",
       signedMaxClaimable: "300",
@@ -3969,6 +3967,162 @@ describe("direct-mode client", () => {
     );
   });
 
+  it("serializes concurrent channel signing and retains the disclosed voucher", async () => {
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const baseline = makeClient({ provider, store });
+    const resource = { url: "https://api.example.test/data" };
+    const first = await baseline.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })), resource,
+    );
+    expect(first.channel?.signedMaxClaimable).toBe("100");
+    await baseline.applySettlement(first, makeSettlement(first.channel!, "100"));
+
+    let markSlowSigning!: () => void;
+    let releaseSlowSigning!: () => void;
+    const slowSigning = new Promise<void>((resolve) => { markSlowSigning = resolve; });
+    const mayFinish = new Promise<void>((resolve) => { releaseSlowSigning = resolve; });
+    class SlowSigner extends FakeSigner {
+      override async signVoucher(request: VoucherSignRequest) {
+        markSlowSigning();
+        await mayFinish;
+        return super.signVoucher(request);
+      }
+    }
+    const slow = makeClient({ provider, store, signer: new SlowSigner() });
+    const fast = makeClient({ provider, store });
+    const pending = slow.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })), resource,
+    );
+    await slowSigning;
+    const higherPending = fast.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "200" })), resource,
+    );
+    releaseSlowSigning();
+    const lower = await pending;
+    await expect(higherPending).rejects.toThrow("existing voucher authorization");
+    const [stored] = await store.loadChannels({});
+    expect(stored!.signedMaxClaimable).toBe("200");
+    expect(lower.channel!.signedMaxClaimable).toBe("200");
+  });
+
+  it("rejects a stale or regressing complete channel snapshot", async () => {
+    // Failure modes: a stale writer replaces a newer voucher, a current writer
+    // lowers the ceiling, or a current writer drops the signed voucher itself.
+    const provider = new FakeFundingProvider();
+    const store = new MemoryChannelStore();
+    const client = makeClient({ provider, store });
+    const resource = { url: "https://api.example.test/data" };
+    const first = await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "100" })), resource,
+    );
+    await client.applySettlement(first, makeSettlement(first.channel!, "100"));
+    const before = (await store.loadChannels({}))[0]!;
+    await client.createPayment(
+      encodePaymentRequiredHeader(makeRequired({ amount: "200" })), resource,
+    );
+    const after = (await store.loadChannels({}))[0]!;
+
+    await expect(store.saveChannel(before, before)).rejects.toBeInstanceOf(ChannelCasConflictError);
+    await expect(store.saveChannel(after, {
+      ...after, signedMaxClaimable: before.signedMaxClaimable,
+      latestVoucher: before.latestVoucher,
+    })).rejects.toThrow();
+    await expect(store.saveChannel(after, {
+      ...after, latestVoucher: undefined,
+    })).rejects.toThrow();
+    expect((await store.loadChannels({}))[0]!.signedMaxClaimable).toBe("300");
+  });
+
+  it("persists an authenticated lineage compaction at transition 65", async () => {
+    // Failure modes: a valid compacted prefix is rejected as a journal rewrite,
+    // or a forged history hash or changed retained event is accepted.
+    const provider = new FakeFundingProvider();
+    const opened = await makeClient({ provider, store: new MemoryChannelStore() })
+      .createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" });
+    let lineage = opened.channel!.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    expect(lineage.journal).toHaveLength(64);
+    const at64 = {
+      ...opened.channel!,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    const store = new MemoryChannelStore([at64]);
+    const compacted = appendCompactionTopUp(lineage, 65);
+    expect(compacted.anchor.compactedEvents).toBe(1);
+    expect(compacted.journal).toHaveLength(64);
+    const at65 = {
+      ...at64,
+      lineage: compacted,
+      activeOutpoint: compacted.currentHead!.outpoint,
+      activeScriptPublicKey: compacted.currentHead!.scriptPublicKey,
+      fundingAmount: compacted.currentHead!.value,
+    };
+    const forgedData = { ...compacted.anchor, historyHash: "fa".repeat(32) };
+    const { snapshotHash: _ignored, ...forgedPayload } = forgedData;
+    const forged = {
+      ...compacted,
+      anchor: { ...forgedPayload, snapshotHash: sha256Hex(stableStringify(forgedPayload)) },
+    };
+    await expect(store.applyCovenantLineage({ expectedChannel: at64,
+      lineage: forged, channel: { ...at65, lineage: forged } }))
+      .rejects.toThrow("journal is not append-only");
+    const altered = structuredClone(compacted);
+    if (altered.journal[0]?.event !== "accepted") throw new Error("expected retained transition");
+    altered.journal[0].transition.acceptance.confirmationCount = 31;
+    await expect(store.applyCovenantLineage({ expectedChannel: at64,
+      lineage: altered, channel: { ...at65, lineage: altered } }))
+      .rejects.toThrow("journal is not append-only");
+    await expect(store.applyCovenantLineage({ expectedChannel: at64,
+      lineage: compacted, channel: at65 })).resolves.toEqual(at65);
+    await expect(store.loadCovenantLineage(at64.id)).resolves.toEqual(compacted);
+  });
+
+  it("reconciles transition 65 through DirectModeClient without marking the channel refundable", async () => {
+    // Failure mode: the accepted transition moved into the anchor looks removed
+    // when runtime rollback detection compares only retained journal events.
+    const provider = new FakeFundingProvider();
+    const opened = await makeClient({ provider, store: new MemoryChannelStore() })
+      .createPayment(encodePaymentRequiredHeader(makeRequired({ amount: "100" })),
+        { url: "https://api.example.test/data" });
+    let lineage = opened.channel!.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    const at64: DirectModeChannel = {
+      ...opened.channel!,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    const store = new MemoryChannelStore([at64]);
+    const client = makeClient({ provider, store });
+    const update = compactionTopUpUpdate(lineage, 65);
+    const accepted = update.addedChainBlocks[0]!.transitions[0]!;
+    const successor = accepted.successor!;
+    provider.utxos.push({
+      outpoint: successor.outpoint,
+      covenantId: at64.covenantId,
+      amount: successor.value,
+      address: at64.escrowAddress,
+      scriptPublicKey: successor.scriptPublicKey,
+      acceptance: accepted.acceptance,
+    });
+    provider.lineageDiscovery = (request) => compactionTopUpUpdate(request.lineage, 65);
+
+    const reconciled = await client.reconcileChannel(at64.id);
+    expect(reconciled.status).toBe("active");
+    expect(reconciled.lineage.anchor.compactedEvents).toBe(1);
+    expect(reconciled.lineage.journal).toHaveLength(64);
+    expect(reconciled.activeOutpoint).toEqual(successor.outpoint);
+    await expect(store.loadChannels({})).resolves.toEqual([reconciled]);
+  });
+
   it("atomically applies a durable refund attempt only against its captured head", async () => {
     const provider = new FakeFundingProvider();
     const store = new MemoryChannelStore();
@@ -4003,9 +4157,9 @@ describe("direct-mode client", () => {
       ...channel,
       activeOutpoint: { txid: "67".repeat(32), index: 0 },
     };
-    await expect(store.saveChannel(changed)).rejects.toThrow("open refund");
+    await expect(store.saveChannel(channel, changed)).rejects.toThrow("open refund");
     await expect(
-      store.saveChannel({ ...channel, id: channel.id.toUpperCase() }),
+      store.saveChannel(channel, { ...channel, id: channel.id.toUpperCase() }),
     ).rejects.toThrow("open refund");
     await expect(store.retireChannel(channel.id)).rejects.toThrow(
       "open refund",
@@ -4037,7 +4191,7 @@ describe("direct-mode client", () => {
     });
     expect(applied.channel.status).toBe("refunded");
     expect(applied.attempt.status).toBe("applied");
-    await expect(store.saveChannel(applied.channel)).rejects.toThrow(
+    await expect(store.saveChannel(applied.channel, applied.channel)).rejects.toThrow(
       "terminal refund",
     );
     await expect(store.retireChannel(channel.id)).rejects.toThrow(

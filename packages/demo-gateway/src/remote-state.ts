@@ -33,18 +33,15 @@ import type {
 import { GATEWAY_COORDINATION_DOMAIN } from "./state.js";
 
 export type GatewayStateNamespace = Env["GATEWAY_STATE"];
-export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-v1.0.0-rc.2";
+export const GATEWAY_STATE_OBJECT_NAME = "demo-gateway-state-v2";
 
 export class RemoteGatewayState implements GatewayStateClient {
   readonly coordinationScope = "deployment-wide" as const;
   readonly coordinationDomain = GATEWAY_COORDINATION_DOMAIN;
   readonly #stub: ReturnType<GatewayStateNamespace["get"]>;
 
-  constructor(
-    namespace: GatewayStateNamespace,
-    name = GATEWAY_STATE_OBJECT_NAME,
-  ) {
-    this.#stub = namespace.get(namespace.idFromName(name));
+  constructor(namespace: GatewayStateNamespace) {
+    this.#stub = namespace.get(namespace.idFromName(GATEWAY_STATE_OBJECT_NAME));
   }
 
   loadChannel(channelId: string): Promise<ServerChannelRecord | undefined> {
@@ -127,6 +124,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("beginBatchHandler", { attemptId, startedAt });
   }
 
+  resetBatchHandlerBeforeExecution(attemptId: string, startedAt: string): Promise<boolean> {
+    return this.#call("resetBatchHandlerBeforeExecution", { attemptId, startedAt });
+  }
+
   recordBatchHandlerResult(
     attemptId: string,
     result: ProtectedHandlerResult,
@@ -189,24 +190,41 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("loadExactHead", { headId });
   }
 
+  recordExactHeadOfferObservation(head: ExactHeadRecord): Promise<void> {
+    return this.#call("recordExactHeadOfferObservation", { head });
+  }
+
+  hasRecentExactHeadOfferObservation(headId: string, nowMs: number, signal?: AbortSignal): Promise<boolean> {
+    return this.#call("hasRecentExactHeadOfferObservation", { headId, nowMs }, signal);
+  }
+
   listExactHeads(): Promise<ExactHeadRecord[]> {
     return this.#call("listExactHeads");
   }
 
-  exactHeadStats(): Promise<ExactHeadStats> {
-    return this.#call("exactHeadStats");
+  exactHeadStats(signal?: AbortSignal): Promise<ExactHeadStats> {
+    return this.#call("exactHeadStats", undefined, signal);
   }
 
   selectExactHead(
     request: ExactHeadSelectionRequest,
+    signal?: AbortSignal,
   ): Promise<ExactHeadRecord | undefined> {
-    return this.#call("selectExactHead", { request });
+    return this.#call("selectExactHead", { request }, signal);
   }
 
   claimExactSettlement(
     record: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementClaimResult> {
     return this.#call("claimExactSettlement", { record });
+  }
+
+  claimExactSettlementWithEvidence(
+    record: ExactSettlementAttemptRecord,
+    receipt: PnnEvidenceRecord,
+    signal?: AbortSignal,
+  ): Promise<ExactSettlementClaimResult> {
+    return this.#call("claimExactSettlementWithEvidence", { record, receipt }, signal);
   }
 
   loadExactSettlementAttempt(
@@ -244,6 +262,10 @@ export class RemoteGatewayState implements GatewayStateClient {
     startedAt: string,
   ): Promise<boolean> {
     return this.#call("beginExactHandler", { transactionId, startedAt });
+  }
+
+  resetExactHandlerBeforeExecution(transactionId: string, startedAt: string): Promise<boolean> {
+    return this.#call("resetExactHandlerBeforeExecution", { transactionId, startedAt });
   }
 
   recordExactHandlerResult(
@@ -306,12 +328,17 @@ export class RemoteGatewayState implements GatewayStateClient {
     currentDaa: string,
     refundDeltaDaa: string,
     minimumLeadDaa: string,
+    signal?: AbortSignal,
   ): Promise<string> {
     return this.#call("resolveBatchRefundTimeoutDaa", {
       currentDaa,
       refundDeltaDaa,
       minimumLeadDaa,
-    });
+    }, signal);
+  }
+
+  loadRecentPnnDaaScore(nowMs: number, maxAgeMs?: number, signal?: AbortSignal): Promise<string | undefined> {
+    return this.#call("loadRecentPnnDaaScore", { nowMs, maxAgeMs }, signal);
   }
 
   loadOpenClaimAttempt(
@@ -350,11 +377,22 @@ export class RemoteGatewayState implements GatewayStateClient {
 
   acquirePublicAdmission(
     token: string,
+    callerKey: string,
     nowMs: number,
-    limit: number,
+    globalLimit: number,
+    callerLimit: number,
     ttlMs: number,
   ): Promise<GatewayPublicAdmissionResult> {
-    return this.#stub.acquirePublicAdmission(token, nowMs, limit, ttlMs);
+    return this.#stub.acquirePublicAdmission(token, callerKey, nowMs, globalLimit, callerLimit, ttlMs);
+  }
+
+  renewPublicAdmission(
+    token: string,
+    callerKey: string,
+    nowMs: number,
+    ttlMs: number,
+  ): Promise<boolean> {
+    return this.#stub.renewPublicAdmission(token, callerKey, nowMs, ttlMs);
   }
 
   releasePublicAdmission(token: string): Promise<void> {
@@ -374,12 +412,13 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("loadPnnEvidence", { transactionId });
   }
 
-  savePnnEvidence(record: PnnEvidenceRecord): Promise<void> {
-    return this.#call("savePnnEvidence", { record });
+  savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void> {
+    signal?.throwIfAborted();
+    return this.#call("savePnnEvidence", { record }, signal);
   }
 
-  recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void> {
-    return this.#call("recordPnnCheckpoint", { checkpoint });
+  recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void> {
+    return this.#call("recordPnnCheckpoint", { checkpoint }, signal);
   }
 
   findPnnCheckpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {
@@ -402,14 +441,18 @@ export class RemoteGatewayState implements GatewayStateClient {
     return this.#call("metrics");
   }
 
-  async #call<T>(method: GatewayStateMethod, payload?: unknown): Promise<T> {
+  async #call<T>(method: GatewayStateMethod, payload?: unknown, signal?: AbortSignal): Promise<T> {
+    signal?.throwIfAborted();
     const body: GatewayStateRequest = { method, payload };
     const response = await this.#stub.fetch("https://gateway-state/rpc", {
       method: "POST",
       headers: { "content-type": "application/json" },
       body: JSON.stringify(body),
+      ...(signal ? { signal } : {}),
     });
+    signal?.throwIfAborted();
     const result = await response.json<GatewayStateResponse<T>>();
+    signal?.throwIfAborted();
     if (!response.ok) throw new Error(`gateway state method failed: ${method}`);
     if (!result.ok) throw new Error(result.error);
     return result.value as T;

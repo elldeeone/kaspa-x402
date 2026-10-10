@@ -40,6 +40,14 @@ import {
 import { runExactAuthorizationE2EProof } from "./proof-exact-authorization-e2e.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
+let admissionSequence = 0;
+function handleProofRequest(server, request, handler) {
+  admissionSequence += 1;
+  return server.handlePaidRequest({
+    ...request,
+    admissionKey: admissionSequence.toString(16).padStart(64, "0"),
+  }, handler);
+}
 const options = readOptions(process.argv.slice(2));
 const report = {
   generatedAt: new Date().toISOString(),
@@ -100,7 +108,7 @@ async function runExactProof() {
     profile: "standard-native",
     step: "download",
   });
-  const unpaid = await server.handlePaidRequest(
+  const unpaid = await handleProofRequest(server,
     { routeAccess: "public", url, resource, paymentAmount: amount, paymentScheme: "exact" },
     async () => ({
       status: 200,
@@ -150,7 +158,7 @@ async function runExactProof() {
   });
 
   let executions = 0;
-  const response = await server.handlePaidRequest(
+  const response = await handleProofRequest(server,
     requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url,
       resource,
@@ -183,7 +191,7 @@ async function runExactProof() {
   });
 
   let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(
+  const cached = await handleProofRequest(server,
     requestWithPayment(payment.paymentPayload, { routeAccess: "public",
       url,
       resource,
@@ -215,7 +223,7 @@ async function runExactProof() {
     description: "Fixed-price exact replay source",
     mimeType: "application/octet-stream",
   };
-  const replayRequired = await server.handlePaidRequest(
+  const replayRequired = await handleProofRequest(server,
     { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
@@ -237,7 +245,7 @@ async function runExactProof() {
   );
   const replayFirstHash = replayPayment.paymentPayload.payload.requestHash;
   assert.ok(replayFirstHash);
-  const replaySource = await server.handlePaidRequest(
+  const replaySource = await handleProofRequest(server,
     requestWithPayment(replayPayment.paymentPayload, { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
@@ -253,7 +261,7 @@ async function runExactProof() {
   assert.equal(replaySource.status, 200);
 
   let replayExecutions = 0;
-  const replay = await server.handlePaidRequest(
+  const replay = await handleProofRequest(server,
     requestWithPayment(replayPayment.paymentPayload, { routeAccess: "public",
       url: replayUrl,
       resource: replayResource,
@@ -363,7 +371,7 @@ async function runBatchProof() {
     channelId: depositVerify.extra?.channelId,
   });
 
-  const depositResponse = await server.handlePaidRequest(
+  const depositResponse = await handleProofRequest(server,
     requestWithPayment(deposit.paymentPayload, { routeAccess: "public",
       url,
       resource,
@@ -439,7 +447,7 @@ async function runBatchProof() {
   underpaidPayload.payload.voucher = structuredClone(
     deposit.paymentPayload.payload.voucher,
   );
-  const corrective = await server.handlePaidRequest(
+  const corrective = await handleProofRequest(server,
     requestWithPayment(underpaidPayload, { routeAccess: "public",
       url,
       resource,
@@ -467,7 +475,7 @@ async function runBatchProof() {
   });
 
   let executions = 0;
-  const voucherResponse = await server.handlePaidRequest(
+  const voucherResponse = await handleProofRequest(server,
     requestWithPayment(voucher.paymentPayload, { routeAccess: "public",
       url,
       resource,
@@ -507,7 +515,7 @@ async function runBatchProof() {
   });
 
   let cachedExecutions = 0;
-  const cached = await server.handlePaidRequest(
+  const cached = await handleProofRequest(server,
     requestWithPayment(voucher.paymentPayload, { routeAccess: "public",
       url,
       resource,
@@ -536,7 +544,7 @@ async function runBatchProof() {
 
   let replayExecutions = 0;
   const staleReplayPayload = withoutPaymentIdentifier(voucher.paymentPayload);
-  const staleReplay = await server.handlePaidRequest(
+  const staleReplay = await handleProofRequest(server,
     requestWithPayment(staleReplayPayload, { routeAccess: "public",
       url,
       resource,

@@ -3,9 +3,12 @@ import { describe, expect, it } from "vitest";
 import {
   applyCovenantSelectedChainUpdate,
   createCovenantLineageState,
+  sha256Hex,
+  stableStringify,
   type AcceptedTransactionEvidence,
   type SettlementResponse,
 } from "@kaspa-x402/core";
+import { appendCompactionTopUp } from "../../core/test/compaction-fixture.js";
 import {
   ESCROW_V5_LAUNCH_IDENTITY,
   buildKip10AdditiveRedeemScript,
@@ -772,6 +775,54 @@ function defineStoreContract(factory: StoreFactory): void {
       store.applyCovenantLineage(advanced, rolledBack, rollbackLease),
     ).rejects.toThrow("journal is not append-only");
     await expect(store.loadChannel(first.channelId)).resolves.toEqual(advanced);
+  });
+
+  it("persists authenticated lineage compaction at transition 65 across restart", async () => {
+    // Failure modes: a valid 64-to-65 compaction fails the append-only guard,
+    // or a forged anchor/history or changed retained event passes that guard.
+    const first = channel();
+    let lineage = first.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    expect(lineage.journal).toHaveLength(64);
+    const at64: ServerChannelRecord = {
+      ...first,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    let store = await factory.create([at64]);
+    const compacted = appendCompactionTopUp(lineage, 65);
+    expect(compacted.anchor.compactedEvents).toBe(1);
+    expect(compacted.journal).toHaveLength(64);
+    const at65: ServerChannelRecord = {
+      ...at64,
+      version: "1",
+      lineage: compacted,
+      activeOutpoint: compacted.currentHead!.outpoint,
+      activeScriptPublicKey: compacted.currentHead!.scriptPublicKey,
+      fundingAmount: compacted.currentHead!.value,
+    };
+    await store.claimChannelOperation(channelOperation(at64, "recovery", ATTEMPT));
+    const forgedData = { ...compacted.anchor, historyHash: "fa".repeat(32) };
+    const { snapshotHash: _ignored, ...forgedPayload } = forgedData;
+    const forged = {
+      ...compacted,
+      anchor: { ...forgedPayload, snapshotHash: sha256Hex(stableStringify(forgedPayload)) },
+    };
+    await expect(store.applyCovenantLineage(at64,
+      { ...at65, lineage: forged }, ATTEMPT))
+      .rejects.toThrow("journal is not append-only");
+    const altered = structuredClone(compacted);
+    if (altered.journal[0]?.event !== "accepted") throw new Error("expected retained transition");
+    altered.journal[0].transition.acceptance.confirmationCount = 31;
+    await expect(store.applyCovenantLineage(at64,
+      { ...at65, lineage: altered }, ATTEMPT))
+      .rejects.toThrow("journal is not append-only");
+    await expect(store.applyCovenantLineage(at64, at65, ATTEMPT)).resolves.toBeUndefined();
+    if (store instanceof DurableMockServerChannelStore) store = await store.restart();
+    await expect(store.loadChannel(at64.channelId)).resolves.toEqual(at65);
   });
 
   it("applies batch settlement only when the channel snapshot still matches", async () => {

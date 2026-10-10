@@ -513,6 +513,7 @@ export class DirectModeServer {
           this.#config.network,
         );
       for (let selectionAttempt = 0; selectionAttempt < 2; selectionAttempt++) {
+        options.signal?.throwIfAborted();
         const selectionKey = sha256Hex(
           stableStringify({
             scope: "kaspa:x402:additive-head-selection:v1",
@@ -531,7 +532,8 @@ export class DirectModeServer {
           minimumAdditiveThresholdSompi:
             this.#config.minimumExactAdditiveThresholdSompi,
           selectionKey,
-        });
+        }, options.signal);
+        options.signal?.throwIfAborted();
         if (!head) break;
         if (this.#config.reconcileExactHeadOnOffer) {
           try {
@@ -893,7 +895,9 @@ export class DirectModeServer {
     let permit: PublicBoundaryPermit;
     try {
       request = { ...request, trustedSecurityContext: paidRouteContext(request) };
-      permit = this.#publicBoundary.enterRequest(request.trustedSecurityContext);
+      permit = this.#publicBoundary.enterRequest(
+        request.trustedSecurityContext, request.admissionKey,
+      );
     } catch (error) {
       return error instanceof PublicBoundaryError
         ? publicBoundaryResponse(error)
@@ -1092,16 +1096,34 @@ export class DirectModeServer {
             request.signal,
           );
         }
+        if (request.signal?.aborted) return requestAbortedResponse();
         const runVerified = async () => {
+          if (request.signal?.aborted) return requestAbortedResponse();
           let recoveredExactHandlerResult: ProtectedHandlerResult | undefined;
           let recoveredBatchHandlerResult: ProtectedHandlerResult | undefined;
           let batchAttemptId: Hash32Hex | undefined;
+          let batchHandlerStartedAt: string | undefined;
+          let exactHandlerStartedAt: string | undefined;
+          let exactHandlerTransactionId: Hash32Hex | undefined;
+          let handlerInvoked = false;
+          const resetBeforeExecution = async () => {
+            if (handlerInvoked) return;
+            if (batchAttemptId && batchHandlerStartedAt)
+              await this.#batchStore.resetBatchHandlerBeforeExecution(
+                batchAttemptId, batchHandlerStartedAt,
+              );
+            if (exactHandlerStartedAt && exactHandlerTransactionId)
+              await this.#config.store.resetExactHandlerBeforeExecution(
+                exactHandlerTransactionId, exactHandlerStartedAt,
+              );
+          };
           if (verified.scheme === "batch-settlement") {
             try {
               const existingAttempt =
                 await this.#batchStore.loadBatchSettlementAttempt(
                   this.#batchSettlementAttemptId(verified, fingerprint),
                 );
+              if (request.signal?.aborted) return requestAbortedResponse();
               if (!existingAttempt)
                 verified = this.#prepareLiveDepositTransition(verified);
               const claim = existingAttempt
@@ -1111,6 +1133,7 @@ export class DirectModeServer {
                     fingerprint,
                     paymentIdentifier,
                   );
+              if (request.signal?.aborted) return requestAbortedResponse();
               batchAttemptId = claim.attempt.attemptId;
               recoveredBatchHandlerResult = claim.attempt.handlerResult;
               if (
@@ -1144,15 +1167,24 @@ export class DirectModeServer {
                     request.signal,
                   );
                 }
+                batchHandlerStartedAt = uniqueHandlerStartTime();
                 const handlerStarted =
                   await this.#batchStore.beginBatchHandler(
                     batchAttemptId,
-                    new Date().toISOString(),
+                    batchHandlerStartedAt,
                   );
+                if (request.signal?.aborted) {
+                  await resetBeforeExecution();
+                  return requestAbortedResponse();
+                }
                 if (!handlerStarted)
                   return batchSettlementRecoveryRequiredResponse();
               }
             } catch (error) {
+              if (request.signal?.aborted) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return batchSettlementRecoveryRequiredResponse();
@@ -1186,12 +1218,18 @@ export class DirectModeServer {
                 verified,
                 fingerprint,
                 paymentIdentifier,
+                request.signal,
               );
+              request.signal?.throwIfAborted();
               verified = await this.#settleExactIfNeeded(
                 verified,
                 claim,
                 request.signal,
               );
+              request.signal?.throwIfAborted();
+              if (verified.evidenceReceipt && this.#config.persistOwnedExactEvidence) {
+                await this.#config.persistOwnedExactEvidence(verified, claim, request.signal);
+              }
               if (verified.profile === "hash-chain-additive") {
                 await this.#recordAcceptedHashChainPayment(
                   verified,
@@ -1216,10 +1254,12 @@ export class DirectModeServer {
                 };
               }
               if (!recoveredExactHandlerResult) {
+                exactHandlerStartedAt = uniqueHandlerStartTime();
+                exactHandlerTransactionId = verified.transactionId;
                 const handlerStarted =
                   await this.#config.store.beginExactHandler(
                     verified.transactionId,
-                    new Date().toISOString(),
+                    exactHandlerStartedAt,
                   );
                 if (!handlerStarted) {
                   return {
@@ -1230,6 +1270,10 @@ export class DirectModeServer {
                 }
               }
             } catch (error) {
+              if (request.signal?.aborted) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (isPaymentIdentifierOwnershipError(error))
                 return paymentIdentifierConflictResponse();
               return this.#settlementCorrectiveResponse(
@@ -1245,6 +1289,10 @@ export class DirectModeServer {
             }
           }
           let handlerResult: ProtectedHandlerResult;
+          if (request.signal?.aborted) {
+            await resetBeforeExecution();
+            return requestAbortedResponse();
+          }
           if (recoveredExactHandlerResult || recoveredBatchHandlerResult) {
             handlerResult =
               recoveredExactHandlerResult ?? recoveredBatchHandlerResult!;
@@ -1266,6 +1314,7 @@ export class DirectModeServer {
                       return { status: "expired", reason: expiryError };
                     }
                   }
+                  handlerInvoked = true;
                   return Promise.resolve(
                     handler({
                       request: { ...request, signal },
@@ -1289,6 +1338,10 @@ export class DirectModeServer {
               }
               handlerResult = execution.result;
             } catch {
+              if (request.signal?.aborted && !handlerInvoked) {
+                await resetBeforeExecution();
+                return requestAbortedResponse();
+              }
               if (verified.scheme === "exact") {
                 await this.#config.store.markExactHandlerRecoveryRequired(
                   verified.transactionId,
@@ -2646,6 +2699,9 @@ export class DirectModeServer {
       ...(verification.payerAddress
         ? { payerAddress: verification.payerAddress }
         : {}),
+      ...(verification.evidenceReceipt
+        ? { evidenceReceipt: verification.evidenceReceipt }
+        : {}),
       finality: verification.finality ?? "mempool",
       ...(verification.finality
         ? { observedFinality: verification.finality }
@@ -3709,6 +3765,7 @@ export class DirectModeServer {
     verified: VerifiedExactPayment,
     fingerprint: Hash32Hex,
     paymentIdentifier?: string,
+    signal?: AbortSignal,
   ): Promise<ExactSettlementClaimResult> {
     const now = new Date().toISOString();
     const attempt = this.#buildExactSettlementAttempt(
@@ -3718,6 +3775,14 @@ export class DirectModeServer {
       now,
     );
     try {
+      signal?.throwIfAborted();
+      if (verified.evidenceReceipt !== undefined) {
+        if (!this.#config.store.claimExactSettlementWithEvidence)
+          throw new Error("atomic exact evidence claim store is required");
+        return await this.#config.store.claimExactSettlementWithEvidence(
+          attempt, verified.evidenceReceipt, signal,
+        );
+      }
       return await this.#config.store.claimExactSettlement(attempt);
     } catch (error) {
       throw new KaspaX402Error(
@@ -6000,8 +6065,15 @@ function serverCovenantLineageRolledBack(
       transition.transactionId.toLowerCase(),
     ),
   );
+  const newlyAnchored = new Set(
+    previous.journal.slice(0,
+      Math.max(0, next.anchor.compactedEvents - previous.anchor.compactedEvents),
+    ).filter((event) => event.event === "accepted")
+      .map((event) => event.transition.transactionId.toLowerCase()),
+  );
   return canonicalCovenantTransitions(previous).some(
-    (transition) => !canonical.has(transition.transactionId.toLowerCase()),
+    (transition) => !canonical.has(transition.transactionId.toLowerCase()) &&
+      !newlyAnchored.has(transition.transactionId.toLowerCase()),
   );
 }
 
@@ -6254,6 +6326,16 @@ function requestAbortedResponse(): ServerResponse {
     headers: {},
     body: { error: "request_aborted" },
   };
+}
+
+function uniqueHandlerStartTime(): string {
+  // Extra fractional digits keep the compare-and-reset owner unique across
+  // Worker isolates, including requests admitted in the same millisecond.
+  const nonce = crypto.getRandomValues(new Uint32Array(2));
+  return new Date().toISOString().replace(
+    /Z$/,
+    `${nonce[0]!.toString().padStart(10, "0")}${nonce[1]!.toString().padStart(10, "0")}Z`,
+  );
 }
 
 function boundaryError(error: unknown): Error {

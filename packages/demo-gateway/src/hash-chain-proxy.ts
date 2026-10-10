@@ -31,10 +31,10 @@ export async function proxyHashChainRequest(request: Request, config: GatewayCon
   }
 }
 
-export async function hashChainSupportedKinds(config: GatewayConfig): Promise<SupportedKind[]> {
+export async function hashChainSupportedKinds(config: GatewayConfig, signal?: AbortSignal): Promise<SupportedKind[]> {
   if (!config.enabled || !config.hashChainOrigin || !config.hashChainProxyToken) return [];
   try {
-    const response = await upstream(new Request("https://demo.invalid/hash-chain/supported"), config, 5_000);
+    const response = await upstream(new Request("https://demo.invalid/hash-chain/supported", { signal }), config, 5_000);
     if (!response.ok) return [];
     const body = JSON.parse(new TextDecoder().decode(await boundedBytes(response))) as { kinds?: SupportedKind[] };
     return (Array.isArray(body.kinds) ? body.kinds : []).filter((kind) =>

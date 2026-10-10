@@ -38,6 +38,14 @@ import {
 const privateKey = new Uint8Array(32).fill(7);
 const publicKey = schnorr.getPublicKey(privateKey);
 const publicKeyHex = Buffer.from(publicKey).toString("hex");
+let admissionSequence = 0;
+function handleProofRequest(server, request, handler) {
+  admissionSequence += 1;
+  return server.handlePaidRequest({
+    ...request,
+    admissionKey: admissionSequence.toString(16).padStart(64, "0"),
+  }, handler);
+}
 
 /** Offline HTTP payment flow: real payer Schnorr authorization, synthetic chain settlement. */
 export async function runExactAuthorizationE2EProof() {
@@ -128,7 +136,7 @@ export async function runExactAuthorizationE2EProof() {
   };
   const route = { routeAccess: "public", method: "GET", url, body: null,
     resource, paymentAmount: amount, paymentScheme: "exact", requestHash };
-  const unpaid = await server.handlePaidRequest(route, handler);
+  const unpaid = await handleProofRequest(server, route, handler);
   assert.equal(unpaid.status, 402);
   assert.equal(handlerExecutions, 0);
   const paymentRequired = unpaid.headers[PAYMENT_REQUIRED_HEADER];
@@ -202,7 +210,7 @@ export async function runExactAuthorizationE2EProof() {
     digest: legacyDigest,
     signature: legacySignature,
   };
-  const legacyResponse = await server.handlePaidRequest({
+  const legacyResponse = await handleProofRequest(server, {
     ...route,
     headers: { [PAYMENT_SIGNATURE_HEADER]: Buffer.from(stableStringify(legacyPayload)).toString("base64") },
   }, handler);
@@ -212,7 +220,7 @@ export async function runExactAuthorizationE2EProof() {
 
   const changedIdentifier = structuredClone(first.paymentPayload);
   changedIdentifier.extensions["payment-identifier"].info.id = "offline_exact_authorization_e2e_0002";
-  const changedIdentifierResponse = await server.handlePaidRequest({
+  const changedIdentifierResponse = await handleProofRequest(server, {
     ...route,
     headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(changedIdentifier) },
   }, handler);
@@ -220,7 +228,7 @@ export async function runExactAuthorizationE2EProof() {
   assert.equal(handlerExecutions, 0);
 
   const verifierCallsBeforePaid = verifierCalls;
-  const paid = await server.handlePaidRequest({
+  const paid = await handleProofRequest(server, {
     ...route,
     headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(first.paymentPayload) },
   }, handler);
@@ -263,7 +271,7 @@ export async function runExactAuthorizationE2EProof() {
   assert.equal(approvals, 1);
   assert.equal(providerCalls, 1);
 
-  const cached = await server.handlePaidRequest({
+  const cached = await handleProofRequest(server, {
     ...route,
     headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(retry.paymentPayload) },
   }, handler);
@@ -283,7 +291,7 @@ export async function runExactAuthorizationE2EProof() {
     lateHandlerExecutions += 1;
     return { status: 200, body: { ok: true, resource: "late-settlement" } };
   };
-  const lateChallenge = await server.handlePaidRequest(lateRoute, lateHandler);
+  const lateChallenge = await handleProofRequest(server, lateRoute, lateHandler);
   assert.equal(lateChallenge.status, 402);
   const latePayment = await client.createPayment(lateChallenge.headers[PAYMENT_REQUIRED_HEADER], {
     url: lateUrl,
@@ -303,7 +311,7 @@ export async function runExactAuthorizationE2EProof() {
     interruptedHandlerExecutions += 1;
     return { status: 200, body: { ok: true, resource: "interrupted-settlement" } };
   };
-  const interruptedChallenge = await server.handlePaidRequest(interruptedRoute, interruptedHandler);
+  const interruptedChallenge = await handleProofRequest(server, interruptedRoute, interruptedHandler);
   assert.equal(interruptedChallenge.status, 402);
   const interruptedPayment = await client.createPayment(
     interruptedChallenge.headers[PAYMENT_REQUIRED_HEADER], {
@@ -320,7 +328,7 @@ export async function runExactAuthorizationE2EProof() {
     resource: { ...resource, url: staleUrl },
     requestHash: mockRequestHash({ proof: "exact-authorization-stale-new-claim", url: staleUrl }),
   };
-  const staleChallenge = await server.handlePaidRequest(staleRoute, handler);
+  const staleChallenge = await handleProofRequest(server, staleRoute, handler);
   assert.equal(staleChallenge.status, 402);
   const stalePayment = await client.createPayment(staleChallenge.headers[PAYMENT_REQUIRED_HEADER], {
     url: staleUrl,
@@ -334,7 +342,7 @@ export async function runExactAuthorizationE2EProof() {
     resource: { ...resource, url: racingUrl },
     requestHash: mockRequestHash({ proof: "exact-authorization-racing-claim", url: racingUrl }),
   };
-  const racingChallenge = await server.handlePaidRequest(racingRoute, handler);
+  const racingChallenge = await handleProofRequest(server, racingRoute, handler);
   assert.equal(racingChallenge.status, 402);
   const racingPayment = await client.createPayment(racingChallenge.headers[PAYMENT_REQUIRED_HEADER], {
     url: racingUrl,
@@ -381,12 +389,12 @@ export async function runExactAuthorizationE2EProof() {
       }
       return claimExactSettlement(attempt);
     };
-    latePaid = await server.handlePaidRequest({
+    latePaid = await handleProofRequest(server, {
       ...lateRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: latePayload },
     }, lateHandler);
     assert.equal(latePaid.status, 200, "accepted late settlement must deliver the paid result");
-    lateRetry = await server.handlePaidRequest({
+    lateRetry = await handleProofRequest(server, {
       ...lateRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: latePayload },
     }, lateHandler);
@@ -397,7 +405,7 @@ export async function runExactAuthorizationE2EProof() {
     assert.equal(lateAttempt?.status, "applied");
 
     nowMs = RealDate.now();
-    interruptedFirst = await server.handlePaidRequest({
+    interruptedFirst = await handleProofRequest(server, {
       ...interruptedRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: interruptedPayload },
     }, interruptedHandler);
@@ -406,7 +414,7 @@ export async function runExactAuthorizationE2EProof() {
     assert.equal(interruptedAttempt?.status, "accepted");
     assert.equal(interruptedAttempt.handlerStartedAt, undefined);
     assert.equal(interruptedHandlerExecutions, 0);
-    interruptedRetry = await server.handlePaidRequest({
+    interruptedRetry = await handleProofRequest(server, {
       ...interruptedRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: interruptedPayload },
     }, interruptedHandler);
@@ -416,7 +424,7 @@ export async function runExactAuthorizationE2EProof() {
     assert.equal(interruptedCompleted?.status, "applied");
 
     nowMs = RealDate.parse(stalePayment.paymentPayload.payload.authorization.expiresAt) + 1_000;
-    staleResponse = await server.handlePaidRequest({
+    staleResponse = await handleProofRequest(server, {
       ...staleRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(stalePayment.paymentPayload) },
     }, handler);
@@ -424,7 +432,7 @@ export async function runExactAuthorizationE2EProof() {
     assert.equal(await serverStore.loadExactSettlementAttempt(stalePayment.transactionId), undefined);
 
     nowMs = RealDate.now();
-    racingResponse = await server.handlePaidRequest({
+    racingResponse = await handleProofRequest(server, {
       ...racingRoute,
       headers: { [PAYMENT_SIGNATURE_HEADER]: encodePaymentSignatureHeader(racingPayment.paymentPayload) },
     }, handler);

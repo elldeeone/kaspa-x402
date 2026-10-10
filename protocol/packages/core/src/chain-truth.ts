@@ -10,6 +10,11 @@ import type {
 } from "./types.js";
 
 export const TESTNET_10_CONFIRMATION_THRESHOLD = 30;
+export const MAX_LINEAGE_REMOVED_BLOCKS = 32;
+export const MAX_LINEAGE_UPDATE_EVENTS = 64;
+export const MAX_LINEAGE_JOURNAL_EVENTS = 128;
+export const MAX_LINEAGE_STATE_BYTES = 512 * 1024;
+export const MAX_LINEAGE_UPDATE_BYTES = 128 * 1024;
 
 export interface ChainCheckpoint {
   blockHash: Hash32Hex;
@@ -192,6 +197,19 @@ export type CovenantLineageEvent =
 
 export interface CovenantLineageState {
   manifest: CovenantLaunchManifest;
+  /** Authenticated base of the retained reorganization window. */
+  anchor: {
+    compactedEvents: number;
+    head: CovenantLineageHead | null;
+    genesisAcceptance?: AcceptedTransactionEvidence;
+    tipTransition?: CovenantLineageTransition;
+    manifestIdentitySha256: Hash32Hex;
+    checkpointBlockHash: Hash32Hex;
+    historyHash: Hash32Hex;
+    snapshotHash: Hash32Hex;
+    /** Fixed-size conservative filter for older relevant accepting blocks. */
+    relevantBlocksBloom: string;
+  };
   journal: CovenantLineageEvent[];
   /** Atomically derived from manifest + canonical journal events. */
   currentHead: CovenantLineageHead | null;
@@ -220,19 +238,34 @@ export interface CovenantSelectedChainUpdate {
 export function createCovenantLineageState(
   manifest: CovenantLaunchManifest,
 ): CovenantLineageState {
+  if (serializedBytes(manifest) > MAX_LINEAGE_STATE_BYTES - 4_096)
+    throw new Error("covenant launch manifest exceeds the lineage byte limit");
   assertLaunchManifest(manifest);
-  return {
+  const head = {
+    outpoint: structuredClone(manifest.genesis.outpoint),
+    scriptPublicKey: manifest.genesis.scriptPublicKey.toLowerCase(),
+    value: manifest.genesis.value,
+    claimedCumulativeAmount: manifest.genesis.claimedCumulativeAmount,
+  };
+  const anchor = makeLineageAnchor({
+    compactedEvents: 0,
+    head,
+    genesisAcceptance: structuredClone(manifest.genesis.acceptance),
+    manifestIdentitySha256: manifest.identitySha256,
+    checkpointBlockHash: manifest.genesis.acceptance.checkpoint.blockHash,
+    historyHash: sha256Hex(stableStringify({ genesis: manifest.identitySha256 })),
+    relevantBlocksBloom: "00".repeat(256),
+  });
+  const state: CovenantLineageState = {
     manifest: structuredClone(manifest),
+    anchor,
     journal: [],
-    currentHead: {
-      outpoint: structuredClone(manifest.genesis.outpoint),
-      scriptPublicKey: manifest.genesis.scriptPublicKey.toLowerCase(),
-      value: manifest.genesis.value,
-      claimedCumulativeAmount: manifest.genesis.claimedCumulativeAmount,
-    },
+    currentHead: structuredClone(head),
     checkpoint: structuredClone(manifest.genesis.acceptance.checkpoint),
     availability: "available",
   };
+  assertLineageBudget(state);
+  return state;
 }
 
 /**
@@ -243,6 +276,24 @@ export function applyCovenantSelectedChainUpdate(
   current: CovenantLineageState,
   update: CovenantSelectedChainUpdate,
 ): CovenantLineageState {
+  if (update.removedChainBlockHashes.length > MAX_LINEAGE_REMOVED_BLOCKS) {
+    throw new Error("selected-chain removed block count exceeds the limit");
+  }
+  const additions = update.addedChainBlocks.reduce(
+    (count, block) => count + block.transitions.length + (block.genesisAcceptance ? 1 : 0), 0,
+  );
+  const updateBytes = serializedBytes(update);
+  if (additions + update.removedChainBlockHashes.length > MAX_LINEAGE_UPDATE_EVENTS ||
+    updateBytes > MAX_LINEAGE_UPDATE_BYTES) {
+    throw new Error("selected-chain update exceeds the event or byte limit");
+  }
+  // Reject projected work before the validation path clones or derives state.
+  assertLineageBudget(current);
+  if (current.journal.length + additions + update.removedChainBlockHashes.length >
+      MAX_LINEAGE_JOURNAL_EVENTS ||
+      serializedBytes(current) + updateBytes > MAX_LINEAGE_STATE_BYTES) {
+    throw new Error("projected covenant lineage exceeds the event or byte limit");
+  }
   assertLineageState(current);
   assertCheckpoint(update.fromCheckpoint);
   assertCheckpoint(update.checkpoint);
@@ -264,6 +315,14 @@ export function applyCovenantSelectedChainUpdate(
   const next = structuredClone(current);
   let sequence = next.journal.length;
   const removed = new Set<string>();
+  const acceptedByBlock = new Map<string, string[]>();
+  for (const { transition } of canonicalAcceptedEvents(next.journal)) {
+    const hash = transition.acceptance.acceptingBlockHash.toLowerCase();
+    const ids = acceptedByBlock.get(hash) ?? [];
+    ids.push(transition.transactionId.toLowerCase());
+    acceptedByBlock.set(hash, ids);
+  }
+  const genesisAcceptance = canonicalGenesisAcceptance(next);
   for (const hash of update.removedChainBlockHashes) {
     assertHash32(hash, "removed chain block hash");
     const normalized = hash.toLowerCase();
@@ -271,17 +330,29 @@ export function applyCovenantSelectedChainUpdate(
       throw new Error("selected-chain update repeats a removed block");
     }
     removed.add(normalized);
-    const transactionIds = canonicalAcceptedEvents(next.journal)
-      .filter(
-        ({ transition }) =>
-          transition.acceptance.acceptingBlockHash.toLowerCase() === normalized,
-      )
-      .map(({ transition }) => transition.transactionId.toLowerCase());
-    const genesisAcceptance = canonicalGenesisAcceptance(next);
+    const transactionIds = [...(acceptedByBlock.get(normalized) ?? [])];
     if (
       genesisAcceptance?.acceptingBlockHash.toLowerCase() === normalized
     ) {
       transactionIds.push(next.manifest.genesis.transactionId.toLowerCase());
+    }
+    if (transactionIds.length === 0) {
+      if (bloomContains(next.anchor.relevantBlocksBloom, normalized)) {
+        return {
+          ...structuredClone(current),
+          availability: "unknown",
+          unavailableReason: "selected-chain removal exceeds the compact reorganization window",
+        };
+      }
+      continue;
+    }
+    if (next.anchor.compactedEvents > 0 &&
+      transactionIds.includes(next.manifest.genesis.transactionId.toLowerCase())) {
+      return {
+        ...structuredClone(current),
+        availability: "unknown",
+        unavailableReason: "covenant genesis removal exceeds the compact reorganization window",
+      };
     }
     next.journal.push({
       event: "removed",
@@ -290,10 +361,6 @@ export function applyCovenantSelectedChainUpdate(
       transactionIds,
     });
   }
-
-  // Re-derive immediately after removals. Added blocks may only extend this
-  // rolled-back head, never the stale pre-reorg index.
-  deriveCanonicalLineage(next);
 
   const addedBlocks = new Set<string>();
   const spends = new Set<string>();
@@ -322,7 +389,6 @@ export function applyCovenantSelectedChainUpdate(
         sequence: sequence++,
         acceptance: structuredClone(block.genesisAcceptance),
       });
-      deriveCanonicalLineage(next);
     }
     for (const transition of block.transitions) {
       assertLineageTransition(next.manifest, transition);
@@ -346,13 +412,13 @@ export function applyCovenantSelectedChainUpdate(
         sequence: sequence++,
         transition: structuredClone(transition),
       });
-      // Validate each step against the head produced by all preceding steps.
-      deriveCanonicalLineage(next);
     }
   }
 
   next.checkpoint = structuredClone(update.checkpoint);
+  compactLineage(next);
   deriveCanonicalLineage(next);
+  assertLineageBudget(next);
   if (canonicalGenesisAcceptance(next)) {
     next.availability = "available";
     delete next.unavailableReason;
@@ -371,6 +437,41 @@ export function canonicalCovenantTransitions(
   return canonicalAcceptedEvents(state.journal).map(({ transition }) =>
     structuredClone(transition),
   );
+}
+
+/** Verify a durable lineage replacement, including a compacted journal prefix. */
+export function assertCovenantLineageExtension(
+  previous: CovenantLineageState,
+  next: CovenantLineageState,
+): void {
+  const reject = (): never => {
+    throw new Error("covenant lineage journal is not append-only");
+  };
+  const compacted = next.anchor.compactedEvents - previous.anchor.compactedEvents;
+  if (!Number.isSafeInteger(compacted) || compacted < 0 ||
+    compacted > previous.journal.length) reject();
+  const retained = previous.journal.slice(compacted);
+  if (next.journal.length < retained.length) reject();
+  for (const [index, event] of retained.entries()) {
+    if (stableStringify({ ...event, sequence: index }) !==
+      stableStringify(next.journal[index])) reject();
+  }
+  if (compacted === 0) {
+    if (stableStringify(previous.anchor) !== stableStringify(next.anchor)) reject();
+    return;
+  }
+  let expectedAnchor: CovenantLineageState["anchor"] | undefined;
+  try {
+    expectedAnchor = compactedLineageAnchor(
+      previous,
+      previous.journal.slice(0, compacted),
+      next.checkpoint.blockHash,
+    );
+  } catch {
+    reject();
+  }
+  if (!expectedAnchor ||
+    stableStringify(expectedAnchor) !== stableStringify(next.anchor)) reject();
 }
 
 export function assertCovenantLineageConfirmed(
@@ -517,7 +618,41 @@ function assertLaunchManifest(manifest: CovenantLaunchManifest): void {
 }
 
 function assertLineageState(state: CovenantLineageState): void {
+  assertLineageBudget(state);
   assertLaunchManifest(state.manifest);
+  if (!state.anchor ||
+    !Number.isSafeInteger(state.anchor.compactedEvents) ||
+    state.anchor.compactedEvents < 0 ||
+    !/^[0-9a-f]{512}$/.test(state.anchor.relevantBlocksBloom) ||
+    state.anchor.snapshotHash !== makeLineageAnchor(state.anchor).snapshotHash) {
+    throw new Error("covenant lineage compact checkpoint is invalid");
+  }
+  if (state.anchor.manifestIdentitySha256 !== state.manifest.identitySha256 ||
+    !/^[0-9a-f]{64}$/.test(state.anchor.checkpointBlockHash)) {
+    throw new Error("covenant lineage compact checkpoint is detached from the manifest");
+  }
+  if (state.anchor.tipTransition) {
+    assertLineageTransition(state.manifest, state.anchor.tipTransition);
+    const tip = state.anchor.tipTransition.successor;
+    const tipHead = tip ? {
+      outpoint: tip.outpoint,
+      scriptPublicKey: tip.scriptPublicKey,
+      value: tip.value,
+      claimedCumulativeAmount: tip.claimedCumulativeAmount,
+    } : null;
+    if (!sameLineageHead(tipHead, state.anchor.head))
+      throw new Error("covenant lineage compact head lacks its accepted tip witness");
+  } else {
+    const genesis = state.manifest.genesis;
+    const genesisHead = state.anchor.genesisAcceptance ? {
+      outpoint: genesis.outpoint,
+      scriptPublicKey: genesis.scriptPublicKey,
+      value: genesis.value,
+      claimedCumulativeAmount: genesis.claimedCumulativeAmount,
+    } : null;
+    if (!sameLineageHead(genesisHead, state.anchor.head))
+      throw new Error("covenant lineage compact genesis head is invalid");
+  }
   assertCheckpoint(state.checkpoint);
   if (state.availability !== "available" && state.availability !== "unknown") {
     throw new Error("covenant lineage availability is invalid");
@@ -612,14 +747,16 @@ function assertLineageTransition(
 }
 
 function deriveCanonicalLineage(state: CovenantLineageState): void {
-  const genesis = state.manifest.genesis;
   const genesisAcceptance = canonicalGenesisAcceptance(state);
-  let head: CovenantLineageHead | null = genesisAcceptance ? {
-    outpoint: structuredClone(genesis.outpoint),
-    scriptPublicKey: genesis.scriptPublicKey.toLowerCase(),
-    value: genesis.value,
-    claimedCumulativeAmount: genesis.claimedCumulativeAmount,
-  } : null;
+  let head: CovenantLineageHead | null = state.anchor.genesisAcceptance
+    ? structuredClone(state.anchor.head)
+    : genesisAcceptance ? {
+      outpoint: structuredClone(state.manifest.genesis.outpoint),
+      scriptPublicKey: state.manifest.genesis.scriptPublicKey.toLowerCase(),
+      value: state.manifest.genesis.value,
+      claimedCumulativeAmount: state.manifest.genesis.claimedCumulativeAmount,
+    } : null;
+  if (!genesisAcceptance) head = null;
   const seenTransactions = new Set<string>();
   for (const { transition } of canonicalAcceptedEvents(state.journal)) {
     const transactionId = transition.transactionId.toLowerCase();
@@ -669,34 +806,34 @@ function deriveCanonicalLineage(state: CovenantLineageState): void {
 function canonicalAcceptedEvents(
   journal: readonly CovenantLineageEvent[],
 ): CovenantLineageAcceptedEvent[] {
-  const active: CovenantLineageAcceptedEvent[] = [];
+  const active = new Map<string, CovenantLineageAcceptedEvent>();
   for (const event of journal) {
     if (event.event === "accepted") {
-      active.push(event);
+      const id = event.transition.transactionId.toLowerCase();
+      if (active.has(id))
+        throw new Error("canonical covenant lineage repeats a transaction");
+      active.set(id, event);
       continue;
     }
     if (event.event === "genesis-accepted") continue;
-    const removedIds = new Set(event.transactionIds.map((id) => id.toLowerCase()));
-    for (let index = active.length - 1; index >= 0; index -= 1) {
-      const candidate = active[index]!;
-      if (
-        candidate.transition.acceptance.acceptingBlockHash.toLowerCase() ===
-          event.acceptingBlockHash.toLowerCase() &&
-        removedIds.has(candidate.transition.transactionId.toLowerCase())
-      ) {
-        active.splice(index, 1);
+    for (const id of event.transactionIds) {
+      const key = id.toLowerCase();
+      const candidate = active.get(key);
+      if (candidate && candidate.transition.acceptance.acceptingBlockHash.toLowerCase() ===
+          event.acceptingBlockHash.toLowerCase()) {
+        active.delete(key);
       }
     }
   }
-  return active;
+  return Array.from(active.values());
 }
 
 function canonicalGenesisAcceptance(
-  state: Pick<CovenantLineageState, "manifest" | "journal">,
+  state: Pick<CovenantLineageState, "manifest" | "anchor" | "journal">,
 ): AcceptedTransactionEvidence | undefined {
   const transactionId = state.manifest.genesis.transactionId.toLowerCase();
   let active: AcceptedTransactionEvidence | undefined =
-    state.manifest.genesis.acceptance;
+    state.anchor.genesisAcceptance;
   for (const event of state.journal) {
     if (event.event === "genesis-accepted") {
       active = event.acceptance;
@@ -712,6 +849,114 @@ function canonicalGenesisAcceptance(
     }
   }
   return active ? structuredClone(active) : undefined;
+}
+
+function makeLineageAnchor(
+  input: Omit<CovenantLineageState["anchor"], "snapshotHash">,
+): CovenantLineageState["anchor"] {
+  const data = {
+    compactedEvents: input.compactedEvents,
+    head: input.head,
+    ...(input.genesisAcceptance ? { genesisAcceptance: input.genesisAcceptance } : {}),
+    ...(input.tipTransition ? { tipTransition: input.tipTransition } : {}),
+    manifestIdentitySha256: input.manifestIdentitySha256,
+    checkpointBlockHash: input.checkpointBlockHash,
+    historyHash: input.historyHash,
+    relevantBlocksBloom: input.relevantBlocksBloom,
+  };
+  return { ...data, snapshotHash: sha256Hex(stableStringify(data)) };
+}
+
+function serializedBytes(value: unknown): number {
+  return new TextEncoder().encode(JSON.stringify(value)).byteLength;
+}
+
+function assertLineageBudget(state: CovenantLineageState): void {
+  if (state.journal.length > MAX_LINEAGE_JOURNAL_EVENTS ||
+    serializedBytes(state) > MAX_LINEAGE_STATE_BYTES) {
+    throw new Error("covenant lineage state exceeds the event or byte limit");
+  }
+}
+
+function bloomIndexes(blockHash: string): number[] {
+  return [0, 1, 2, 3].map((salt) =>
+    parseInt(sha256Hex(`${salt}:${blockHash.toLowerCase()}`).slice(0, 8), 16) % 2048,
+  );
+}
+
+function bloomContains(bloom: string, blockHash: string): boolean {
+  return bloomIndexes(blockHash).every((index) =>
+    (parseInt(bloom.slice((index >> 3) * 2, (index >> 3) * 2 + 2), 16) &
+      (1 << (index & 7))) !== 0,
+  );
+}
+
+function bloomAdd(bloom: string, blockHash: string): string {
+  const bytes = Array.from({ length: 256 }, (_, index) =>
+    parseInt(bloom.slice(index * 2, index * 2 + 2), 16),
+  );
+  for (const index of bloomIndexes(blockHash)) bytes[index >> 3]! |= 1 << (index & 7);
+  return bytes.map((byte) => byte.toString(16).padStart(2, "0")).join("");
+}
+
+function compactLineage(state: CovenantLineageState): void {
+  if (state.journal.length <= 64) return;
+  let cutoff = state.journal.length - 64;
+  const suffixRemovals = new Set(
+    state.journal.slice(cutoff).flatMap((event) =>
+      event.event === "removed" ? event.transactionIds.map((id) => id.toLowerCase()) : []),
+  );
+  for (let index = 0; index < cutoff; index++) {
+    const event = state.journal[index]!;
+    if (event.event === "accepted" &&
+      suffixRemovals.has(event.transition.transactionId.toLowerCase())) {
+      cutoff = index;
+      break;
+    }
+  }
+  if (cutoff === 0) return;
+  const prefix = state.journal.slice(0, cutoff);
+  state.anchor = compactedLineageAnchor(
+    state, prefix, state.checkpoint.blockHash,
+  );
+  state.journal = state.journal.slice(cutoff).map((event, sequence) => ({
+    ...event, sequence,
+  }));
+}
+
+function compactedLineageAnchor(
+  state: CovenantLineageState,
+  prefix: CovenantLineageEvent[],
+  checkpointBlockHash: Hash32Hex,
+): CovenantLineageState["anchor"] {
+  const prefixState: CovenantLineageState = {
+    ...state,
+    journal: prefix,
+    currentHead: state.anchor.head,
+  };
+  deriveCanonicalLineage(prefixState);
+  const canonicalPrefix = canonicalAcceptedEvents(prefix);
+  const tipTransition = canonicalPrefix.at(-1)?.transition ?? state.anchor.tipTransition;
+  let bloom = state.anchor.relevantBlocksBloom;
+  for (const event of prefix) {
+    if (event.event === "accepted") {
+      bloom = bloomAdd(bloom, event.transition.acceptance.acceptingBlockHash);
+    }
+  }
+  return makeLineageAnchor({
+    compactedEvents: state.anchor.compactedEvents + prefix.length,
+    head: prefixState.currentHead,
+    ...(tipTransition ? { tipTransition } : {}),
+    ...(canonicalGenesisAcceptance(prefixState)
+      ? { genesisAcceptance: canonicalGenesisAcceptance(prefixState)! } : {}),
+    manifestIdentitySha256: state.manifest.identitySha256,
+    checkpointBlockHash,
+    historyHash: sha256Hex(stableStringify({
+      prior: state.anchor.historyHash,
+      events: prefix,
+    })),
+    relevantBlocksBloom: bloom,
+  });
 }
 
 function assertAcceptedEvidence(evidence: AcceptedTransactionEvidence): void {

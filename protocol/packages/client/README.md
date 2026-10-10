@@ -32,8 +32,8 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
 - exposes refund eligibility and a crash-safe, digest-bound refund workflow
   through injected transaction, broadcast, persistence, and reconciliation
   adapters;
-- persists an immutable covenant launch manifest and append-only selected-chain
-  journal, deriving the live head locally from verified lineage.
+- persists an immutable covenant launch manifest, compact checkpoint, and
+  bounded selected-chain journal, deriving the live head from verified lineage.
 
 The client exposes and selects `batch-settlement` only when `batch` is
 configured, its funding provider implements authoritative
@@ -164,6 +164,13 @@ and terminal status roll back atomically to `refundable`, never `active`, before
 a newly built refund is allowed.
 
 `MemoryChannelStore` demonstrates these contracts for tests and examples.
+`ChannelStore.saveChannel(expected, next)` compares the complete channel
+snapshot and rejects lower signed ceilings or missing vouchers. A lost
+comparison throws `ChannelCasConflictError`; the client reloads and retries
+before disclosing a result. A batch client
+holds `withChannelOperationLease` across reuse selection, payer authorization,
+signing, and persistence. Durable store implementations must serialize this
+lease across processes and apply the snapshot comparison atomically.
 An exact-only deployment needs a durable `ExactPaymentAttemptStore` and trusted
 exact reconciliation. Enabling batch also requires the full `ChannelStore`,
 funding-transition and refund reconciliation adapters.

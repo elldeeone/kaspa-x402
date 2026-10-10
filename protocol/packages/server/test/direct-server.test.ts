@@ -1,6 +1,7 @@
 import { exactServerStore, exactServerChain } from "./exact-dependencies.js";
 import { acceptedChainEvidence, fakeAuthorizationEvidence } from "../../../test-support/chain-evidence.js";
 import { serverTestConfig, type ServerTestConfig } from "../../../test-support/server-config.js";
+import { appendCompactionTopUp, compactionTopUpUpdate } from "../../core/test/compaction-fixture.js";
 import { describe, expect, it, vi } from "vitest";
 
 import {
@@ -47,6 +48,7 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   DirectModeServer,
+  MemoryPublicBoundaryController,
   MemoryChannelLockManager,
   MemoryServerChannelStore,
   PAYMENT_REQUIRED_HEADER,
@@ -118,6 +120,25 @@ function absentChainEvidence(
 }
 
 describe("direct-mode server", () => {
+  it("separates anonymous admission without changing payment terms", async () => {
+    const boundary = new MemoryPublicBoundaryController({ callerQuota: 1 });
+    const { server } = makeServer({ publicBoundaryController: boundary });
+    const request = (admissionKey: string) => server.handlePaidRequest(
+      { url: RESOURCE.url, routeAccess: "public", admissionKey },
+      async () => ({ body: "unreachable" }),
+    );
+    const alice = "aa".repeat(32);
+    const bob = "bb".repeat(32);
+    const first = await request(alice);
+    expect(first.status).toBe(402);
+    expect((await request(alice)).status).toBe(429);
+    const independent = await request(bob);
+    expect(independent.status).toBe(402);
+    expect(independent.headers[PAYMENT_REQUIRED_HEADER]).toBe(
+      first.headers[PAYMENT_REQUIRED_HEADER],
+    );
+  });
+
   it("requires host context on authenticated routes even when auth headers were consumed", async () => {
     const setup = makeServer();
     const anonymous = await setup.server.handlePaidRequest(
@@ -825,6 +846,7 @@ describe("direct-mode server", () => {
     for (let index = 0; index < 1_000; index += 1) {
       const response = await setup.server.handlePaidRequest(
         { routeAccess: "public",
+          admissionKey: index.toString(16).padStart(64, "0"),
           url: `${RESOURCE.url}?offer=${index}`,
           resource: { url: `${RESOURCE.url}?offer=${index}` },
           paymentScheme: "exact",
@@ -3308,6 +3330,116 @@ describe("direct-mode server", () => {
     expect(observed?.aborted).toBe(true);
   });
 
+  it("does not start batch settlement after cancellation during voucher verification", async () => {
+    // Failure mode: asynchronous voucher verification finishes after the gateway loses admission.
+    let markVerifying!: () => void;
+    const verifying = new Promise<void>((resolve) => { markVerifying = resolve; });
+    let releaseVerification!: () => void;
+    const verificationMayFinish = new Promise<void>((resolve) => { releaseVerification = resolve; });
+    const setup = makeServer({
+      voucherVerifier: {
+        async verifyVoucher({ digest, voucher }) {
+          markVerifying();
+          await verificationMayFinish;
+          return voucher.signature === `${digest}${digest}`;
+        },
+      },
+    });
+    const payment = makeDepositPayment(setup);
+    const controller = new AbortController();
+    let handlerCalls = 0;
+    const pending = setup.server.handlePaidRequest(
+      { ...requestWithPayment(payment.payload, { routeAccess: "public" }), signal: controller.signal },
+      async () => { handlerCalls += 1; return { chargedAmount: "100" }; },
+    );
+    await verifying;
+    controller.abort(new Error("gateway admission expired"));
+    releaseVerification();
+    await expect(pending).resolves.toMatchObject({ status: 499, body: { error: "request_aborted" } });
+    expect(handlerCalls).toBe(0);
+    await expect(setup.store.loadChannel(payment.channelId)).resolves.toBeUndefined();
+  });
+
+  it("retries batch work after admission expires during durable handler start", async () => {
+    const controller = new AbortController();
+    const store = new ExpiringBatchHandlerAdmissionStore();
+    store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+    const setup = makeServer({ store });
+    const payment = makeDepositPayment(setup);
+    const request = requestWithPayment(payment.payload, {
+      routeAccess: "public", requestHash: "aa".repeat(32),
+    });
+    let executions = 0;
+    const handler = async () => { executions += 1; return { body: "served", chargedAmount: "100" }; };
+
+    await expect(setup.server.handlePaidRequest(
+      { ...request, signal: controller.signal }, handler,
+    )).resolves.toMatchObject({ status: 499 });
+    expect(executions).toBe(0);
+    await expect(setup.server.handlePaidRequest(request, handler))
+      .resolves.toMatchObject({ status: 200, body: "served" });
+    expect(executions).toBe(1);
+  });
+
+  it("releases an identified batch attempt that expires after pre-handler cancellation", async () => {
+    let now = Date.UTC(2030, 0, 1);
+    const nowSpy = vi.spyOn(Date, "now").mockImplementation(() => now);
+    try {
+      const controller = new AbortController();
+      const store = new ExpiringBatchHandlerAdmissionStore();
+      store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+      const setup = makeServer({ store, requirePaymentIdentifier: true });
+      const paymentIdentifier = "pay_7d5d747be160e280504c099d984bcfe0";
+      const payment = makeDepositPayment(setup, { paymentIdentifier });
+      if (payment.payload.payload.type !== "deposit-voucher")
+        throw new Error("expected deposit voucher");
+      const request = requestWithPayment(payment.payload, {
+        routeAccess: "public", requestHash: "aa".repeat(32),
+      });
+      let executions = 0;
+      const handler = async () => { executions += 1; return { chargedAmount: "100" }; };
+
+      await expect(setup.server.handlePaidRequest(
+        { ...request, signal: controller.signal }, handler,
+      )).resolves.toMatchObject({ status: 499 });
+      now = Date.parse(payment.payload.payload.presentation.expiresAt) + 1;
+      await expect(setup.server.handlePaidRequest(request, handler))
+        .resolves.toMatchObject({ status: 402 });
+      await expect(store.abandonBatchSettlement(
+        store.attemptId!, "presentation expired after admission loss",
+        new Date(now).toISOString(),
+      )).resolves.toBeUndefined();
+      expect(executions).toBe(0);
+      await expect(store.loadPaymentIdentifierReservation(paymentIdentifier))
+        .resolves.toMatchObject({ status: "safely-released" });
+      await expect(store.loadChannelOperation(payment.channelId)).resolves.toBeUndefined();
+    } finally {
+      nowSpy.mockRestore();
+    }
+  });
+
+  it("retries exact work after admission expires during durable handler start", async () => {
+    const controller = new AbortController();
+    const store = new ExpiringExactHandlerAdmissionStore();
+    store.afterHandlerAdmission = () => controller.abort(new Error("gateway admission expired"));
+    const setup = makeServer({ store });
+    const requestHash = "12".repeat(32);
+    const payment = makeExactPayment(setup, { requestHash });
+    const request = requestWithPayment(payment, {
+      routeAccess: "public", paymentScheme: "exact", requestHash,
+    });
+    let executions = 0;
+    const handler = async () => { executions += 1; return { body: "served" }; };
+
+    await expect(setup.server.handlePaidRequest(
+      { ...request, signal: controller.signal }, handler,
+    )).resolves.toMatchObject({ status: 499 });
+    expect(executions).toBe(0);
+    await expect(setup.server.handlePaidRequest(request, handler))
+      .resolves.toMatchObject({ status: 200, body: "served" });
+    expect(executions).toBe(1);
+  });
+
   it("rejects a salted channel alias for an already registered covenant", async () => {
     const setup = makeServer();
     const first = makeDepositPayment(setup, { salt: "31".repeat(32) });
@@ -4983,7 +5115,7 @@ describe("direct-mode server", () => {
     expect(setup.chain.utxoLookupCount).toBe(0);
   });
 
-  it("returns a controlled quota response per authenticated caller", async () => {
+  it("returns a controlled quota response per trusted admission key", async () => {
     const setup = makeServer({
       publicBoundaryPolicy: {
         callerQuota: 1,
@@ -4997,6 +5129,7 @@ describe("direct-mode server", () => {
       resource: RESOURCE,
       paymentScheme: "exact" as const,
       trustedSecurityContext: { principal: "payer-a" },
+      admissionKey: "aa".repeat(32),
     };
 
     const first = await setup.server.handlePaidRequest(request, async () => ({
@@ -5009,6 +5142,7 @@ describe("direct-mode server", () => {
       {
         ...request,
         trustedSecurityContext: { principal: "payer-b" },
+        admissionKey: "bb".repeat(32),
       },
       async () => ({ body: "unreachable" }),
     );
@@ -5019,6 +5153,26 @@ describe("direct-mode server", () => {
       body: { error: "caller_quota_exceeded" },
     });
     expect(other.status).toBe(402);
+  });
+
+  it("keeps authenticated host quotas separate without an explicit admission key", async () => {
+    const setup = makeServer({
+      publicBoundaryPolicy: { callerQuota: 1, callerQuotaWindowMs: 60_000 },
+    });
+    const request = (principal: string) => setup.server.handlePaidRequest({
+      routeAccess: "authenticated",
+      method: "GET",
+      url: RESOURCE.url,
+      resource: RESOURCE,
+      paymentScheme: "exact",
+      trustedSecurityContext: { principal },
+    }, async () => ({ body: "unreachable" }));
+
+    expect((await request("payer-a")).status).toBe(402);
+    await expect(request("payer-a")).resolves.toMatchObject({
+      status: 429, body: { error: "caller_quota_exceeded" },
+    });
+    expect((await request("payer-b")).status).toBe(402);
   });
 
   it("returns a controlled timeout without reaching protected work", async () => {
@@ -5345,6 +5499,48 @@ describe("direct-mode server", () => {
       "accepted",
       "removed",
     ]);
+  });
+
+  it("reconciles transition 65 through DirectModeServer without marking the channel suspicious", async () => {
+    // Failure mode: the accepted transition moved into the anchor looks removed
+    // when runtime rollback detection compares only retained journal events.
+    const opened = makeServer();
+    const payment = makeDepositPayment(opened);
+    await opened.server.handlePaidRequest(
+      requestWithPayment(payment.payload, { routeAccess: "public" }),
+      async () => ({ chargedAmount: "100" }),
+    );
+    const initial = await requireChannel(opened.store, payment.channelId);
+    let lineage = initial.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    const at64: ServerChannelRecord = {
+      ...initial,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    const store = new MemoryServerChannelStore([at64]);
+    const setup = makeServer({ store });
+    const update = compactionTopUpUpdate(lineage, 65);
+    const accepted = update.addedChainBlocks[0]!.transitions[0]!;
+    const successor = accepted.successor!;
+    setup.chain.setUtxo({
+      outpoint: successor.outpoint,
+      amount: successor.value,
+      scriptPublicKey: successor.scriptPublicKey,
+      finality: "confirmed",
+      acceptance: accepted.acceptance,
+    });
+    setup.chain.lineageDiscovery = (request) => compactionTopUpUpdate(request.lineage, 65);
+
+    const reconciled = await setup.server.reconcileChannel(payment.channelId);
+    expect(reconciled.status).toBe("active");
+    expect(reconciled.lineage.anchor.compactedEvents).toBe(1);
+    expect(reconciled.lineage.journal).toHaveLength(64);
+    expect(reconciled.activeOutpoint).toEqual(successor.outpoint);
+    await expect(store.loadChannel(payment.channelId)).resolves.toEqual(reconciled);
   });
 
   it("keeps a channel unavailable after its covenant genesis is removed", async () => {
@@ -7345,6 +7541,16 @@ class ExpiringBatchHandlerAdmissionStore extends MemoryServerChannelStore {
       this.attemptId = attemptId;
       this.afterHandlerAdmission?.();
     }
+    return started;
+  }
+}
+
+class ExpiringExactHandlerAdmissionStore extends MemoryServerChannelStore {
+  afterHandlerAdmission?: () => void;
+
+  override async beginExactHandler(transactionId: Hash32Hex, startedAt: string): Promise<boolean> {
+    const started = await super.beginExactHandler(transactionId, startedAt);
+    if (started) this.afterHandlerAdmission?.();
     return started;
   }
 }

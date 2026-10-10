@@ -347,6 +347,8 @@ export interface ExactTransactionVerification {
   };
   /** Canonical KIP-10 continuation verified from the signed transaction. */
   continuation?: ExactHeadContinuation;
+  /** Authenticated adapter receipt, held in memory until the settlement claim owns it. */
+  evidenceReceipt?: unknown;
 }
 
 export interface ExactTransactionVerifier {
@@ -697,6 +699,8 @@ export interface BatchSettlementAttemptStore {
   ): Promise<BatchSettlementAttemptRecord | undefined>;
   /** Returns true exactly once, preventing protected-handler replay. */
   beginBatchHandler(attemptId: Hash32Hex, startedAt: string): Promise<boolean>;
+  /** Clears this admission only when its protected handler has not run. */
+  resetBatchHandlerBeforeExecution(attemptId: Hash32Hex, startedAt: string): Promise<boolean>;
   /** Persists protected work before settlement commit so retries can resume safely. */
   recordBatchHandlerResult(
     attemptId: Hash32Hex,
@@ -754,10 +758,17 @@ export interface ExactHeadStore {
   /** Read-only selection: issuing a 402 must not mutate or lease the head. */
   selectExactHead(
     request: ExactHeadSelectionRequest,
+    signal?: AbortSignal,
   ): Promise<ExactHeadRecord | undefined>;
   /** Atomically claims a transaction and, for additive exact, its expected head snapshot. */
   claimExactSettlement(
     attempt: ExactSettlementAttemptRecord,
+  ): Promise<ExactSettlementClaimResult>;
+  /** Claim and persist verification evidence in one durable transaction. */
+  claimExactSettlementWithEvidence?(
+    attempt: ExactSettlementAttemptRecord,
+    evidenceReceipt: unknown,
+    signal?: AbortSignal,
   ): Promise<ExactSettlementClaimResult>;
   loadExactSettlementAttempt(
     transactionId: Hash32Hex,
@@ -778,6 +789,8 @@ export interface ExactHeadStore {
     transactionId: Hash32Hex,
     startedAt: string,
   ): Promise<boolean>;
+  /** Clears this admission only when its protected handler has not run. */
+  resetExactHandlerBeforeExecution(transactionId: Hash32Hex, startedAt: string): Promise<boolean>;
   /** Persists protected work before the payment/response commit so retries can resume safely. */
   recordExactHandlerResult(
     transactionId: Hash32Hex,
@@ -961,6 +974,12 @@ export interface ExactServerConfig {
   chainProvider: ExactServerChainProvider;
   addressCodec: AddressCodec;
   exactTransactionVerifier?: ExactTransactionVerifier;
+  /** Refreshes an already atomically claimed receipt after settlement. */
+  persistOwnedExactEvidence?: (
+    verification: VerifiedExactPayment,
+    claim: ExactSettlementClaimResult,
+    signal?: AbortSignal,
+  ) => Promise<void>;
   exactSettlementReconciler?: ExactSettlementReconciler;
   exactHeadReconciler?: ExactHeadReconciler;
   /** Private issuer; the root server bundle only uses its structural interface. */
@@ -1065,6 +1084,8 @@ export interface DirectPaymentSettlementOptions extends DirectPaymentVerificatio
 
 export interface PaidRequest {
   routeAccess: PaidRouteAccess;
+  /** Host-derived opaque admission identity, separate from payment authorization. */
+  admissionKey?: string;
   method?: string;
   url: string;
   headers?: HeaderSource;
@@ -1138,6 +1159,7 @@ export interface VerifiedExactPayment {
   payerAddress?: string;
   finality: "mempool" | "accepted" | "confirmed";
   observedFinality?: "mempool" | "accepted" | "confirmed";
+  evidenceReceipt?: unknown;
   /** Expired authorization accepted only to resume an immutable durable attempt. */
   recoveryOnly?: boolean;
 }

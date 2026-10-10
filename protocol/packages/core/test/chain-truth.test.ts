@@ -1,4 +1,4 @@
-import { describe, expect, it } from "vitest";
+import { describe, expect, it, vi } from "vitest";
 
 import {
   CovenantChainObserver,
@@ -90,6 +90,95 @@ describe("trusted chain evidence policy", () => {
 });
 
 describe("covenant selected-chain state", () => {
+  it("bounds removals and drops irrelevant hashes before journal replay", () => {
+    // Failure modes: irrelevant removals grow durable state, duplicate hashes
+    // hide work, or a small transport payload drives unbounded replay passes.
+    const initial = createCovenantLineageState(manifest());
+    const irrelevant = "fe".repeat(32);
+    const noChange = applyCovenantSelectedChainUpdate(initial, {
+      fromCheckpoint: initial.checkpoint,
+      checkpoint: checkpoint("fa".repeat(32), "130"),
+      continuity: "complete",
+      removedChainBlockHashes: [irrelevant],
+      addedChainBlocks: [],
+    });
+    expect(noChange.journal).toHaveLength(0);
+    expect(noChange.currentHead).toEqual(initial.currentHead);
+    const many = Array.from({ length: 33 }, (_, index) =>
+      index.toString(16).padStart(64, "0"));
+    expect(() => applyCovenantSelectedChainUpdate(initial, {
+      fromCheckpoint: initial.checkpoint,
+      checkpoint: checkpoint("fa".repeat(32), "130"),
+      continuity: "complete",
+      removedChainBlockHashes: many,
+      addedChainBlocks: [],
+    })).toThrow("removed block count");
+  });
+
+  it("rejects the event past the lineage bound before validation or cloning", () => {
+    // Failure modes: a projected max+1 event first scans the whole journal,
+    // derives lineage, or clones state before the bounded guard rejects it.
+    const initial = createCovenantLineageState(manifest());
+    const atBound = {
+      ...initial,
+      journal: Array.from({ length: 128 }, (_, sequence) => ({
+        event: "removed" as const,
+        sequence,
+        acceptingBlockHash: "fe".repeat(32),
+        transactionIds: [],
+      })),
+    };
+    const clone = vi.spyOn(globalThis, "structuredClone");
+    try {
+      expect(() => applyCovenantSelectedChainUpdate(atBound, {
+        fromCheckpoint: initial.checkpoint,
+        checkpoint: checkpoint("fa".repeat(32), "130"),
+        continuity: "complete",
+        removedChainBlockHashes: ["ff".repeat(32)],
+        addedChainBlocks: [],
+      })).toThrow("projected covenant lineage exceeds");
+      expect(clone).not.toHaveBeenCalled();
+    } finally {
+      clone.mockRestore();
+    }
+  });
+
+  it("compacts old lineage while retaining a bounded reorganization window", () => {
+    // Failure modes: history grows without bound, compaction changes the head,
+    // or a recent block removal cannot roll back the compacted state.
+    let state = createCovenantLineageState(manifest());
+    let lastBlock = "";
+    for (let index = 0; index < 80; index++) {
+      const transactionId = (index + 1).toString(16).padStart(64, "0");
+      lastBlock = (index + 1000).toString(16).padStart(64, "0");
+      state = applyCovenantSelectedChainUpdate(state, {
+        fromCheckpoint: state.checkpoint,
+        checkpoint: checkpoint("ee".repeat(32), "160"),
+        continuity: "complete",
+        removedChainBlockHashes: [],
+        addedChainBlocks: [{
+          blockHash: lastBlock,
+          transitions: [topUpTransition({
+            transactionId,
+            acceptingBlockHash: lastBlock,
+            consumedOutpoint: state.currentHead!.outpoint,
+            value: String(1001 + index),
+          })],
+        }],
+      });
+    }
+    expect(state.journal.length).toBeLessThanOrEqual(64);
+    expect(state.currentHead?.value).toBe("1080");
+    const removed = applyCovenantSelectedChainUpdate(state, {
+      fromCheckpoint: state.checkpoint,
+      checkpoint: checkpoint("ef".repeat(32), "170"),
+      continuity: "complete",
+      removedChainBlockHashes: [lastBlock],
+      addedChainBlocks: [],
+    });
+    expect(removed.currentHead?.value).toBe("1079");
+  });
+
   it("appends verified lineage and derives the unique current head", () => {
     const initial = createCovenantLineageState(manifest());
     const afterClaim = applyCovenantSelectedChainUpdate(initial, {

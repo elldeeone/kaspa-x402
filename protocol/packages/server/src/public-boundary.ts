@@ -54,7 +54,7 @@ export interface PublicBoundaryPermit {
 }
 
 export interface PublicBoundaryController {
-  enterRequest(context?: TrustedSecurityContext): PublicBoundaryPermit;
+  enterRequest(context?: TrustedSecurityContext, admissionKey?: string): PublicBoundaryPermit;
   /** Candidate extension: enters with a previously authenticated stable caller key. */
   enterRequestKey?(callerKey: string): PublicBoundaryPermit;
   enterChannel(channelKey: string): PublicBoundaryPermit;
@@ -88,20 +88,28 @@ export class MemoryPublicBoundaryController
     assertPublicBoundaryPolicy(this.#policy);
   }
 
-  enterRequest(context?: TrustedSecurityContext): PublicBoundaryPermit {
-    return this.enterRequestKey(
-      context ? publicBoundaryCallerKey(context) : "anonymous",
+  enterRequest(context?: TrustedSecurityContext, admissionKey?: string): PublicBoundaryPermit {
+    if (admissionKey !== undefined && !/^[0-9a-f]{64}$/.test(admissionKey))
+      throw new PublicBoundaryError("caller_quota_exceeded", "trusted admission key is invalid");
+    const aggregate = admissionKey === undefined && context === undefined;
+    return this.#enterRequestKey(
+      admissionKey ?? (context ? publicBoundaryCallerKey(context) : "anonymous-aggregate"),
+      aggregate,
     );
   }
 
   enterRequestKey(caller: string): PublicBoundaryPermit {
+    return this.#enterRequestKey(caller, false);
+  }
+
+  #enterRequestKey(caller: string, aggregate: boolean): PublicBoundaryPermit {
     if (typeof caller !== "string" || caller.length === 0 || caller.length > 256) {
       throw new PublicBoundaryError(
         "caller_quota_exceeded",
         "authenticated caller key is invalid",
       );
     }
-    this.#admitCallerQuota(caller);
+    this.#admitCallerQuota(caller, aggregate ? Math.min(this.#policy.callerQuota, 8) : this.#policy.callerQuota);
     if (this.#globalConcurrency >= this.#policy.maxGlobalConcurrency) {
       throw new PublicBoundaryError(
         "global_concurrency_exceeded",
@@ -109,7 +117,7 @@ export class MemoryPublicBoundaryController
       );
     }
     const callerCount = this.#callerConcurrency.get(caller) ?? 0;
-    if (callerCount >= this.#policy.maxCallerConcurrency) {
+    if (callerCount >= (aggregate ? Math.min(this.#policy.maxCallerConcurrency, 2) : this.#policy.maxCallerConcurrency)) {
       throw new PublicBoundaryError(
         "caller_concurrency_exceeded",
         "authenticated caller concurrency limit exceeded",
@@ -189,7 +197,7 @@ export class MemoryPublicBoundaryController
     }
   }
 
-  #admitCallerQuota(caller: string): void {
+  #admitCallerQuota(caller: string, limit: number): void {
     const now = this.#now();
     this.#quotaAdmissions += 1;
     if (this.#quotaAdmissions % 256 === 0) this.#pruneExpiredQuotas(now);
@@ -208,7 +216,7 @@ export class MemoryPublicBoundaryController
       !existing || existing.resetAt <= now
         ? { count: 0, resetAt: now + this.#policy.callerQuotaWindowMs }
         : existing;
-    if (window.count >= this.#policy.callerQuota) {
+    if (window.count >= limit) {
       throw new PublicBoundaryError(
         "caller_quota_exceeded",
         "authenticated caller request quota exceeded",

@@ -1,4 +1,5 @@
 import {
+  assertCovenantLineageExtension,
   canonicalCovenantTransitions,
   parseSompiString,
   stableStringify,
@@ -116,8 +117,16 @@ export function assertServerCovenantLineageExtension(
       transition.transactionId.toLowerCase(),
     ),
   );
+  const compacted = next.lineage.anchor.compactedEvents -
+    previous.lineage.anchor.compactedEvents;
+  const newlyAnchoredIds = new Set(
+    previous.lineage.journal.slice(0, compacted)
+      .filter((event) => event.event === "accepted")
+      .map((event) => event.transition.transactionId.toLowerCase()),
+  );
   const rolledBack = canonicalCovenantTransitions(previous.lineage).some(
-    (transition) => !nextIds.has(transition.transactionId.toLowerCase()),
+    (transition) => !nextIds.has(transition.transactionId.toLowerCase()) &&
+      !newlyAnchoredIds.has(transition.transactionId.toLowerCase()),
   );
   const expectedStatus =
     next.lineage.currentHead === null
@@ -144,17 +153,7 @@ export function assertServerCovenantJournalExtension(
   ) {
     throw new Error("covenant launch manifest is immutable");
   }
-  if (next.lineage.journal.length < previous.lineage.journal.length) {
-    throw new Error("covenant lineage journal is not append-only");
-  }
-  for (let index = 0; index < previous.lineage.journal.length; index++) {
-    if (
-      stableStringify(previous.lineage.journal[index]) !==
-      stableStringify(next.lineage.journal[index])
-    ) {
-      throw new Error("covenant lineage journal is not append-only");
-    }
-  }
+  assertCovenantLineageExtension(previous.lineage, next.lineage);
 }
 
 export function sameCovenantLineage(

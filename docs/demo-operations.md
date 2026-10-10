@@ -44,6 +44,8 @@ Important non-secret variables:
 | `KASPA_X402_REFUND_TIMEOUT_DAA_DELTA`        | Maximum DAA horizon for the persisted absolute batch timeout. The Worker rolls the timeout only at the minimum-lead boundary.                                  |
 | `KASPA_X402_MINIMUM_REFUND_LEAD_DAA`         | Minimum remaining DAA lead required before accepting a batch payment.                                                                                          |
 | `KASPA_X402_GLOBAL_CONCURRENCY`              | Deployment-wide cap for in-flight protected requests. Enforced by renewable leases in the gateway Durable Object; default `64`, maximum `256`.                 |
+| `KASPA_X402_PER_CALLER_CONCURRENCY`          | Per-ingress active lease cap in the same Durable Object; default `8`, maximum `256`.                                                    |
+| `KASPA_X402_ADMISSION_HMAC_KEY`              | Secret with at least 32 bytes, required when enabled. HMACs the Cloudflare ingress IP into an opaque admission key. Set as a Worker secret; do not commit it. |
 | `KASPA_X402_SITE_BASE_URL`                   | Standards site base URL used by canary checks.                                                                                                                 |
 | `KASPA_X402_RELEASE_VERSION`                 | Current release version checked against the standards site's `/release.json`.                                                                                   |
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
@@ -64,9 +66,27 @@ Secret variables:
 
 ## v1 RC2 State
 
-The Worker resolves `GATEWAY_STATE` with the logical object name
+The deployed RC2 Worker resolves `GATEWAY_STATE` with the logical object name
 `demo-gateway-v1.0.0-rc.2`. It uses a clean RC state model and must not import
 pre-RC channel or replay state.
+
+## Development state-v2 clean cutover
+
+This development branch changes the logical Durable Object name to
+`demo-gateway-state-v2`. Deploying this branch creates a fresh object for all
+gateway channel, admission, replay, and hash-chain state. The new Worker never
+addresses `demo-gateway-v1.0.0-rc.2`, so it cannot read its old channel records
+or admission leases. There is no state migration or legacy parser. The old
+object remains stored but is not used by the new Worker.
+
+Before an approved deployment, finish or refund any funded channels that still
+depend on the old object. Then run the build and disabled deployment commands
+below. Confirm `/health` on the new Worker, wait for a scheduled PNN canary to
+record a recent DAA checkpoint, and only then run the public-enable deployment
+command. A missing or stale checkpoint makes unsigned `/exact` and `/batch`
+return `503 quote_unavailable`. Register new additive and hash-chain heads on
+the fresh object before enabling those optional profiles. Do not reuse the old
+head or channel records.
 
 ## Deploy
 
@@ -97,9 +117,10 @@ curl -fsS https://demo.kaspa-x402.org/canary
 npm run check:demo-gateway
 ```
 
-`check:demo-gateway` starts a local Worker, verifies the unpaid exact and batch
-availability gate, verifies the unpaid batch offer, rejects a foreign payment
-scheme, and checks the health and canary routes. A deployed paid check still
+`check:demo-gateway` starts an isolated local Worker, proves the missing-cache
+`503` boundary, seeds a deterministic PNN checkpoint in its new Durable Object,
+then verifies exact and batch `402` offers, a corrective `402` for a foreign
+payment scheme, `HEAD`, health, and supported kinds. A deployed paid check still
 requires an isolated funded testnet wallet.
 
 ## Batch Collection And Refunds

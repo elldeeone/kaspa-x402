@@ -44,8 +44,8 @@ export interface PnnEvidenceStore {
   loadPnnEvidence(
     transactionId: string,
   ): Promise<PnnEvidenceRecord | undefined>;
-  savePnnEvidence(record: PnnEvidenceRecord): Promise<void>;
-  recordPnnCheckpoint(checkpoint: ChainCheckpoint): Promise<void>;
+  savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void>;
+  recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void>;
   findPnnCheckpointBefore(
     daaScore: string,
   ): Promise<ChainCheckpoint | undefined>;
@@ -53,6 +53,7 @@ export interface PnnEvidenceStore {
 
 /** One request's node reads; durable receipts survive Worker restarts. */
 export class PnnChainEvidence implements ChainEvidenceClient {
+  #signal?: AbortSignal;
   #candidate?: SafeTransaction;
   #candidateRecord?: PnnEvidenceRecord;
   #origins: PnnUtxo[] = [];
@@ -76,11 +77,12 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     const result = await new VerifiedExactTransactionVerifier(
       this,
     ).verifyExactPayment(request);
+    this.#checkLive();
     const checkpoint =
       this.#candidateRecord?.checkpoint ?? this.#snapshot?.checkpoint;
     if (!checkpoint)
       throw unavailable("exact payment lacks a trusted PNN checkpoint");
-    await this.store.savePnnEvidence({
+    const evidenceReceipt: PnnEvidenceRecord = {
       transactionId: result.transactionId,
       checkpoint,
       origins: this.#origins,
@@ -90,11 +92,31 @@ export class PnnChainEvidence implements ChainEvidenceClient {
             evidence: this.#candidateRecord.evidence,
           }
         : {}),
-    });
-    return result;
+    };
+    return { ...result, evidenceReceipt };
   }
 
+  async persistOwnedEvidence(
+    transactionId: string,
+    receipt: unknown,
+    signal?: AbortSignal,
+  ): Promise<void> {
+    signal?.throwIfAborted();
+    if (!receipt || typeof receipt !== "object" ||
+      (receipt as PnnEvidenceRecord).transactionId !== transactionId) {
+      throw unavailable("owned PNN receipt does not match the claimed transaction");
+    }
+    const latest = this.#candidateRecord?.transactionId === transactionId &&
+      this.#candidateRecord.transaction && this.#candidateRecord.evidence
+      ? this.#candidateRecord : receipt as PnnEvidenceRecord;
+    await this.store.savePnnEvidence(latest, signal);
+  }
+
+  #checkLive(): void { this.#signal?.throwIfAborted(); }
+
   #resetVerification(request: ExactTransactionVerificationRequest): void {
+    this.#signal = request.signal;
+    this.#checkLive();
     this.#verified.clear();
     this.#candidateRecord = undefined;
     this.#origins = [];
@@ -107,6 +129,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   }
 
   async getTransaction(transactionId: string): Promise<RestTransaction | null> {
+    this.#checkLive();
     const id = hashValue(transactionId, "PNN transaction id");
     const verified = this.#verified.get(id);
     if (verified) return verified.transaction;
@@ -129,11 +152,13 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       const evidence = await this.pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
+        this.#signal,
       );
       return this.#remember(id, cached.transaction, evidence);
     }
     const snapshot = await this.pnn.snapshotHashChainUtxos(
       this.book.addresses(),
+      this.#signal,
     );
     const current = snapshot.utxos.find((utxo) => utxo.outpoint.txid === id);
     const from =
@@ -146,24 +171,20 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       ...(current?.blockDaaScore
         ? { originDaaScore: current.blockDaaScore }
         : {}),
-    });
+    }, this.#signal);
     if (!accepted) return null;
     const evidence = await this.pnn.confirmAcceptedTransaction(
       accepted.evidence,
       this.confirmations,
+      this.#signal,
     );
     const transaction = observedTransaction(accepted.raw, evidence);
-    await this.store.savePnnEvidence({
-      transactionId: id,
-      checkpoint: cached?.checkpoint ?? evidence.checkpoint!,
-      transaction,
-      evidence,
-      ...(cached?.origins ? { origins: cached.origins } : {}),
-    });
+    this.#checkLive();
     return this.#remember(id, transaction, evidence);
   }
 
   async #candidateTransaction(): Promise<RestTransaction | null> {
+    this.#checkLive();
     const candidate = this.#candidate!;
     const cached = await this.store.loadPnnEvidence(candidate.id);
     this.#candidateRecord = cached;
@@ -172,6 +193,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       const evidence = await this.pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
+        this.#signal,
       );
       assertChainTransactionMatchesSafe(cached.transaction, candidate);
       this.#candidateRecord = { ...cached, evidence };
@@ -187,7 +209,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
         ),
       ),
     ];
-    this.#snapshot = await this.pnn.snapshotHashChainUtxos(addresses);
+    this.#snapshot = await this.pnn.snapshotHashChainUtxos(addresses, this.#signal);
     const currentOrigins = candidate.inputs.map((input) =>
       this.#snapshot!.utxos.filter((utxo) =>
         sameOutpoint(utxo.outpoint, {
@@ -206,7 +228,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     if (!cached) {
       const snapshot = await this.pnn.snapshotHashChainUtxos([
         this.#paymentOutput!.address,
-      ]);
+      ], this.#signal);
       const output = snapshot.utxos.find((item) =>
         sameOutpoint(item.outpoint, {
           txid: candidate.id,
@@ -223,6 +245,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     const accepted = await this.pnn.findAcceptedTransaction(
       candidate.id,
       from ? { from } : {},
+      this.#signal,
     );
     if (!accepted)
       throw unavailable(
@@ -231,6 +254,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     const evidence = await this.pnn.confirmAcceptedTransaction(
       accepted.evidence,
       this.confirmations,
+      this.#signal,
     );
     const transaction = observedTransaction(accepted.raw, evidence);
     assertChainTransactionMatchesSafe(transaction, candidate);
@@ -248,37 +272,43 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     };
     // A pending receipt's origins were authenticated before broadcast. Commit
     // its accepted readback before the settlement reconciler asks for evidence.
-    if (cached) await this.store.savePnnEvidence(this.#candidateRecord);
+    this.#checkLive();
     return this.#remember(candidate.id, transaction, evidence);
   }
 
   async getUtxosForAddress(address: string): Promise<RestObservedUtxo[]> {
+    this.#checkLive();
     const snapshot =
-      this.#snapshot ?? (await this.pnn.snapshotHashChainUtxos([address]));
+      this.#snapshot ?? (await this.pnn.snapshotHashChainUtxos([address], this.#signal));
+    this.#checkLive();
     const script = scriptPublicKeyForAddress(address, "kaspa:testnet-10");
     return snapshot.utxos
       .filter((utxo) => utxo.scriptPublicKey === script)
       .map(observedUtxo);
   }
 
-  async getVirtualDaaScore(): Promise<string> {
-    const snapshot = await this.pnn.snapshotHashChainUtxos([]);
+  async getVirtualDaaScore(signal?: AbortSignal): Promise<string> {
+    const liveSignal = signal ?? this.#signal;
+    liveSignal?.throwIfAborted();
+    const snapshot = await this.pnn.snapshotHashChainUtxos([], liveSignal);
+    liveSignal?.throwIfAborted();
     if (!snapshot.checkpoint.daaScore)
       throw unavailable("PNN checkpoint lacks DAA score");
-    await this.store.recordPnnCheckpoint(snapshot.checkpoint);
+    await this.store.recordPnnCheckpoint(snapshot.checkpoint, liveSignal);
+    liveSignal?.throwIfAborted();
     return snapshot.checkpoint.daaScore;
   }
 
   async observeAcceptedUtxo(address: string, outpoint: FundingOutpoint) {
     const initial = (
-      await this.pnn.snapshotHashChainUtxos([address])
+      await this.pnn.snapshotHashChainUtxos([address], this.#signal)
     ).utxos.find((utxo) => sameOutpoint(utxo.outpoint, outpoint));
     if (!initial) return null;
     this.book.recordOutpoint(outpoint, initial.scriptPublicKey, address);
     const transaction = await this.getTransaction(outpoint.txid);
     if (!transaction) return null;
     const evidence = await this.acceptedTransactionEvidence(outpoint.txid);
-    const current = await this.pnn.snapshotHashChainUtxos([address]);
+    const current = await this.pnn.snapshotHashChainUtxos([address], this.#signal);
     const matches = current.utxos.filter((utxo) =>
       sameOutpoint(utxo.outpoint, outpoint),
     );

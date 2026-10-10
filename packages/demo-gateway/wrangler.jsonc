@@ -3,7 +3,7 @@
   "account_id": "4d306be42951e0fb5e88bc49f0af7137",
   "main": "src/index.ts",
   "compatibility_date": "2026-06-02",
-  "compatibility_flags": ["nodejs_compat"],
+  "compatibility_flags": ["nodejs_compat", "enable_request_signal", "request_signal_passthrough"],
   "routes": [
     {
       "pattern": "demo.kaspa-x402.org",

@@ -66,6 +66,7 @@ import {
   type ParsePaymentRequiredOptions,
 } from "./payment-required.js";
 import { assertHashChainGrantDestination } from "./hash-chain-grant-url.js";
+import { ChannelCasConflictError } from "./channel-store.js";
 import {
   PAYMENT_REQUIRED_HEADER,
   PAYMENT_RESPONSE_HEADER,
@@ -271,30 +272,42 @@ export class DirectModeClient {
       ...(paymentContext.audience ? { audience: paymentContext.audience } : {}),
       payTo: accepted.payTo,
     });
-    const existing = await this.#selectExistingChannel(
-      accepted,
-      origin,
-      resourceUrl,
-      parsed.paymentRequired,
-      requestContext,
-    );
-
-    if (existing) {
-      const { channel, paymentPayload } = await this.#buildVoucherPayload(
-        existing.channel,
-        accepted,
-        parsed.paymentRequired,
-        requestContext,
-        existing.toppedUp,
+    const candidates = await this.#batchStore.loadChannels({
+      origin, network: accepted.network, status: "active",
+    });
+    for (const candidate of candidates) {
+      if (!channelMatchesRequirement(candidate, accepted, resourceUrl)) continue;
+      const existingPayment = await this.#batchStore.withChannelOperationLease(
+        candidate.id,
+        async () => {
+          for (let attempt = 0; attempt < 3; attempt++) {
+            const existing = await this.#selectExistingChannel(
+              accepted, origin, resourceUrl, parsed.paymentRequired,
+              requestContext, candidate.id,
+            );
+            if (!existing) return undefined;
+            try {
+              const { channel, paymentPayload } = await this.#buildVoucherPayload(
+                existing.channel, accepted, parsed.paymentRequired,
+                requestContext, existing.toppedUp,
+              );
+              return {
+                paymentRequired: parsed.paymentRequired,
+                accepted,
+                paymentPayload,
+                scheme: "batch-settlement" as const,
+                channel,
+                openedChannel: false,
+              };
+            } catch (error) {
+              if (!(error instanceof ChannelCasConflictError) || attempt === 2)
+                throw error;
+            }
+          }
+          return undefined;
+        },
       );
-      return {
-        paymentRequired: parsed.paymentRequired,
-        accepted,
-        paymentPayload,
-        scheme: "batch-settlement",
-        channel,
-        openedChannel: false,
-      };
+      if (existingPayment) return existingPayment;
     }
 
     const unresolvedGenesis = (
@@ -1078,6 +1091,7 @@ export class DirectModeClient {
     resourceUrl: string,
     paymentRequired: CreatePaymentResult["paymentRequired"],
     context: PaymentRequestContext,
+    onlyChannelId: string,
   ): Promise<{ channel: DirectModeChannel; toppedUp: boolean } | undefined> {
     const channels = await this.#batchStore.loadChannels({
       origin,
@@ -1086,6 +1100,7 @@ export class DirectModeClient {
     });
     let topUpCandidate: DirectModeChannel | undefined;
     for (const channel of channels) {
+      if (channel.id.toLowerCase() !== onlyChannelId.toLowerCase()) continue;
       if (!channelMatchesRequirement(channel, accepted, resourceUrl)) continue;
 
       const openFundingAttempt =
@@ -1461,7 +1476,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#batchStore.saveChannel(signedChannel);
+    await this.#batchStore.saveChannel(channel, signedChannel);
     return { channel: signedChannel, paymentPayload };
   }
 
@@ -1878,7 +1893,7 @@ export class DirectModeClient {
       paymentPayload,
     });
     if (!retryValidation.ok) throw retryValidation.error;
-    await this.#batchStore.saveChannel(updated);
+    await this.#batchStore.saveChannel(channel, updated);
     return { channel: updated, paymentPayload };
   }
 
@@ -2498,7 +2513,7 @@ export class DirectModeClient {
         "corrective active outpoint does not match authoritative chain state",
       );
     }
-    await this.#batchStore.saveChannel(candidate);
+    await this.#batchStore.saveChannel(channel, candidate);
     return candidate;
   }
 }
@@ -2512,8 +2527,15 @@ function covenantLineageRolledBack(
       transition.transactionId.toLowerCase(),
     ),
   );
+  const newlyAnchored = new Set(
+    previous.journal.slice(0,
+      Math.max(0, next.anchor.compactedEvents - previous.anchor.compactedEvents),
+    ).filter((event) => event.event === "accepted")
+      .map((event) => event.transition.transactionId.toLowerCase()),
+  );
   return canonicalCovenantTransitions(previous).some(
-    (transition) => !canonical.has(transition.transactionId.toLowerCase()),
+    (transition) => !canonical.has(transition.transactionId.toLowerCase()) &&
+      !newlyAnchored.has(transition.transactionId.toLowerCase()),
   );
 }
 

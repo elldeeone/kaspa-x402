@@ -1,5 +1,6 @@
 import {
   applyCovenantSelectedChainUpdate,
+  assertCovenantLineageExtension,
   canonicalCovenantTransitions,
   channelId,
   createCovenantLineageState,
@@ -28,6 +29,14 @@ import type {
   RefundAttemptRecord,
 } from "./types.js";
 
+/** Durable stores throw this only when the complete expected snapshot lost a CAS. */
+export class ChannelCasConflictError extends Error {
+  constructor() {
+    super("channel changed before compare-and-set save");
+    this.name = "ChannelCasConflictError";
+  }
+}
+
 export class MemoryChannelStore implements ChannelStore {
   readonly #channels = new Map<string, DirectModeChannel>();
   readonly #fundingAttempts = new Map<
@@ -37,6 +46,7 @@ export class MemoryChannelStore implements ChannelStore {
   readonly #refundAttempts = new Map<string, RefundAttemptRecord>();
   readonly #exactPaymentAttempts = new Map<string, ExactPaymentAttemptRecord>();
   readonly #exactPaymentIdentifiers = new Map<string, string>();
+  readonly #channelOperations = new Map<string, Promise<void>>();
 
   constructor(
     channels: readonly DirectModeChannel[] = [],
@@ -108,12 +118,47 @@ export class MemoryChannelStore implements ChannelStore {
       .map(cloneChannel);
   }
 
-  async saveChannel(channel: DirectModeChannel): Promise<void> {
+  async withChannelOperationLease<T>(
+    channelId: string,
+    operation: () => Promise<T>,
+  ): Promise<T> {
+    const key = channelKey(channelId);
+    const previous = this.#channelOperations.get(key);
+    let release!: () => void;
+    const held = new Promise<void>((resolve) => { release = resolve; });
+    this.#channelOperations.set(key, held);
+    if (previous) await previous;
+    try {
+      return await operation();
+    } finally {
+      if (this.#channelOperations.get(key) === held) {
+        this.#channelOperations.delete(key);
+      }
+      release();
+    }
+  }
+
+  async saveChannel(
+    expected: DirectModeChannel | undefined,
+    channel: DirectModeChannel,
+  ): Promise<void> {
     const key = channelKey(channel.id);
     this.#assertChannelMutable(channel.id);
     assertChannelLineageConsistency(channel);
     const existingChannel = this.#channels.get(key);
+    if (existingChannel === undefined ? expected !== undefined :
+      expected === undefined || stableStringify(existingChannel) !== stableStringify(expected)) {
+      throw new ChannelCasConflictError();
+    }
     if (existingChannel) {
+      if (parseSompiString(channel.signedMaxClaimable) < parseSompiString(existingChannel.signedMaxClaimable) ||
+        parseSompiString(channel.chargedCumulativeAmount) < parseSompiString(existingChannel.chargedCumulativeAmount) ||
+        parseSompiString(channel.claimedCumulativeAmount) < parseSompiString(existingChannel.claimedCumulativeAmount) ||
+        (existingChannel.latestVoucher && (!channel.latestVoucher ||
+          parseSompiString(channel.latestVoucher.authorizedCumulativeAmount) <
+            parseSompiString(existingChannel.latestVoucher.authorizedCumulativeAmount)))) {
+        throw new Error("channel save would regress monotonic payment state");
+      }
       if (!sameLineage(existingChannel.lineage, channel.lineage)) {
         throw new Error(
           "generic channel save cannot replace authoritative covenant lineage",
@@ -553,9 +598,17 @@ export class MemoryChannelStore implements ChannelStore {
     if (!sameManifest(current.lineage.manifest, input.lineage.manifest)) {
       throw new Error("covenant launch manifest is immutable");
     }
-    if (!journalHasPrefix(input.lineage, current.lineage)) {
-      throw new Error("covenant lineage journal is not append-only");
-    }
+    assertCovenantLineageExtension(current.lineage, input.lineage);
+    const compacted = input.lineage.anchor.compactedEvents -
+      current.lineage.anchor.compactedEvents;
+    const appendedEvents = input.lineage.journal.slice(
+      current.lineage.journal.length - compacted,
+    );
+    const newlyAnchoredIds = new Set(
+      current.lineage.journal.slice(0, compacted)
+        .filter((event) => event.event === "accepted")
+        .map((event) => event.transition.transactionId.toLowerCase()),
+    );
     if (
       !sameHex(input.channel.id, current.id) ||
       !sameLineage(input.channel.lineage, input.lineage)
@@ -564,15 +617,14 @@ export class MemoryChannelStore implements ChannelStore {
     }
     assertChannelLineageConsistency(input.channel);
     if (fundingAttempt?.kind === "top-up" && fundingAttempt.status === "applied") {
-      const transitionStillCanonical = canonicalCovenantTransitions(
+      const transitionStillCanonical = newlyAnchoredIds.has(
+        fundingAttempt.transactionId.toLowerCase(),
+      ) || canonicalCovenantTransitions(
         input.lineage,
       ).some((transition) =>
         sameHex(transition.transactionId, fundingAttempt.transactionId),
       );
       if (!transitionStillCanonical) {
-        const appendedEvents = input.lineage.journal.slice(
-          current.lineage.journal.length,
-        );
         const verifiedRemoval =
           input.channel.status === "refundable" &&
           fundingAttempt.acceptance !== undefined &&
@@ -602,7 +654,9 @@ export class MemoryChannelStore implements ChannelStore {
       }
     }
     if (refundAttempt?.status === "applied") {
-      const refundStillCanonical = canonicalCovenantTransitions(
+      const refundStillCanonical = newlyAnchoredIds.has(
+        refundAttempt.transactionId.toLowerCase(),
+      ) || canonicalCovenantTransitions(
         input.lineage,
       ).some(
         (transition) =>
@@ -611,9 +665,6 @@ export class MemoryChannelStore implements ChannelStore {
           sameOutpoint(transition.consumedOutpoint, refundAttempt.activeOutpoint),
       );
       if (!refundStillCanonical) {
-        const appendedEvents = input.lineage.journal.slice(
-          current.lineage.journal.length,
-        );
         const verifiedRemoval =
           current.status === "refunded" &&
           current.lineage.currentHead === null &&
@@ -1596,16 +1647,4 @@ function sameLineage(
   right: CovenantLineageState,
 ): boolean {
   return JSON.stringify(left) === JSON.stringify(right);
-}
-
-function journalHasPrefix(
-  next: CovenantLineageState,
-  current: CovenantLineageState,
-): boolean {
-  return (
-    next.journal.length >= current.journal.length &&
-    current.journal.every(
-      (event, index) => JSON.stringify(event) === JSON.stringify(next.journal[index]),
-    )
-  );
 }

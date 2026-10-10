@@ -4,6 +4,7 @@ export class FakeStorage implements GatewayStorage {
   #values = new Map<string, unknown>();
   #transactionTail: Promise<void> = Promise.resolve();
   #failWriteAt: number | undefined;
+  #failWriteKey: string | undefined;
   #writes = 0;
 
   failWriteAt(index: number): void {
@@ -11,11 +12,19 @@ export class FakeStorage implements GatewayStorage {
     this.#writes = 0;
   }
 
+  failWriteForKey(key: string): void {
+    this.#failWriteKey = key;
+  }
+
   snapshot(): Map<string, unknown> {
     return structuredClone(this.#values);
   }
 
-  #beforeWrite(): void {
+  #beforeWrite(key: string): void {
+    if (key === this.#failWriteKey) {
+      this.#failWriteKey = undefined;
+      throw new Error("injected storage write failure");
+    }
     if (++this.#writes === this.#failWriteAt) {
       this.#failWriteAt = undefined;
       throw new Error("injected storage write failure");
@@ -34,12 +43,12 @@ export class FakeStorage implements GatewayStorage {
   }
 
   async put<T = unknown>(key: string, value: T): Promise<void> {
-    this.#beforeWrite();
+    this.#beforeWrite(key);
     this.#values.set(key, structuredClone(value));
   }
 
   async delete(key: string): Promise<boolean> {
-    this.#beforeWrite();
+    this.#beforeWrite(key);
     return this.#values.delete(key);
   }
 

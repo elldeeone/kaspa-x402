@@ -8,33 +8,35 @@ import {
 
 const ALICE = { principal: "alice", tenant: "merchant" } as const;
 const BOB = { principal: "bob", tenant: "merchant" } as const;
+const ALICE_ADMISSION = "aa".repeat(32);
+const BOB_ADMISSION = "bb".repeat(32);
 
 describe("public boundary controller", () => {
-  it("applies request quotas per authenticated caller and resets the window", () => {
+  it("applies request quotas per trusted admission key and resets the window", () => {
     let now = 1_000;
     const boundary = new MemoryPublicBoundaryController(
       { callerQuota: 1, callerQuotaWindowMs: 100 },
       () => now,
     );
 
-    boundary.enterRequest(ALICE).release();
+    boundary.enterRequest(ALICE, ALICE_ADMISSION).release();
     expect(() =>
       boundary.enterRequest({
         ...ALICE,
         authorizationScopes: ["different-request-scope"],
-      }),
+      }, ALICE_ADMISSION),
     ).toThrowError(
       expect.objectContaining({ reason: "caller_quota_exceeded" }),
     );
-    expect(() => boundary.enterRequest(BOB).release()).not.toThrow();
+    expect(() => boundary.enterRequest(BOB, BOB_ADMISSION).release()).not.toThrow();
 
     now += 100;
-    expect(() => boundary.enterRequest(ALICE).release()).not.toThrow();
+    expect(() => boundary.enterRequest(ALICE, ALICE_ADMISSION).release()).not.toThrow();
   });
 
   it("charges stored challenge keys to the original caller quota", () => {
     const boundary = new MemoryPublicBoundaryController({ callerQuota: 1 });
-    boundary.enterRequest(ALICE).release();
+    boundary.enterRequestKey(publicBoundaryCallerKey(ALICE)).release();
     expect(() => boundary.enterRequestKey(publicBoundaryCallerKey(ALICE)))
       .toThrowError(expect.objectContaining({ reason: "caller_quota_exceeded" }));
   });
@@ -50,13 +52,13 @@ describe("public boundary controller", () => {
       () => now,
     );
 
-    boundary.enterRequest(ALICE).release();
-    expect(() => boundary.enterRequest(BOB)).toThrowError(
+    boundary.enterRequest(ALICE, ALICE_ADMISSION).release();
+    expect(() => boundary.enterRequest(BOB, BOB_ADMISSION)).toThrowError(
       expect.objectContaining({ reason: "caller_quota_exceeded" }),
     );
 
     now += 100;
-    expect(() => boundary.enterRequest(BOB).release()).not.toThrow();
+    expect(() => boundary.enterRequest(BOB, BOB_ADMISSION).release()).not.toThrow();
   });
 
   it("bounds global, caller, and channel concurrency without leaking permits", () => {
@@ -64,19 +66,19 @@ describe("public boundary controller", () => {
       maxGlobalConcurrency: 1,
       maxCallerConcurrency: 1,
     });
-    const request = global.enterRequest(ALICE);
-    expect(() => global.enterRequest(BOB)).toThrowError(
+    const request = global.enterRequest(ALICE, ALICE_ADMISSION);
+    expect(() => global.enterRequest(BOB, BOB_ADMISSION)).toThrowError(
       expect.objectContaining({ reason: "global_concurrency_exceeded" }),
     );
     request.release();
-    expect(() => global.enterRequest(BOB).release()).not.toThrow();
+    expect(() => global.enterRequest(BOB, BOB_ADMISSION).release()).not.toThrow();
 
     const caller = new MemoryPublicBoundaryController({
       maxGlobalConcurrency: 2,
       maxCallerConcurrency: 1,
     });
-    const firstCaller = caller.enterRequest(ALICE);
-    expect(() => caller.enterRequest(ALICE)).toThrowError(
+    const firstCaller = caller.enterRequest(ALICE, ALICE_ADMISSION);
+    expect(() => caller.enterRequest(ALICE, ALICE_ADMISSION)).toThrowError(
       expect.objectContaining({ reason: "caller_concurrency_exceeded" }),
     );
     firstCaller.release();

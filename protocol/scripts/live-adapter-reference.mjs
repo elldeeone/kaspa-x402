@@ -83,6 +83,7 @@ const FUNDING_SPLIT_SHARDS = 16;
 const MIN_REUSABLE_FUNDING_SHARDS = 8;
 const FUNDING_SPLIT_SHARD_AMOUNT = 500_000_000n;
 const SDK_GENERATED_TX_VERSION_SOURCE = "sdk-generated-transaction";
+const LIVE_LOOPBACK_ADMISSION_KEY = sha256Hex("kaspa-x402-live-proof-loopback:v1");
 const ADAPTER_SUBMITTED_TX_VERSION_SOURCE =
   "adapter-submitted-transaction-shape";
 const REPO_ROOT = path.resolve(
@@ -876,7 +877,8 @@ async function exactChallenge({
       description: `Live ${label} ${profile} exact proof`,
     };
     const unpaid = await server.handlePaidRequest(
-      { routeAccess: "public",
+      trustedLoopbackProofRequest({
+        routeAccess: "public",
         method: "GET",
         url: resource.url,
         body: null,
@@ -884,7 +886,7 @@ async function exactChallenge({
         resource,
         paymentAmount: amount,
         paymentScheme: "exact",
-      },
+      }),
       async () => ({ status: 200, body: { ok: false } }),
     );
     const paymentRequired = unpaid.headers?.[PAYMENT_REQUIRED_HEADER];
@@ -4906,7 +4908,7 @@ function requestWithPayment(paymentPayload, input) {
 }
 
 function requestWithPaymentHeader(paymentHeader, input) {
-  return {
+  return trustedLoopbackProofRequest({
     routeAccess: input.routeAccess,
     method: "GET",
     url: input.url,
@@ -4918,7 +4920,12 @@ function requestWithPaymentHeader(paymentHeader, input) {
     paymentAmount: input.amount,
     paymentScheme: input.scheme,
     requestHash: input.requestHash,
-  };
+  });
+}
+
+/** The loopback proof host supplies this key; payment payloads cannot choose it. */
+export function trustedLoopbackProofRequest(request) {
+  return { ...request, admissionKey: LIVE_LOOPBACK_ADMISSION_KEY };
 }
 
 function unsafePaymentHeader(value) {

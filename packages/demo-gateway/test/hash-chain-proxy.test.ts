@@ -3,12 +3,19 @@ import { hashChainSupportedKinds, proxyHashChainRequest } from "../src/hash-chai
 import { readGatewayConfig, type GatewayEnv } from "../src/config.js";
 import { handleGatewayRequest } from "../src/gateway.js";
 
+function workerRequest(input: RequestInfo | URL, init?: RequestInit): Request {
+  const request = new globalThis.Request(input, init);
+  Object.defineProperty(request, "cf", { value: { colo: "SYD" } });
+  return request;
+}
+
 const env: GatewayEnv = {
   KASPA_X402_GATEWAY_ENABLED: "true",
   KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
   KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
   KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",
   KASPA_X402_HASH_CHAIN_PROXY_TOKEN: "proxy-test-value",
+  KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
   KASPA_X402_PAY_TO: "kaspatest:merchant",
   KASPA_X402_SERVER_PUBLIC_KEY: "aa".repeat(32),
 } as GatewayEnv;
@@ -20,8 +27,8 @@ function gatewayEnv(overrides: Partial<GatewayEnv> = {}): GatewayEnv {
     idFromName(name: string) { return { name }; },
     get() {
       return {
-        acquirePublicAdmission(token: string, _nowMs: number, limit: number) {
-          if (!leases.has(token) && leases.size >= limit) {
+        acquirePublicAdmission(token: string, _callerKey: string, _nowMs: number, globalLimit: number) {
+          if (!leases.has(token) && leases.size >= globalLimit) {
             return { allowed: false, retryAt: Date.now() + 1_000 };
           }
           leases.add(token);
@@ -70,7 +77,7 @@ describe("hash-chain demo proxy", () => {
       } });
     });
     vi.stubGlobal("fetch", fetcher);
-    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report?demo-payment=one", {
+    const response = await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report?demo-payment=one", {
       headers: { "PAYMENT-SIGNATURE": "signed-proof", cookie: "private",
         "cf-connecting-ip": "203.0.113.1", "x-kaspa-x402-demo-caller": "forged" },
     }), readGatewayConfig(env));
@@ -90,7 +97,7 @@ describe("hash-chain demo proxy", () => {
     }));
     for (const [path, ip] of [["/hash-chain/report", "203.0.113.1"],
       ["/hash-chain/grant", "203.0.113.1"], ["/hash-chain/report", "203.0.113.2"]] as const) {
-      await proxyHashChainRequest(new Request(`https://demo.kaspa-x402.org${path}`, {
+      await proxyHashChainRequest(workerRequest(`https://demo.kaspa-x402.org${path}`, {
         method: path.endsWith("/grant") ? "POST" : "GET",
         headers: { "cf-connecting-ip": ip, "x-kaspa-x402-demo-caller": "forged" },
       }), readGatewayConfig(env));
@@ -105,7 +112,7 @@ describe("hash-chain demo proxy", () => {
         "x-kaspa-x402-demo-caller": new Headers(init.headers).get("x-kaspa-x402-demo-caller")!,
       },
     })));
-    const response = await handleGatewayRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
+    const response = await handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report", {
       headers: { origin: "https://kaspa-x402.org", "cf-connecting-ip": "203.0.113.1" },
     }), gatewayEnv(), { waitUntil() {} });
     expect(response.status).toBe(402);
@@ -126,7 +133,7 @@ describe("hash-chain demo proxy", () => {
         KASPA_X402_HASH_CHAIN_ORIGIN: `https://rate-limit-${index}.example.test`,
         KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
       });
-      const request = () => handleGatewayRequest(new Request(`https://demo.kaspa-x402.org${path}`, {
+      const request = () => handleGatewayRequest(workerRequest(`https://demo.kaspa-x402.org${path}`, {
         method: path.endsWith("/grant") ? "POST" : "GET",
         headers: { "cf-connecting-ip": `203.0.113.${index + 1}` },
       }), admitted, { waitUntil() {} });
@@ -139,7 +146,7 @@ describe("hash-chain demo proxy", () => {
       KASPA_X402_HASH_CHAIN_ORIGIN: "https://rate-limit-supported.example.test",
       KASPA_X402_RATE_LIMIT_PER_MINUTE: "1",
     });
-    const supported = () => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/supported", {
+    const supported = () => handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/supported", {
       headers: { "cf-connecting-ip": "203.0.113.9" },
     }), supportedEnv, { waitUntil() {} });
     expect((await supported()).status).toBe(200);
@@ -160,7 +167,7 @@ describe("hash-chain demo proxy", () => {
       KASPA_X402_HASH_CHAIN_ORIGIN: "https://capability-cache.example.test",
       KASPA_X402_RATE_LIMIT_PER_MINUTE: "10",
     });
-    const request = (ip: string) => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/supported", {
+    const request = (ip: string) => handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/supported", {
       headers: { "cf-connecting-ip": ip },
     }), cached, { waitUntil() {} });
 
@@ -187,7 +194,7 @@ describe("hash-chain demo proxy", () => {
     });
     vi.stubGlobal("fetch", fetcher);
     const admitted = gatewayEnv({ KASPA_X402_GLOBAL_CONCURRENCY: "1" });
-    const request = (ip: string) => handleGatewayRequest(new Request("https://demo.kaspa-x402.org/hash-chain/status", {
+    const request = (ip: string) => handleGatewayRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/status", {
       headers: { "cf-connecting-ip": ip },
     }), admitted, { waitUntil() {} });
 
@@ -202,7 +209,7 @@ describe("hash-chain demo proxy", () => {
   });
   it("rejects a resource request without trusted caller metadata", async () => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
+    const response = await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report", {
       headers: { "x-kaspa-x402-demo-caller": "aa".repeat(32), "x-forwarded-for": "203.0.113.1" },
     }), readGatewayConfig(env));
     expect(response.status).toBe(503);
@@ -210,10 +217,10 @@ describe("hash-chain demo proxy", () => {
   });
   it("leaves hash-chain unavailable when unconfigured or disabled", async () => {
     const fetcher = vi.fn(); vi.stubGlobal("fetch", fetcher);
-    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report"),
+    const response = await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report"),
       readGatewayConfig({ ...env, KASPA_X402_HASH_CHAIN_ORIGIN: "" }));
     expect(response.status).toBe(503);
-    expect((await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report"),
+    expect((await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report"),
       readGatewayConfig({ ...env, KASPA_X402_HASH_CHAIN_PROXY_TOKEN: undefined }))).status).toBe(503);
     expect(await hashChainSupportedKinds(readGatewayConfig({ ...env, KASPA_X402_GATEWAY_ENABLED: "false" }))).toEqual([]);
     expect(fetcher).not.toHaveBeenCalled();
@@ -222,7 +229,7 @@ describe("hash-chain demo proxy", () => {
     vi.stubGlobal("fetch", vi.fn(async () => new Response('{"kinds":[]}')));
     expect(await hashChainSupportedKinds(readGatewayConfig(env))).toEqual([]);
     vi.stubGlobal("fetch", vi.fn(async () => { throw new Error("issuer offline"); }));
-    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
+    const response = await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report", {
       headers: { "cf-connecting-ip": "203.0.113.1" },
     }), readGatewayConfig(env));
     expect(response.status).toBe(503);
@@ -233,7 +240,7 @@ describe("hash-chain demo proxy", () => {
       expect(init.redirect).toBe("manual");
       return new Response(null, { status: 302, headers: { location: "https://other.example.test" } });
     }));
-    const response = await proxyHashChainRequest(new Request("https://demo.kaspa-x402.org/hash-chain/report", {
+    const response = await proxyHashChainRequest(workerRequest("https://demo.kaspa-x402.org/hash-chain/report", {
       headers: { "cf-connecting-ip": "203.0.113.1" },
     }), readGatewayConfig(env));
     expect(response.status).toBe(503);

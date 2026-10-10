@@ -527,7 +527,10 @@ export interface ExactPaymentAttemptRecord {
 
 export interface ChannelStore extends ExactPaymentAttemptStore {
   loadChannels(scope: ChannelLookupScope): Promise<DirectModeChannel[]>;
-  saveChannel(channel: DirectModeChannel): Promise<void>;
+  /** Serialize the whole operation for one channel across every client sharing this store. Durable stores must coordinate this across processes. */
+  withChannelOperationLease<T>(channelId: Hash32Hex, operation: () => Promise<T>): Promise<T>;
+  /** Atomically replaces the complete expected snapshot; undefined only creates a new channel. A lost comparison throws ChannelCasConflictError. */
+  saveChannel(expected: DirectModeChannel | undefined, channel: DirectModeChannel): Promise<void>;
   /** Applies one validated settlement only if the disclosed channel snapshot is current. */
   applySettledChannel(
     expected: DirectModeChannel,

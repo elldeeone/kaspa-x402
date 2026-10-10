@@ -6,17 +6,20 @@ import {
 } from "../src/remote-state.js";
 
 describe("remote gateway state", () => {
-  it("uses a fresh v1 RC2 object identity instead of migrating old alpha state", () => {
+  it("uses a fresh state-v2 object identity without reading the prior Durable Object", async () => {
     const idFromName = vi.fn(() => ({}) as DurableObjectId);
+    const get = vi.fn(() => ({ fetch: vi.fn() }) as unknown as DurableObjectStub);
     const namespace = {
       idFromName,
-      get: vi.fn(() => ({ fetch: vi.fn() }) as unknown as DurableObjectStub),
+      get,
     } as unknown as GatewayEnv["GATEWAY_STATE"];
 
     new RemoteGatewayState(namespace);
 
-    expect(GATEWAY_STATE_OBJECT_NAME).toBe("demo-gateway-v1.0.0-rc.2");
+    expect(GATEWAY_STATE_OBJECT_NAME).toBe("demo-gateway-state-v2");
     expect(idFromName).toHaveBeenCalledWith(GATEWAY_STATE_OBJECT_NAME);
+    expect(idFromName).not.toHaveBeenCalledWith("demo-gateway-v1.0.0-rc.2");
+    expect(get).toHaveBeenCalledTimes(1);
   });
 
   it("uses Durable Object RPC for deployment-wide admission", async () => {
@@ -37,14 +40,16 @@ describe("remote gateway state", () => {
     const token = "00000000-0000-4000-8000-000000000001";
 
     await expect(
-      state.acquirePublicAdmission(token, 1_000, 4, 30_000),
+      state.acquirePublicAdmission(token, "aa".repeat(32), 1_000, 4, 2, 30_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await state.releasePublicAdmission(token);
 
     expect(acquirePublicAdmission).toHaveBeenCalledWith(
       token,
+      "aa".repeat(32),
       1_000,
       4,
+      2,
       30_000,
     );
     expect(releasePublicAdmission).toHaveBeenCalledWith(token);

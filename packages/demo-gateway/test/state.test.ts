@@ -22,7 +22,9 @@ import {
 import {
   applyCovenantSelectedChainUpdate,
   createCovenantLineageState,
+  sha256Hex,
   type AcceptedTransactionEvidence,
+  type CovenantLineageState,
 } from "@kaspa-x402/core";
 import { DurableGatewayLockManager, GatewayLedger } from "../src/state.js";
 
@@ -46,6 +48,39 @@ const KIP10_SCRIPT_PUBLIC_KEY = serializedScriptPublicKey(
 const HEAD_ID = "90".repeat(32);
 
 describe("gateway durable ledger", () => {
+  it("persists the 64-to-65 covenant compaction across Durable Object restart", async () => {
+    // Failure modes: the transaction wrapper rejects the new compact anchor,
+    // or restart reloads a stale journal/head after the replacement.
+    const first = channel();
+    let lineage = first.lineage;
+    for (let index = 1; index <= 64; index++)
+      lineage = appendCompactionTopUp(lineage, index);
+    const at64: ServerChannelRecord = {
+      ...first,
+      lineage,
+      activeOutpoint: lineage.currentHead!.outpoint,
+      activeScriptPublicKey: lineage.currentHead!.scriptPublicKey,
+      fundingAmount: lineage.currentHead!.value,
+    };
+    const storage = new FakeStorage();
+    let ledger = new GatewayLedger(storage);
+    await ledger.registerChannel(at64);
+    await ledger.claimChannelOperation(channelOperation(at64, "recovery"));
+    const compacted = appendCompactionTopUp(lineage, 65);
+    const at65: ServerChannelRecord = {
+      ...at64,
+      version: "1",
+      lineage: compacted,
+      activeOutpoint: compacted.currentHead!.outpoint,
+      activeScriptPublicKey: compacted.currentHead!.scriptPublicKey,
+      fundingAmount: compacted.currentHead!.value,
+    };
+    await ledger.applyCovenantLineage(at64, at65, ATTEMPT);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.loadChannel(at64.channelId)).resolves.toEqual(at65);
+    await expect(ledger.loadChannelOperation(at64.channelId)).resolves.toBeUndefined();
+  });
+
   it("keeps bounded discovery checkpoints before a deposit and survives restart", async () => {
     const storage = new FakeStorage();
     let ledger = new GatewayLedger(storage);
@@ -67,7 +102,9 @@ describe("gateway durable ledger", () => {
     let ledger = new GatewayLedger(storage);
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
       origins: [{ outpoint: { txid: FUNDING_TX, index: 0 }, amount: "1000", scriptPublicKey: SCRIPT, covenantId: null }] };
-    await ledger.savePnnEvidence(record);
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), record,
+    );
     ledger = new GatewayLedger(storage);
     await expect(ledger.loadPnnEvidence(TX)).resolves.toEqual(record);
     const before = storage.snapshot();
@@ -76,18 +113,124 @@ describe("gateway durable ledger", () => {
     expect(storage.snapshot()).toEqual(before);
   });
 
-  it("rolls back a PNN receipt when its budget write fails and refuses excess capacity", async () => {
+  it("rolls back the exact claim when its PNN budget write fails", async () => {
     const storage = new FakeStorage();
     const ledger = new GatewayLedger(storage);
     const record = { transactionId: TX, checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" } };
-    storage.failWriteAt(2);
-    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("injected storage write failure");
+    storage.failWriteForKey("pnn-evidence:budget");
+    await expect(ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), record,
+    )).rejects.toThrow("injected storage write failure");
     await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
     await expect(storage.get("pnn-evidence:budget")).resolves.toBeUndefined();
-    await storage.put("pnn-evidence:budget", { records: 4096, bytes: 0 });
-    const before = storage.snapshot();
-    await expect(ledger.savePnnEvidence(record)).rejects.toThrow("capacity exhausted");
-    expect(storage.snapshot()).toEqual(before);
+  });
+
+  it("rejects a saturated evidence budget before claiming an additive head", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    await ledger.registerExactHead(exactHead());
+    await storage.put("pnn-evidence:budget", { records: 4096, bytes: 0, reservedBytes: 0 });
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await expect(ledger.claimExactSettlementWithEvidence(exactSettlementAttempt(), receipt))
+      .rejects.toThrow("capacity exhausted");
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 4096, bytes: 0, reservedBytes: 0,
+    });
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadExactHead(HEAD_ID)).resolves.toMatchObject({
+      status: "available", version: "0",
+    });
+  });
+
+  it("keeps room for accepted evidence when the budget fills at claim time", async () => {
+    const storage = new FakeStorage();
+    const originalBudget = {
+      records: 1_000, bytes: 64 * 1024 * 1024 - 64 * 1024, reservedBytes: 0,
+    };
+    await storage.put("pnn-evidence:budget", originalBudget);
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.acceptExactSettlement(TX, "accepted", "2026-07-07T00:00:01.000Z");
+    const accepted = {
+      ...receipt,
+      transaction: { transaction_id: TX, is_accepted: true, inputs: [], outputs: [] },
+    };
+    await expect(ledger.savePnnEvidence(accepted)).resolves.toBeUndefined();
+    await expect(new GatewayLedger(storage).loadPnnEvidence(TX)).resolves.toEqual(accepted);
+    const budget = await storage.get<typeof originalBudget>("pnn-evidence:budget");
+    expect(budget!.records).toBe(1_001);
+    expect(budget!.bytes + budget!.reservedBytes).toBe(64 * 1024 * 1024);
+    const acceptedBudget = await storage.get<typeof originalBudget>("pnn-evidence:budget");
+    await expect(ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    )).resolves.toMatchObject({ created: false });
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toEqual(accepted);
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual(acceptedBudget);
+    await ledger.beginExactHandler(TX, "2026-07-07T00:00:02.000Z");
+    await ledger.recordExactHandlerResult(
+      TX, { chargedAmount: "20000000" }, "2026-07-07T00:00:03.000Z",
+    );
+    await ledger.commitExactPayment({
+      payment: exactPayment({ profile: "standard-native", amount: "20000000" }),
+    });
+    await expect(storage.get<typeof originalBudget>("pnn-evidence:budget"))
+      .resolves.toMatchObject({ records: 1_001, reservedBytes: 0 });
+  });
+
+  it("releases PNN capacity when an unaccepted settlement is abandoned", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+    };
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.abandonExactSettlement(
+      TX, "trusted rejection before broadcast", "2026-07-07T00:00:01.000Z",
+    );
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 0, bytes: 0, reservedBytes: 0,
+    });
+  });
+
+  it("releases an exact-limit PNN receipt when its settlement is abandoned", async () => {
+    const storage = new FakeStorage();
+    const ledger = new GatewayLedger(storage);
+    const receipt = {
+      transactionId: TX,
+      checkpoint: { blockHash: OTHER_TX, blueScore: "100", daaScore: "200" },
+      transaction: { transaction_id: TX, is_accepted: true, payload: "" },
+    };
+    const bytes = (value: unknown) => new TextEncoder().encode(JSON.stringify(value)).byteLength;
+    if ((64 * 1024 - bytes(receipt)) % 2 !== 0)
+      receipt.checkpoint.daaScore = "2000";
+    receipt.transaction.payload = "ab".repeat((64 * 1024 - bytes(receipt)) / 2);
+    expect(bytes(receipt)).toBe(64 * 1024);
+
+    await ledger.claimExactSettlementWithEvidence(
+      exactSettlementAttempt({ profile: "standard-native", head: undefined }), receipt,
+    );
+    await ledger.abandonExactSettlement(
+      TX, "trusted rejection before broadcast", "2026-07-07T00:00:01.000Z",
+    );
+    await expect(ledger.loadExactSettlementAttempt(TX)).resolves.toBeUndefined();
+    await expect(ledger.loadPnnEvidence(TX)).resolves.toBeUndefined();
+    await expect(storage.get("pnn-evidence:budget")).resolves.toEqual({
+      records: 0, bytes: 0, reservedBytes: 0,
+    });
   });
 
   it("rejects independently provisioned additive heads at max plus one", async () => {
@@ -337,6 +480,41 @@ describe("gateway durable ledger", () => {
       chargedCumulativeAmount: "100",
       signedMaxClaimable: "100",
     });
+  });
+
+  it("releases an identified batch attempt after a pre-handler abort across restart", async () => {
+    const storage = new FakeStorage();
+    const previous = channel();
+    let ledger = new GatewayLedger(storage);
+    await ledger.registerChannel(previous);
+    const claim: PaymentIdentifierReservationClaim = {
+      id: "payment-id",
+      fingerprint: REQUEST,
+      paymentPayloadHash: PAYLOAD,
+      paymentScopeId: CHANNEL_ID,
+      paymentKind: "batch-settlement",
+      ownerId: ATTEMPT,
+      payerId: "payer:test",
+      channelId: CHANNEL_ID,
+    };
+    await ledger.claimBatchSettlement(batchSettlementAttempt(previous, {
+      paymentIdentifier: claim,
+    }));
+    const startedAt = "2026-07-07T00:00:02.000Z";
+    await expect(ledger.beginBatchHandler(ATTEMPT, startedAt)).resolves.toBe(true);
+    ledger = new GatewayLedger(storage);
+    await expect(ledger.resetBatchHandlerBeforeExecution(ATTEMPT, startedAt))
+      .resolves.toBe(true);
+    await expect(ledger.loadPaymentIdentifierReservation(claim.id))
+      .resolves.toMatchObject({ status: "reserved" });
+    await expect(ledger.loadChannelOperation(CHANNEL_ID))
+      .resolves.toMatchObject({ status: "reserved" });
+    await expect(ledger.abandonBatchSettlement(
+      ATTEMPT, "presentation expired", "2026-07-07T00:00:03.000Z",
+    )).resolves.toBeUndefined();
+    await expect(ledger.loadPaymentIdentifierReservation(claim.id))
+      .resolves.toMatchObject({ status: "safely-released" });
+    await expect(ledger.loadChannelOperation(CHANNEL_ID)).resolves.toBeUndefined();
   });
 
   it("rejects malformed batch settlement attempts before durable state changes", async () => {
@@ -1140,23 +1318,25 @@ describe("gateway durable ledger", () => {
     const ledger = new GatewayLedger(new FakeStorage());
     const first = "00000000-0000-4000-8000-000000000001";
     const second = "00000000-0000-4000-8000-000000000002";
+    const alice = "aa".repeat(32);
+    const bob = "bb".repeat(32);
 
     await expect(
-      ledger.acquirePublicAdmission(first, 1_000, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 1_000, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(first, 1_500, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 1_500, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(second, 1_600, 1, 1_000),
-    ).resolves.toEqual({ allowed: false, active: 1, retryAt: 2_500 });
+      ledger.acquirePublicAdmission(second, bob, 1_600, 1, 1, 1_000),
+    ).resolves.toEqual({ allowed: false, active: 1, retryAt: 2_500, reason: "global_concurrency_exceeded" });
 
     await ledger.releasePublicAdmission(first);
     await expect(
-      ledger.acquirePublicAdmission(second, 1_700, 1, 1_000),
+      ledger.acquirePublicAdmission(second, bob, 1_700, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
     await expect(
-      ledger.acquirePublicAdmission(first, 2_700, 1, 1_000),
+      ledger.acquirePublicAdmission(first, alice, 2_700, 1, 1, 1_000),
     ).resolves.toEqual({ allowed: true, active: 1 });
   });
 
@@ -1167,13 +1347,17 @@ describe("gateway durable ledger", () => {
     const results = await Promise.all([
       firstLedger.acquirePublicAdmission(
         "00000000-0000-4000-8000-000000000001",
+        "aa".repeat(32),
         1_000,
+        1,
         1,
         1_000,
       ),
       secondLedger.acquirePublicAdmission(
         "00000000-0000-4000-8000-000000000002",
+        "bb".repeat(32),
         1_000,
+        1,
         1,
         1_000,
       ),
@@ -1383,6 +1567,48 @@ describe("gateway durable ledger", () => {
     );
   });
 });
+
+function appendCompactionTopUp(
+  state: CovenantLineageState,
+  index: number,
+): CovenantLineageState {
+  const head = state.currentHead;
+  if (!head) throw new Error("compaction fixture requires a live covenant head");
+  const transactionId = sha256Hex(`gateway-compaction-transaction:${index}`);
+  const blockHash = sha256Hex(`gateway-compaction-block:${index}`);
+  const checkpoint = { blockHash: "ef".repeat(32), blueScore: "1000", daaScore: "1000" };
+  return applyCovenantSelectedChainUpdate(state, {
+    fromCheckpoint: state.checkpoint,
+    checkpoint,
+    continuity: "complete",
+    removedChainBlockHashes: [],
+    addedChainBlocks: [{ blockHash, transitions: [{
+      kind: "top-up",
+      covenantId: state.manifest.genesis.covenantId,
+      templateId: state.manifest.bytecode.templateId,
+      consumedOutpoint: head.outpoint,
+      transactionId,
+      authorizedSuccessorCount: 1,
+      successor: {
+        covenantId: state.manifest.genesis.covenantId,
+        authorizingInput: 0,
+        outpoint: { txid: transactionId, index: 0 },
+        scriptPublicKey: head.scriptPublicKey,
+        value: (BigInt(head.value) + 1n).toString(),
+        claimedCumulativeAmount: head.claimedCumulativeAmount,
+      },
+      terminalOutput: null,
+      acceptance: {
+        status: "accepted",
+        transactionId,
+        acceptingBlockHash: blockHash,
+        acceptingBlockBlueScore: "971",
+        confirmationCount: 30,
+        checkpoint,
+      },
+    }] }],
+  });
+}
 
 function channel(
   overrides: Partial<ServerChannelRecord> = {},

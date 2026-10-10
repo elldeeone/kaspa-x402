@@ -150,6 +150,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       for (let index = 0; index < 65; index++) {
         const rejected = await server.handlePaidRequest(
           { ...anonymousRoute, url: `${RESOURCE.url}?anonymous=${index}`,
+            admissionKey: index.toString(16).padStart(64, "0"),
             resource: { url: `${RESOURCE.url}?anonymous=${index}` } },
           async () => ({ body: "must not run" }),
         );
@@ -161,6 +162,7 @@ describe("native-KAS hash-chain x402 product path", () => {
         const deniedUrl = `${RESOURCE.url}?denied=${index}`;
         const denied = await server.handlePaidRequest({
           ...anonymousRoute,
+          admissionKey: (index + 100).toString(16).padStart(64, "0"),
           routeAccess: "authenticated",
           url: deniedUrl,
           resource: { url: deniedUrl },
@@ -174,7 +176,7 @@ describe("native-KAS hash-chain x402 product path", () => {
       expect(headReads).toBe(0);
       expect(admissionCalls).toBe(65);
       challengeEligible = true;
-      const route = { ...anonymousRoute, routeAccess: "authenticated" as const, trustedSecurityContext };
+      const route = { ...anonymousRoute, admissionKey: "ff".repeat(32), routeAccess: "authenticated" as const, trustedSecurityContext };
       const unpaid = await server.handlePaidRequest(route, async () => { protectedCalls++; return { body: "paid" }; });
       expect(unpaid.status).toBe(402);
       expect(headReads).toBe(1);

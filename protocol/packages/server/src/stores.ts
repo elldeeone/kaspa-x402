@@ -536,6 +536,35 @@ export class MemoryServerChannelStore implements ServerStateStore {
     return true;
   }
 
+  async resetBatchHandlerBeforeExecution(
+    attemptId: Hash32Hex,
+    startedAt: string,
+  ): Promise<boolean> {
+    const attempt = this.#requireBatchAttempt(attemptId);
+    if (attempt.status !== "pending" || attempt.handlerStartedAt !== startedAt ||
+        attempt.handlerResult || attempt.recoveryReason) return false;
+    const updatedAt = new Date().toISOString();
+    this.#batchAttempts.set(attempt.attemptId, {
+      ...attempt,
+      handlerStartedAt: undefined,
+      updatedAt,
+    });
+    this.#updateChannelOperation(attempt.channelId, attempt.attemptId, {
+      status: "reserved",
+      recoveryReason: undefined,
+      updatedAt,
+    });
+    this.#applyPaymentIdentifierTransition(attempt.paymentIdentifier, {
+      kind: "update",
+      update: {
+        status: "reserved",
+        recoveryReason: undefined,
+        updatedAt,
+      },
+    });
+    return true;
+  }
+
   async recordBatchHandlerResult(
     attemptId: Hash32Hex,
     result: import("./types.js").ProtectedHandlerResult,
@@ -718,6 +747,16 @@ export class MemoryServerChannelStore implements ServerStateStore {
   ): Promise<boolean> {
     return this.#applyExactTransition({
       kind: "begin-handler",
+      args: [transactionId, startedAt],
+    });
+  }
+
+  async resetExactHandlerBeforeExecution(
+    transactionId: Hash32Hex,
+    startedAt: string,
+  ): Promise<boolean> {
+    return this.#applyExactTransition({
+      kind: "reset-handler",
       args: [transactionId, startedAt],
     });
   }
