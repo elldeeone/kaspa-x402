@@ -35,6 +35,29 @@ The current implementation covers HTTP paid fetch and MCP paid tool calls for `e
 - persists an immutable covenant launch manifest, compact checkpoint, and
   bounded selected-chain journal, deriving the live head from verified lineage.
 
+`paidFetch()` requires canonical HTTPS origins in `FundingPolicy.allowedOrigins`
+before its first request. It rejects credentials, fragments, literal IP and local
+hostnames, and asks fetch to disable caching and redirects. A Node process must
+provide a dial-time bounded transport; the built-in one is available from
+`@kaspa-x402/client/node`:
+
+```ts
+import { createNodeBoundedFetch } from "@kaspa-x402/client/node";
+
+const transport = createNodeBoundedFetch({
+  allowedOrigins: ["https://merchant.example"],
+});
+// Pass transport.fetch as DirectModeClient's fetch and close it on shutdown.
+```
+
+The Node connector checks every DNS answer inside the actual TLS connection
+path and refuses private, reserved and IPv6 answers. Browser fetch is available
+only for the current HTTPS page origin; a cross-origin browser request needs a
+bounded transport. Worker or server code without a bounded transport
+fails closed. An injected fetch marked as bounded is a trusted host authority:
+it must enforce the same dial-time and redirect rules. The shipped mock example
+is marked because it never opens a socket.
+
 The client exposes and selects `batch-settlement` only when `batch` is
 configured, its funding provider implements authoritative
 `discoverCovenantLineage` recovery and `authorizeBatchPayment`, and

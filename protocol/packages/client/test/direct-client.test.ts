@@ -2757,6 +2757,7 @@ describe("direct-mode client", () => {
       provider,
       store,
       fetch: async (_input, init) => {
+        expect(init?.cache).toBe("no-store");
         const paymentHeader =
           init?.headers && !Array.isArray(init.headers)
             ? (init.headers as Record<string, string>)[PAYMENT_SIGNATURE_HEADER]
@@ -2784,6 +2785,28 @@ describe("direct-mode client", () => {
     expect(result.response.status).toBe(200);
     expect(capturedPayment?.payload.type).toBe("deposit-voucher");
     expect(result.settlement?.channel!.chargedCumulativeAmount).toBe("100");
+  });
+
+  it("rejects unauthorized paidFetch destinations before invoking fetch", async () => {
+    const fetch = vi.fn(async (url: string) => response(200, {}, url));
+    const client = makeClient({ provider: new FakeFundingProvider(),
+      store: new MemoryChannelStore(), fetch });
+    for (const url of [
+      "http://api.example.test/data", "https://other.example.test/data",
+      "https://127.0.0.1/data", "https://10.0.0.1/data",
+      "https://169.254.169.254/latest/meta-data/", "https://api.example.test/data#secret",
+      "https://user:pass@api.example.test/data", "file:///etc/passwd",
+    ]) await expect(client.paidFetch(url)).rejects.toThrow();
+    expect(fetch).not.toHaveBeenCalled();
+  });
+
+  it("fails closed for an unbounded server fetch adapter", async () => {
+    const fetch = vi.fn(async (url: string) => response(200, {}, url));
+    const client = makeClient({ provider: new FakeFundingProvider(),
+      store: new MemoryChannelStore(), fetch, markFetch: false });
+    await expect(client.paidFetch("https://api.example.test/data"))
+      .rejects.toThrow(/bounded|transport/i);
+    expect(fetch).not.toHaveBeenCalled();
   });
 
   it.each([
@@ -2872,6 +2895,22 @@ describe("direct-mode client", () => {
       const result = await client.paidFetch("/data");
 
       expect(result.response.status).toBe(200);
+    } finally {
+      vi.unstubAllGlobals();
+    }
+  });
+
+  it("rejects cross-origin browser fetch without a bounded transport", async () => {
+    vi.stubGlobal("location", { href: "https://api.example.test/application" });
+    try {
+      const fetch = vi.fn(async (url: string) => response(200, {}, url));
+      const client = makeClient({ provider: new FakeFundingProvider(),
+        store: new MemoryChannelStore(), fetch, markFetch: false,
+        fundingPolicy: { allowedOrigins: ["https://other.example.test"] },
+      });
+      await expect(client.paidFetch("https://other.example.test/data"))
+        .rejects.toThrow(/bounded|origin/i);
+      expect(fetch).not.toHaveBeenCalled();
     } finally {
       vi.unstubAllGlobals();
     }
@@ -4421,6 +4460,7 @@ function makeClient(options: {
   store?: MemoryChannelStore;
   fundingSource?: FundingSourceKind;
   fetch?: FetchLike;
+  markFetch?: boolean;
   verifyVoucherSignature?: (
     voucher: {
       covenantId: string;
@@ -4440,6 +4480,9 @@ function makeClient(options: {
   signer?: FakeSigner;
   useDefaultBatchPolicy?: boolean;
 }): DirectModeClient {
+  if (options.fetch && options.markFetch !== false)
+    Object.defineProperty(options.fetch, Symbol.for("kaspa-x402:bound-paid-fetch:v1"),
+      { value: true });
   const provider = options.provider ?? new FakeFundingProvider();
   const batchPayment =
     options.fundingPolicy?.batchPayment ??

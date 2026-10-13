@@ -1,5 +1,6 @@
 import { KaspaPnnClient } from "@kaspa-x402/adapters";
 import { PnnChainEvidence } from "@kaspa-x402/adapters";
+import { createNodeBoundedPnnWebSocket } from "@kaspa-x402/adapters/pnn-node";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { decodePaymentRequiredHeader, encodePaymentSignatureHeader, type PaymentPayload } from "@kaspa-x402/core";
 import {
@@ -60,6 +61,7 @@ const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_RELEASE_VERSION: "1.0.0-rc.2",
   KASPA_X402_GATEWAY_BASE_URL: "https://demo.kaspa-x402.org",
   KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
+  KASPA_X402_BOUNDED_PNN_WEBSOCKET_FACTORY: createNodeBoundedPnnWebSocket,
 };
 
 describe("gateway canary", () => {
@@ -70,6 +72,28 @@ describe("gateway canary", () => {
   afterEach(() => {
     vi.restoreAllMocks();
     vi.unstubAllGlobals();
+  });
+
+  it("does not advertise or accept paid routes without a bounded PNN transport", async () => {
+    const storage = new FakeStorage();
+    await new GatewayLedger(storage).recordPnnCheckpoint({
+      blockHash: "ab".repeat(32), blueScore: "507000000", daaScore: "507000000",
+    });
+    const env: GatewayEnv = { ...BASE_ENV,
+      KASPA_X402_BOUNDED_PNN_WEBSOCKET_FACTORY: undefined,
+      GATEWAY_STATE: fakeNamespace(storage),
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true" };
+    const supported = await requestJson(env, "/supported");
+    expect((supported.body as { kinds: unknown[] }).kinds).toEqual([]);
+    for (const route of ["/exact", "/batch"]) {
+      const offer = await handleGatewayRequest(workerRequest(`https://demo.kaspa-x402.org${route}`), env, fakeContext());
+      expect(offer.status).toBe(503);
+      expect(offer.headers.has(PAYMENT_REQUIRED_HEADER)).toBe(false);
+      const paid = await handleGatewayRequest(workerRequest(`https://demo.kaspa-x402.org${route}`, {
+        headers: { [PAYMENT_SIGNATURE_HEADER]: btoa("{}") },
+      }), env, fakeContext());
+      expect(paid.status).toBe(503);
+    }
   });
 
   it("runs non-spending checks and stores the latest report", async () => {

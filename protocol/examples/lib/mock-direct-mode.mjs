@@ -230,7 +230,7 @@ export function createMockDirectModeEnvironment() {
 }
 
 export function createMockPaidFetch(server) {
-  return async function mockPaidFetch(input, init = {}) {
+  const mockPaidFetch = async function (input, init = {}) {
     const url = String(input);
     const route = routeForUrl(url);
     const response = await server.handlePaidRequest(
@@ -257,6 +257,10 @@ export function createMockPaidFetch(server) {
       url,
     );
   };
+  // This example transport invokes the in-process server and never opens a socket.
+  Object.defineProperty(mockPaidFetch, Symbol.for("kaspa-x402:bound-paid-fetch:v1"),
+    { value: true });
+  return mockPaidFetch;
 }
 
 export function paymentRequiredFor(server, input) {

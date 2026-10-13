@@ -7,7 +7,7 @@ import { createHashChainDemoFixture, TEST_PAYER_KEY } from './hash-chain-demo-fi
 import { createHashChainDemoPayment, readHashChainQuote } from '../site/dist/assets/hash-chain-client.js';
 
 test('one caller exhausting unpaid quotes does not block another caller', async () => {
-  const origin = 'http://127.0.0.1:9878';
+  const origin = 'https://demo.kaspa-x402.org:9878';
   const fixture = await createHashChainDemoFixture(origin);
   const quote = (caller, payment) => fixture.fetch(`${origin}/hash-chain/report?payment=${payment}`, {
     headers: { 'x-kaspa-x402-demo-caller': caller.repeat(32) },
@@ -24,7 +24,7 @@ test('one caller exhausting unpaid quotes does not block another caller', async 
 });
 
 test('an unfunded self-signed claimant cannot reserve the sole grant', async () => {
-  const origin = 'http://127.0.0.1:9879';
+  const origin = 'https://demo.kaspa-x402.org:9879';
   const fixture = await createHashChainDemoFixture(origin);
   const caller = 'ef'.repeat(32);
   const url = `${origin}/hash-chain/report?unfunded=1`;
@@ -57,7 +57,7 @@ test('an unfunded self-signed claimant cannot reserve the sole grant', async () 
 });
 
 test('assigned grant retries survive funding loss and restart but still require the authenticated caller and unspent head', async () => {
-  const origin = 'http://127.0.0.1:9880';
+  const origin = 'https://demo.kaspa-x402.org:9880';
   const fixture = await createHashChainDemoFixture(origin);
   const caller = 'ef'.repeat(32);
   const url = `${origin}/hash-chain/report?grant-retry=1`;
@@ -106,7 +106,7 @@ test('assigned grant retries survive funding loss and restart but still require 
 });
 
 test('bundled browser client pays twice, preserves paid retries across restart and expiry, and supports manual rotation', async (t) => {
-  const origin = 'http://127.0.0.1:9876';
+  const origin = 'https://demo.kaspa-x402.org:9876';
   const fixture = await createHashChainDemoFixture(origin);
   const sdk = { Transaction: { deserializeFromSafeJSON(artifact) {
     return { id: JSON.parse(artifact).id, artifact, free() {} };
@@ -123,8 +123,7 @@ test('bundled browser client pays twice, preserves paid retries across restart a
     for (let index = 0; index < 2; index++) {
       const url = `${origin}/hash-chain/report?payment=${index}`;
       const quote = readHashChainQuote(await fixture.fetch(url));
-      const payment = createHashChainDemoPayment({ sdk, rpc, privateKey: TEST_PAYER_KEY,
-        address: 'kaspatest:payer', url, quote, fetcher: async (input, init) => {
+      const fetcher = async (input, init) => {
           const response = await fixture.fetch(input, init);
           if (new Headers(init?.headers).has('PAYMENT-SIGNATURE')) {
             lastPaidRequest = new Request(input, init);
@@ -132,7 +131,10 @@ test('bundled browser client pays twice, preserves paid retries across restart a
             assert.ok(response.headers.get('PAYMENT-RESPONSE'), await response.clone().text());
           }
           return response;
-        } });
+        };
+      Object.defineProperty(fetcher, Symbol.for('kaspa-x402:bound-paid-fetch:v1'), { value: true });
+      const payment = createHashChainDemoPayment({ sdk, rpc, privateKey: TEST_PAYER_KEY,
+        address: 'kaspatest:payer', url, quote, fetcher });
       const result = await payment.run();
       lastResult = result;
       lastExpiry = quote.accepted.extra.challengeExpiresAt;
@@ -166,7 +168,7 @@ test('a shorter delivered grant expires independently of its public challenge', 
   const schedule = globalThis.setTimeout;
   t.mock.method(globalThis, 'setTimeout', (callback, delay, ...args) =>
     schedule(callback, delay === 1000 ? 0 : delay, ...args));
-  const fixture = await createHashChainDemoFixture('http://127.0.0.1:9877');
+  const fixture = await createHashChainDemoFixture('https://demo.kaspa-x402.org:9877');
   const key = Buffer.from(TEST_PAYER_KEY, 'hex');
   let grantExpiry;
   let paidResponse;
@@ -183,10 +185,9 @@ test('a shorter delivered grant expires independently of its public challenge', 
     },
   };
   try {
-    const url = 'http://127.0.0.1:9877/hash-chain/report?short-grant=1';
+    const url = 'https://demo.kaspa-x402.org:9877/hash-chain/report?short-grant=1';
     const quote = readHashChainQuote(await fixture.fetch(url));
-    const payment = createHashChainDemoPayment({ sdk, rpc, privateKey: TEST_PAYER_KEY,
-      address: 'kaspatest:payer', url, quote, fetcher: async (input, init) => {
+    const fetcher = async (input, init) => {
         if (new URL(input).pathname === '/hash-chain/grant') {
           const claim = JSON.parse(init.body);
           grantExpiry = new Date(Date.now() + 10_000).toISOString();
@@ -197,7 +198,10 @@ test('a shorter delivered grant expires independently of its public challenge', 
         const response = await fixture.fetch(input, init);
         if (new Headers(init?.headers).has('PAYMENT-SIGNATURE')) paidResponse = response.clone();
         return response;
-      } });
+      };
+    Object.defineProperty(fetcher, Symbol.for('kaspa-x402:bound-paid-fetch:v1'), { value: true });
+    const payment = createHashChainDemoPayment({ sdk, rpc, privateKey: TEST_PAYER_KEY,
+      address: 'kaspatest:payer', url, quote, fetcher });
     await assert.rejects(payment.run());
     assert.ok(Date.now() < Date.parse(quote.accepted.extra.challengeExpiresAt));
     assert.notEqual(paidResponse.status, 200);

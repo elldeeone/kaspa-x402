@@ -2,7 +2,7 @@ import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import { schnorr } from "@noble/curves/secp256k1.js";
 import { encodePaymentRequiredHeader, sha256Hex, stableStringify } from "@kaspa-x402/core";
-import { describe, expect, it, vi } from "vitest";
+import { afterEach, beforeEach, describe, expect, it, vi } from "vitest";
 import { DirectModeClient, MemoryChannelStore, PendingExactPaymentError,
   signHashChainExactTransaction, type DirectModeClientOptions } from "../src/index.js";
 
@@ -20,6 +20,9 @@ const exactFundingPolicy = {
   maximumExactAmountSompi: vector.paymentPayload.accepted.amount,
 } as const;
 
+beforeEach(() => vi.stubGlobal("location", { href: "https://api.example.test/" }));
+afterEach(() => vi.unstubAllGlobals());
+
 describe("hash-chain paidFetch", () => {
   it("retries an ambiguous broadcast with the same delivered grant and signed transaction", async () => {
     const equivalentRequired = structuredClone(vector.paymentRequired);
@@ -30,13 +33,15 @@ describe("hash-chain paidFetch", () => {
     let signed = 0;
     let broadcasts = 0;
     let paidRequests = 0;
+    const caller = new AbortController();
     const provider = {
       networkId: "kaspa:testnet-10", sourceKind: "hot-wallet",
       async getPublicIdentity() {
         return { address: vector.paymentPayload.payload.payerAddress,
           publicKey: Buffer.from(schnorr.getPublicKey(Buffer.from(payerKey, "hex"))).toString("hex") };
       },
-      async claimHashChainGrant() {
+      async claimHashChainGrant(request: { signal?: AbortSignal }) {
+        expect(request.signal).toBe(caller.signal);
         grants++;
         return {
           grantId: vector.paymentPayload.accepted.extra.grantId, headVersion: 0,
@@ -103,7 +108,7 @@ describe("hash-chain paidFetch", () => {
         };
       },
     });
-    const init = { paymentIdentifier: "hash_chain_vector_0001" };
+    const init = { paymentIdentifier: "hash_chain_vector_0001", signal: caller.signal };
     await expect(client.paidFetch(vector.paymentRequired.resource.url, init)).rejects.toBeInstanceOf(PendingExactPaymentError);
     const retried = await client.paidFetch(vector.paymentRequired.resource.url, init);
     expect(retried.response.status).toBe(200);

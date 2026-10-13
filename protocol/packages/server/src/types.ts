@@ -86,6 +86,7 @@ export interface ServerChainProvider {
   ): Promise<CovenantGenesisVerification | null>;
   /** Authoritative selected-chain discovery from the durable covenant checkpoint. */
   discoverCovenantLineage(request: {
+    signal?: AbortSignal;
     network: NetworkId;
     covenantId: Hash32Hex;
     templateId: "kaspa-x402-escrow-v5";

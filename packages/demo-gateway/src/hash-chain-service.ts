@@ -27,7 +27,9 @@ export class HashChainDemoService {
   ) {
     this.issuer = openDurableHashChainIssuer(storage);
     this.#pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints,
-      timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
+      timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts,
+      allowInsecureLoopback: config.allowInsecureLoopback,
+      boundedWebSocketFactory: config.boundedPnnWebSocketFactory });
     this.#chain = new HashChainPnnView(this.#pnn, storage);
     this.#lock = new DurableGatewayLockManager(state);
   }
@@ -140,5 +142,7 @@ export class HashChainDemoService {
 }
 
 function json(body: unknown, status = 200, headers: Record<string, string> = {}): Response {
-  return Response.json(body, { status, headers: { "cache-control": "no-store", ...headers } });
+  const responseHeaders = new Headers(headers);
+  responseHeaders.set("cache-control", "private, no-store, max-age=0");
+  return Response.json(body, { status, headers: responseHeaders });
 }

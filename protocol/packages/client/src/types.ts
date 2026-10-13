@@ -188,6 +188,7 @@ export interface HashChainGrantDelivery {
 }
 
 export interface HashChainGrantClaimRequest {
+  signal?: AbortSignal;
   network: "kaspa:testnet-10";
   head: NonNullable<ExactPaymentRequest["hashChainHead"]>;
   /** Trusted actual paid-resource URL; the grant endpoint must share its origin. */
@@ -626,6 +627,7 @@ export interface ChannelLookupScope {
 
 export interface PaymentRequestContext {
   url: string;
+  signal?: AbortSignal;
   method?: string;
   body?: unknown;
   origin?: string;
@@ -681,6 +683,7 @@ export interface HttpResponseLike {
 
 export interface HttpRequestInitLike {
   headers?: HeadersInitLike;
+  signal?: AbortSignal;
   method?: string;
   body?: unknown;
   redirect?: "error";

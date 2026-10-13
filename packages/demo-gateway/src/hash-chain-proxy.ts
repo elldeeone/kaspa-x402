@@ -20,7 +20,7 @@ export async function proxyHashChainRequest(request: Request, config: GatewayCon
     return failure("hash_chain_unavailable", 503);
   try {
     const response = await upstream(request, config);
-    const headers = new Headers({ "cache-control": "no-store", "content-type": "application/json" });
+    const headers = new Headers({ "cache-control": "private, no-store, max-age=0", "content-type": "application/json" });
     for (const name of ["PAYMENT-REQUIRED", "PAYMENT-RESPONSE", "retry-after", HASH_CHAIN_CALLER_HEADER]) {
       const value = response.headers.get(name);
       if (value) headers.set(name, value);

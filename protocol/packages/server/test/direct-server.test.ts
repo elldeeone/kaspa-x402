@@ -154,6 +154,7 @@ describe("direct-mode server", () => {
       async () => ({ body: "unreachable" }),
     );
     expect(publicRequest.status).toBe(402);
+    expect(publicRequest.headers["cache-control"]).toBe("private, no-store, max-age=0");
 
     const context = { principal: "account:one" };
     const challenged = await setup.server.handlePaidRequest(
@@ -172,6 +173,15 @@ describe("direct-mode server", () => {
       async () => ({ body: "private", chargedAmount: "100" }),
     );
     expect(paid.status).toBe(200);
+    expect(paid.headers["cache-control"]).toBe("private, no-store, max-age=0");
+    const simulatedCache = new Map<string, typeof paid>();
+    if (!/\bno-store\b/.test(paid.headers["cache-control"] ?? ""))
+      simulatedCache.set(RESOURCE.url, paid);
+    const laterUnpaid = simulatedCache.get(RESOURCE.url) ?? await setup.server.handlePaidRequest(
+      { url: RESOURCE.url, routeAccess: "authenticated", trustedSecurityContext: context },
+      async () => ({ body: "must not run" }),
+    );
+    expect(laterUnpaid.status).toBe(402);
     const replay = await setup.server.handlePaidRequest(
       requestWithPayment(payment.payload, { routeAccess: "authenticated", trustedSecurityContext: undefined }),
       async () => ({ body: "wrong", chargedAmount: "100" }),
@@ -4315,6 +4325,7 @@ describe("direct-mode server", () => {
     expect(first.status).toBe(200);
     expect(replay.status).toBe(200);
     expect(replay.body).toBe("cached");
+    expect(replay.headers["cache-control"]).toBe("private, no-store, max-age=0");
     expect(executions).toBe(1);
   });
 
@@ -4782,6 +4793,7 @@ describe("direct-mode server", () => {
       async () => ({ body: "wrong" }),
     );
     expect(corrective.status).toBe(402);
+    expect(corrective.headers["cache-control"]).toBe("private, no-store, max-age=0");
     const required = decodePaymentRequiredHeader(
       corrective.headers[PAYMENT_REQUIRED_HEADER],
     );

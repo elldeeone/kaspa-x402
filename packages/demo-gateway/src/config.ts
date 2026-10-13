@@ -4,6 +4,7 @@ import {
   type NetworkId,
   type SompiString,
 } from "@kaspa-x402/core";
+import { trustedNodeUrl } from "@kaspa-x402/adapters";
 
 /** Reference gateway policy, not a universal Kaspa consensus dust constant. */
 export const MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI = 10_000_000n;
@@ -21,6 +22,8 @@ export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
     KASPA_X402_HASH_CHAIN_PROXY_TOKEN?: string;
     KASPA_X402_ADMISSION_HMAC_KEY?: string;
     KASPA_X402_PER_CALLER_CONCURRENCY?: string;
+    KASPA_X402_ALLOW_INSECURE_LOOPBACK?: string;
+    KASPA_X402_BOUNDED_PNN_WEBSOCKET_FACTORY?: (endpoint: string, maxBytes: number) => WebSocket;
   };
 
 export interface GatewayConfig {
@@ -49,14 +52,21 @@ export interface GatewayConfig {
   hostedExactSettlementEnabled: boolean;
   chainBroadcastMode: "pnn";
   pnnEndpoints: string[];
+  allowInsecureLoopback: boolean;
   pnnTimeoutMs: number;
   pnnAttempts: number;
+  boundedPnnWebSocketFactory?: (endpoint: string, maxBytes: number) => WebSocket;
   hashChainOrigin?: string;
   hashChainProxyToken?: string;
   hashChainEnabled: boolean;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
+  const boundedPnnWebSocketFactory = env.KASPA_X402_BOUNDED_PNN_WEBSOCKET_FACTORY;
+  if (boundedPnnWebSocketFactory &&
+      (boundedPnnWebSocketFactory as unknown as Record<symbol, unknown>)[
+        Symbol.for("kaspa-x402:bounded-pnn-websocket:v1")] !== true)
+    throw new Error("hosted PNN transport lacks bounded authority");
   const enabled = bool(
     env.KASPA_X402_GATEWAY_ENABLED ?? "false",
     "KASPA_X402_GATEWAY_ENABLED",
@@ -120,7 +130,9 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
   const chainBroadcastMode = broadcastMode(
     env.KASPA_X402_CHAIN_BROADCAST_MODE ?? "pnn",
   );
-  const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "");
+  const allowInsecureLoopback = bool(env.KASPA_X402_ALLOW_INSECURE_LOOPBACK ?? "false",
+    "KASPA_X402_ALLOW_INSECURE_LOOPBACK");
+  const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "", allowInsecureLoopback);
   if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
     throw new Error(
       "KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn",
@@ -206,7 +218,9 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED",
     ),
     chainBroadcastMode,
+    ...(boundedPnnWebSocketFactory ? { boundedPnnWebSocketFactory } : {}),
     pnnEndpoints: endpoints,
+    allowInsecureLoopback,
     pnnTimeoutMs: uint(
       env.KASPA_X402_PNN_TIMEOUT_MS ?? "15000",
       "KASPA_X402_PNN_TIMEOUT_MS",
@@ -289,7 +303,7 @@ function broadcastMode(value: string): "pnn" {
   throw new Error("KASPA_X402_CHAIN_BROADCAST_MODE must be pnn");
 }
 
-function pnnEndpoints(value: string): string[] {
+function pnnEndpoints(value: string, allowInsecureLoopback: boolean): string[] {
   const entries = value
     .split(",")
     .map((entry) => entry.trim())
@@ -297,32 +311,12 @@ function pnnEndpoints(value: string): string[] {
   if (entries.length > 8) {
     throw new Error("KASPA_X402_PNN_ENDPOINTS accepts at most 8 entries");
   }
-  for (const entry of entries) {
+  return entries.map((entry) => {
     if (entry.length > 2_048) {
       throw new Error("KASPA_X402_PNN_ENDPOINTS entries are too long");
     }
-    const parsed = new URL(entry);
-    if (parsed.protocol !== "wss:" && parsed.protocol !== "ws:") {
-      throw new Error(
-        "KASPA_X402_PNN_ENDPOINTS entries must be ws or wss URLs",
-      );
-    }
-    if (
-      parsed.protocol === "ws:" &&
-      parsed.hostname !== "127.0.0.1" &&
-      parsed.hostname !== "localhost"
-    ) {
-      throw new Error(
-        "KASPA_X402_PNN_ENDPOINTS must use wss except for localhost",
-      );
-    }
-    if (parsed.username || parsed.password || parsed.hash) {
-      throw new Error(
-        "KASPA_X402_PNN_ENDPOINTS must not contain credentials or fragments",
-      );
-    }
-  }
-  return entries;
+    return trustedNodeUrl(entry, "pnn", allowInsecureLoopback).href;
+  });
 }
 
 function baseUrl(value: string, name: string): string {

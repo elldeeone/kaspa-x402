@@ -117,7 +117,8 @@ export async function handleGatewayRequest(
         );
         const body = await response.arrayBuffer();
         return new Response(body, { status: response.status,
-          headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config) } });
+          headers: { ...Object.fromEntries(response.headers), ...corsHeaders(config),
+            "cache-control": "private, no-store, max-age=0" } });
       });
     } finally {
       await admission.release();
@@ -185,6 +186,10 @@ export async function handleGatewayRequest(
       { ok: false, error: "gateway_disabled" },
       { status: 503, headers: corsHeaders(config) },
     );
+  }
+  if (!config.boundedPnnWebSocketFactory) {
+    return json({ ok: false, error: "payment_transport_unavailable" },
+      { status: 503, headers: corsHeaders(config) });
   }
   if (paymentHeader && !validGatewayPaymentHeader(paymentHeader)) {
     return json({ ok: false, error: "invalid_payload" },
@@ -606,10 +611,10 @@ export async function runGatewayCanary(
 
   checks.push(
     await checked("kaspa-chain", async () => {
-      const chain = await new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }).health();
+      const chain = await new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory }).health();
       if (config.enabled)
         await new PnnChainEvidence(
-          new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts }),
+          new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory }),
           new ScriptAddressBook(), state,
         ).getVirtualDaaScore();
       return {
@@ -752,6 +757,7 @@ async function hostedExactAvailable(
 ): Promise<boolean> {
   signal?.throwIfAborted();
   if (!hostedExactConfigured(config)) return false;
+  if (!config.boundedPnnWebSocketFactory) return false;
   if (config.exactProfile === "standard-native") return true;
   const stats = await state.exactHeadStats(signal);
   signal?.throwIfAborted();
@@ -770,6 +776,7 @@ function gatewaySupportedKinds(
   config: GatewayConfig,
   exactAvailable: boolean,
 ): SupportedKind[] {
+  if (!config.enabled || !config.boundedPnnWebSocketFactory) return [];
   const kinds: SupportedKind[] = [];
   if (exactAvailable) {
     kinds.push({
@@ -827,7 +834,7 @@ async function createGateway(
   signal?.throwIfAborted();
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
-  const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts });
+  const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory });
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
   const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore(signal));
   signal?.throwIfAborted();
@@ -1721,6 +1728,7 @@ function serverResponse(
   head: boolean,
 ): Response {
   const headers = new Headers(response.headers);
+  headers.set("cache-control", "private, no-store, max-age=0");
   for (const [key, value] of Object.entries(corsHeaders(config)))
     headers.set(key, value);
   if (!headers.has("content-type") && response.body !== undefined)
