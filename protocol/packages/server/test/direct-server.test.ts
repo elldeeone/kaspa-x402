@@ -3911,6 +3911,31 @@ describe("direct-mode server", () => {
     },
   );
 
+  it("keeps shallow selected-chain top-up out of durable funding and voucher authorization", async () => {
+    const setup = makeServer();
+    const deposit = makeDepositPayment(setup);
+    await setup.server.handlePaidRequest(
+      requestWithPayment(deposit.payload, { routeAccess: "public" }),
+      async () => ({ chargedAmount: "100" }),
+    );
+    const before = await requireChannel(setup.store, deposit.channelId);
+    setup.chain.lineageDiscovery = (request) => {
+      const update = compactionTopUpUpdate(request.lineage, 1);
+      update.addedChainBlocks[0]!.transitions[0]!.acceptance.confirmationCount = 29;
+      return update;
+    };
+    await expect(setup.server.reconcileChannel(deposit.channelId)).rejects.toThrow(/confirmation|depth/);
+    const voucher = makeVoucherPayment(setup, before, { voucherAmount: "200" });
+    let executed = false;
+    const response = await setup.server.handlePaidRequest(
+      requestWithPayment(voucher, { routeAccess: "public" }),
+      async () => { executed = true; return { chargedAmount: "100" }; },
+    );
+    expect(response.status).toBe(402);
+    expect(executed).toBe(false);
+    await expect(setup.store.loadChannel(deposit.channelId)).resolves.toEqual(before);
+  });
+
   it("rejects underpaid vouchers without executing the handler", async () => {
     const setup = makeServer();
     const deposit = makeDepositPayment(setup);

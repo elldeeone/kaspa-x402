@@ -33,6 +33,7 @@ const options = {
   resourcePersistencePath: folder,
   bindings: {
     KASPA_X402_GATEWAY_ENABLED: "true", KASPA_X402_HASH_CHAIN_ENABLED: "true",
+    KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
     KASPA_X402_ADMISSION_HMAC_KEY: "test-admission-key-with-at-least-32-bytes",
     KASPA_X402_ADMIN_TOKEN: admin,
     KASPA_X402_PAY_TO: addressForScriptPublicKey(payerScript, "kaspa:testnet-10"),

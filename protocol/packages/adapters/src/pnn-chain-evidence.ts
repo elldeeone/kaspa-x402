@@ -6,7 +6,6 @@ import {
 } from "@kaspa-x402/core";
 import type { ExactTransactionVerificationRequest } from "@kaspa-x402/server";
 import {
-  KaspaPnnClient,
   ScriptAddressBook,
   VerifiedExactTransactionVerifier,
   parseSafeTransactionArtifact,
@@ -31,6 +30,7 @@ import {
   addressForScriptPublicKey,
   scriptPublicKeyForAddress,
 } from "./kaspa-native.js";
+import { assertPolicySelectedPnnClient, type PolicySelectedPnnClient } from "./pnn-trust-boundary.js";
 
 export interface PnnEvidenceRecord {
   transactionId: string;
@@ -53,6 +53,7 @@ export interface PnnEvidenceStore {
 
 /** One request's node reads; durable receipts survive Worker restarts. */
 export class PnnChainEvidence implements ChainEvidenceClient {
+  readonly #pnn: PolicySelectedPnnClient;
   #signal?: AbortSignal;
   #candidate?: SafeTransaction;
   #candidateRecord?: PnnEvidenceRecord;
@@ -62,14 +63,19 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     string,
     { transaction: RestTransaction; evidence: AcceptedTransactionEvidence }
   >();
-  #snapshot?: Awaited<ReturnType<KaspaPnnClient["snapshotHashChainUtxos"]>>;
+  #snapshot?: Awaited<ReturnType<PolicySelectedPnnClient["snapshotHashChainUtxos"]>>;
+
+  get pnn(): PolicySelectedPnnClient { return this.#pnn; }
 
   constructor(
-    readonly pnn: KaspaPnnClient,
+    pnn: PolicySelectedPnnClient,
     readonly book: ScriptAddressBook,
     readonly store: PnnEvidenceStore,
     readonly confirmations = 30,
-  ) {}
+  ) {
+    assertPolicySelectedPnnClient(pnn);
+    this.#pnn = pnn;
+  }
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest) {
     this.#resetVerification(request);
@@ -149,14 +155,14 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       };
     const cached = await this.store.loadPnnEvidence(id);
     if (cached?.transaction && cached.evidence) {
-      const evidence = await this.pnn.confirmAcceptedTransaction(
+      const evidence = await this.#pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
         this.#signal,
       );
       return this.#remember(id, cached.transaction, evidence);
     }
-    const snapshot = await this.pnn.snapshotHashChainUtxos(
+    const snapshot = await this.#pnn.snapshotHashChainUtxos(
       this.book.addresses(),
       this.#signal,
     );
@@ -166,14 +172,14 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       (current?.blockDaaScore
         ? await this.store.findPnnCheckpointBefore(current.blockDaaScore)
         : undefined);
-    const accepted = await this.pnn.findAcceptedTransaction(id, {
+    const accepted = await this.#pnn.findAcceptedTransaction(id, {
       ...(from ? { from } : {}),
       ...(current?.blockDaaScore
         ? { originDaaScore: current.blockDaaScore }
         : {}),
     }, this.#signal);
     if (!accepted) return null;
-    const evidence = await this.pnn.confirmAcceptedTransaction(
+    const evidence = await this.#pnn.confirmAcceptedTransaction(
       accepted.evidence,
       this.confirmations,
       this.#signal,
@@ -190,7 +196,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     this.#candidateRecord = cached;
     if (cached?.origins) this.#origins = cached.origins;
     if (cached?.transaction && cached.evidence) {
-      const evidence = await this.pnn.confirmAcceptedTransaction(
+      const evidence = await this.#pnn.confirmAcceptedTransaction(
         cached.evidence,
         this.confirmations,
         this.#signal,
@@ -209,7 +215,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
         ),
       ),
     ];
-    this.#snapshot = await this.pnn.snapshotHashChainUtxos(addresses, this.#signal);
+    this.#snapshot = await this.#pnn.snapshotHashChainUtxos(addresses, this.#signal);
     const currentOrigins = candidate.inputs.map((input) =>
       this.#snapshot!.utxos.filter((utxo) =>
         sameOutpoint(utxo.outpoint, {
@@ -226,7 +232,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     }
     let from = cached?.checkpoint;
     if (!cached) {
-      const snapshot = await this.pnn.snapshotHashChainUtxos([
+      const snapshot = await this.#pnn.snapshotHashChainUtxos([
         this.#paymentOutput!.address,
       ], this.#signal);
       const output = snapshot.utxos.find((item) =>
@@ -242,7 +248,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       if (output.blockDaaScore)
         from = await this.store.findPnnCheckpointBefore(output.blockDaaScore);
     }
-    const accepted = await this.pnn.findAcceptedTransaction(
+    const accepted = await this.#pnn.findAcceptedTransaction(
       candidate.id,
       from ? { from } : {},
       this.#signal,
@@ -251,7 +257,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
       throw unavailable(
         "payment inputs are spent or missing and accepted evidence is unavailable",
       );
-    const evidence = await this.pnn.confirmAcceptedTransaction(
+    const evidence = await this.#pnn.confirmAcceptedTransaction(
       accepted.evidence,
       this.confirmations,
       this.#signal,
@@ -279,7 +285,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   async getUtxosForAddress(address: string): Promise<RestObservedUtxo[]> {
     this.#checkLive();
     const snapshot =
-      this.#snapshot ?? (await this.pnn.snapshotHashChainUtxos([address], this.#signal));
+      this.#snapshot ?? (await this.#pnn.snapshotHashChainUtxos([address], this.#signal));
     this.#checkLive();
     const script = scriptPublicKeyForAddress(address, "kaspa:testnet-10");
     return snapshot.utxos
@@ -290,7 +296,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   async getVirtualDaaScore(signal?: AbortSignal): Promise<string> {
     const liveSignal = signal ?? this.#signal;
     liveSignal?.throwIfAborted();
-    const snapshot = await this.pnn.snapshotHashChainUtxos([], liveSignal);
+    const snapshot = await this.#pnn.snapshotHashChainUtxos([], liveSignal);
     liveSignal?.throwIfAborted();
     if (!snapshot.checkpoint.daaScore)
       throw unavailable("PNN checkpoint lacks DAA score");
@@ -301,14 +307,14 @@ export class PnnChainEvidence implements ChainEvidenceClient {
 
   async observeAcceptedUtxo(address: string, outpoint: FundingOutpoint) {
     const initial = (
-      await this.pnn.snapshotHashChainUtxos([address], this.#signal)
+      await this.#pnn.snapshotHashChainUtxos([address], this.#signal)
     ).utxos.find((utxo) => sameOutpoint(utxo.outpoint, outpoint));
     if (!initial) return null;
     this.book.recordOutpoint(outpoint, initial.scriptPublicKey, address);
     const transaction = await this.getTransaction(outpoint.txid);
     if (!transaction) return null;
     const evidence = await this.acceptedTransactionEvidence(outpoint.txid);
-    const current = await this.pnn.snapshotHashChainUtxos([address], this.#signal);
+    const current = await this.#pnn.snapshotHashChainUtxos([address], this.#signal);
     const matches = current.utxos.filter((utxo) =>
       sameOutpoint(utxo.outpoint, outpoint),
     );
@@ -341,7 +347,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
   }
 
   async submitTransaction(transaction: string): Promise<string> {
-    return (await this.pnn.submitTransaction(transaction, this.book))
+    return (await this.#pnn.submitTransaction(transaction, this.book))
       .transactionId;
   }
 

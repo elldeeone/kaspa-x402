@@ -86,7 +86,7 @@ describe("bounded Node PNN transport", () => {
     };
     peer.on("connection", (remote) => remote.on("message", (raw) => {
       const request = JSON.parse(String(raw));
-      const params = request.params as { hash?: string };
+      const params = request.params as { hash?: string; dataVerbosityLevel?: string };
       const response = request.method === "getServerInfo"
         ? { networkId: "testnet-10", isSynced: true }
         : request.method === "getBlockDagInfo" ? { sink }
@@ -101,10 +101,15 @@ describe("bounded Node PNN transport", () => {
             acceptedTransactionIds: [{ acceptingBlockHash: accepting, acceptedTransactionIds: [txid] }],
           }
         : request.method === "getVirtualChainFromBlockV2" ? {
-            removedChainBlockHashes: [], addedChainBlockHashes: [accepting],
+            removedChainBlockHashes: [],
+            addedChainBlockHashes: params.dataVerbosityLevel === "High"
+              ? [accepting] : [accepting, sink],
             chainBlockAcceptedTransactions: [{ chainBlockHeader: {
               hash: accepting, blueScore: "970", daaScore: "970",
-            }, acceptedTransactions: [transaction] }],
+            }, acceptedTransactions: [transaction] },
+            ...(params.dataVerbosityLevel === "High" ? [] : [{ chainBlockHeader: {
+              hash: sink, blueScore: "1000", daaScore: "1000",
+            }, acceptedTransactions: [] }])],
           }
         : undefined;
       remote.send(JSON.stringify({ id: request.id, params: response }));
@@ -122,7 +127,7 @@ describe("bounded Node PNN transport", () => {
       successor: { amount: "120000000", covenantId } });
     const confirmed = await client.confirmAcceptedTransaction(payment!.evidence, 1);
     expect(confirmed).toMatchObject({ status: "accepted", transactionId: txid,
-      confirmationCount: 1, checkpoint: { blockHash: sink } });
+      confirmationCount: 2, checkpoint: { blockHash: sink } });
   });
 
   it("closes a connection flooded with unsolicited RPC messages", async () => {

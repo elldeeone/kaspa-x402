@@ -31,10 +31,26 @@ fs.mkdirSync(dataDir, { recursive: true, mode: 0o700 });
 const keyFile = path.join(dataDir, 'grant-store-key');
 if (command === 'init' && !fs.existsSync(keyFile)) privateWrite(keyFile, randomBytes(32).toString('hex'));
 const issuer = await HashChainGrantIssuer.open({ databasePath: path.join(dataDir, 'grants.sqlite'),
-  encryptionKey: Buffer.from(privateRead(keyFile), 'hex'), canClaim: () => true });
+  encryptionKey: Buffer.from(privateRead(keyFile), 'hex'), admissionPolicy: {
+    maxGrantsPerClaimant: 1, windowSeconds: 86_400,
+    resolveFundingOutpoint: async (claim, grant, _claimantId, signal) => {
+      signal?.throwIfAborted();
+      if (!rpc) throw new Error('payer funding observer is unavailable');
+      const challenge = issuer.getChallenge(grant.headId, claim.challengeId);
+      if (!challenge) throw new Error('grant challenge is unavailable');
+      const payerScript = `000020${claim.payerPublicKey}ac`;
+      const entries = await getAddressUtxos(rpc, addressForScript(sdk, payerScript));
+      signal?.throwIfAborted();
+      const funded = entries.find((item) => !item.covenantId && item.scriptPublicKey === payerScript &&
+        BigInt(item.amount) >= BigInt(challenge.quotedAmount) + 1_000_000n);
+      if (!funded) throw new Error('payer has no eligible funding UTXO');
+      return funded.outpoint;
+    },
+  } });
 const headFile = path.join(dataDir, 'head.json');
 const pendingFile = path.join(dataDir, 'pending-setup.json');
 let rpc;
+let sdk;
 let http;
 let payments;
 try {
@@ -60,7 +76,7 @@ try {
     const sdkPath = path.resolve(config.sdkModule);
     const sdkRequire = createRequire(sdkPath);
     globalThis.WebSocket = sdkRequire('websocket').w3cwebsocket;
-    const sdk = sdkRequire(sdkPath);
+    sdk = sdkRequire(sdkPath);
     rpc = new sdk.RpcClient({ url: config.rpcUrl, networkId: 'testnet-10' });
     await rpc.connect({ timeoutDuration: 15_000, retries: 2 });
     const info = await rpc.getServerInfo();

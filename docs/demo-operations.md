@@ -51,12 +51,37 @@ Important non-secret variables:
 | `KASPA_X402_GATEWAY_BASE_URL`                | Gateway base URL used by canary checks.                                                                                                                        |
 | `KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED` | Set to `true` only when the hosted exact verifier, PNN broadcast path, and finality observation are deployed. Additive also requires a durable available head. |
 | `KASPA_X402_CHAIN_BROADCAST_MODE`            | `pnn` for all hosted chain reads, transaction submission, and selected-chain recovery. REST mode is rejected.                      |
-| `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated public TN10 WSS endpoints used for exact submission and `GetVirtualChainFromBlockV2` batch lineage recovery.                                   |
+| `KASPA_X402_PNN_ENDPOINTS`                   | Comma-separated TN10 WSS submission endpoints. In single-source mode these are one trusted verification authority, regardless of URL count. |
+| `KASPA_X402_CHAIN_TRUST_MODE`                | Required when the gateway or hash-chain route is enabled: `trusted-single-source` or `independent-corroboration`. A single node remains supported. |
+| `KASPA_X402_PNN_VERIFICATION_AUTHORITIES`   | In corroboration mode, JSON array of `{ "trustDomain": "operator-id", "endpoints": ["wss://..."] }` groups. Each group is one administrative authority. |
+| `KASPA_X402_CHAIN_REQUIRED_AUTHORITIES`     | In corroboration mode, number of distinct verification authorities required to agree; minimum `2`. Conflicts always reject. |
+| `KASPA_X402_HASH_CHAIN_POOL_SIZE`            | Maximum registered nonretired hash-chain heads in the shared Durable Object; default `1`, maximum `16`. |
 | `KASPA_X402_HASH_CHAIN_ENABLED`             | Enable hash-chain exact in the existing gateway Durable Object after registering a funded Testnet head. Default: `false`. |
 
 The Worker must not receive a mainnet, operator wallet, head owner, or faucet
 key. Hash-chain registration supplies only its limited one-time grant keys.
 Merchant claim broadcasting is disabled in the hosted gateway package.
+
+`trusted-single-source` makes the configured PNN group a full payment-authority
+dependency. Multiple failover URLs do not corroborate each other. Independent
+corroboration is recommended for higher-assurance Testnet-10 deployments; it
+does not satisfy the project's mainnet launch gates. A second node is not required for
+Testnet-10 operation. The optional corroborated
+mode reads origins, UTXOs, acceptance, checkpoint, finality, and selected-chain
+lineage from distinct configured trust domains; submission can use separate
+endpoints. A conflicting view fails closed. `/health` exposes the mode and
+required authority count without exposing endpoint URLs.
+Nearby selected tips can corroborate when their authorization facts agree;
+snapshot DAA scores must be within 100, and refund timing uses the highest
+verified DAA.
+
+Rusty Kaspa 2.1.0 at pinned commit
+`01b532e8b553523216471682649693af92f0fd16` filters V2
+`minConfirmationCount` by **sink blue-score distance**, with a strict
+`distance > minConfirmationCount` test. It does not measure selected-parent
+positions. The adapter therefore requests the unfiltered ordered V2 path,
+counts positions through its pinned checkpoint (including the accepting
+block), and records that measured depth.
 
 Secret variables:
 
@@ -419,11 +444,22 @@ acceptance. The public REST API is not the hash-chain verification source.
    `/supported`, then make a funded browser payment and retry that same payment.
    Check the existing exact and batch demos too.
 
-If a grant is abandoned or the chain is exhausted, create a new private data
-directory, initialize a fresh funded head, and publish it. Registration waits
-for an assigned grant to expire before replacing it. Old quotes and unfinished
-demo payments can become unavailable after a reset. Automatic rotation and
-recovery are outside this demo's scope.
+An expired disclosed grant automatically enters `needsRotation`. The same
+claimant is limited to one disclosure per 24 hours and its qualifying funding
+outpoint remains in a durable tombstone across restart and owner rotation.
+Assigned grants from a pre-admission store remain readable for authenticated
+retry and selected-payment recovery. Because their original qualifying funding
+outpoint is unknown, that payer key cannot qualify another grant; the payer
+must use a fresh key and newly funded output for a later grant.
+To recover capacity, the operator signs and broadcasts the owner rotation from
+its own wallet, waits for selected-chain acceptance, then sends the rotation
+transaction ID, an earlier selected-chain checkpoint, and the matching fresh
+private grant chain to authenticated HTTPS `POST /admin/hash-chain/recover`.
+The Worker verifies that the selected transaction spends the quarantined head
+and installs the new guard only after acceptance. It never holds or uses the
+owner private key. Register independent funded heads up to the configured pool
+size before service; another ready head can continue issuing while one needs
+rotation. Ordinary exact and batch routes remain available during recovery.
 
 ### Caller Admission
 

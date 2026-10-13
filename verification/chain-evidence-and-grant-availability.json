@@ -1,0 +1,363 @@
+{
+  "schema": "kaspa-x402-chain-evidence-and-grant-availability/v1",
+  "branch": "harden-chain-evidence",
+  "baseSha": "6918defe91f5fd830c1a297aa72ce382c3428b94",
+  "sourceSha256": "c52cf1c7e1b9b657ca525f3eb00e7a9ac5bdf4df3f21647dfc4d2773a2d2e0ca",
+  "sourceFiles": [
+    "docs/demo-operations.md",
+    "packages/demo-gateway/src/config.ts",
+    "packages/demo-gateway/src/gateway.ts",
+    "packages/demo-gateway/src/hash-chain-pnn-view.ts",
+    "packages/demo-gateway/src/hash-chain-service.ts",
+    "packages/demo-gateway/src/hash-chain-storage.ts",
+    "packages/demo-gateway/src/index.ts",
+    "packages/demo-gateway/src/pnn-trust.ts",
+    "packages/demo-gateway/test/config.test.ts",
+    "packages/demo-gateway/test/gateway.test.ts",
+    "packages/demo-gateway/test/hash-chain-pnn-view.test.ts",
+    "packages/demo-gateway/test/hash-chain-proxy.test.ts",
+    "packages/demo-gateway/wrangler.jsonc",
+    "protocol/packages/adapters/README.md",
+    "protocol/packages/adapters/src/adapters.ts",
+    "protocol/packages/adapters/src/index.ts",
+    "protocol/packages/adapters/src/pnn-chain-evidence.ts",
+    "protocol/packages/adapters/src/pnn-trust-boundary.ts",
+    "protocol/packages/adapters/src/pnn-trust-policy.ts",
+    "protocol/packages/adapters/test/adapters.test.ts",
+    "protocol/packages/adapters/test/pnn-transport.test.ts",
+    "protocol/packages/adapters/test/pnn-trust-boundary.test.ts",
+    "protocol/packages/server/README.md",
+    "protocol/packages/server/src/hash-chain-grants.ts",
+    "protocol/packages/server/src/hash-chain-issuer.ts",
+    "protocol/packages/server/test/direct-server.test.ts",
+    "protocol/packages/server/test/hash-chain-grants.test.ts",
+    "protocol/packages/server/test/hash-chain-product.test.ts",
+    "protocol/scripts/proof-hash-chain-testnet.mjs",
+    "scripts/check-demo-gateway.mjs",
+    "scripts/check-hash-chain-worker.mjs",
+    "scripts/hash-chain-demo-fixture.mjs",
+    "scripts/hash-chain-demo.mjs",
+    "scripts/verify-chain-evidence-and-grants.mjs",
+    "verification/chain-evidence-and-grant-failure-modes.md"
+  ],
+  "findings": {
+    "csf_7eae12cfa24c2a26e35632a3": [
+      "protocol/packages/server/test/hash-chain-grants.test.ts",
+      "protocol/packages/server/test/hash-chain-product.test.ts",
+      "packages/demo-gateway/test/gateway.test.ts"
+    ],
+    "csf_33cd655a82fc168eff00df5e": [
+      "protocol/packages/adapters/test/adapters.test.ts",
+      "protocol/packages/server/test/direct-server.test.ts"
+    ],
+    "csf_9dbf8ad7ee69a2cfc2a39038": [
+      "protocol/packages/adapters/test/adapters.test.ts",
+      "protocol/packages/adapters/test/pnn-trust-boundary.test.ts",
+      "packages/demo-gateway/test/config.test.ts"
+    ]
+  },
+  "beforeFixFailingEvidence": [
+    {
+      "test": "shallow selected-chain lineage with large blue-score jump",
+      "command": "npx vitest run protocol/packages/adapters/test/adapters.test.ts -t 'rejects a shallow covenant spend'",
+      "exitCode": 1,
+      "observed": "base accepted two selected positions as 30 confirmations"
+    },
+    {
+      "test": "enabled gateway missing explicit trust policy",
+      "command": "npx vitest run packages/demo-gateway/test/config.test.ts -t 'requires an explicit chain-evidence trust policy'",
+      "exitCode": 1,
+      "observed": "base accepted omitted trust policy"
+    },
+    {
+      "test": "unrestricted boolean grant admission",
+      "command": "npx vitest run protocol/packages/server/test/hash-chain-grants.test.ts -t 'rejects unrestricted boolean admission'",
+      "exitCode": 1,
+      "observed": "base accepted canClaim: () => true"
+    },
+    {
+      "test": "signed payer changes admission identity",
+      "command": "npx vitest run protocol/packages/server/test/hash-chain-grants.test.ts -t 'tombstones an abandoned funding outpoint'",
+      "exitCode": 1,
+      "observed": "candidate before dual-identity quota delivered another private grant"
+    },
+    {
+      "test": "pre-admission schema-v2 assignment",
+      "command": "npx vitest run protocol/packages/server/test/hash-chain-grants.test.ts -t 'pre-admission'",
+      "exitCode": 1,
+      "observed": "the old assignment made getCurrent and listHeads throw before recovery"
+    },
+    {
+      "test": "old schema-v2 claimant quota",
+      "command": "npx vitest run protocol/packages/server/test/hash-chain-grants.test.ts -t 'pre-admission schema-v2 assignment'",
+      "exitCode": 1,
+      "observed": "without a migrated admission row, the same payer claimed another head"
+    },
+    {
+      "test": "adjacent PNN tips",
+      "command": "npx vitest run protocol/packages/adapters/test/adapters.test.ts -t 'adjacent tips'",
+      "exitCode": 1,
+      "observed": "identical UTXOs at different selected tips conflicted; the first authority's lower DAA was later returned"
+    },
+    {
+      "test": "fresh funding after abandoned grant",
+      "command": "npx vitest run packages/demo-gateway/test/hash-chain-pnn-view.test.ts -t 'fresh funding'",
+      "exitCode": 1,
+      "observed": "the gateway repeatedly selected the lower-sorting tombstoned outpoint"
+    },
+    {
+      "test": "raw PNN client at protected authorization constructors",
+      "command": "npx vitest run protocol/packages/adapters/test/pnn-trust-boundary.test.ts",
+      "exitCode": 1,
+      "observed": "raw and missing clients were accepted, and single-source policy selection returned the raw client itself"
+    }
+  ],
+  "selectedParentDepth": {
+    "rpc": "GetVirtualChainFromBlockV2 with minConfirmationCount 0; count the ordered selected positions through the pinned checkpoint, including the accepting block",
+    "reason": "Rusty Kaspa 2.1.0 V2 filters by strict blue-score distance, not selected-parent position count",
+    "rustyKaspaCommit": "01b532e8b553523216471682649693af92f0fd16",
+    "shallow": "2 or 29 selected positions with blue-score delta > 30 reject",
+    "exact": "30 selected positions with irregular blue scores pass and persist measured count 30"
+  },
+  "grantReservationAndRecovery": {
+    "commit": "Unique outpoint tombstone and quotas for signed payer key and host admission identity commit in the same SQL transaction as sealed assignment before private key delivery",
+    "recovery": "Expiry quarantines; owner-signed selected-chain rotation and fresh grants restore readiness; unchanged outpoint remains tombstoned",
+    "availability": "Another ready head serves while one requires rotation; exact and batch profiles remain available"
+  },
+  "supportedTrustModes": [
+    "trusted-single-source",
+    "independent-corroboration"
+  ],
+  "secondNodeRequired": false,
+  "commands": [
+    {
+      "argv": [
+        "npx",
+        "vitest",
+        "run",
+        "protocol/packages/adapters/test/adapters.test.ts",
+        "protocol/packages/adapters/test/pnn-trust-boundary.test.ts",
+        "protocol/packages/server/test/hash-chain-grants.test.ts",
+        "protocol/packages/server/test/hash-chain-product.test.ts",
+        "protocol/packages/server/test/direct-server.test.ts",
+        "packages/demo-gateway/test/config.test.ts",
+        "packages/demo-gateway/test/gateway.test.ts",
+        "packages/demo-gateway/test/hash-chain-pnn-view.test.ts",
+        "packages/demo-gateway/test/hash-chain-proxy.test.ts"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 342
+    },
+    {
+      "argv": [
+        "npm",
+        "--prefix",
+        "protocol",
+        "run",
+        "verify"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 913
+    },
+    {
+      "argv": [
+        "npm",
+        "test"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 1059
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "validate:schemas"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "validate:tx-v1-consensus"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "validate:reorg-consensus"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:covenant-fixtures"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:hash-chain-fixture"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:protocol-isolation"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 1073
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:host-isolation"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 150
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "site:build"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "site:check"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 4
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:browser-demo"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:pnn-browser"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:worker-types"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:demo-gateway"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:hash-chain-demo"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 5
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:hash-chain-worker"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "proof:offline"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "npm",
+        "run",
+        "check:diff"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    },
+    {
+      "argv": [
+        "git",
+        "diff",
+        "--check"
+      ],
+      "exitCode": 0,
+      "signal": null,
+      "passingTests": 0
+    }
+  ],
+  "totalPassingTests": 1059,
+  "limitations": [
+    "Offline and isolated Worker proof only; no funded Testnet transaction or deployment was performed",
+    "Single-source mode explicitly trusts one operator as the full payment authority",
+    "Independent trust domains are configured by the host and cannot be established from URL count alone",
+    "A payer can create fresh key and funding identities; the demo also limits the host admission identity, which derives from gateway client IP",
+    "The Worker requires a pre-delivery bounded PNN transport to offer hosted paid routes",
+    "Selected-chain traversal is bounded and rejects an acceptance older than its 4096-block or response-byte limit"
+  ]
+}

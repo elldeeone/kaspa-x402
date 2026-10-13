@@ -80,6 +80,9 @@ export interface HashChainGrantDeliveryRecord {
   requestHash: string;
   quotedAmount: string;
   payerPublicKey: string;
+  /** Absent only on deliveries committed before durable admission qualification. */
+  claimantId?: string;
+  qualifyingFundingOutpoint?: { txid: string; index: number };
   expiresAt: string;
   deliveryCommittedAt: string;
 }
@@ -119,6 +122,9 @@ interface StoredAssignment {
   requestHash: string;
   quotedAmount: string;
   payerPublicKey: string;
+  /** Existing schema-v2 assignments predate these admission fields. */
+  claimantId?: string;
+  qualifyingFundingOutpoint?: { txid: string; index: number };
   expiresAt: string;
   deliveryCommittedAt: string;
   /** First locally authenticated payment artifact; alternate artifacts fail closed. */
@@ -173,7 +179,20 @@ export interface HashChainGrantStorageOptions {
   transactionSync: <T>(callback: () => T) => T;
   /** Caller-managed 32-byte encryption key; loss loses outstanding grants. */
   encryptionKey: Uint8Array;
-  canClaim: (claim: HashChainGrantClaim, grant: HashChainPublicGrant) => boolean;
+  admissionPolicy: {
+    /** Durable deployment-wide limit for one authenticated admission identity. */
+    maxGrantsPerClaimant: number;
+    windowSeconds: number;
+    /** Optional cheap host eligibility check before selected-chain I/O. */
+    preflight?: (claim: HashChainGrantClaim, grant: HashChainPublicGrant) => boolean;
+    /** Host must observe a current, sufficiently funded payer-controlled outpoint. claimantId is the signed payer public key. */
+    resolveFundingOutpoint: (
+      claim: HashChainGrantClaim,
+      grant: HashChainPublicGrant,
+      claimantId: string,
+      signal?: AbortSignal,
+    ) => Promise<{ txid: string; index: number } | readonly { txid: string; index: number }[]>;
+  };
   maxLiveChallengesPerAdmissionKey?: number;
   now?: () => Date;
 }
@@ -194,7 +213,7 @@ export class HashChainGrantIssuer {
   protected constructor(
     private readonly db: HashChainSqlDatabase,
     private readonly key: Buffer,
-    private readonly canClaim: HashChainGrantStorageOptions["canClaim"],
+    private readonly admissionPolicy: HashChainGrantStorageOptions["admissionPolicy"],
     private readonly maxLiveChallengesPerAdmissionKey: number,
     private readonly now: () => Date,
     private readonly transactionSync: HashChainGrantStorageOptions["transactionSync"],
@@ -202,7 +221,14 @@ export class HashChainGrantIssuer {
 
   static fromStorage(options: HashChainGrantStorageOptions): HashChainGrantIssuer {
     if (options.encryptionKey.length !== 32) throw new Error("grant encryption key must be 32 bytes");
-    if (typeof options.canClaim !== "function") throw new Error("grant payer admission callback is required");
+    if (!options.admissionPolicy ||
+      !Number.isSafeInteger(options.admissionPolicy.maxGrantsPerClaimant) ||
+      options.admissionPolicy.maxGrantsPerClaimant < 1 ||
+      !Number.isSafeInteger(options.admissionPolicy.windowSeconds) ||
+      options.admissionPolicy.windowSeconds < 1 ||
+      typeof options.admissionPolicy.resolveFundingOutpoint !== "function") {
+      throw new Error("durable grant-admission policy is required");
+    }
     const maxLiveChallengesPerAdmissionKey = options.maxLiveChallengesPerAdmissionKey ?? 4;
     if (!Number.isSafeInteger(maxLiveChallengesPerAdmissionKey) ||
       maxLiveChallengesPerAdmissionKey < 1 || maxLiveChallengesPerAdmissionKey > 8) {
@@ -216,6 +242,10 @@ export class HashChainGrantIssuer {
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_deliveries (head_id TEXT NOT NULL, grant_id TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(head_id, grant_id))");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_payments (transaction_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL UNIQUE, sealed BLOB NOT NULL)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_seen_keys (key_fingerprint TEXT PRIMARY KEY, head_id TEXT NOT NULL)");
+        db.exec("CREATE TABLE IF NOT EXISTS hash_chain_admissions (outpoint_fingerprint TEXT PRIMARY KEY, claimant_fingerprint TEXT NOT NULL, admission_fingerprint TEXT NOT NULL, disclosed_at INTEGER NOT NULL)");
+        db.exec("CREATE INDEX IF NOT EXISTS hash_chain_admissions_claimant ON hash_chain_admissions(claimant_fingerprint, disclosed_at)");
+        db.exec("CREATE INDEX IF NOT EXISTS hash_chain_admissions_host ON hash_chain_admissions(admission_fingerprint, disclosed_at)");
+        db.exec("CREATE TABLE IF NOT EXISTS hash_chain_legacy_claimants (claimant_fingerprint TEXT PRIMARY KEY)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_meta (id INTEGER PRIMARY KEY CHECK(id = 1), sealed BLOB NOT NULL)");
         const schemaVersion = db.getSchemaVersion();
         if (![0, 1, 2].includes(schemaVersion)) throw new Error("unsupported grant database schema version");
@@ -234,8 +264,9 @@ export class HashChainGrantIssuer {
         }
         if (schemaVersion === 0) migrateLegacyGrantKeys(db, key);
         if (schemaVersion !== 2) migrateQuotedGrants(db, key);
+        migrateLegacyGrantAdmissions(db, key);
       });
-      return new this(db, key, options.canClaim, maxLiveChallengesPerAdmissionKey,
+      return new this(db, key, options.admissionPolicy, maxLiveChallengesPerAdmissionKey,
         options.now ?? (() => new Date()), options.transactionSync);
     } catch (error) {
       key.fill(0);
@@ -248,7 +279,10 @@ export class HashChainGrantIssuer {
   installHead(input: {
     headId: string; network: string; ownerPublicKey: string;
     head: HashChainObservedHead; grants: readonly HashChainBorrowGrant[];
-  }): HashChainPublicGrant {
+  }, maxActiveHeads?: number): HashChainPublicGrant {
+    if (maxActiveHeads !== undefined &&
+      (!Number.isSafeInteger(maxActiveHeads) || maxActiveHeads < 1 || maxActiveHeads > 1024))
+      throw new Error("ready-head pool limit is invalid");
     const headId = hex32(input.headId, "headId");
     const ownerPublicKey = hex32(input.ownerPublicKey, "ownerPublicKey");
     assertSupportedGrantNetwork(input.network);
@@ -268,13 +302,43 @@ export class HashChainGrantIssuer {
     };
     return this.mutate(headId, (current) => {
       if (current) throw new Error("grant head already exists");
+      if (maxActiveHeads !== undefined) {
+        const rows = this.db.prepare("SELECT head_id, sealed FROM hash_chain_grants").all() as
+          { head_id: string; sealed: Uint8Array }[];
+        const occupied = rows.filter((row) => {
+          const existing = JSON.parse(unseal(this.key, row.head_id,
+            Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
+          return existing.phase !== "retired";
+        }).length;
+        if (occupied >= maxActiveHeads) throw new Error("hash-chain ready-head pool is full");
+      }
       if (this.rememberGrantKeys(headId, grants)) throw new Error("one-time key has already been used");
       return [stored, publicGrant(stored)];
     });
   }
 
   getCurrent(headId: string): HashChainPublicGrant {
-    return publicGrant(this.read(hex32(headId, "headId")));
+    const id = hex32(headId, "headId");
+    const current = this.read(id);
+    if (current.phase !== "assigned" || !current.assignment ||
+      Date.parse(current.assignment.expiresAt) >= this.now().getTime()) {
+      return publicGrant(current);
+    }
+    return this.mutate(id, (state) => {
+      if (!state) throw new Error("grant head is missing");
+      if (state.phase === "assigned" && state.assignment &&
+        Date.parse(state.assignment.expiresAt) < this.now().getTime()) {
+        state.phase = "needsRotation";
+        state.challenges = [];
+      }
+      return [state, publicGrant(state)];
+    });
+  }
+
+  /** Public capacity view; private grants and admission records stay sealed. */
+  listHeads(): HashChainPublicGrant[] {
+    const rows = this.db.prepare("SELECT head_id FROM hash_chain_grants ORDER BY head_id").all() as { head_id: string }[];
+    return rows.map((row) => this.getCurrent(row.head_id));
   }
 
   /** Historical, encrypted delivery evidence for later exact settlement. Never exposes a private key. */
@@ -394,14 +458,15 @@ export class HashChainGrantIssuer {
     admissionKey: string;
     payerPublicKey: string;
     current: HashChainPublicGrant;
-    commit(): HashChainGrantDelivery;
+    needsQualification: boolean;
+    commit(fundingOutpoint?: { txid: string; index: number } | readonly { txid: string; index: number }[]): HashChainGrantDelivery;
   } {
     const id = hex32(headId, "headId");
     const normalized = normalizeClaim(claim);
     const state = this.read(id);
     const { challenge } = inspectGrantClaim(state, normalized, this.now().getTime());
     const current = publicGrant(state);
-    if (!state.assignment && !this.canClaim(normalized, current)) {
+    if (!state.assignment && this.admissionPolicy.preflight?.(normalized, current) === false) {
       throw new Error("payer is ineligible for grant");
     }
     const snapshot = {
@@ -416,7 +481,8 @@ export class HashChainGrantIssuer {
       admissionKey,
       payerPublicKey: normalized.payerPublicKey,
       current: structuredClone(current),
-      commit: () => this.#commitAuthorizedGrantClaim(id, normalized, snapshot),
+      needsQualification: !state.assignment,
+      commit: (fundingOutpoint) => this.#commitAuthorizedGrantClaim(id, normalized, snapshot, admissionKey, fundingOutpoint),
     };
   }
 
@@ -538,13 +604,20 @@ export class HashChainGrantIssuer {
         "current hash-chain head does not match the authoritative selected UTXO",
       );
     }
-    return authorized.commit();
+    const fundingOutpoint = authorized.needsQualification
+      ? await this.admissionPolicy.resolveFundingOutpoint(
+          claim, authorized.current, authorized.payerPublicKey, options.signal)
+      : undefined;
+    options.signal?.throwIfAborted();
+    return authorized.commit(fundingOutpoint);
   }
 
   #commitAuthorizedGrantClaim(
     id: string,
     normalized: HashChainGrantClaim,
     snapshot: { headVersion: number; head: HashChainObservedHead },
+    admissionKey: string,
+    fundingOutpoint?: { txid: string; index: number } | readonly { txid: string; index: number }[],
   ): HashChainGrantDelivery {
     return this.mutate(id, (state) => {
       if (!state || state.version !== snapshot.headVersion || !sameHead(state.head, snapshot.head)) {
@@ -556,10 +629,40 @@ export class HashChainGrantIssuer {
         this.now().getTime(),
       );
       if (!state.assignment) {
+        const candidates = fundingOutpoint === undefined ? [] : Array.isArray(fundingOutpoint)
+          ? fundingOutpoint : [fundingOutpoint];
+        if (candidates.length === 0) throw new Error("qualifying funding outpoint is required");
+        const claimantId = normalized.payerPublicKey;
+        const claimantFingerprint = createHmac("sha256", this.key).update(`claimant:${claimantId}`).digest("hex");
+        const admissionFingerprint = createHmac("sha256", this.key).update(`admission:${admissionKey}`).digest("hex");
+        if (this.db.prepare("SELECT 1 AS present FROM hash_chain_legacy_claimants WHERE claimant_fingerprint = ?")
+          .get(claimantFingerprint)) throw new Error("legacy claimant requires a fresh payer key");
+        const now = this.now().getTime();
+        const used = this.db.prepare("SELECT COUNT(*) AS count FROM hash_chain_admissions WHERE (claimant_fingerprint = ? OR admission_fingerprint = ?) AND disclosed_at >= ?")
+          .get(claimantFingerprint, admissionFingerprint,
+            now - this.admissionPolicy.windowSeconds * 1000) as { count: number };
+        if (used.count >= this.admissionPolicy.maxGrantsPerClaimant) throw new Error("claimant grant quota exceeded");
+        const findOutpoint = this.db.prepare("SELECT 1 AS present FROM hash_chain_admissions WHERE outpoint_fingerprint = ?");
+        let selected: { txid: string; index: number; fingerprint: string } | undefined;
+        for (const candidate of candidates) {
+          if (!Number.isSafeInteger(candidate.index) || candidate.index < 0)
+            throw new Error("qualifying funding outpoint is required");
+          const txid = hex32(candidate.txid, "funding transaction");
+          const fingerprint = createHmac("sha256", this.key)
+            .update(`outpoint:${txid}:${candidate.index}`).digest("hex");
+          if (!findOutpoint.get(fingerprint)) {
+            selected = { txid, index: candidate.index, fingerprint };
+            break;
+          }
+        }
+        if (!selected) throw new Error("funding outpoint already qualified a disclosed grant");
+        this.db.prepare("INSERT INTO hash_chain_admissions(outpoint_fingerprint, claimant_fingerprint, admission_fingerprint, disclosed_at) VALUES(?, ?, ?, ?)")
+          .run(selected.fingerprint, claimantFingerprint, admissionFingerprint, now);
         state.assignment = {
           grantId: normalized.grantId, challengeId: normalized.challengeId,
           requestHash: normalized.requestHash, quotedAmount: challenge.quotedAmount,
-          payerPublicKey: normalized.payerPublicKey,
+          payerPublicKey: normalized.payerPublicKey, claimantId,
+          qualifyingFundingOutpoint: { txid: selected.txid, index: selected.index },
           expiresAt: normalized.expiresAt, deliveryCommittedAt: this.now().toISOString(),
         };
         state.phase = "assigned";
@@ -573,7 +676,9 @@ export class HashChainGrantIssuer {
           challengeId: normalized.challengeId, challengeIssuedAt: challenge.issuedAt,
           challengeExpiresAt: challenge.expiresAt,
           requestHash: normalized.requestHash, quotedAmount: challenge.quotedAmount,
-          payerPublicKey: normalized.payerPublicKey, expiresAt: normalized.expiresAt,
+          payerPublicKey: normalized.payerPublicKey, claimantId,
+          qualifyingFundingOutpoint: state.assignment.qualifyingFundingOutpoint,
+          expiresAt: normalized.expiresAt,
           deliveryCommittedAt: state.assignment.deliveryCommittedAt,
         };
         this.db.prepare("INSERT INTO hash_chain_deliveries(head_id, grant_id, sealed) VALUES(?, ?, ?)")
@@ -593,6 +698,7 @@ export class HashChainGrantIssuer {
   markAbandoned(headId: string): HashChainPublicGrant {
     const id = hex32(headId, "headId");
     return this.mutate(id, (state) => {
+      if (state?.phase === "needsRotation") return [state, publicGrant(state)];
       if (!state || state.phase !== "assigned" || !state.assignment) throw new Error("no assigned grant to abandon");
       if (Date.parse(state.assignment.expiresAt) >= this.now().getTime()) throw new Error("assigned grant has not expired");
       state.phase = "needsRotation";
@@ -682,6 +788,47 @@ export class HashChainGrantIssuer {
     headId: string, transition: HashChainAcceptedTransition, grants: readonly HashChainBorrowGrant[],
   ): HashChainPublicGrant {
     return this.advance(headId, transition, "rotate", grants);
+  }
+
+  /** Host-authenticated recovery after an owner-signed rotation is selected. */
+  async recoverOwnerRotationAfterSelectedObservation(
+    headId: string,
+    transactionId: string,
+    grants: readonly HashChainBorrowGrant[],
+    chain: Pick<HashChainChainView, "getSelectedTransaction">,
+    signal?: AbortSignal,
+  ): Promise<HashChainPublicGrant> {
+    const id = hex32(headId, "headId");
+    const txid = hex32(transactionId, "rotation transaction ID");
+    const current = this.getCurrent(id);
+    if (current.phase !== "needsRotation") throw new Error("head is not awaiting owner rotation");
+    if (!Array.isArray(grants) || grants.length < 1 || grants.length > 1024)
+      throw new Error("replacement grant chain length is invalid");
+    const first = normalizeGrant(grants[0]!);
+    const newGuard = hashChainBorrowGuard(first.revealedGuard, first.oneTimePublicKey);
+    signal?.throwIfAborted();
+    const selected = await chain.getSelectedTransaction(txid, { signal });
+    signal?.throwIfAborted();
+    if (!selected || selected.transactionId !== txid ||
+      (selected.finality !== "accepted" && selected.finality !== "confirmed") ||
+      !sameOutpoint(selected.spentHead, current.head.outpoint) ||
+      selected.successor.authorizingInput !== 0 ||
+      selected.successor.covenantId !== current.head.covenantId ||
+      selected.successor.scriptPublicKey !== hashChainHeadScriptPublicKey({
+        ownerPublicKey: current.ownerPublicKey, guard: newGuard,
+      })) throw new Error("owner rotation is not accepted on the selected chain");
+    const latest = this.getCurrent(id);
+    if (latest.headVersion !== current.headVersion || latest.phase !== "needsRotation" ||
+      !sameHead(latest.head, current.head)) throw new Error("head changed during owner rotation readback");
+    return this.recordAcceptedRotation(id, {
+      finality: selected.finality,
+      predecessor: current.head.outpoint,
+      successor: {
+        outpoint: { txid, index: 0 }, amount: selected.successor.amount,
+        guard: newGuard, scriptPublicKey: selected.successor.scriptPublicKey,
+        covenantId: selected.successor.covenantId,
+      },
+    }, grants);
   }
 
   recordAcceptedSweep(headId: string, sweep: HashChainAcceptedSweep): HashChainPublicGrant {
@@ -855,6 +1002,11 @@ export class HashChainGrantIssuer {
     if (!row) throw new Error("grant head is missing");
     const state = JSON.parse(unseal(this.key, headId, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
     assertSupportedGrantNetwork(state.network);
+    if (state.assignment &&
+      (state.assignment.claimantId === undefined) !==
+      (state.assignment.qualifyingFundingOutpoint === undefined)) {
+      throw new Error("grant state has incomplete admission qualification");
+    }
     return state;
   }
 
@@ -1088,6 +1240,31 @@ function migrateQuotedGrants(db: HashChainSqlDatabase, key: Buffer): void {
     }
   }
   db.setSchemaVersion(2);
+}
+
+/** Old assignments have no known qualifying outpoint: preserve recovery, but never reuse their payer key. */
+function migrateLegacyGrantAdmissions(db: HashChainSqlDatabase, key: Buffer): void {
+  const heads = db.prepare("SELECT head_id, sealed FROM hash_chain_grants").all() as { head_id: string; sealed: Uint8Array }[];
+  const legacy = db.prepare("INSERT OR IGNORE INTO hash_chain_legacy_claimants(claimant_fingerprint) VALUES(?)");
+  const reserve = db.prepare("INSERT OR IGNORE INTO hash_chain_admissions(outpoint_fingerprint, claimant_fingerprint, admission_fingerprint, disclosed_at) VALUES(?, ?, ?, ?)");
+  for (const row of heads) {
+    const state = JSON.parse(unseal(key, row.head_id, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
+    const assignment = state.assignment;
+    if (!assignment || assignment.claimantId !== undefined || assignment.qualifyingFundingOutpoint !== undefined)
+      continue;
+    const claimantFingerprint = createHmac("sha256", key)
+      .update(`claimant:${hex32(assignment.payerPublicKey, "legacy payer public key")}`).digest("hex");
+    legacy.run(claimantFingerprint);
+    const challenge = state.challenges.find((item) => item.challengeId === assignment.challengeId);
+    if (!challenge) continue;
+    const disclosedAt = Date.parse(assignment.deliveryCommittedAt);
+    if (!Number.isFinite(disclosedAt)) throw new Error("legacy grant delivery time is invalid");
+    const admissionFingerprint = createHmac("sha256", key)
+      .update(`admission:${challengeAdmissionKey(row.head_id, challenge)}`).digest("hex");
+    const outpointFingerprint = createHmac("sha256", key)
+      .update(`legacy:${row.head_id}:${assignment.grantId}`).digest("hex");
+    reserve.run(outpointFingerprint, claimantFingerprint, admissionFingerprint, disclosedAt);
+  }
 }
 
 function grantKeyFingerprint(key: Buffer, publicKey: string): string {

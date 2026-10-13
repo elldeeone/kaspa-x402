@@ -10,6 +10,7 @@ const BASE_ENV: GatewayEnv = {
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
   KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
+  KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
   KASPA_X402_PAY_TO:
     "kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh",
   KASPA_X402_SERVER_PUBLIC_KEY:
@@ -17,6 +18,41 @@ const BASE_ENV: GatewayEnv = {
 };
 
 describe("gateway config", () => {
+  it("requires an explicit chain-evidence trust policy for protected operation", () => {
+    expect(() => readGatewayConfig({
+      ...BASE_ENV,
+      KASPA_X402_GATEWAY_ENABLED: "true",
+      KASPA_X402_ADMISSION_HMAC_KEY: "a".repeat(32),
+      KASPA_X402_CHAIN_TRUST_MODE: undefined,
+    })).toThrow("KASPA_X402_CHAIN_TRUST_MODE");
+    expect(readGatewayConfig({
+      ...BASE_ENV,
+      KASPA_X402_GATEWAY_ENABLED: "true",
+      KASPA_X402_ADMISSION_HMAC_KEY: "a".repeat(32),
+      KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
+    } as GatewayEnv)).toMatchObject({ chainTrustMode: "trusted-single-source" });
+  });
+
+  it("counts trust domains rather than failover URLs for optional corroboration", () => {
+    const independent = { ...BASE_ENV,
+      KASPA_X402_GATEWAY_ENABLED: "true",
+      KASPA_X402_ADMISSION_HMAC_KEY: "a".repeat(32),
+      KASPA_X402_CHAIN_TRUST_MODE: "independent-corroboration",
+      KASPA_X402_CHAIN_REQUIRED_AUTHORITIES: "2",
+    };
+    expect(() => readGatewayConfig({ ...independent,
+      KASPA_X402_PNN_VERIFICATION_AUTHORITIES: JSON.stringify([{
+        trustDomain: "one-operator", endpoints: ["wss://one.example.test", "wss://one-failover.example.test"],
+      }]),
+    })).toThrow("at least two trust domains");
+    expect(readGatewayConfig({ ...independent,
+      KASPA_X402_PNN_VERIFICATION_AUTHORITIES: JSON.stringify([
+        { trustDomain: "one-operator", endpoints: ["wss://one.example.test", "wss://one-failover.example.test"] },
+        { trustDomain: "another-operator", endpoints: ["wss://two.example.test"] },
+      ]),
+    })).toMatchObject({ chainTrustMode: "independent-corroboration", requiredAuthorities: 2,
+      verificationAuthorities: [{ trustDomain: "one-operator" }, { trustDomain: "another-operator" }] });
+  });
   it("rejects exact offers below the reference on-chain output policy", () => {
     expect(() =>
       readGatewayConfig({

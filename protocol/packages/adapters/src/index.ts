@@ -20,3 +20,8 @@ export {
 } from "./adapters.js";
 export { PnnChainEvidence, type PnnEvidenceRecord, type PnnEvidenceStore } from "./pnn-chain-evidence.js";
 export { trustedNodeUrl } from "./trusted-node-url.js";
+export { CorroboratedKaspaPnnClient,
+  selectPnnChainEvidenceClient,
+  type PnnChainTrustMode, type PnnChainTrustPolicy,
+  type PnnVerificationAuthority } from "./pnn-trust-policy.js";
+export { assertPolicySelectedPnnClient, type PolicySelectedPnnClient } from "./pnn-trust-boundary.js";

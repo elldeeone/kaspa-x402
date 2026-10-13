@@ -153,7 +153,22 @@ try {
   const storeKey = randomBytes(32);
   writePrivateText(path.join(outputDir, "grant-store-key"), storeKey.toString("hex"));
   issuer = await HashChainGrantIssuer.open({ databasePath: path.join(outputDir, "grants.sqlite"),
-    encryptionKey: storeKey, canClaim: () => true });
+    encryptionKey: storeKey, admissionPolicy: {
+      maxGrantsPerClaimant: 100, windowSeconds: 86_400,
+      resolveFundingOutpoint: async (claim, grant, _claimantId, signal) => {
+        signal?.throwIfAborted();
+        if (claim.payerPublicKey !== fundingPublicKey) throw new Error("payer funding identity changed");
+        const challenge = issuer.getChallenge(grant.headId, claim.challengeId);
+        if (!challenge) throw new Error("grant challenge is unavailable");
+        const eligible = (await getAddressUtxos(rpc, fundingAddress))
+          .filter((item) => !reserved.has(outpointKey(item.outpoint)) && !item.covenantId &&
+            BigInt(item.amount) >= BigInt(challenge.quotedAmount) + payerFee + 10_000_000n)
+          .sort((a, b) => BigInt(a.amount) < BigInt(b.amount) ? -1 : 1)[0];
+        signal?.throwIfAborted();
+        if (!eligible) throw new Error("payer funding is unavailable");
+        return eligible.outpoint;
+      },
+    } });
   issuer.installHead({ headId, network: "kaspa:testnet-10", ownerPublicKey,
     head: { outpoint: { txid: genesis.id, index: 0 }, amount: headAmount.toString(),
       guard: grants.initialGuard, scriptPublicKey: initialScript, covenantId },

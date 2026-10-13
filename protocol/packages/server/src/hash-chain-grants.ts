@@ -18,7 +18,7 @@ export class HashChainGrantIssuer extends StorageGrantIssuer {
   static async open(options: HashChainGrantIssuerOptions): Promise<HashChainGrantIssuer> {
     if (options.encryptionKey.length !== 32) throw new Error("grant encryption key must be 32 bytes");
     if (!options.databasePath || options.databasePath === ":memory:") throw new Error("grant database must be a durable file");
-    if (typeof options.canClaim !== "function") throw new Error("grant payer admission callback is required");
+    if (!options.admissionPolicy) throw new Error("durable grant-admission policy is required");
     const limit = options.maxLiveChallengesPerAdmissionKey ?? 4;
     if (!Number.isSafeInteger(limit) || limit < 1 || limit > 8) throw new Error("live challenges per admission key must be 1 to 8");
     if (!existsSync(options.databasePath)) {

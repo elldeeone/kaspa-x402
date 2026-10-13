@@ -7,7 +7,7 @@ import {
   type HashChainTrustedOrigin,
 } from "@kaspa-x402/server";
 import type { HashChainGrantClaim } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient } from "@kaspa-x402/adapters";
+import { assertPolicySelectedPnnClient, type PolicySelectedPnnClient } from "@kaspa-x402/adapters";
 import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import type { HashChainStorage } from "./hash-chain-storage.js";
 
@@ -17,7 +17,11 @@ type Accepted = { transaction: HashChainSelectedTransaction; evidence: AcceptedT
 
 /** Public REST indexes omit covenant data; use the gateway's configured PNNs. */
 export class HashChainPnnView implements ExactTransactionVerifier {
-  constructor(private readonly pnn: KaspaPnnClient, private readonly storage: HashChainStorage) {
+  readonly #pnn: PolicySelectedPnnClient;
+
+  constructor(pnn: PolicySelectedPnnClient, private readonly storage: HashChainStorage) {
+    assertPolicySelectedPnnClient(pnn);
+    this.#pnn = pnn;
     storage.sql.exec("CREATE TABLE IF NOT EXISTS hash_chain_origin_snapshots (challenge_id TEXT PRIMARY KEY, snapshot TEXT NOT NULL)");
     storage.sql.exec("CREATE TABLE IF NOT EXISTS hash_chain_acceptance (transaction_id TEXT PRIMARY KEY, acceptance TEXT NOT NULL)");
   }
@@ -32,7 +36,7 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     signal?.throwIfAborted();
     const addresses = [addressForScriptPublicKey(script, "kaspa:testnet-10")];
     if (claim) addresses.push(addressForScriptPublicKey(`000020${claim.payerPublicKey}ac`, "kaspa:testnet-10"));
-    const snapshot = await this.pnn.snapshotHashChainUtxos(addresses, signal);
+    const snapshot = await this.#pnn.snapshotHashChainUtxos(addresses, signal);
     signal?.throwIfAborted();
     const matching = snapshot.utxos.filter((item) => sameOutpoint(item.outpoint, outpoint));
     if (matching.length > 1) throw new Error("PNN returned duplicate head UTXOs");
@@ -49,6 +53,21 @@ export class HashChainPnnView implements ExactTransactionVerifier {
         claim.challengeId, JSON.stringify(snapshot));
     }
     return matching[0] ?? null;
+  }
+
+  qualifyingFundingOutpoints(claim: HashChainGrantClaim, requiredAmount: string) {
+    const row = this.storage.sql.exec<{ snapshot: string }>(
+      "SELECT snapshot FROM hash_chain_origin_snapshots WHERE challenge_id = ?", claim.challengeId,
+    ).toArray()[0];
+    if (!row) throw new Error("payer funding snapshot is unavailable");
+    const snapshot = JSON.parse(row.snapshot) as Snapshot;
+    const script = `000020${claim.payerPublicKey}ac`;
+    const eligible = snapshot.utxos.filter((utxo) =>
+      utxo.covenantId === null && utxo.scriptPublicKey === script &&
+      BigInt(utxo.amount) >= BigInt(requiredAmount));
+    if (eligible.length === 0) throw new Error("payer has no eligible funding UTXO");
+    eligible.sort((a, b) => `${a.outpoint.txid}:${a.outpoint.index}`.localeCompare(`${b.outpoint.txid}:${b.outpoint.index}`));
+    return eligible.map((utxo) => utxo.outpoint);
   }
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest) {
@@ -71,7 +90,7 @@ export class HashChainPnnView implements ExactTransactionVerifier {
         const cached = this.#accepted(id);
         if (cached) return await this.isSelected(id, { signal }) ? cached.transaction : null;
         if (!snapshot) return null;
-        const accepted = await this.pnn.findHashChainPayment(id, snapshot.checkpoint, signal);
+        const accepted = await this.#pnn.findHashChainPayment(id, snapshot.checkpoint, signal);
         signal?.throwIfAborted();
         if (accepted) this.storage.sql.exec(
           "INSERT OR IGNORE INTO hash_chain_acceptance(transaction_id, acceptance) VALUES(?, ?)", id, JSON.stringify(accepted));
@@ -84,9 +103,17 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     signal?.throwIfAborted();
     const accepted = this.#accepted(id);
     if (!accepted) return false;
-    await this.pnn.confirmAcceptedTransaction(accepted.evidence, 1, signal);
+    await this.#pnn.confirmAcceptedTransaction(accepted.evidence, 1, signal);
     signal?.throwIfAborted();
     return true;
+  }
+
+  async selectedOwnerRotation(id: string, from: ChainCheckpoint, signal?: AbortSignal) {
+    const accepted = await this.#pnn.findHashChainPayment(id, from, signal);
+    if (!accepted) return null;
+    await this.#pnn.confirmAcceptedTransaction(accepted.evidence, 1, signal);
+    signal?.throwIfAborted();
+    return accepted.transaction;
   }
 
   #accepted(id: string): Accepted | undefined {
