@@ -638,10 +638,14 @@ export class HashChainGrantIssuer {
         if (this.db.prepare("SELECT 1 AS present FROM hash_chain_legacy_claimants WHERE claimant_fingerprint = ?")
           .get(claimantFingerprint)) throw new Error("legacy claimant requires a fresh payer key");
         const now = this.now().getTime();
-        const used = this.db.prepare("SELECT COUNT(*) AS count FROM hash_chain_admissions WHERE (claimant_fingerprint = ? OR admission_fingerprint = ?) AND disclosed_at >= ?")
-          .get(claimantFingerprint, admissionFingerprint,
-            now - this.admissionPolicy.windowSeconds * 1000) as { count: number };
-        if (used.count >= this.admissionPolicy.maxGrantsPerClaimant) throw new Error("claimant grant quota exceeded");
+        const windowStart = now - this.admissionPolicy.windowSeconds * 1000;
+        const usedByClaimant = this.db.prepare("SELECT COUNT(*) AS count FROM hash_chain_admissions WHERE claimant_fingerprint = ? AND disclosed_at >= ?")
+          .get(claimantFingerprint, windowStart) as { count: number };
+        const usedByAdmission = this.db.prepare("SELECT COUNT(*) AS count FROM hash_chain_admissions WHERE admission_fingerprint = ? AND disclosed_at >= ?")
+          .get(admissionFingerprint, windowStart) as { count: number };
+        if (usedByClaimant.count >= this.admissionPolicy.maxGrantsPerClaimant ||
+          usedByAdmission.count >= this.admissionPolicy.maxGrantsPerClaimant)
+          throw new Error("claimant grant quota exceeded");
         const findOutpoint = this.db.prepare("SELECT 1 AS present FROM hash_chain_admissions WHERE outpoint_fingerprint = ?");
         let selected: { txid: string; index: number; fingerprint: string } | undefined;
         for (const candidate of candidates) {

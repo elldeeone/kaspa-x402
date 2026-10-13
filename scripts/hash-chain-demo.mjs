@@ -41,10 +41,10 @@ const issuer = await HashChainGrantIssuer.open({ databasePath: path.join(dataDir
       const payerScript = `000020${claim.payerPublicKey}ac`;
       const entries = await getAddressUtxos(rpc, addressForScript(sdk, payerScript));
       signal?.throwIfAborted();
-      const funded = entries.find((item) => !item.covenantId && item.scriptPublicKey === payerScript &&
+      const funded = entries.filter((item) => !item.covenantId && item.scriptPublicKey === payerScript &&
         BigInt(item.amount) >= BigInt(challenge.quotedAmount) + 1_000_000n);
-      if (!funded) throw new Error('payer has no eligible funding UTXO');
-      return funded.outpoint;
+      if (funded.length === 0) throw new Error('payer has no eligible funding UTXO');
+      return funded.map((item) => item.outpoint);
     },
   } });
 const headFile = path.join(dataDir, 'head.json');

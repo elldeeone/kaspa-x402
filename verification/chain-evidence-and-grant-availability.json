@@ -2,7 +2,7 @@
   "schema": "kaspa-x402-chain-evidence-and-grant-availability/v1",
   "branch": "harden-chain-evidence",
   "baseSha": "6918defe91f5fd830c1a297aa72ce382c3428b94",
-  "sourceSha256": "c52cf1c7e1b9b657ca525f3eb00e7a9ac5bdf4df3f21647dfc4d2773a2d2e0ca",
+  "sourceSha256": "0bd589f59a804fe45b8ca2dce7db9dabb62fc8f3d775019872ee4efcf1f1b2cc",
   "sourceFiles": [
     "docs/demo-operations.md",
     "packages/demo-gateway/src/config.ts",
