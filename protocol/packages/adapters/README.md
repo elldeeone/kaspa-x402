@@ -10,6 +10,20 @@ settlement reconcilers, `NativeAddressCodec`, `NativeVoucherVerifier` and
 `ScriptAddressBook`. Use `@kaspa-x402/adapters/native` for address encoding and
 Schnorr verification without loading the provider stack.
 
+For PNN payment evidence, choose a trust policy with
+`selectPnnChainEvidenceClient`. `trusted-single-source` explicitly trusts one
+operator's failover group as the full payment authority. Optional
+`independent-corroboration` requires distinct administrative trust domains to
+agree on normalized chain reads; several URLs on one `KaspaPnnClient` count as
+one authority. Submission can use a separate client. A second node is not
+mandatory for Testnet-10. Independent corroboration is strongly recommended
+for higher-assurance Testnet-10 deployments; it does not satisfy the project's
+mainnet launch gates.
+Each authority validates its own selected-chain checkpoint. Matching UTXO and
+acceptance facts may come from nearby tips; snapshot DAA scores must be within
+100 and the highest verified DAA is returned. A wider gap or conflicting chain
+facts rejects the read.
+
 For direct REST integration:
 
 ```ts
@@ -27,8 +41,12 @@ from the actual protected operation. Successful verification alone neither
 settles the payment nor authorizes executing the same protected work twice.
 
 For selected-chain PNN evidence, construct `KaspaPnnClient` with explicit
-operator-controlled endpoints, then create a **new `PnnChainEvidence` per request**
-using a `ScriptAddressBook` and an implementation of `PnnEvidenceStore`.
+operator-controlled endpoints, select an explicit trust policy, then create a
+**new `PnnChainEvidence` per request** with the selected client, a
+`ScriptAddressBook`, and an implementation of `PnnEvidenceStore`. The
+`PnnChainEvidence` and `PnnBroadcastChainProvider` constructors reject a raw
+client at runtime, including one forced through TypeScript with a cast. Raw
+clients remain available for policy construction and transaction submission.
 The evidence object keeps mutable request-local snapshots. It can serve both
 `VerifiedKaspaChainProvider` and exact verification. RPC confirms network ID,
 acceptance and selected-chain continuity; it is a trust boundary, not a light client.

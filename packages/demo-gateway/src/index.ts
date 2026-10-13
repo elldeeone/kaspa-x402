@@ -6,7 +6,7 @@ import {
   runGatewayCanary,
 } from "./gateway.js";
 import { readGatewayConfig, type GatewayEnv } from "./config.js";
-import { HashChainDemoService, type HashChainHeadRegistration } from "./hash-chain-service.js";
+import { HashChainDemoService, type HashChainHeadRegistration, type HashChainOwnerRecovery } from "./hash-chain-service.js";
 import {
   dispatchGatewayState,
   GatewayLedger,
@@ -31,6 +31,10 @@ export class GatewayState extends DurableObject<GatewayEnv> {
 
   registerHashChainHead(input: HashChainHeadRegistration) {
     return this.#hashChainService().register(input);
+  }
+
+  recoverHashChainHead(input: HashChainOwnerRecovery) {
+    return this.#hashChainService().recover(input);
   }
 
   hashChainHead() {

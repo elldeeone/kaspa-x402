@@ -18,6 +18,8 @@ import {
 } from "@kaspa-x402/covenant";
 import {
   KaspaPnnClient,
+  CorroboratedKaspaPnnClient,
+  selectPnnChainEvidenceClient,
   KaspaRestClient,
   NativeAddressCodec,
   NativeVoucherVerifier,
@@ -644,7 +646,8 @@ describe("VerifiedKaspaChainProvider", () => {
     const book = new ScriptAddressBook();
     book.recordOutpoint({ txid, index: 0 }, scriptPublicKey, address);
     const store = new MemoryEvidenceStore();
-    const provider = () => new VerifiedKaspaChainProvider(new PnnChainEvidence(pnn, book, store), book, "100");
+    const selected = selectPnnChainEvidenceClient({ mode: "trusted-single-source", verification: pnn });
+    const provider = () => new VerifiedKaspaChainProvider(new PnnChainEvidence(selected, book, store), book, "100");
     const utxo = await provider().getUtxo({ txid, index: 0 }, "kaspa:testnet-10");
     expect(utxo?.covenantId).toBe(covenantId);
     expect(find).toHaveBeenCalledWith(txid, { originDaaScore: "900" }, undefined);
@@ -1027,6 +1030,125 @@ describe("VerifiedExactSettlementReconciler", () => {
 });
 
 describe("KaspaPnnClient", () => {
+  it("corroborates equal UTXOs at adjacent tips while rejecting real conflicts", async () => {
+    const fundingTxid = "b2".repeat(32);
+    const source = (tip: string, amount: string, daaScore: string) => new KaspaPnnClient({
+      endpoints: [`wss://${tip.slice(0, 4)}.example.test`], attempts: 1,
+      rpcFactory: mockPnnRpcFactory(() => ({
+        async connect() {}, async disconnect() {},
+        async getServerInfo() { return { networkId: "testnet-10", isSynced: true }; },
+        async submitTransaction() { throw new Error("submission is separate"); },
+        async getBlockDagInfo() { return { sink: tip }; },
+        async getBlock() { return { block: {
+          header: { blueScore: tip === "a1".repeat(32) ? "100" : "101", daaScore },
+          verboseData: { hash: tip, isChainBlock: true },
+        } }; },
+        async getUtxosByAddresses() { return { entries: [{
+          outpoint: { transactionId: fundingTxid, index: 0 },
+          utxoEntry: { amount, scriptPublicKey: "000020" + "c3".repeat(32) + "ac" },
+        }] }; },
+      })),
+    });
+    const a = source("a1".repeat(32), "100", "100");
+    const b = source("a2".repeat(32), "100", "101");
+    const c = source("a3".repeat(32), "999", "101");
+    const authorities = [
+      { trustDomain: "operator-a", client: a },
+      { trustDomain: "operator-b", client: b },
+    ];
+    await expect(new CorroboratedKaspaPnnClient(a, authorities, 2)
+      .snapshotHashChainUtxos([])).resolves.toMatchObject({
+        checkpoint: { daaScore: "101" }, utxos: [{ amount: "100" }],
+      });
+    await expect(new CorroboratedKaspaPnnClient(a, [
+      ...authorities, { trustDomain: "operator-c", client: c },
+    ], 2).snapshotHashChainUtxos([])).rejects.toThrow("independent chain evidence conflicts");
+    await expect(new CorroboratedKaspaPnnClient(a, [
+      { trustDomain: "operator-b", client: b }, { trustDomain: "operator-c", client: c },
+    ], 2).snapshotHashChainUtxos([])).rejects.toThrow("independent chain evidence conflicts");
+    await expect(new CorroboratedKaspaPnnClient(a, [
+      { trustDomain: "operator-a", client: a },
+      { trustDomain: "operator-stale", client: source("a4".repeat(32), "100", "1000") },
+    ], 2).snapshotHashChainUtxos([])).rejects.toThrow("independent chain evidence conflicts");
+  });
+
+  it("corroborates accepted facts and lineage events despite tip-dependent depth", async () => {
+    const transactionId = "a4".repeat(32);
+    const acceptingBlockHash = "b5".repeat(32);
+    const from = { blockHash: "c6".repeat(32), blueScore: "90", daaScore: "90" };
+    const authority = (suffix: string, depth: number) => {
+      const client = new KaspaPnnClient({ endpoints: [] });
+      const checkpoint = { blockHash: suffix.repeat(32), blueScore: String(100 + depth), daaScore: "100" };
+      const evidence = { status: "accepted" as const, transactionId, acceptingBlockHash,
+        acceptingBlockBlueScore: "95", confirmationCount: depth, checkpoint };
+      vi.spyOn(client, "findAcceptedTransaction").mockResolvedValue({ raw: { id: transactionId }, evidence });
+      vi.spyOn(client, "findHashChainPayment").mockResolvedValue({ transaction: {
+        transactionId, finality: "accepted", spentHead: { txid: "d7".repeat(32), index: 0 },
+        successor: { amount: "120000000", scriptPublicKey: "000020" + "e8".repeat(32) + "ac",
+          covenantId: "f9".repeat(32), authorizingInput: 0 },
+      }, evidence });
+      vi.spyOn(client, "confirmAcceptedTransaction").mockResolvedValue(evidence);
+      vi.spyOn(client, "discoverCovenantLineage").mockResolvedValue({
+        fromCheckpoint: from, checkpoint, continuity: "complete",
+        removedChainBlockHashes: [], addedChainBlocks: [{ blockHash: acceptingBlockHash,
+          genesisAcceptance: evidence, transitions: [] }],
+      });
+      return client;
+    };
+    const a = authority("a1", 5);
+    const b = authority("a2", 6);
+    const corroborated = new CorroboratedKaspaPnnClient(a, [
+      { trustDomain: "operator-a", client: a }, { trustDomain: "operator-b", client: b },
+    ], 2);
+    await expect(corroborated.findAcceptedTransaction(transactionId)).resolves.toMatchObject({
+      evidence: { transactionId, acceptingBlockHash },
+    });
+    await expect(corroborated.findHashChainPayment(transactionId, from)).resolves.toMatchObject({
+      transaction: { transactionId }, evidence: { acceptingBlockHash },
+    });
+    await expect(corroborated.confirmAcceptedTransaction({ status: "accepted", transactionId,
+      acceptingBlockHash, acceptingBlockBlueScore: "95", confirmationCount: 4, checkpoint: from }, 1))
+      .resolves.toMatchObject({ transactionId, acceptingBlockHash });
+    await expect(corroborated.discoverCovenantLineage({} as never)).resolves.toMatchObject({
+      addedChainBlocks: [{ genesisAcceptance: { transactionId } }],
+    });
+  });
+
+  it("requires distinct verification authorities and rejects a fabricated single-node UTXO view", async () => {
+    const checkpointHash = "a1".repeat(32);
+    const fundingTxid = "b2".repeat(32);
+    const source = (amount: string, endpoints: string[]) => new KaspaPnnClient({
+      endpoints, attempts: 1,
+      rpcFactory: mockPnnRpcFactory(() => ({
+        async connect() {}, async disconnect() {},
+        async getServerInfo() { return { networkId: "testnet-10", isSynced: true }; },
+        async submitTransaction() { throw new Error("submission is separate"); },
+        async getBlockDagInfo() { return { sink: checkpointHash }; },
+        async getBlock() { return { block: {
+          header: { blueScore: "100", daaScore: "100" },
+          verboseData: { hash: checkpointHash, isChainBlock: true },
+        } }; },
+        async getUtxosByAddresses() { return { entries: [{
+          outpoint: { transactionId: fundingTxid, index: 0 },
+          utxoEntry: { amount, scriptPublicKey: "000020" + "c3".repeat(32) + "ac" },
+        }] }; },
+      })),
+    });
+    const submission = source("100", ["wss://submit.example.test/?token=private"]);
+    const a = source("100", ["wss://a.example.test", "wss://a-failover.example.test"]);
+    const b = source("100", ["wss://b.example.test"]);
+    expect(() => new CorroboratedKaspaPnnClient(submission,
+      [{ trustDomain: "operator-a", client: a }], 2)).toThrow("authorities are invalid");
+    const corroborated = new CorroboratedKaspaPnnClient(submission,
+      [{ trustDomain: "operator-a", client: a }, { trustDomain: "operator-b", client: b }], 2);
+    await expect(corroborated.snapshotHashChainUtxos([])).resolves.toMatchObject({
+      checkpoint: { blockHash: checkpointHash }, utxos: [{ amount: "100" }],
+    });
+    const fabricated = new CorroboratedKaspaPnnClient(submission,
+      [{ trustDomain: "operator-a", client: source("100", ["wss://a.example.test"]) },
+        { trustDomain: "operator-b", client: source("999", ["wss://b.example.test"]) }], 2);
+    await expect(fabricated.snapshotHashChainUtxos([])).rejects.toThrow("independent chain evidence conflicts");
+  });
   it("waits for PNN disconnect before releasing an aborted request", async () => {
     const controller = new AbortController();
     let entered!: () => void;
@@ -1445,7 +1567,7 @@ describe("KaspaPnnClient", () => {
     ).resolves.toEqual(pnnObservedBroadcast(exact.txid));
   });
 
-  it("promotes REST acceptance only after PNN proves selected-chain depth", async () => {
+  it.each([29, 30])("promotes REST acceptance only after PNN proves %i selected positions", async (selectedDepth) => {
     const transactionId = "d1".repeat(32);
     const acceptingBlockHash = "d2".repeat(32);
     const selectedParentHash = "d3".repeat(32);
@@ -1498,14 +1620,16 @@ describe("KaspaPnnClient", () => {
         };
       },
       async getVirtualChainFromBlockV2(request) {
-        expect(request.minConfirmationCount).toBe(33);
+        expect(request.minConfirmationCount).toBe(0);
         expect(request.dataVerbosityLevel).toBe("Low");
         selectedCalls += 1;
         if (selectedCalls === 1) {
           expect(request.startHash).toBe(selectedParentHash);
+          const intermediate = Array.from({ length: selectedDepth - 2 }, (_, index) =>
+            (index + 1).toString(16).padStart(64, "0"));
           return {
             removedChainBlockHashes: [],
-            addedChainBlockHashes: [acceptingBlockHash],
+            addedChainBlockHashes: [acceptingBlockHash, ...intermediate, checkpoint.blockHash],
             chainBlockAcceptedTransactions: [
               {
                 chainBlockHeader: {
@@ -1514,11 +1638,15 @@ describe("KaspaPnnClient", () => {
                   daaScore: "971",
                 },
                 acceptedTransactions: [{ transactionId }],
-              },
+              }, ...intermediate.map((hash, index) => ({
+                chainBlockHeader: { hash, blueScore: String(972 + index), daaScore: String(972 + index) },
+                acceptedTransactions: [],
+              })), { chainBlockHeader: { hash: checkpoint.blockHash,
+                blueScore: checkpoint.blueScore, daaScore: checkpoint.daaScore }, acceptedTransactions: [] },
             ],
           };
         }
-        expect(request.startHash).toBe(acceptingBlockHash);
+        expect(request.startHash).toBe(checkpoint.blockHash);
         return {
           removedChainBlockHashes: [],
           addedChainBlockHashes: [],
@@ -1535,17 +1663,12 @@ describe("KaspaPnnClient", () => {
       checkpoint,
     };
 
-    await expect(
-      new KaspaPnnClient({
-        endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json"],
-        timeoutMs: 50,
-        rpcFactory,
-      }).confirmAcceptedTransaction(evidence, 30),
-    ).resolves.toEqual({
-      ...evidence,
-      confirmationCount: 30,
-      checkpoint,
-    });
+    const confirmed = new KaspaPnnClient({
+      endpoints: ["wss://pnn-a.example.test/kaspa/testnet-10/wrpc/json"],
+      timeoutMs: 50, rpcFactory,
+    }).confirmAcceptedTransaction(evidence, 30);
+    if (selectedDepth < 30) await expect(confirmed).rejects.toThrow("configured selected-chain depth");
+    else await expect(confirmed).resolves.toEqual({ ...evidence, confirmationCount: 30, checkpoint });
   });
 
   it("discovers a confirmed covenant successor while the selected-chain tip advances", async () => {
@@ -1587,6 +1710,93 @@ describe("KaspaPnnClient", () => {
       }],
     });
   });
+
+  it("rejects a shallow covenant spend even when blue score jumps by more than 30", async () => {
+    const current = batchChannel({});
+    const fixture = pnnLineageFixture(current, false, current.covenantId, undefined, undefined, 2);
+    const requests: number[] = [];
+    const rpc: MockPnnRpc = {
+      ...fixture.rpc,
+      async getVirtualChainFromBlockV2(request) {
+        requests.push(request.minConfirmationCount);
+        return fixture.rpc.getVirtualChainFromBlockV2!(request);
+      },
+    };
+    await expect(new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test/wrpc/json"],
+      rpcFactory: mockPnnRpcFactory(() => rpc),
+    }).discoverCovenantLineage({
+      network: "kaspa:testnet-10", covenantId: current.covenantId,
+      templateId: current.channelConfig.templateId, lineage: current.lineage,
+      minConfirmationCount: 30,
+    })).rejects.toThrow("required selected-chain depth");
+    expect(requests).toContain(0); // Pinned Rusty Kaspa V2 filters by blue score; local ordered positions are authoritative.
+  });
+
+  it.each(["top-up", "refund"] as const)(
+    "holds a shallow %s out of durable covenant state despite a large blue-score jump", async (kind) => {
+      const current = batchChannel({});
+      const fixture = pnnLineageFixture(current, false, current.covenantId,
+        undefined, undefined, 29, kind);
+      await expect(new KaspaPnnClient({
+        endpoints: ["wss://pnn.example.test/wrpc/json"],
+        rpcFactory: mockPnnRpcFactory(() => fixture.rpc),
+      }).discoverCovenantLineage({ network: "kaspa:testnet-10", covenantId: current.covenantId,
+        templateId: current.channelConfig.templateId, lineage: current.lineage,
+        minConfirmationCount: 30 })).rejects.toThrow("required selected-chain depth");
+      expect(current.lineage.currentHead?.value).toBe("1000");
+    },
+  );
+
+  it("rejects a shallow genesis acceptance despite its large blue-score jump", async () => {
+    const current = batchChannel({});
+    const fixture = pnnLineageFixture(current, false, current.covenantId,
+      undefined, undefined, 29, "genesis");
+    await expect(new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test/wrpc/json"],
+      rpcFactory: mockPnnRpcFactory(() => fixture.rpc),
+    }).discoverCovenantLineage({ network: "kaspa:testnet-10", covenantId: current.covenantId,
+      templateId: current.channelConfig.templateId, lineage: current.lineage,
+      minConfirmationCount: 30 })).rejects.toThrow("required selected-chain depth");
+  });
+
+  it("reaccepts covenant genesis at exactly 30 measured selected positions after reorganization", async () => {
+    const current = batchChannel({});
+    const fixture = pnnLineageFixture(current, false, current.covenantId,
+      undefined, undefined, 30, "genesis");
+    const rpc: MockPnnRpc = { ...fixture.rpc,
+      async getVirtualChainFromBlockV2(request) {
+        const response = await fixture.rpc.getVirtualChainFromBlockV2!(request) as Record<string, unknown>;
+        return { ...response, removedChainBlockHashes: [
+          current.lineage.manifest.genesis.acceptance.acceptingBlockHash,
+        ] };
+      },
+    };
+    const update = await new KaspaPnnClient({
+      endpoints: ["wss://pnn.example.test/wrpc/json"],
+      rpcFactory: mockPnnRpcFactory(() => rpc),
+    }).discoverCovenantLineage({ network: "kaspa:testnet-10", covenantId: current.covenantId,
+      templateId: current.channelConfig.templateId, lineage: current.lineage,
+      minConfirmationCount: 30 });
+    expect(update.addedChainBlocks[0]?.genesisAcceptance?.confirmationCount).toBe(30);
+  });
+
+  it.each(["top-up", "refund"] as const)(
+    "records exactly 30 selected positions for a confirmed %s", async (kind) => {
+      const current = batchChannel({});
+      const fixture = pnnLineageFixture(current, false, current.covenantId,
+        undefined, undefined, 30, kind);
+      const update = await new KaspaPnnClient({
+        endpoints: ["wss://pnn.example.test/wrpc/json"],
+        rpcFactory: mockPnnRpcFactory(() => fixture.rpc),
+      }).discoverCovenantLineage({ network: "kaspa:testnet-10", covenantId: current.covenantId,
+        templateId: current.channelConfig.templateId, lineage: current.lineage,
+        minConfirmationCount: 30 });
+      expect(update.addedChainBlocks[0]?.transitions[0]).toMatchObject({
+        kind, acceptance: { confirmationCount: 30 },
+      });
+    },
+  );
 
   it("rejects branching covenant successors from selected-chain V2", async () => {
     const current = batchChannel({});
@@ -2030,7 +2240,8 @@ describe("VerifiedExactTransactionVerifier", () => {
     const confirmSpy = vi.spyOn(pnn, "confirmAcceptedTransaction").mockResolvedValue(receipt);
     const durable = new MemoryEvidenceStore();
     const book = new ScriptAddressBook();
-    const nodeVerifier = new PnnChainEvidence(pnn, book, durable);
+    const selected = selectPnnChainEvidenceClient({ mode: "trusted-single-source", verification: pnn });
+    const nodeVerifier = new PnnChainEvidence(selected, book, durable);
     const firstVerification = await nodeVerifier.verifyExactPayment(request);
     expect(firstVerification.transactionId).toBe(standard.transactionId);
     expect(findSpy).not.toHaveBeenCalled();
@@ -2046,7 +2257,7 @@ describe("VerifiedExactTransactionVerifier", () => {
       await lateRead;
       return { utxos: [origin], checkpoint };
     });
-    const lateVerification = new PnnChainEvidence(pnn, book, lateStore)
+    const lateVerification = new PnnChainEvidence(selected, book, lateStore)
       .verifyExactPayment({ ...request, signal: canceled.signal });
     canceled.abort();
     releaseLateRead();
@@ -2054,14 +2265,14 @@ describe("VerifiedExactTransactionVerifier", () => {
     expect(await lateStore.loadPnnEvidence(standard.transactionId)).toBeUndefined();
 
     snapshotSpy.mockResolvedValue({ utxos: [{ ...origin, amount: String(BigInt(origin.amount) + 1n) }], checkpoint });
-    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment(request)).rejects.toThrow("does not match trusted chain state");
+    await expect(new PnnChainEvidence(selected, book, durable).verifyExactPayment(request)).rejects.toThrow("does not match trusted chain state");
     snapshotSpy.mockResolvedValue({ utxos: [], checkpoint });
     await expect(nodeVerifier.getTransaction(standard.transactionId)).resolves.toMatchObject({ transaction_id: standard.transactionId });
     await expect(nodeVerifier.acceptedTransactionEvidence(standard.transactionId)).resolves.toEqual(receipt);
     expect(confirmSpy).toHaveBeenCalledTimes(1);
     await nodeVerifier.persistOwnedEvidence(standard.transactionId, firstVerification.evidenceReceipt);
     expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
-    const restarted = new PnnChainEvidence(pnn, book, durable);
+    const restarted = new PnnChainEvidence(selected, book, durable);
     const resumedVerification = await restarted.verifyExactPayment(request);
     expect(resumedVerification).toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
     await restarted.persistOwnedEvidence(standard.transactionId, resumedVerification.evidenceReceipt);
@@ -2071,11 +2282,11 @@ describe("VerifiedExactTransactionVerifier", () => {
     await expect(restarted.verifyExactPayment(request)).rejects.toThrow("left the selected chain");
     confirmSpy.mockResolvedValue(receipt);
     findSpy.mockClear();
-    await expect(new PnnChainEvidence(pnn, book, new MemoryEvidenceStore()).verifyExactPayment(request))
+    await expect(new PnnChainEvidence(selected, book, new MemoryEvidenceStore()).verifyExactPayment(request))
       .rejects.toThrow("no accepted candidate output or durable receipt");
     expect(findSpy).not.toHaveBeenCalled();
     const saveSpy = vi.spyOn(durable, "savePnnEvidence");
-    await expect(new PnnChainEvidence(pnn, book, durable).verifyExactPayment({ ...request,
+    await expect(new PnnChainEvidence(selected, book, durable).verifyExactPayment({ ...request,
       authorization: { ...request.authorization, signature: "00".repeat(64) } })).rejects.toThrow();
     expect(saveSpy).not.toHaveBeenCalled();
 
@@ -2824,6 +3035,8 @@ function pnnLineageFixture(
   inputCovenantId = current.covenantId,
   headerHash?: string,
   flattenedInputCovenantId?: string,
+  selectedDepth = 30,
+  transitionKind: "genesis" | "claim" | "top-up" | "refund" = "claim",
 ) {
   const proofCheckpoint = {
     blockHash: "f0".repeat(32),
@@ -2836,12 +3049,13 @@ function pnnLineageFixture(
     daaScore: "1105",
   };
   const acceptingBlockHash = "f1".repeat(32);
-  const transactionId = "f2".repeat(32);
+  const transactionId = transitionKind === "genesis"
+    ? current.lineage.manifest.genesis.transactionId : "f2".repeat(32);
   const successorScript = "0000" + "f3".repeat(34);
   let checkpointCalls = 0;
   let selectedCalls = 0;
   const successor = {
-    value: "900",
+    value: transitionKind === "top-up" ? "1100" : "900",
     scriptPublicKey: successorScript,
     covenant: {
       covenantId: current.covenantId,
@@ -2900,9 +3114,11 @@ function pnnLineageFixture(
         };
       }
       expect(request.startHash).toBe(current.lineage.checkpoint.blockHash);
+      const intermediateHashes = Array.from({ length: selectedDepth - 2 }, (_, index) =>
+        (index + 1).toString(16).padStart(64, "0"));
       return {
         removedChainBlockHashes: [],
-        addedChainBlockHashes: [acceptingBlockHash, proofCheckpoint.blockHash],
+        addedChainBlockHashes: [acceptingBlockHash, ...intermediateHashes, proofCheckpoint.blockHash],
         chainBlockAcceptedTransactions: [{
           chainBlockHeader: {
             ...(headerHash ? { hash: headerHash } : {}),
@@ -2923,9 +3139,14 @@ function pnnLineageFixture(
                 ? { covenantId: flattenedInputCovenantId }
                 : {}),
             }],
-            outputs: branching ? [successor, { ...successor }] : [successor],
+            outputs: transitionKind === "refund"
+              ? [{ value: "900", scriptPublicKey: "000020" + "e1".repeat(32) + "ac" }]
+              : branching ? [successor, { ...successor }] : [successor],
           }],
-        }, { chainBlockHeader: { hash: proofCheckpoint.blockHash, blueScore: "1100", daaScore: "1100" }, acceptedTransactions: [] }],
+        }, ...intermediateHashes.map((hash, index) => ({
+          chainBlockHeader: { hash, blueScore: String(1061 + index), daaScore: String(1061 + index) },
+          acceptedTransactions: [],
+        })), { chainBlockHeader: { hash: proofCheckpoint.blockHash, blueScore: "1100", daaScore: "1100" }, acceptedTransactions: [] }],
       };
     },
   };

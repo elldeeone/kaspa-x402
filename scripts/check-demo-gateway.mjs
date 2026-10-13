@@ -32,6 +32,7 @@ const options = {
   bindings: {
     ...wranglerVars,
     KASPA_X402_GATEWAY_ENABLED: "true",
+    KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
     KASPA_X402_PNN_ENDPOINTS: "wss://pnn.demo.invalid/wrpc/json",
     KASPA_X402_ADMISSION_HMAC_KEY: "local-worker-admission-test-secret".repeat(2),
   },

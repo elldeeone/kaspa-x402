@@ -4,7 +4,7 @@ import {
   type NetworkId,
   type SompiString,
 } from "@kaspa-x402/core";
-import { trustedNodeUrl } from "@kaspa-x402/adapters";
+import { trustedNodeUrl, type PnnChainTrustMode } from "@kaspa-x402/adapters";
 
 /** Reference gateway policy, not a universal Kaspa consensus dust constant. */
 export const MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI = 10_000_000n;
@@ -24,6 +24,10 @@ export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
     KASPA_X402_PER_CALLER_CONCURRENCY?: string;
     KASPA_X402_ALLOW_INSECURE_LOOPBACK?: string;
     KASPA_X402_BOUNDED_PNN_WEBSOCKET_FACTORY?: (endpoint: string, maxBytes: number) => WebSocket;
+    KASPA_X402_CHAIN_TRUST_MODE?: string;
+    KASPA_X402_PNN_VERIFICATION_AUTHORITIES?: string;
+    KASPA_X402_CHAIN_REQUIRED_AUTHORITIES?: string;
+    KASPA_X402_HASH_CHAIN_POOL_SIZE?: string;
   };
 
 export interface GatewayConfig {
@@ -52,6 +56,9 @@ export interface GatewayConfig {
   hostedExactSettlementEnabled: boolean;
   chainBroadcastMode: "pnn";
   pnnEndpoints: string[];
+  chainTrustMode: PnnChainTrustMode;
+  verificationAuthorities: { trustDomain: string; endpoints: string[] }[];
+  requiredAuthorities: number;
   allowInsecureLoopback: boolean;
   pnnTimeoutMs: number;
   pnnAttempts: number;
@@ -59,6 +66,7 @@ export interface GatewayConfig {
   hashChainOrigin?: string;
   hashChainProxyToken?: string;
   hashChainEnabled: boolean;
+  hashChainPoolSize: number;
 }
 
 export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
@@ -133,6 +141,20 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
   const allowInsecureLoopback = bool(env.KASPA_X402_ALLOW_INSECURE_LOOPBACK ?? "false",
     "KASPA_X402_ALLOW_INSECURE_LOOPBACK");
   const endpoints = pnnEndpoints(env.KASPA_X402_PNN_ENDPOINTS ?? "", allowInsecureLoopback);
+  const hashChainEnabled = bool(env.KASPA_X402_HASH_CHAIN_ENABLED ?? "false", "KASPA_X402_HASH_CHAIN_ENABLED");
+  const mode = env.KASPA_X402_CHAIN_TRUST_MODE;
+  if ((enabled || hashChainEnabled) && !mode) throw new Error("KASPA_X402_CHAIN_TRUST_MODE is required");
+  if (mode !== undefined && mode !== "trusted-single-source" && mode !== "independent-corroboration")
+    throw new Error("KASPA_X402_CHAIN_TRUST_MODE is invalid");
+  const chainTrustMode = mode ?? "trusted-single-source";
+  const verificationAuthorities = chainTrustMode === "independent-corroboration"
+    ? parseVerificationAuthorities(env.KASPA_X402_PNN_VERIFICATION_AUTHORITIES, allowInsecureLoopback)
+    : [];
+  const requiredAuthorities = chainTrustMode === "independent-corroboration"
+    ? uint(env.KASPA_X402_CHAIN_REQUIRED_AUTHORITIES ?? "", "KASPA_X402_CHAIN_REQUIRED_AUTHORITIES", 2, 8)
+    : 1;
+  if (chainTrustMode === "independent-corroboration" && verificationAuthorities.length < requiredAuthorities)
+    throw new Error("independent chain-evidence authorities are insufficient");
   if (chainBroadcastMode === "pnn" && endpoints.length === 0) {
     throw new Error(
       "KASPA_X402_PNN_ENDPOINTS is required when KASPA_X402_CHAIN_BROADCAST_MODE=pnn",
@@ -152,7 +174,8 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     );
   }
   return {
-    hashChainEnabled: bool(env.KASPA_X402_HASH_CHAIN_ENABLED ?? "false", "KASPA_X402_HASH_CHAIN_ENABLED"),
+    hashChainEnabled,
+    hashChainPoolSize: uint(env.KASPA_X402_HASH_CHAIN_POOL_SIZE ?? "1", "KASPA_X402_HASH_CHAIN_POOL_SIZE", 1, 16),
     ...(env.KASPA_X402_HASH_CHAIN_ORIGIN?.trim() ? {
       hashChainOrigin: hashChainOrigin(env.KASPA_X402_HASH_CHAIN_ORIGIN),
       hashChainProxyToken: env.KASPA_X402_HASH_CHAIN_PROXY_TOKEN?.trim(),
@@ -220,6 +243,9 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
     chainBroadcastMode,
     ...(boundedPnnWebSocketFactory ? { boundedPnnWebSocketFactory } : {}),
     pnnEndpoints: endpoints,
+    chainTrustMode,
+    verificationAuthorities,
+    requiredAuthorities,
     allowInsecureLoopback,
     pnnTimeoutMs: uint(
       env.KASPA_X402_PNN_TIMEOUT_MS ?? "15000",
@@ -316,6 +342,32 @@ function pnnEndpoints(value: string, allowInsecureLoopback: boolean): string[] {
       throw new Error("KASPA_X402_PNN_ENDPOINTS entries are too long");
     }
     return trustedNodeUrl(entry, "pnn", allowInsecureLoopback).href;
+  });
+}
+
+function parseVerificationAuthorities(value: string | undefined, allowInsecureLoopback: boolean) {
+  let input: unknown;
+  try { input = JSON.parse(value ?? ""); }
+  catch { throw new Error("KASPA_X402_PNN_VERIFICATION_AUTHORITIES must be JSON"); }
+  if (!Array.isArray(input) || input.length < 2 || input.length > 8)
+    throw new Error("independent chain-evidence authorities must include at least two trust domains");
+  const domains = new Set<string>();
+  const urls = new Set<string>();
+  return input.map((item) => {
+    if (!item || typeof item !== "object" || Array.isArray(item)) throw new Error("invalid chain-evidence authority");
+    const authority = item as Record<string, unknown>;
+    if (typeof authority.trustDomain !== "string" || !/^[a-z0-9_-]{1,64}$/.test(authority.trustDomain) ||
+      domains.has(authority.trustDomain) || !Array.isArray(authority.endpoints) ||
+      authority.endpoints.length < 1 || authority.endpoints.some((endpoint) => typeof endpoint !== "string")) {
+      throw new Error("invalid chain-evidence authority");
+    }
+    domains.add(authority.trustDomain);
+    const endpoints = pnnEndpoints(authority.endpoints.join(","), allowInsecureLoopback);
+    for (const endpoint of endpoints) {
+      if (urls.has(endpoint)) throw new Error("verification authorities share an endpoint");
+      urls.add(endpoint);
+    }
+    return { trustDomain: authority.trustDomain, endpoints };
   });
 }
 

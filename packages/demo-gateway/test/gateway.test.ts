@@ -50,6 +50,7 @@ const KIP10_ADDRESS = addressForScriptPublicKey(
 
 const BASE_ENV: Omit<GatewayEnv, "GATEWAY_STATE"> = {
   KASPA_X402_GATEWAY_ENABLED: "true",
+  KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
   KASPA_X402_NETWORK: "kaspa:testnet-10",
   KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
   KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
@@ -189,6 +190,26 @@ describe("gateway canary", () => {
         },
       },
     ]);
+  });
+
+  it("keeps exact and batch offers available while a hash-chain head needs rotation", async () => {
+    const storage = new FakeStorage();
+    const env: GatewayEnv = { ...BASE_ENV,
+      KASPA_X402_HASH_CHAIN_ENABLED: "true",
+      KASPA_X402_ADMIN_TOKEN: "test-hash-chain-admin-token",
+      KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: "true",
+      GATEWAY_STATE: fakeNamespace(storage, {
+        hashChainRequest: async () => Response.json({ available: false, phase: "needsRotation", readyHeads: 0 }),
+      }),
+    };
+    stubCanaryFetches();
+    const headStatus = await requestJson(env, "/hash-chain/status");
+    expect(headStatus.body).toMatchObject({ available: false, phase: "needsRotation" });
+    for (const route of ["/exact", "/batch"]) {
+      const response = await handleGatewayRequest(workerRequest(`https://demo.kaspa-x402.org${route}`), env, fakeContext());
+      expect(response.status).toBe(402);
+      expect(response.headers.has(PAYMENT_REQUIRED_HEADER)).toBe(true);
+    }
   });
 
   it("skips protected-route canaries when the gateway is disabled", async () => {

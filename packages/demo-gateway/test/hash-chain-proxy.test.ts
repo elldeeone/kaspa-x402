@@ -11,6 +11,7 @@ function workerRequest(input: RequestInfo | URL, init?: RequestInit): Request {
 
 const env: GatewayEnv = {
   KASPA_X402_GATEWAY_ENABLED: "true",
+  KASPA_X402_CHAIN_TRUST_MODE: "trusted-single-source",
   KASPA_X402_CHAIN_BROADCAST_MODE: "pnn",
   KASPA_X402_PNN_ENDPOINTS: "wss://pnn.example.test",
   KASPA_X402_HASH_CHAIN_ORIGIN: "https://issuer.example.test",

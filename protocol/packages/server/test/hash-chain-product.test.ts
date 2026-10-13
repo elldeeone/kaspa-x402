@@ -45,7 +45,12 @@ describe("native-KAS hash-chain x402 product path", () => {
     let claimEligible = true;
     const issuer = await HashChainGrantIssuer.open({
       databasePath: path.join(folder, "grants.sqlite"), encryptionKey: randomBytes(32),
-      canClaim: () => claimEligible,
+      admissionPolicy: { maxGrantsPerClaimant: 100, windowSeconds: 86_400,
+        preflight: () => claimEligible,
+        resolveFundingOutpoint: async (claim) => {
+          if (!claimEligible) throw new Error("payer is ineligible for grant");
+          return { txid: claim.grantId, index: 0 };
+        } },
     });
     try {
       const chain = generateHashChainBorrowGrants(2);

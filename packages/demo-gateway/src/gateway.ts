@@ -1,4 +1,5 @@
 import { PnnChainEvidence, type PnnEvidenceRecord } from "@kaspa-x402/adapters";
+import { configuredPnnClient } from "./pnn-trust.js";
 import {
   bytesToHex,
   KASPA_X402_RESOURCE_BUDGET,
@@ -46,7 +47,7 @@ import {
 import { RemoteGatewayState } from "./remote-state.js";
 import { HASH_CHAIN_ROUTES, HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
 import { routeHashChainRequest, hostedHashChainSupportedKinds, hashChainStub } from "./hash-chain-routing.js";
-import type { HashChainHeadRegistration } from "./hash-chain-service.js";
+import type { HashChainHeadRegistration, HashChainOwnerRecovery } from "./hash-chain-service.js";
 import {
   DurableGatewayLockManager,
   type GatewayCanaryCheck,
@@ -611,10 +612,10 @@ export async function runGatewayCanary(
 
   checks.push(
     await checked("kaspa-chain", async () => {
-      const chain = await new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory }).health();
+      const chain = await configuredPnnClient(config).health();
       if (config.enabled)
         await new PnnChainEvidence(
-          new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory }),
+          configuredPnnClient(config),
           new ScriptAddressBook(), state,
         ).getVirtualDaaScore();
       return {
@@ -834,7 +835,7 @@ async function createGateway(
   signal?.throwIfAborted();
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
-  const pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints, timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts, allowInsecureLoopback: config.allowInsecureLoopback, boundedWebSocketFactory: config.boundedPnnWebSocketFactory });
+  const pnn = configuredPnnClient(config);
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
   const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore(signal));
   signal?.throwIfAborted();
@@ -1214,7 +1215,9 @@ function healthResponse(config: GatewayConfig): Response {
       hostedExactSettlementEnabled: config.hostedExactSettlementEnabled,
       exactProfile: config.exactProfile,
       chainBroadcastMode: config.chainBroadcastMode,
-        chainEvidenceSource: "pnn",
+      chainEvidenceSource: "pnn",
+      chainTrustMode: config.chainTrustMode,
+      chainEvidenceAuthorities: config.requiredAuthorities,
     },
     { headers: corsHeaders(config) },
   );
@@ -1232,6 +1235,10 @@ async function hashChainAdminResponse(request: Request, url: URL, config: Gatewa
     if (url.pathname === "/admin/hash-chain/register" && request.method === "POST") {
       const input = await readRequestJsonWithLimit<HashChainHeadRegistration>(request, MAX_ADMIN_JSON_BYTES, "hash-chain head");
       return reply({ ok: true, head: await hashChainStub(env).registerHashChainHead(input) });
+    }
+    if (url.pathname === "/admin/hash-chain/recover" && request.method === "POST") {
+      const input = await readRequestJsonWithLimit<HashChainOwnerRecovery>(request, MAX_ADMIN_JSON_BYTES, "hash-chain owner recovery");
+      return reply({ ok: true, head: await hashChainStub(env).recoverHashChainHead(input) });
     }
     return reply({ ok: false, error: "not_found" }, 404);
   } catch {
@@ -1864,5 +1871,6 @@ function indexBody(url: URL): unknown {
 
 function errorMessage(error: unknown): string {
   if (error instanceof KaspaX402Error) return toX402ErrorReason(error.code);
-  return error instanceof Error ? error.message : String(error);
+  return (error instanceof Error ? error.message : String(error))
+    .replace(/(?:wss?|https?):\/\/[^\s"'<>]+/gi, "[endpoint]");
 }

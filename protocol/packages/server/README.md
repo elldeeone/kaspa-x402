@@ -102,10 +102,40 @@ for the distinction from published RC2.
 not exposed by the Worker-compatible package root. Connect it to the candidate
 hash-chain x402 profile through `DirectModeServer`, and route the advertised
 grant claim URL to `handleHashChainGrantClaimHttp`. Create it with a private
-SQLite file, a caller-managed 32-byte encryption key, and a synchronous,
-pure/idempotent payer eligibility callback. Apply rate limits through challenge
-admission and the shared public boundary, not side effects in `canClaim`. Supply
-the same host-authenticated `TrustedSecurityContext` used to issue the challenge
+SQLite file, a caller-managed 32-byte encryption key, and a structured
+`admissionPolicy`. The policy sets a durable claimant quota/window and resolves
+current, sufficiently funded payer-controlled outpoints before disclosure:
+
+```ts
+import { HashChainGrantIssuer, type HashChainGrantIssuerOptions } from "@kaspa-x402/server/hash-chain-grants";
+
+type ResolveFundingOutpoint = HashChainGrantIssuerOptions["admissionPolicy"]["resolveFundingOutpoint"];
+
+async function openGrantIssuer(
+  databasePath: string,
+  encryptionKey: Uint8Array,
+  resolveFundingOutpoint: ResolveFundingOutpoint,
+) {
+  return HashChainGrantIssuer.open({
+    databasePath,
+    encryptionKey,
+    admissionPolicy: {
+      maxGrantsPerClaimant: 1,
+      windowSeconds: 86_400,
+      resolveFundingOutpoint,
+    },
+  });
+}
+```
+
+The host's `resolveFundingOutpoint(claim, grant, claimantId, signal)` must use
+trusted chain evidence to return one or more eligible outpoints controlled by
+the signed payer key; it must not trust a payer-supplied outpoint. The issuer
+chooses an unused outpoint and atomically commits its durable tombstone and
+the encrypted assignment before returning any private key. The claimant and
+host admission quotas use the same transaction and persist across restart.
+Apply request rate limits through challenge admission and the shared public
+boundary. Supply the same host-authenticated `TrustedSecurityContext` used to issue the challenge
 with each claim handler call; claims from a different caller are rejected. Store
 the encryption key separately from the
 database and back it up; losing it loses outstanding grants. See the
@@ -119,6 +149,9 @@ reused replacement chain, the issuer records the new head as `needsRotation`
 and does not release that chain.
 Opening a database created by an earlier local prototype backfills known keys
 and quarantines its live heads until owner rotation.
+Existing schema-v2 assignments without admission fields remain recoverable;
+their payer key cannot qualify a new grant because its original funding
+outpoint is unknown.
 
 The issuer checks each one-time private key and reverse hash link before
 installation. It commits one payer's signed claim and an encrypted delivery
@@ -144,6 +177,11 @@ an owner rotation is accepted. An absent current head pauses issuance; a fresh
 selected exact proof for the assigned grant can advance it from hold. A reorg
 or unknown restored head otherwise stays on hold for reconciliation. An
 accepted owner sweep retires the head and stops further issuance.
+Hosts may install multiple ready heads with `installHead(input, maxActiveHeads)`
+so another ready head can serve while an assigned one awaits payment or
+rotation. An abandoned disclosed grant remains tombstoned; restore that head
+through owner-signed rotation and selected-chain observation via
+`recoverOwnerRotationAfterSelectedObservation`, then install fresh grants.
 
 The server locally authenticates and durably pins the first candidate
 transaction to its assigned `(head version, grant, challenge, request, payer)`

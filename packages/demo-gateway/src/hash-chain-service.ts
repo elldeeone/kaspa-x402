@@ -2,22 +2,34 @@ import {
   DirectModeServer,
   handleHashChainGrantClaimHttp,
 } from "@kaspa-x402/server";
-import type { HashChainGrantIssuer } from "@kaspa-x402/server/hash-chain-issuer";
-import { KaspaPnnClient, NativeAddressCodec, ScriptAddressBook } from "@kaspa-x402/adapters";
+import type { HashChainGrantIssuer, HashChainPublicGrant } from "@kaspa-x402/server/hash-chain-issuer";
+import { NativeAddressCodec, ScriptAddressBook, type PolicySelectedPnnClient } from "@kaspa-x402/adapters";
 import type { GatewayConfig } from "./config.js";
 import { HASH_CHAIN_CALLER_HEADER } from "./hash-chain-proxy.js";
 import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import { DurableGatewayLockManager, type GatewayStateClient } from "./state.js";
 import { openDurableHashChainIssuer, type HashChainStorage } from "./hash-chain-storage.js";
 import { HashChainPnnView } from "./hash-chain-pnn-view.js";
+import { configuredPnnClient } from "./pnn-trust.js";
+import { decodePaymentSignatureHeader } from "@kaspa-x402/core";
+import type { ChainCheckpoint } from "@kaspa-x402/core";
+import type { HashChainBorrowGrant } from "@kaspa-x402/covenant";
+import { readRequestJsonWithLimit } from "./gateway.js";
+import type { HashChainGrantClaim } from "@kaspa-x402/server/hash-chain-issuer";
 
 export type HashChainHeadRegistration = Parameters<HashChainGrantIssuer["installHead"]>[0];
+export interface HashChainOwnerRecovery {
+  headId: string;
+  transactionId: string;
+  fromCheckpoint: ChainCheckpoint;
+  grants: HashChainBorrowGrant[];
+}
 
-/** One demo head in the existing Durable Object, using the shared payment ledger. */
+/** Optional ready-head pool in the existing Durable Object and shared ledger. */
 export class HashChainDemoService {
   readonly issuer: HashChainGrantIssuer;
   readonly #chain: HashChainPnnView;
-  readonly #pnn: KaspaPnnClient;
+  readonly #pnn: PolicySelectedPnnClient;
   readonly #lock: DurableGatewayLockManager;
 
   constructor(
@@ -25,41 +37,49 @@ export class HashChainDemoService {
     private readonly state: GatewayStateClient,
     private readonly config: GatewayConfig,
   ) {
-    this.issuer = openDurableHashChainIssuer(storage);
-    this.#pnn = new KaspaPnnClient({ endpoints: config.pnnEndpoints,
-      timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts,
-      allowInsecureLoopback: config.allowInsecureLoopback,
-      boundedWebSocketFactory: config.boundedPnnWebSocketFactory });
+    this.issuer = openDurableHashChainIssuer(storage, {
+      maxGrantsPerClaimant: 1,
+      windowSeconds: 86_400,
+      resolveFundingOutpoint: async (claim, grant) => {
+        const challenge = this.issuer.getChallenge(grant.headId, claim.challengeId);
+        if (!challenge) throw new Error("grant challenge is unavailable");
+        return this.#chain.qualifyingFundingOutpoints(
+          claim, (BigInt(challenge.quotedAmount) + BigInt(this.config.claimFeeSompi)).toString());
+      },
+    });
+    this.#pnn = configuredPnnClient(config);
     this.#chain = new HashChainPnnView(this.#pnn, storage);
     this.#lock = new DurableGatewayLockManager(state);
   }
 
-  current() {
-    const row = this.storage.sql.exec<{ head_id: string | null; pay_to: string | null }>(
-      "SELECT head_id, pay_to FROM hash_chain_demo WHERE id = 1",
-    ).one();
-    return row.head_id ? { ...this.issuer.getCurrent(row.head_id), payTo: row.pay_to! } : undefined;
+  current(): (HashChainPublicGrant & { payTo: string }) | undefined {
+    const heads = this.issuer.listHeads().filter((head) => head.phase !== "retired");
+    const selected = heads.find((head) => head.phase === "ready") ?? heads[0];
+    return selected ? { ...selected,
+      payTo: addressForScriptPublicKey(selected.head.scriptPublicKey, "kaspa:testnet-10") } : undefined;
   }
 
-  async register(input: HashChainHeadRegistration) {
+  async register(input: HashChainHeadRegistration): Promise<HashChainPublicGrant> {
     if (input.network !== "kaspa:testnet-10") throw new Error("Use a Testnet-10 head");
     if (!Array.isArray(input.grants) || input.grants.length > 64) throw new Error("Demo head requires 1 to 64 grants");
-    const payTo = addressForScriptPublicKey(input.head.scriptPublicKey, "kaspa:testnet-10");
     const actual = await this.#currentUtxo(input.head.outpoint, input.head.scriptPublicKey);
     if (!actual || actual.amount !== input.head.amount || actual.scriptPublicKey !== input.head.scriptPublicKey ||
       actual.covenantId !== input.head.covenantId) throw new Error("Funded head does not match Testnet-10 UTXO evidence");
-    return this.storage.transactionSync(() => {
-      const previous = this.current();
-      if (previous?.phase === "assigned") this.issuer.markAbandoned(previous.headId);
-      const head = this.issuer.installHead(input);
-      this.storage.sql.exec("UPDATE hash_chain_demo SET head_id = ?, pay_to = ? WHERE id = 1", input.headId, payTo);
-      return head;
-    });
+    return this.issuer.installHead(input, this.config.hashChainPoolSize);
+  }
+
+  async recover(input: HashChainOwnerRecovery): Promise<HashChainPublicGrant> {
+    return this.issuer.recoverOwnerRotationAfterSelectedObservation(
+      input.headId, input.transactionId, input.grants,
+      { getSelectedTransaction: (id, { signal } = {}) =>
+        this.#chain.selectedOwnerRotation(id, input.fromCheckpoint, signal) },
+    );
   }
 
   async fetch(request: Request): Promise<Response> {
     const path = new URL(request.url).pathname;
-    const current = this.current();
+    let current = this.current();
+    const allHeads = this.issuer.listHeads();
     if (path === "/hash-chain/status" || path === "/hash-chain/supported") {
       const available = !!current && current.phase === "ready" &&
         !!await this.#currentUtxo(current.head.outpoint, current.head.scriptPublicKey, request.signal);
@@ -70,7 +90,29 @@ export class HashChainDemoService {
           transactionEncoding: "kaspa-sdk-safe-json-v2.0.0" },
       }] : [] });
       return json({ available, phase: current?.phase ?? "unconfigured", headVersion: current?.headVersion,
-        headAmount: current?.head.amount, network: "kaspa:testnet-10" });
+        headAmount: current?.head.amount, network: "kaspa:testnet-10",
+        readyHeads: allHeads.filter((head) => head.phase === "ready").length,
+        capacity: this.config.hashChainPoolSize, trustMode: this.config.chainTrustMode });
+    }
+    if (path === "/hash-chain/grant") {
+      let claim: HashChainGrantClaim;
+      try { claim = await readRequestJsonWithLimit<HashChainGrantClaim>(request.clone(), 8192, "hash-chain grant claim"); }
+      catch { return json({ error: "grant_claim_rejected" }, 400); }
+      const match = allHeads.find((head) =>
+        head.grantId === claim.grantId && !!this.issuer.getChallenge(head.headId, claim.challengeId));
+      if (match) current = { ...match,
+        payTo: addressForScriptPublicKey(match.head.scriptPublicKey, "kaspa:testnet-10") };
+    } else {
+      const header = request.headers.get("payment-signature");
+      if (header) {
+        try {
+          const payment = decodePaymentSignatureHeader(header);
+          const headId = payment.accepted.scheme === "exact" ? payment.accepted.extra.headId : undefined;
+          const match = allHeads.find((head) => head.headId === headId);
+          if (match) current = { ...match,
+            payTo: addressForScriptPublicKey(match.head.scriptPublicKey, "kaspa:testnet-10") };
+        } catch { /* The server returns the validated payment error. */ }
+      }
     }
     if (!current) return json({ error: "hash_chain_unavailable" }, 503);
     const book = new ScriptAddressBook();

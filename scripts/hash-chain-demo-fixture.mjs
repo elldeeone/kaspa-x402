@@ -26,6 +26,7 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
   let broadcasts = 0;
   let protectedCalls = 0;
   let fundingIndex = 1;
+  let latestFundingOutpoint;
   const origins = new Map();
   const selected = new Map();
   const chainView = {
@@ -37,7 +38,11 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
     issuer?.close();
     await payments?.close();
     issuer = await HashChainGrantIssuer.open({ databasePath: path.join(folder, 'grants.sqlite'), encryptionKey,
-      canClaim: () => true, now: () => new Date(now) });
+      admissionPolicy: { maxGrantsPerClaimant: 100, windowSeconds: 86_400,
+        resolveFundingOutpoint: async () => {
+          if (!latestFundingOutpoint) throw new Error('payer funding is unavailable');
+          return latestFundingOutpoint;
+        } }, now: () => new Date(now) });
     payments = await openHashChainDemoStore(path.join(folder, 'payments.sqlite'));
     handler = createHashChainDemoHandler({ issuer, headId: HEAD_ID, publicBaseUrl,
       store: payments.store,
@@ -75,6 +80,7 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
     get protectedCalls() { return protectedCalls; },
     funding() {
       const transactionId = String(fundingIndex++).padStart(64, '0');
+      latestFundingOutpoint = { txid: transactionId, index: 0 };
       origins.set(`${transactionId}:0`, { amount: '50000000', scriptPublicKey: payerScript, covenantId: null });
       return { entries: [{ outpoint: { transactionId, index: 0 }, amount: '50000000', covenantId: null }] };
     },
@@ -104,6 +110,7 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
       return response;
     },
     async abandonAndRotate() {
+      fixture.funding();
       const response = await fixture.fetch(`${publicBaseUrl}/hash-chain/report?abandon=1`);
       const { accepted, trustedSecurityContext } = readHashChainQuote(response);
       // Use the same request hashing as the real client for a signed grant claim.
@@ -145,7 +152,12 @@ export async function createHashChainDemoFixture(publicBaseUrl) {
       const replacement = generateHashChainBorrowGrants(2);
       const successor = { ...before, outpoint: { txid: '99'.repeat(32), index: 0 },
         guard: replacement.initialGuard, scriptPublicKey: hashChainHeadScriptPublicKey({ ownerPublicKey: owner, guard: replacement.initialGuard }) };
-      issuer.recordAcceptedRotation(HEAD_ID, { finality: 'accepted', predecessor: before.outpoint, successor }, replacement.grants);
+      await issuer.recoverOwnerRotationAfterSelectedObservation(HEAD_ID, successor.outpoint.txid,
+        replacement.grants, { getSelectedTransaction: async () => ({
+          transactionId: successor.outpoint.txid, finality: 'accepted', spentHead: before.outpoint,
+          successor: { amount: successor.amount, scriptPublicKey: successor.scriptPublicKey,
+            covenantId: COVENANT_ID, authorizingInput: 0 },
+        }) });
       origins.set(`${successor.outpoint.txid}:0`, { amount: successor.amount, scriptPublicKey: successor.scriptPublicKey, covenantId: COVENANT_ID });
     },
     async close() { await payments.close(); issuer.close(); rmSync(folder, { recursive: true, force: true }); },
