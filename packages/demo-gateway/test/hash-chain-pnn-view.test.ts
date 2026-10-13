@@ -86,7 +86,7 @@ describe("hash-chain PNN grant eligibility", () => {
     const view = new HashChainPnnView(
       selectPnnChainEvidenceClient({ mode: "trusted-single-source", verification: raw }),
       { sql: { exec(query: string, ...args: unknown[]) {
-      if (query.startsWith("INSERT OR IGNORE INTO hash_chain_origin_snapshots"))
+      if (query.startsWith("INSERT OR REPLACE INTO hash_chain_origin_snapshots"))
         snapshots.set(String(args[0]), String(args[1]));
       return { toArray: () => query.startsWith("SELECT snapshot") && snapshots.has(String(args[0]))
         ? [{ snapshot: snapshots.get(String(args[0]))! }] : [] };
@@ -144,7 +144,7 @@ describe("hash-chain PNN grant eligibility", () => {
       await expect(view.currentUtxo(HEAD, HEAD_SCRIPT, undefined, CLAIM, "21000000"))
         .rejects.toThrow("payer has no eligible funding UTXO");
       expect(exec.mock.calls.some((call) => String(call[0]).includes(
-        "INSERT OR IGNORE INTO hash_chain_origin_snapshots",
+        "INSERT OR REPLACE INTO hash_chain_origin_snapshots",
       ))).toBe(false);
     }
   });
@@ -157,7 +157,7 @@ describe("hash-chain PNN grant eligibility", () => {
     await expect(view.currentUtxo(HEAD, HEAD_SCRIPT, undefined, CLAIM, "21000000"))
       .resolves.toMatchObject({ outpoint: HEAD });
     expect(exec.mock.calls.some((call) => String(call[0]).includes(
-      "INSERT OR IGNORE INTO hash_chain_origin_snapshots",
+      "INSERT OR REPLACE INTO hash_chain_origin_snapshots",
     ))).toBe(true);
   });
 });

@@ -1251,14 +1251,15 @@ function migrateLegacyGrantAdmissions(db: HashChainSqlDatabase, key: Buffer): vo
   const heads = db.prepare("SELECT head_id, sealed FROM hash_chain_grants").all() as { head_id: string; sealed: Uint8Array }[];
   const legacy = db.prepare("INSERT OR IGNORE INTO hash_chain_legacy_claimants(claimant_fingerprint) VALUES(?)");
   const reserve = db.prepare("INSERT OR IGNORE INTO hash_chain_admissions(outpoint_fingerprint, claimant_fingerprint, admission_fingerprint, disclosed_at) VALUES(?, ?, ?, ?)");
+  const claimantFingerprint = (payerPublicKey: string) => createHmac("sha256", key)
+    .update(`claimant:${hex32(payerPublicKey, "legacy payer public key")}`).digest("hex");
   for (const row of heads) {
     const state = JSON.parse(unseal(key, row.head_id, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
     const assignment = state.assignment;
     if (!assignment || assignment.claimantId !== undefined || assignment.qualifyingFundingOutpoint !== undefined)
       continue;
-    const claimantFingerprint = createHmac("sha256", key)
-      .update(`claimant:${hex32(assignment.payerPublicKey, "legacy payer public key")}`).digest("hex");
-    legacy.run(claimantFingerprint);
+    const fingerprint = claimantFingerprint(assignment.payerPublicKey);
+    legacy.run(fingerprint);
     const challenge = state.challenges.find((item) => item.challengeId === assignment.challengeId);
     if (!challenge) continue;
     const disclosedAt = Date.parse(assignment.deliveryCommittedAt);
@@ -1267,7 +1268,14 @@ function migrateLegacyGrantAdmissions(db: HashChainSqlDatabase, key: Buffer): vo
       .update(`admission:${challengeAdmissionKey(row.head_id, challenge)}`).digest("hex");
     const outpointFingerprint = createHmac("sha256", key)
       .update(`legacy:${row.head_id}:${assignment.grantId}`).digest("hex");
-    reserve.run(outpointFingerprint, claimantFingerprint, admissionFingerprint, disclosedAt);
+    reserve.run(outpointFingerprint, fingerprint, admissionFingerprint, disclosedAt);
+  }
+  const deliveries = db.prepare("SELECT head_id, grant_id, sealed FROM hash_chain_deliveries").all() as
+    { head_id: string; grant_id: string; sealed: Uint8Array }[];
+  for (const row of deliveries) {
+    const record = JSON.parse(unseal(key, `${row.head_id}:${row.grant_id}`, Buffer.from(row.sealed)).toString("utf8")) as HashChainGrantDeliveryRecord;
+    if (record.claimantId === undefined || record.qualifyingFundingOutpoint === undefined)
+      legacy.run(claimantFingerprint(record.payerPublicKey));
   }
 }
 

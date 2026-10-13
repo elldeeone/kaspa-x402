@@ -1,5 +1,6 @@
 import type { AcceptedTransactionEvidence, ChainCheckpoint, FundingOutpoint } from "@kaspa-x402/core";
 import {
+  authenticateHashChainPaymentLocally,
   HashChainExactTransactionVerifier,
   type ExactTransactionVerificationRequest,
   type ExactTransactionVerifier,
@@ -48,16 +49,17 @@ export class HashChainPnnView implements ExactTransactionVerifier {
         BigInt(item.amount) >= BigInt(requiredPayerFunding))) {
         throw new Error("payer has no eligible funding UTXO");
       }
-      // A repeated delivery must retain the checkpoint from before the spend.
-      this.storage.sql.exec("INSERT OR IGNORE INTO hash_chain_origin_snapshots(challenge_id, snapshot) VALUES(?, ?)",
-        claim.challengeId, JSON.stringify(snapshot));
+      // The service supplies a claim only before assignment; refresh that payer's pre-spend snapshot.
+      this.storage.sql.exec("INSERT OR REPLACE INTO hash_chain_origin_snapshots(challenge_id, snapshot) VALUES(?, ?)",
+        claimantSnapshotKey(claim.challengeId, claim.payerPublicKey), JSON.stringify(snapshot));
     }
     return matching[0] ?? null;
   }
 
   qualifyingFundingOutpoints(claim: HashChainGrantClaim, requiredAmount: string) {
     const row = this.storage.sql.exec<{ snapshot: string }>(
-      "SELECT snapshot FROM hash_chain_origin_snapshots WHERE challenge_id = ?", claim.challengeId,
+      "SELECT snapshot FROM hash_chain_origin_snapshots WHERE challenge_id = ?",
+      claimantSnapshotKey(claim.challengeId, claim.payerPublicKey),
     ).toArray()[0];
     if (!row) throw new Error("payer funding snapshot is unavailable");
     const snapshot = JSON.parse(row.snapshot) as Snapshot;
@@ -71,11 +73,23 @@ export class HashChainPnnView implements ExactTransactionVerifier {
   }
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest) {
+    const challengeId = request.hashChainHead?.challengeId ?? "";
+    const payerPublicKey = request.hashChainHead
+      ? authenticateHashChainPaymentLocally(request).payerPublicKey : "";
     const row = this.storage.sql.exec<{ snapshot: string }>(
       "SELECT snapshot FROM hash_chain_origin_snapshots WHERE challenge_id = ?",
-      request.hashChainHead?.challengeId ?? "",
+      claimantSnapshotKey(challengeId, payerPublicKey),
     ).toArray()[0];
-    const snapshot: Snapshot | undefined = row ? JSON.parse(row.snapshot) : undefined;
+    let snapshot: Snapshot | undefined = row ? JSON.parse(row.snapshot) : undefined;
+    if (!snapshot && payerPublicKey) {
+      const legacy = this.storage.sql.exec<{ snapshot: string }>(
+        "SELECT snapshot FROM hash_chain_origin_snapshots WHERE challenge_id = ?", challengeId,
+      ).toArray()[0];
+      const oldSnapshot: Snapshot | undefined = legacy ? JSON.parse(legacy.snapshot) : undefined;
+      if (oldSnapshot?.utxos.some((utxo) =>
+        utxo.covenantId === null && utxo.scriptPublicKey === `000020${payerPublicKey}ac`))
+        snapshot = oldSnapshot;
+    }
     return new HashChainExactTransactionVerifier({
       getAcceptedOrigins: async (outpoints, { signal } = {}) => {
         signal?.throwIfAborted();
@@ -122,6 +136,10 @@ export class HashChainPnnView implements ExactTransactionVerifier {
     ).toArray()[0];
     return row ? JSON.parse(row.acceptance) : undefined;
   }
+}
+
+function claimantSnapshotKey(challengeId: string, payerPublicKey: string): string {
+  return `${challengeId.toLowerCase()}:${payerPublicKey.toLowerCase()}`;
 }
 
 function sameOutpoint(left: FundingOutpoint, right: FundingOutpoint): boolean {
