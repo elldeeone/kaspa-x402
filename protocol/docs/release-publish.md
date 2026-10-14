@@ -28,6 +28,42 @@ stable `1.0.0` release. It is not published on the standards site.
    npm run validate:release
    ```
 
+   For an SDK-only release, run `npm --prefix protocol run validate:release`
+   instead. It performs protocol verification, independent covenant reproduction
+   and pinned consensus validation without building or deploying demo hosts.
+
+   Covenant reproduction requires Cargo/rustc 1.95.0. The checker authenticates
+   the pinned compiler's commit, trees and blobs, exports them into a private
+   directory, and builds with the committed lockfile using `--locked`. Mutable
+   checkout files, ignored configuration, hidden-index changes, user Cargo
+   configuration and inherited build overrides are not used. The build uses a
+   fresh Cargo home and target directory; dependency downloads and compilation
+   are therefore required on each invocation. Installed Git, Rust and native
+   build tools remain trusted host inputs.
+
+   `check:covenant-fixtures` independently compiles both escrow-v5 and head-v2,
+   checks constructor/state variants, and compares both fixture JSON/ABI and
+   generated runtime modules without writing them. Its JSON output records the
+   compiler tree, source/dependency manifest hashes, toolchain, compiler binary
+   hash and compilation hashes. Artifact identity metadata retains the historical
+   reproduction command; this new receipt identifies the actual isolated build.
+
+   Local `verify` uses explicitly labelled internal consistency checks. It is
+   not the independent compiler or release gate. Do not substitute it for
+   `validate:release`.
+
+   To retain the adversarial CLI proof and real compiler reproduction:
+
+   ```sh
+   SILVERSCRIPT_DIR=/path/to/silverscript \
+     npm --prefix protocol run proof:covenant-compiler -- \
+       --out /private/proof-directory/compiler-proof.json --real
+   ```
+
+   The report distinguishes controlled external-compiler isolation cases from
+   the real pinned compiler rebuild. Protect the output directory and retain
+   the report with the candidate source fingerprints.
+
 4. Run a fresh funded Testnet-10 proof against that exact commit. Keep secrets
    and raw wallet state outside Git.
    RC2 funded and hosted proof cannot stand in for a run of escrow-v5/head-v2.
