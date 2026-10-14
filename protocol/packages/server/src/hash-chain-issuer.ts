@@ -281,6 +281,17 @@ export class HashChainGrantIssuer {
       const issuer = new this(db, key, options.admissionPolicy, maxLiveChallengesPerAdmissionKey,
         options.now ?? (() => new Date()), options.transactionSync);
       options.transactionSync(() => {
+        const capacityTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hash_chain_capacity'").get();
+        const policy = capacityTable
+          ? db.prepare("SELECT sealed FROM hash_chain_capacity WHERE id = 1").get()
+          : undefined;
+        const limits = policy ? issuer.readStorageLimits() : options.storageLimits ?? DEFAULT_STORAGE_LIMITS;
+        if (options.storageLimits && stableStringify(limits) !== stableStringify(options.storageLimits)) {
+          throw new Error("grant storage limits differ from the persisted policy; use increaseStorageLimits");
+        }
+        // Migration backfills can grow the file before their final quota check.
+        // Install the physical envelope before any schema or data writes.
+        db.configureStorageCapacity?.(limits.maxBytes);
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_grants (head_id TEXT PRIMARY KEY, sealed BLOB NOT NULL)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_deliveries (head_id TEXT NOT NULL, grant_id TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(head_id, grant_id))");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_payments (transaction_id TEXT PRIMARY KEY, grant_id TEXT NOT NULL UNIQUE, sealed BLOB NOT NULL)");
@@ -309,13 +320,7 @@ export class HashChainGrantIssuer {
         if (schemaVersion === 0) migrateLegacyGrantKeys(db, key);
         if (schemaVersion !== 2) migrateQuotedGrants(db, key);
         migrateLegacyGrantAdmissions(db, key);
-        const policy = db.prepare("SELECT sealed FROM hash_chain_capacity WHERE id = 1").get() as { sealed: Uint8Array } | undefined;
-        if (!policy) issuer.writeStorageLimits(options.storageLimits ?? DEFAULT_STORAGE_LIMITS);
-        const limits = issuer.readStorageLimits();
-        if (options.storageLimits && stableStringify(limits) !== stableStringify(options.storageLimits)) {
-          throw new Error("grant storage limits differ from the persisted policy; use increaseStorageLimits");
-        }
-        db.configureStorageCapacity?.(limits.maxBytes);
+        if (!policy) issuer.writeStorageLimits(limits);
         // Existing stores may be full for admission, but must remain recoverable.
         assertStorageCapacity(issuer.storageUsage(), !policy);
       });
@@ -1118,7 +1123,10 @@ export class HashChainGrantIssuer {
 
   private readStorageLimits(): HashChainGrantStorageLimits {
     const row = this.db.prepare("SELECT sealed FROM hash_chain_capacity WHERE id = 1").get() as { sealed: Uint8Array };
-    const limits = JSON.parse(unseal(this.key, "hash-chain-capacity-v1", Buffer.from(row.sealed)).toString("utf8")) as HashChainGrantStorageLimits;
+    let plaintext: string;
+    try { plaintext = unseal(this.key, "hash-chain-capacity-v1", Buffer.from(row.sealed)).toString("utf8"); }
+    catch { throw new Error("grant database encryption key is wrong"); }
+    const limits = JSON.parse(plaintext) as HashChainGrantStorageLimits;
     validateStorageLimits(limits);
     return limits;
   }

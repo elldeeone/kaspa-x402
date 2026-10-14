@@ -356,6 +356,49 @@ try {
       return { rejectedUpgradeUnchanged: true, provisionedUpgradeHeads: 8, usage: issuer.getStorageUsage() };
     } finally { issuer.close(); }
   });
+  await check("legacy migration writes occur only after the physical ceiling is installed", async () => {
+    const issuer = await open("migration-ceiling", { maxRecords: 10000, maxBytes: 8 * 1024 * 1024 });
+    install(issuer, 750, 16);
+    issuer.close();
+    const db = new DatabaseSync(path.join(temporary, "migration-ceiling.sqlite"));
+    db.exec("DROP TABLE hash_chain_capacity; DELETE FROM hash_chain_seen_keys; PRAGMA user_version = 0");
+    let configured = false, migrationWrites = 0;
+    const unboundedWrites = [];
+    const database = {
+      exec: q => db.exec(q), prepare: q => {
+        const s = db.prepare(q);
+        return { get: (...v) => s.get(...v), all: () => s.all(), run: (...v) => {
+          if (/^(INSERT|UPDATE|DELETE)/.test(q)) {
+            if (!configured) unboundedWrites.push(q.split(" ").slice(0, 4).join(" "));
+            migrationWrites++;
+          }
+          return s.run(...v);
+        } };
+      },
+      configureStorageCapacity: maxBytes => {
+        const size = db.prepare("PRAGMA page_size").get().page_size;
+        const pages = Math.floor((4 * maxBytes + 1024 * 1024) / size);
+        assert.equal(db.prepare(`PRAGMA max_page_count = ${pages}`).get().max_page_count, pages);
+        configured = true;
+      },
+      getSchemaVersion: () => db.prepare("PRAGMA user_version").get().user_version,
+      setSchemaVersion: v => db.exec(`PRAGMA user_version = ${v}`), close: () => db.close(),
+    };
+    let reopened;
+    try {
+      reopened = StorageIssuer.fromStorage({ database, encryptionKey: Buffer.alloc(32, 19),
+        storageLimits: { maxRecords: 10000, maxBytes: 8 * 1024 * 1024 },
+        transactionSync: callback => { db.exec("BEGIN IMMEDIATE"); try { const r = callback(); db.exec("COMMIT"); return r; }
+          catch (e) { db.exec("ROLLBACK"); throw e; } },
+        admissionPolicy: { maxGrantsPerClaimant: 1000, windowSeconds: 86400,
+          resolveFundingOutpoint: async c => ({ txid: c.grantId, index: 0 }) },
+      });
+      assert.ok(migrationWrites >= 16, "legacy migration did not exercise key backfill");
+      assert.deepEqual(unboundedWrites, [], "legacy migration wrote before the physical ceiling was installed");
+      assert.equal(reopened.getCurrent(id(750)).phase, "needsRotation");
+      return { migrationWrites, physicalCeilingBeforeWrites: true };
+    } finally { if (reopened) reopened.close(); else db.close(); }
+  });
   await check("hybrid SDK route falls back to batch when persistent issuer capacity is full", async () => {
     const issuer = await open("fallback", { maxRecords: 1033, maxBytes: 4 * 1024 * 1024 });
     try {
