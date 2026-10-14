@@ -94,7 +94,7 @@ its evidence, not a proposal to upstream every file.
 | Check or use | Dependencies and what it establishes |
 | --- | --- |
 | Local `verify` | Node/npm, Git and this lockfile. TypeScript, tsup, Vitest, Ajv, Noble cryptography and the pinned upstream x402 package are declared in manifests. Tests include malformed transactions, signatures, replay, stale state, reorg evidence and restart behavior. Mocked network results do not prove live acceptance. |
-| SilverScript regeneration | A clean checkout at `3ed973335b59269293564805cc2c58a14595ec03`, Cargo and its compiler dependencies. Set `SILVERSCRIPT_DIR` explicitly. `npm ci` does not install this compiler. |
+| SilverScript reproduction / SDK release | A canonical checkout at `3ed973335b59269293564805cc2c58a14595ec03`, Cargo/rustc 1.95.0 and native build tools. Set `SILVERSCRIPT_DIR`. Authenticated Git objects are compiled in a private snapshot with a fresh Cargo home/target and `--locked`; mutable checkout/config/cache inputs are excluded. `npm ci` does not install the compiler. `check:covenant-fixtures` reproduces both covenants; local `verify` checks only artifact consistency. |
 | Kaspa consensus validation | A canonical Rusty-Kaspa checkout at `01b532e8b553523216471682649693af92f0fd16` (2.1.0), Rust 1.95.0, a C/C++ build toolchain, clang/libclang, CMake and pkg-config. The harness has a committed Cargo lock and verifies the source pin. |
 | REST/PNN integration | An operator-selected TLS node/service with required full transaction, UTXO and selected-chain RPCs. REST rejects redirects. PNN requires a pre-delivery bounded transport; the Node adapter ships one, while direct browser and Worker WebSockets fail closed. PNN currently requires Testnet-10. Persist evidence through the supplied store interface. |
 | Funded Testnet proof | A compatible Kaspa WASM module, node RPC, separately supplied funding credentials and explicit live-run confirmation. See [live proof](docs/live-testnet-proof.md) and [hash-chain proof](docs/hash-chain-live-proof.md). The WASM module is supplied externally; the website's vendored copy is not required. |
@@ -102,13 +102,16 @@ its evidence, not a proposal to upstream every file.
 Examples for the external checks, from this folder:
 
 ```sh
-SILVERSCRIPT_DIR=/absolute/path/to/silverscript npm run check:hash-chain-fixture
+SILVERSCRIPT_DIR=/absolute/path/to/silverscript npm run check:covenant-fixtures
 RUSTUP_TOOLCHAIN=1.95.0 npm run validate:tx-v1-consensus -- --kaspa-root /absolute/path/to/rusty-kaspa
 ```
 
-`npm run check:covenant-fixtures` checks the committed escrow artifact locally;
-`npm run generate:covenant-fixture` recompiles it using `SILVERSCRIPT_DIR` and
-writes the fixture. Paths recorded inside compiler/vector artifacts are relative
+`check:covenant-fixtures` independently compiles escrow-v5 and head-v2 using
+`SILVERSCRIPT_DIR` and compares both fixtures and generated modules without
+writing them. `check:covenant-fixtures:internal` checks only committed artifact
+consistency. `generate:covenant-fixture` recompiles escrow-v5 using
+`SILVERSCRIPT_DIR` and writes its fixture and generated module. Paths recorded
+inside compiler/vector artifacts are relative
 to this protocol folder; their historical bytes and signatures are retained.
 
 Offline proof uses simulated adapters. Adapter restart tests reuse stored

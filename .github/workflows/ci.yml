@@ -13,6 +13,41 @@ permissions:
   contents: read
 
 jobs:
+  covenant-reproduction:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version-file: .node-version
+          cache: npm
+      - uses: actions/checkout@v4
+        with:
+          repository: kaspanet/silverscript
+          ref: 3ed973335b59269293564805cc2c58a14595ec03
+          path: .silverscript
+          persist-credentials: false
+      - name: Install compiler native build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev cmake pkg-config
+      - name: Install pinned compiler toolchain
+        run: rustup toolchain install 1.95.0 --profile minimal
+      - run: npm ci
+      - run: npm --workspace @kaspa-x402/covenant run build
+      - name: Adversarial CLI proof and actual covenant reproduction
+        env:
+          SILVERSCRIPT_DIR: ${{ github.workspace }}/.silverscript
+        run: node protocol/scripts/proof-covenant-compiler-e2e.mjs --out proof-artifacts/covenant-compiler.json --real
+      - name: Retain compiler proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: covenant-compiler-linux
+          path: proof-artifacts/covenant-compiler.json
+          if-no-files-found: error
   windows:
     runs-on: windows-latest
     steps:
