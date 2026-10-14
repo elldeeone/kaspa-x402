@@ -64,6 +64,15 @@ jobs:
         run: npm ci
       - name: Workspace tests
         run: npm test
+      - name: Issuer storage E2E proof
+        run: node protocol/scripts/proof-hash-chain-issuer-storage-e2e.mjs --out proof-artifacts/issuer-storage.json
+      - name: Retain issuer storage proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: issuer-storage-windows
+          path: proof-artifacts/issuer-storage.json
+          if-no-files-found: error
       - name: Offline proofs
         run: node protocol/scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
@@ -91,6 +100,15 @@ jobs:
         run: npm run check:host-isolation
       - name: Workspace tests
         run: npm test
+      - name: Issuer storage E2E proof
+        run: node protocol/scripts/proof-hash-chain-issuer-storage-e2e.mjs --out proof-artifacts/issuer-storage.json
+      - name: Retain issuer storage proof
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: issuer-storage-linux
+          path: proof-artifacts/issuer-storage.json
+          if-no-files-found: error
       - name: Offline proofs
         run: node protocol/scripts/proof-offline.mjs --out proof-artifacts/offline.json
       - name: Retain offline proof report
