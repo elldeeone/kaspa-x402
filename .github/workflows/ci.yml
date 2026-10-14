@@ -13,17 +13,48 @@ permissions:
   contents: read
 
 jobs:
+  sdk-release-artifacts:
+    needs: [verify, windows, covenant-reproduction]
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: covenant-compiler-linux
+          path: release-artifacts/compiler
+      - name: Extract independently reproduced compiler receipt
+        run: |
+          node --input-type=module -e 'import fs from "node:fs"; const r=JSON.parse(fs.readFileSync("release-artifacts/compiler/covenant-compiler.json")); const c=r.cases.find(c=>c.name==="real pinned compiler reproduces both covenants"); if(r.failed || !c?.passed)throw new Error("compiler proof failed"); fs.writeFileSync("release-artifacts/compiler-proof.json",c.evidence.output);'
+      - name: Build and inspect exact SDK release archives
+        run: |
+          node protocol/scripts/prepare-sdk-release.mjs --revision "$GITHUB_SHA" --out release-artifacts/sdk --compiler-proof release-artifacts/compiler-proof.json
+          node --input-type=module -e 'import fs from "node:fs"; import crypto from "node:crypto"; import {verifyBundle} from "./protocol/scripts/sdk-release-artifacts.mjs"; const digest=crypto.createHash("sha256").update(fs.readFileSync("release-artifacts/sdk/manifest.json")).digest("hex"); verifyBundle("release-artifacts/sdk",process.env.GITHUB_SHA,digest,true); console.log(JSON.stringify({revision:process.env.GITHUB_SHA,manifestSha256:digest})); fs.writeFileSync("release-artifacts/sdk-approval.json",JSON.stringify({revision:process.env.GITHUB_SHA,manifestSha256:digest})+"\n");'
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-release-bundle
+          path: release-artifacts/sdk/
+          if-no-files-found: error
+      - uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-release-approval
+          path: release-artifacts/sdk-approval.json
+          if-no-files-found: error
   covenant-reproduction:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: kaspanet/silverscript
           ref: 3ed973335b59269293564805cc2c58a14595ec03
@@ -53,10 +84,10 @@ jobs:
     steps:
       - name: Use Windows checkout line endings
         run: git config --global core.autocrlf true
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
@@ -85,10 +116,10 @@ jobs:
   verify:
     runs-on: ubuntu-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           persist-credentials: false
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
         with:
           node-version-file: .node-version
           cache: npm
@@ -131,7 +162,7 @@ jobs:
       - name: Whitespace and diff checks
         run: npm run check:diff
       - name: Check out pinned Kaspa consensus source
-        uses: actions/checkout@v4
+        uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
         with:
           repository: kaspanet/rusty-kaspa
           ref: 01b532e8b553523216471682649693af92f0fd16
