@@ -1,0 +1,66 @@
+name: publish-sdk-release
+
+on:
+  workflow_dispatch:
+    inputs:
+      artifact_run_id:
+        description: Successful CI run containing sdk-release-bundle
+        required: true
+        type: string
+      revision:
+        description: Reviewed full source commit from sdk-release-approval
+        required: true
+        type: string
+      manifest_sha256:
+        description: Independently reviewed manifest digest from sdk-release-approval
+        required: true
+        type: string
+      tag:
+        description: Approved npm dist-tag
+        required: true
+        default: rc
+        type: string
+
+permissions:
+  contents: read
+  actions: read
+
+jobs:
+  publish:
+    if: github.ref == 'refs/heads/main'
+    environment: npm-release
+    runs-on: ubuntu-latest
+    steps:
+      # Run the reviewed publisher from main, never candidate build code with a token.
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@49933ea5288caeca8642d1e84afbd3f7d6820020 # v4
+        with:
+          node-version-file: .node-version
+      - uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4
+        with:
+          name: sdk-release-bundle
+          path: approved-sdk
+          run-id: ${{ inputs.artifact_run_id }}
+          github-token: ${{ github.token }}
+      - name: Validate approved archives without publication credentials
+        env:
+          RELEASE_REVISION: ${{ inputs.revision }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node protocol/scripts/publish-sdk-release.mjs --bundle approved-sdk --revision "$RELEASE_REVISION" --manifest-sha256 "$RELEASE_MANIFEST_SHA256" --tag "$RELEASE_TAG"
+      - name: Publish exact approved archives and verify registry bytes
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_PUBLISH_TOKEN }}
+          RELEASE_REVISION: ${{ inputs.revision }}
+          RELEASE_MANIFEST_SHA256: ${{ inputs.manifest_sha256 }}
+          RELEASE_TAG: ${{ inputs.tag }}
+        run: node protocol/scripts/publish-sdk-release.mjs --bundle approved-sdk --revision "$RELEASE_REVISION" --manifest-sha256 "$RELEASE_MANIFEST_SHA256" --tag "$RELEASE_TAG" --publish
+      - name: Retain publication journal, including partial failures
+        if: always()
+        uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
+        with:
+          name: sdk-publication-journal
+          path: approved-sdk/publication.json
+          if-no-files-found: warn
