@@ -39,6 +39,8 @@ const attackMarker = path.join(temporary, "attack-executed");
 const invocationLog = path.join(temporary, "compiler-inputs.jsonl");
 const bin = path.join(temporary, "bin");
 fs.mkdirSync(bin);
+// Extensionless Node launchers must stay CommonJS even beneath this ESM repo.
+fs.writeFileSync(path.join(bin, "package.json"), '{"type":"commonjs"}');
 // This external compiler is an explicit test boundary, not the production helper.
 // Its outputs come from separately retained baseline artifacts, not the candidate.
 const driver = `#!${process.execPath}

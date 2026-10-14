@@ -102,13 +102,16 @@ its evidence, not a proposal to upstream every file.
 Examples for the external checks, from this folder:
 
 ```sh
-SILVERSCRIPT_DIR=/absolute/path/to/silverscript npm run check:hash-chain-fixture
+SILVERSCRIPT_DIR=/absolute/path/to/silverscript npm run check:covenant-fixtures
 RUSTUP_TOOLCHAIN=1.95.0 npm run validate:tx-v1-consensus -- --kaspa-root /absolute/path/to/rusty-kaspa
 ```
 
-`npm run check:covenant-fixtures` checks the committed escrow artifact locally;
-`npm run generate:covenant-fixture` recompiles it using `SILVERSCRIPT_DIR` and
-writes the fixture. Paths recorded inside compiler/vector artifacts are relative
+`check:covenant-fixtures` independently compiles escrow-v5 and head-v2 using
+`SILVERSCRIPT_DIR` and compares both fixtures and generated modules without
+writing them. `check:covenant-fixtures:internal` checks only committed artifact
+consistency. `generate:covenant-fixture` recompiles escrow-v5 using
+`SILVERSCRIPT_DIR` and writes its fixture and generated module. Paths recorded
+inside compiler/vector artifacts are relative
 to this protocol folder; their historical bytes and signatures are retained.
 
 Offline proof uses simulated adapters. Adapter restart tests reuse stored
