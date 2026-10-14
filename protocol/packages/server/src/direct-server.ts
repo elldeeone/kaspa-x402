@@ -5842,9 +5842,10 @@ function hashChainRequestFingerprint(request: PaidRequest): Hash32Hex {
 function hashChainChallengeCapacityScope(
   error: unknown,
 ): "admission" | "head" | undefined {
-  if (!isRecord(error) || error.code !== "HASH_CHAIN_CHALLENGE_CAPACITY") {
-    return undefined;
-  }
+  if (!isRecord(error)) return undefined;
+  if (error.code === "HASH_CHAIN_STORAGE_CAPACITY" &&
+    (error.scope === "records" || error.scope === "bytes" || error.scope === "physical")) return "head";
+  if (error.code !== "HASH_CHAIN_CHALLENGE_CAPACITY") return undefined;
   return error.scope === "admission" || error.scope === "head"
     ? error.scope
     : undefined;

@@ -3,6 +3,7 @@ import { createRequire } from "node:module";
 import path from "node:path";
 import {
   HashChainGrantIssuer as StorageGrantIssuer,
+  HashChainStorageCapacityError,
   type HashChainGrantStorageOptions,
   type HashChainSqlDatabase,
 } from "./hash-chain-issuer.js";
@@ -40,11 +41,29 @@ export class HashChainGrantIssuer extends StorageGrantIssuer {
         getSchemaVersion: () => (db.prepare("PRAGMA user_version").get() as { user_version: number }).user_version,
         setSchemaVersion: (version) => db.exec(`PRAGMA user_version = ${version}`),
         close: () => db.close(),
+        configureStorageCapacity: (maxBytes) => {
+          const pageSize = (db.prepare("PRAGMA page_size").get() as { page_size: number }).page_size;
+          // Payload/index charge is logical; leave four times that envelope for
+          // B-trees, page fragmentation and reserved recovery, plus schema pages.
+          const pages = Math.floor((4 * maxBytes + 1024 * 1024) / pageSize);
+          const configured = db.prepare(`PRAGMA max_page_count = ${pages}`).get() as { max_page_count: number };
+          if (configured.max_page_count > pages) throw new HashChainStorageCapacityError("physical");
+        },
+        compact: () => db.exec("VACUUM"),
       };
       return this.fromStorage({ ...options, database, transactionSync: (callback) => {
         db.exec("BEGIN IMMEDIATE");
         try { const result = callback(); db.exec("COMMIT"); return result; }
-        catch (error) { db.exec("ROLLBACK"); throw error; }
+        catch (error) {
+          // SQLite can automatically roll back a transaction on SQLITE_FULL.
+          if (db.isTransaction !== false) {
+            try { db.exec("ROLLBACK"); }
+            catch { db.close(); }
+          }
+          if (error instanceof Error && "errcode" in error && error.errcode === 13)
+            throw new HashChainStorageCapacityError("physical");
+          throw error;
+        }
       } });
     } catch (error) { db.close(); throw error; }
   }

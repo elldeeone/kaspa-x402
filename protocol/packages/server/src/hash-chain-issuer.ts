@@ -111,7 +111,11 @@ export interface HashChainAcceptedSweep {
   sameIdOutputCount: 0;
 }
 
-interface StoredGrant extends HashChainBorrowGrant { grantId: string }
+interface StoredGrant extends Omit<HashChainBorrowGrant, "oneTimePrivateKey"> {
+  grantId: string;
+  /** Removed only from retired/quarantined recovery metadata. */
+  oneTimePrivateKey?: string;
+}
 interface StoredChallenge extends HashChainGrantChallenge {
   /** Internal host-authenticated admission bucket; never expose over the wire. */
   admissionKey?: string;
@@ -172,13 +176,49 @@ export interface HashChainSqlDatabase {
   getSchemaVersion(): number;
   setSchemaVersion(version: number): void;
   close(): void;
+  /** Optional physical envelope and maintenance, implemented by the Node adapter. */
+  configureStorageCapacity?(maxBytes: number): void;
+  compact?(): void;
 }
+
+export interface HashChainGrantStorageLimits {
+  maxRecords: number;
+  /** Sealed payloads, identifiers and a conservative per-record/index charge. */
+  maxBytes: number;
+}
+export interface HashChainGrantStorageUsage extends HashChainGrantStorageLimits {
+  records: number;
+  bytes: number;
+  reservedRecords: number;
+  reservedBytes: number;
+  admissionAvailable: boolean;
+}
+export class HashChainStorageCapacityError extends Error {
+  readonly code = "HASH_CHAIN_STORAGE_CAPACITY";
+  constructor(readonly scope: "records" | "bytes" | "physical") {
+    super(`hash-chain persistent ${scope} capacity exhausted`);
+    this.name = "HashChainStorageCapacityError";
+  }
+}
+const DEFAULT_STORAGE_LIMITS: HashChainGrantStorageLimits = {
+  maxRecords: 100_000, maxBytes: 64 * 1024 * 1024,
+};
+// One payment row, a maximum 1024-key recovery rotation and bounded lineage
+// growth per retained head. Keys placed on a selected head must stay reserved
+// even when its replacement chain cannot be admitted for disclosure.
+// Retired identities retain their envelope because selected-chain reorgs can
+// restore them; expiry/retirement must not make their recovery space reusable.
+// Allocation never consumes this envelope; settlement/owner recovery may do so.
+const RECOVERY_BYTES_PER_HEAD = 512 * 1024;
+const RECOVERY_RECORDS_PER_HEAD = 1025;
 
 export interface HashChainGrantStorageOptions {
   database: HashChainSqlDatabase;
   transactionSync: <T>(callback: () => T) => T;
   /** Caller-managed 32-byte encryption key; loss loses outstanding grants. */
   encryptionKey: Uint8Array;
+  /** Persisted store-wide policy. Omit on reopen to use the existing policy. */
+  storageLimits?: HashChainGrantStorageLimits;
   admissionPolicy: {
     /** Durable deployment-wide limit for one authenticated admission identity. */
     maxGrantsPerClaimant: number;
@@ -236,7 +276,10 @@ export class HashChainGrantIssuer {
     }
     const db = options.database;
     const key = Buffer.from(options.encryptionKey);
+    if (options.storageLimits) validateStorageLimits(options.storageLimits);
     try {
+      const issuer = new this(db, key, options.admissionPolicy, maxLiveChallengesPerAdmissionKey,
+        options.now ?? (() => new Date()), options.transactionSync);
       options.transactionSync(() => {
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_grants (head_id TEXT PRIMARY KEY, sealed BLOB NOT NULL)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_deliveries (head_id TEXT NOT NULL, grant_id TEXT NOT NULL, sealed BLOB NOT NULL, PRIMARY KEY(head_id, grant_id))");
@@ -247,6 +290,7 @@ export class HashChainGrantIssuer {
         db.exec("CREATE INDEX IF NOT EXISTS hash_chain_admissions_host ON hash_chain_admissions(admission_fingerprint, disclosed_at)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_legacy_claimants (claimant_fingerprint TEXT PRIMARY KEY)");
         db.exec("CREATE TABLE IF NOT EXISTS hash_chain_meta (id INTEGER PRIMARY KEY CHECK(id = 1), sealed BLOB NOT NULL)");
+        db.exec("CREATE TABLE IF NOT EXISTS hash_chain_capacity (id INTEGER PRIMARY KEY CHECK(id = 1), sealed BLOB NOT NULL)");
         const schemaVersion = db.getSchemaVersion();
         if (![0, 1, 2].includes(schemaVersion)) throw new Error("unsupported grant database schema version");
         const row = db.prepare("SELECT sealed FROM hash_chain_meta WHERE id = 1").get() as { sealed: Uint8Array } | undefined;
@@ -265,9 +309,17 @@ export class HashChainGrantIssuer {
         if (schemaVersion === 0) migrateLegacyGrantKeys(db, key);
         if (schemaVersion !== 2) migrateQuotedGrants(db, key);
         migrateLegacyGrantAdmissions(db, key);
+        const policy = db.prepare("SELECT sealed FROM hash_chain_capacity WHERE id = 1").get() as { sealed: Uint8Array } | undefined;
+        if (!policy) issuer.writeStorageLimits(options.storageLimits ?? DEFAULT_STORAGE_LIMITS);
+        const limits = issuer.readStorageLimits();
+        if (options.storageLimits && stableStringify(limits) !== stableStringify(options.storageLimits)) {
+          throw new Error("grant storage limits differ from the persisted policy; use increaseStorageLimits");
+        }
+        db.configureStorageCapacity?.(limits.maxBytes);
+        // Existing stores may be full for admission, but must remain recoverable.
+        assertStorageCapacity(issuer.storageUsage(), !policy);
       });
-      return new this(db, key, options.admissionPolicy, maxLiveChallengesPerAdmissionKey,
-        options.now ?? (() => new Date()), options.transactionSync);
+      return issuer;
     } catch (error) {
       key.fill(0);
       throw error;
@@ -275,6 +327,48 @@ export class HashChainGrantIssuer {
   }
 
   close(): void { this.db.close(); this.key.fill(0); }
+
+  /** Atomic public view, with no private grant or payer identifiers. */
+  getStorageUsage(): HashChainGrantStorageUsage {
+    return this.transactionSync(() => this.storageUsage());
+  }
+
+  /** Administrative operation: provision disk first; never reset security records. */
+  increaseStorageLimits(limits: HashChainGrantStorageLimits): HashChainGrantStorageUsage {
+    validateStorageLimits(limits);
+    return this.transactionSync(() => {
+      const current = this.readStorageLimits();
+      if (limits.maxBytes < current.maxBytes || limits.maxRecords < current.maxRecords)
+        throw new Error("grant storage limits may only increase");
+      this.db.configureStorageCapacity?.(limits.maxBytes);
+      this.writeStorageLimits(limits);
+      const usage = this.storageUsage();
+      assertStorageCapacity(usage, false);
+      return usage;
+    });
+  }
+
+  /** Drop retired secret chains atomically, retaining lineage and all safety records. */
+  compactStorage(): HashChainGrantStorageUsage {
+    this.transactionSync(() => {
+      const rows = this.db.prepare("SELECT head_id, sealed FROM hash_chain_grants").all() as { head_id: string; sealed: Uint8Array }[];
+      for (const row of rows) {
+        const state = JSON.parse(unseal(this.key, row.head_id, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
+        if (state.phase !== "retired") continue;
+        const current = state.grants[state.nextIndex];
+        state.grants = current ? [publicRecoveryGrant(current)] : [];
+        state.nextIndex = 0;
+        state.history = state.history.map(({ head, grant, exposed }) => ({ head, exposed,
+          ...(grant ? { grant: publicRecoveryGrant(grant) } : {}) }));
+        this.db.prepare("UPDATE hash_chain_grants SET sealed = ? WHERE head_id = ?")
+          .run(seal(this.key, row.head_id, Buffer.from(JSON.stringify(state))), row.head_id);
+      }
+      assertStorageCapacity(this.storageUsage(), false);
+    });
+    // Physical maintenance is idempotent and runs only after the durable commit.
+    this.db.compact?.();
+    return this.getStorageUsage();
+  }
 
   installHead(input: {
     headId: string; network: string; ownerPublicKey: string;
@@ -332,7 +426,7 @@ export class HashChainGrantIssuer {
         state.challenges = [];
       }
       return [state, publicGrant(state)];
-    });
+    }, "recover");
   }
 
   /** Public capacity view; private grants and admission records stay sealed. */
@@ -553,7 +647,7 @@ export class HashChainGrantIssuer {
       }
       assigned.candidateTransactionId = normalized.transactionId;
       return [state, undefined];
-    });
+    }, "recover");
   }
 
   /**
@@ -696,7 +790,7 @@ export class HashChainGrantIssuer {
         oneTimePrivateKey: grant.oneTimePrivateKey,
         expiresAt: assigned.expiresAt, deliveryCommittedAt: assigned.deliveryCommittedAt,
       }];
-    });
+    }, "claim");
   }
 
   markAbandoned(headId: string): HashChainPublicGrant {
@@ -708,7 +802,7 @@ export class HashChainGrantIssuer {
       state.phase = "needsRotation";
       state.challenges = [];
       return [state, publicGrant(state)];
-    });
+    }, "recover");
   }
 
   recordAcceptedBorrow(headId: string, transition: HashChainAcceptedTransition): HashChainPublicGrant {
@@ -791,7 +885,13 @@ export class HashChainGrantIssuer {
   recordAcceptedRotation(
     headId: string, transition: HashChainAcceptedTransition, grants: readonly HashChainBorrowGrant[],
   ): HashChainPublicGrant {
-    return this.advance(headId, transition, "rotate", grants);
+    try { return this.advance(headId, transition, "rotate", grants); }
+    catch (error) {
+      if (!(error instanceof HashChainStorageCapacityError)) throw error;
+      // The selected owner spend is already a fact. Roll back fresh key
+      // allocation, then retain its successor in quarantine using recovery space.
+      return this.advance(headId, transition, "rotate", grants, undefined, true);
+    }
   }
 
   /** Host-authenticated recovery after an owner-signed rotation is selected. */
@@ -854,7 +954,7 @@ export class HashChainGrantIssuer {
       state.assignment = undefined;
       state.challenges = [];
       return [state, publicGrant(state)];
-    });
+    }, "recover");
   }
 
   holdForReorg(headId: string): HashChainPublicGrant {
@@ -864,7 +964,7 @@ export class HashChainGrantIssuer {
       if (state.phase !== "hold") state.phaseBeforeHold = state.phase;
       state.phase = "hold";
       return [state, publicGrant(state)];
-    });
+    }, "recover");
   }
 
   reconcileObservedHead(headId: string, observed: HashChainObservedHead): HashChainPublicGrant {
@@ -887,13 +987,14 @@ export class HashChainGrantIssuer {
       }
       state.phaseBeforeHold = undefined;
       return [state, publicGrant(state)];
-    });
+    }, "recover");
   }
 
   private advance(
     headId: string, transition: HashChainAcceptedTransition, kind: "borrow" | "rotate",
     replacement?: readonly HashChainBorrowGrant[],
     payment?: HashChainAcceptedPayment,
+    recoveryRotation = false,
   ): HashChainPublicGrant {
     const id = hex32(headId, "headId");
     if (transition.finality !== "accepted" && transition.finality !== "confirmed") throw new Error("transition lacks trusted accepted finality");
@@ -981,11 +1082,12 @@ export class HashChainGrantIssuer {
       state.phaseBeforeHold = undefined;
       if (kind === "borrow") state.nextIndex++;
       else { state.grants = replacementMatches ? replacementGrants : []; state.nextIndex = 0; }
-      state.phase = kind === "rotate" && !replacementSafe
+      if (recoveryRotation) state.grants = state.grants.slice(0, 1).map(publicRecoveryGrant);
+      state.phase = kind === "rotate" && (!replacementSafe || recoveryRotation)
         ? "needsRotation" : state.nextIndex >= state.grants.length ? "exhausted"
           : wasQuarantined && kind === "borrow" ? "needsRotation" : "ready";
       return [state, publicGrant(state)];
-    });
+    }, kind === "borrow" || recoveryRotation ? "recover" : "allocate");
   }
 
   /** Reserve every one-time key across this store; duplicates quarantine a rotation. */
@@ -1014,17 +1116,69 @@ export class HashChainGrantIssuer {
     return state;
   }
 
-  private mutate<T>(headId: string, change: (current: StoredHead | undefined) => [StoredHead, T]): T {
+  private readStorageLimits(): HashChainGrantStorageLimits {
+    const row = this.db.prepare("SELECT sealed FROM hash_chain_capacity WHERE id = 1").get() as { sealed: Uint8Array };
+    const limits = JSON.parse(unseal(this.key, "hash-chain-capacity-v1", Buffer.from(row.sealed)).toString("utf8")) as HashChainGrantStorageLimits;
+    validateStorageLimits(limits);
+    return limits;
+  }
+
+  private writeStorageLimits(limits: HashChainGrantStorageLimits): void {
+    this.db.prepare("INSERT INTO hash_chain_capacity(id, sealed) VALUES(1, ?) ON CONFLICT(id) DO UPDATE SET sealed = excluded.sealed")
+      .run(seal(this.key, "hash-chain-capacity-v1", Buffer.from(JSON.stringify(limits))));
+  }
+
+  private storageUsage(): HashChainGrantStorageUsage {
+    const limits = this.readStorageLimits();
+    let records = 0, bytes = 0, heads = 0;
+    for (const [table, payload] of [
+      ["hash_chain_grants", "length(head_id) + length(sealed)"],
+      ["hash_chain_deliveries", "length(head_id) + length(grant_id) + length(sealed)"],
+      ["hash_chain_payments", "length(transaction_id) + length(grant_id) + length(sealed)"],
+      ["hash_chain_seen_keys", "length(key_fingerprint) + length(head_id)"],
+      ["hash_chain_admissions", "length(outpoint_fingerprint) + length(claimant_fingerprint) + length(admission_fingerprint) + 8"],
+      ["hash_chain_legacy_claimants", "length(claimant_fingerprint)"],
+      ["hash_chain_meta", "length(sealed) + 8"],
+      ["hash_chain_capacity", "length(sealed) + 8"],
+    ]) {
+      const row = this.db.prepare(`SELECT COUNT(*) AS records, COALESCE(SUM(${payload} + 128), 0) AS bytes FROM ${table}`).get() as { records: number; bytes: number };
+      records += row.records; bytes += row.bytes;
+      if (table === "hash_chain_grants") heads = row.records;
+    }
+    const reservedRecords = heads * RECOVERY_RECORDS_PER_HEAD, reservedBytes = heads * RECOVERY_BYTES_PER_HEAD;
+    return { ...limits, records, bytes, reservedRecords, reservedBytes,
+      admissionAvailable: records + reservedRecords < limits.maxRecords && bytes + reservedBytes < limits.maxBytes };
+  }
+
+  private mutate<T>(headId: string, change: (current: StoredHead | undefined) => [StoredHead, T],
+    mode: "allocate" | "recover" | "claim" = "allocate"): T {
     return this.transactionSync(() => {
+      // A second connection must see an administrator's provisioned increase.
+      this.db.configureStorageCapacity?.(this.readStorageLimits().maxBytes);
       const row = this.db.prepare("SELECT sealed FROM hash_chain_grants WHERE head_id = ?").get(headId) as { sealed: Uint8Array } | undefined;
       const current = row ? JSON.parse(unseal(this.key, headId, Buffer.from(row.sealed)).toString("utf8")) as StoredHead : undefined;
       if (current) assertSupportedGrantNetwork(current.network);
+      const wasAssigned = !!current?.assignment;
       const [next, result] = change(current);
       this.db.prepare("INSERT INTO hash_chain_grants(head_id, sealed) VALUES(?, ?) ON CONFLICT(head_id) DO UPDATE SET sealed = excluded.sealed")
         .run(headId, seal(this.key, headId, Buffer.from(JSON.stringify(next))));
+      assertStorageCapacity(this.storageUsage(), mode === "allocate" || (mode === "claim" && !wasAssigned));
       return result;
     });
   }
+}
+
+function validateStorageLimits(limits: HashChainGrantStorageLimits): void {
+  if (!Number.isSafeInteger(limits.maxRecords) || limits.maxRecords < 8 || limits.maxRecords > 1_000_000 ||
+    !Number.isSafeInteger(limits.maxBytes) || limits.maxBytes < 256 * 1024 || limits.maxBytes > 4 * 1024 * 1024 * 1024)
+    throw new Error("grant storage limits require 8 to 1000000 records and 256 KiB to 4 GiB");
+}
+
+function assertStorageCapacity(usage: HashChainGrantStorageUsage, reserve: boolean): void {
+  if (usage.records + (reserve ? usage.reservedRecords : 0) > usage.maxRecords)
+    throw new HashChainStorageCapacityError("records");
+  if (usage.bytes + (reserve ? usage.reservedBytes : 0) > usage.maxBytes)
+    throw new HashChainStorageCapacityError("bytes");
 }
 
 function publicGrant(state: StoredHead): HashChainPublicGrant {
@@ -1048,6 +1202,10 @@ function publicChallenge(challenge: StoredChallenge): HashChainGrantChallenge {
     issuedAt: challenge.issuedAt,
     expiresAt: challenge.expiresAt,
   };
+}
+
+function publicRecoveryGrant(grant: StoredGrant): StoredGrant {
+  return { grantId: grant.grantId, revealedGuard: grant.revealedGuard, oneTimePublicKey: grant.oneTimePublicKey };
 }
 
 function normalizeGrant(grant: HashChainBorrowGrant): StoredGrant {
@@ -1076,7 +1234,7 @@ function inspectGrantClaim(
   claim: HashChainGrantClaim,
   now: number,
 ): {
-  grant: StoredGrant;
+  grant: StoredGrant & { oneTimePrivateKey: string };
   challenge: StoredChallenge;
 } {
   if (state.phase !== "ready" && state.phase !== "assigned") {
@@ -1087,7 +1245,7 @@ function inspectGrantClaim(
     (item) => item.challengeId === claim.challengeId,
   );
   if (
-    !grant ||
+    !grant || !grant.oneTimePrivateKey ||
     !challenge ||
     challenge.headVersion !== state.version ||
     challenge.grantId !== grant.grantId ||
@@ -1120,7 +1278,7 @@ function inspectGrantClaim(
   if (state.assignment && !tupleMatches) {
     throw new Error("grant is assigned to another payer or request");
   }
-  return { grant, challenge };
+  return { grant: { ...grant, oneTimePrivateKey: grant.oneTimePrivateKey }, challenge };
 }
 
 function normalizeOutpoint(outpoint: HashChainOutpoint): HashChainOutpoint {

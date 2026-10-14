@@ -51,10 +51,11 @@
     "check:sighash-consensus-vector": "node scripts/generate-sighash-consensus-vectors.mjs --check",
     "test:x402-compatibility": "tsc -p prototypes/x402-exact/tsconfig.json && vitest run prototypes/x402-exact/binding.test.ts",
     "check:x402-compatibility": "npm --workspace @kaspa-x402/core run build:self && npm run test:x402-compatibility",
-    "verify": "npm test && npm run validate:schemas && npm run check:covenant-fixtures:internal && npm run check:hash-chain-http-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run pack:public:dry-run",
+    "verify": "npm test && npm run proof:issuer-storage && npm run validate:schemas && npm run check:covenant-fixtures:internal && npm run check:hash-chain-http-vector && npm run check:exact-http-vector && npm run check:exact-interop-vector && npm run check:batch-interop-vector && npm run proof:offline && npm run pack:public:dry-run",
     "typecheck": "npm run typecheck --workspaces",
     "check:covenant-fixtures:internal": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs --internal-consistency-only",
     "proof:covenant-compiler": "node scripts/proof-covenant-compiler-e2e.mjs",
+    "proof:issuer-storage": "npm --workspace @kaspa-x402/server run build && node scripts/proof-hash-chain-issuer-storage-e2e.mjs --out .kaspa-x402-live/issuer-storage/report.json",
     "validate:release": "npm run verify && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus"
   },
   "workspaces": [

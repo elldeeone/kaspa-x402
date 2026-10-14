@@ -119,6 +119,7 @@ async function openGrantIssuer(
   return HashChainGrantIssuer.open({
     databasePath,
     encryptionKey,
+    storageLimits: { maxRecords: 100_000, maxBytes: 64 * 1024 * 1024 },
     admissionPolicy: {
       maxGrantsPerClaimant: 1,
       windowSeconds: 86_400,
@@ -152,6 +153,60 @@ and quarantines its live heads until owner rotation.
 Existing schema-v2 assignments without admission fields remain recoverable;
 their payer key cannot qualify a new grant because its original funding
 outpoint is unknown.
+
+The issuer persists aggregate record and byte limits with the database. New
+stores default to 100,000 records and 64 MiB of charged payload/index bytes.
+Omit `storageLimits` on reopen to use the stored policy; a conflicting policy
+fails instead of silently resetting the budget. Every installation, challenge,
+disclosure and fresh rotation-chain allocation is checked in the same
+transaction as the encrypted state and safety records. Capacity failure rolls
+back all writes before returning any private key.
+
+Each retained head reserves 1,025 records (one payment and a maximum 1,024-key
+owner rotation) and 512 KiB for bounded lineage/settlement recovery before
+allocation. Retirement retains that reserve
+because a reorg can restore a historical head. Matching delivered retries,
+candidate pinning, accepted settlement, holds, sweeps and owner recovery can use
+reserved capacity. If a selected owner rotation cannot admit its replacement
+keys, the issuer records the successor as `needsRotation`, retains its public
+grant metadata and all key fingerprints, and makes no private key deliverable.
+Provision capacity before signing further owner rotations if recovery has
+consumed the reserve.
+Hybrid routes fall back to batch when persistent challenge capacity is full.
+
+Use `getStorageUsage()` to monitor charged bytes, records and reserved capacity.
+`compactStorage()` removes retired private chains and historical private grants
+in one transaction, retaining head identities, observed lineage and the public
+grant metadata needed to recover borrower spends after a sweep reorg. It never
+deletes delivery/payment evidence or funding, legacy-claimant and key tombstones;
+historical lookups and replay/non-reuse checks therefore keep their authority.
+The Node adapter then runs `VACUUM` to reclaim pages. If physical maintenance
+is interrupted, reopen and repeat it; the logical compaction is atomic.
+
+This is a finite capacity policy, not permission to expire safety records.
+When compaction cannot free enough space, provision more disk, reopen using
+the existing policy and call `increaseStorageLimits({ maxRecords, maxBytes })`.
+Limits may only increase, and other issuer connections read the shared policy.
+Before upgrade or maintenance, close writers and back up the complete database
+and its separately stored encryption key. Restore the whole store; do not
+start a fresh empty database to discard old replay or key-use history. A legacy
+store too large for the initial policy rejects the upgrade atomically; supply
+explicit provisioned limits when opening it for the first time.
+
+The Node adapter uses a dedicated SQLite file, DELETE journaling and a
+`max_page_count` ceiling of `4 * maxBytes + 1 MiB` (rounded down to whole pages).
+This bounds the main database including indexes and freelist pages, separately
+from the logical budget. Provision additional disk for rollback journals and
+VACUUM temporary files; an actual disk-full error can still require operator
+recovery. Portable SQL hosts must enforce their own physical database/journal
+envelope and supply atomic transactions; the SDK's logical quota does not
+bound unrelated host tables or WAL files.
+
+Run the exported-SDK/SQLite E2E proof with `npm run proof:issuer-storage` from
+the protocol folder. It writes `.kaspa-x402-live/issuer-storage/report.json`,
+including source hashes, capacity/file measurements, process-crash recovery
+and preserved replay/non-reuse checks. Its chain observations are controlled
+offline inputs, not funded or mainnet acceptance evidence.
 
 The issuer checks each one-time private key and reverse hash link before
 installation. It commits one payer's signed claim and an encrypted delivery
