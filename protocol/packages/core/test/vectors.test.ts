@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { describe, expect, it } from "vitest";
 
 import {
+  type NetworkId,
   applyBatchClaimAccounting,
   assertBatchVoucherReserve,
   batchCommitmentId,
@@ -826,18 +827,18 @@ describe("exact v2 profile schemas", () => {
   });
 });
 
-describe("v1 RC2 batch network boundary", () => {
-  it("classifies mainnet batch requirements and payloads as network errors", () => {
+describe("batch network boundary", () => {
+  it("classifies unsupported batch requirements and payloads as network errors", () => {
     const vector = readJson<HttpVector>("vectors/x402-http/batch-voucher.json");
     const paymentRequired = structuredClone(vector.paymentRequired);
-    paymentRequired.accepts[0]!.network = "kaspa:mainnet";
+    paymentRequired.accepts[0]!.network = "kaspa:devnet" as NetworkId;
     expectFailureCode(
       validatePaymentRequired(paymentRequired),
       "invalid_kaspa_x402_network",
     );
 
     const paymentPayload = structuredClone(vector.paymentPayload);
-    paymentPayload.accepted.network = "kaspa:mainnet";
+    paymentPayload.accepted.network = "kaspa:devnet" as NetworkId;
     expectFailureCode(
       validatePaymentPayload(paymentPayload),
       "invalid_kaspa_x402_network",

@@ -51,10 +51,10 @@ export function batchPaymentRequirementsPreimage(
     JSON.parse(preimage) as { accepted: BatchPaymentRequirements }
   ).accepted;
 
-  if (snapshot.network !== "kaspa:testnet-10") {
+  if (snapshot.network !== "kaspa:testnet-10" && snapshot.network !== "kaspa:mainnet") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
-      "batch settlement v3 requires Kaspa Testnet-10",
+      "batch settlement v3 requires a supported Kaspa network",
     );
   }
   if (

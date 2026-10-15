@@ -4,6 +4,8 @@ import {
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   KaspaX402Error,
+  assertMainnetAllowed,
+  parseKaspaNetwork,
   type AcceptedTransactionEvidence,
   type ChainCheckpoint,
   type CovenantLineageTransition,
@@ -62,7 +64,7 @@ import {
 import { trustedNodeUrl } from "./trusted-node-url.js";
 import { assertPolicySelectedPnnClient, type PolicySelectedPnnClient } from "./pnn-trust-boundary.js";
 
-export type ChainEvidenceClient = Pick<KaspaRestClient, "getTransaction" | "getUtxosForAddress" | "getVirtualDaaScore" | "observeAcceptedUtxo" | "acceptedTransactionEvidence" | "submitTransaction" | "waitForTransactionAccepted">;
+export type ChainEvidenceClient = Pick<KaspaRestClient, "getTransaction" | "getUtxosForAddress" | "getVirtualDaaScore" | "observeAcceptedUtxo" | "acceptedTransactionEvidence" | "submitTransaction" | "waitForTransactionAccepted"> & { readonly network?: NetworkId };
 
 type FetchLike = typeof fetch;
 type SleepLike = (ms: number) => Promise<void>;
@@ -117,6 +119,8 @@ type PnnRpc = {
 type PnnRpcFactory = (endpoint: string, timeoutMs: number) => PnnRpc;
 
 type KaspaPnnClientOptions = {
+  network?: NetworkId;
+  allowMainnet?: boolean;
   endpoints: string[];
   allowInsecureLoopback?: boolean;
   /** Must enforce frame and reassembled-message limits before message delivery. */
@@ -159,20 +163,22 @@ export class ScriptAddressBook {
 
 export class NativeAddressCodec implements AddressCodec {
   readonly #book: ScriptAddressBook;
+  readonly #allowMainnet: boolean;
 
-  constructor(book: ScriptAddressBook) {
+  constructor(book: ScriptAddressBook, options: { allowMainnet?: boolean } = {}) {
     this.#book = book;
+    this.#allowMainnet = options.allowMainnet === true;
   }
 
   scriptPublicKeyForAddress(address: string, network: NetworkId): string {
-    assertTestnet(network);
+    assertMainnetAllowed(parseKaspaNetwork(network), this.#allowMainnet, "NativeAddressCodec");
     const serialized = scriptPublicKeyForAddress(address, network);
     this.#book.record(serialized, address);
     return serialized;
   }
 
   encodeScriptAddress(input: DeriveEscrowAddressInput): string {
-    assertTestnet(input.network);
+    assertMainnetAllowed(parseKaspaNetwork(input.network), this.#allowMainnet, "NativeAddressCodec");
     const address = encodeScriptAddress(input);
     this.#book.record(input.serializedScriptPublicKey, address);
     return address;
@@ -185,22 +191,26 @@ export class VerifiedKaspaChainProvider
   readonly #client: ChainEvidenceClient;
   readonly #book: ScriptAddressBook;
   readonly #claimFeeSompi: SompiString;
+  readonly #network: NetworkId;
+  get network(): NetworkId { return this.#network; }
 
   constructor(
     client: ChainEvidenceClient,
     book: ScriptAddressBook,
     claimFeeSompi: SompiString,
+    options: { network?: NetworkId; allowMainnet?: boolean } = {},
   ) {
     this.#client = client;
     this.#book = book;
     this.#claimFeeSompi = claimFeeSompi;
+    this.#network = boundNetwork(client, options, "VerifiedKaspaChainProvider");
   }
 
   async getUtxo(
     outpoint: FundingOutpoint,
     network: NetworkId,
   ): Promise<ChainUtxo | null> {
-    assertTestnet(network);
+    assertBoundNetwork(network, this.#network);
     let address = this.#book.addressForOutpoint(outpoint);
     if (!address) {
       const transaction = await this.#client.getTransaction(outpoint.txid);
@@ -463,16 +473,18 @@ export class VerifiedKaspaChainProvider
 
 export class VerifiedExactHeadReconciler implements ExactHeadReconciler {
   readonly #client: ChainEvidenceClient;
+  readonly #network: NetworkId;
 
-  constructor(client: ChainEvidenceClient) {
+  constructor(client: ChainEvidenceClient, options: { network?: NetworkId; allowMainnet?: boolean } = {}) {
     this.#client = client;
+    this.#network = boundNetwork(client, options, "VerifiedExactHeadReconciler");
   }
 
   async reconcileExactHead(
     head: ExactHeadRecord,
     candidateTransactionIds: readonly Hash32Hex[] = [],
   ): Promise<ExactHeadReconciliation> {
-    assertTestnet(head.network);
+    assertBoundNetwork(head.network, this.#network);
     const current = (await this.#client.getUtxosForAddress(head.payTo)).find(
       (utxo) => sameOutpoint(utxo.outpoint, head.currentOutpoint),
     );
@@ -585,14 +597,17 @@ export class VerifiedExactSettlementReconciler
   implements ExactSettlementReconciler
 {
   readonly #client: ChainEvidenceClient;
+  readonly #network: NetworkId;
 
-  constructor(client: ChainEvidenceClient) {
+  constructor(client: ChainEvidenceClient, options: { network?: NetworkId; allowMainnet?: boolean } = {}) {
     this.#client = client;
+    this.#network = boundNetwork(client, options, "VerifiedExactSettlementReconciler");
   }
 
   async reconcileExactSettlement(
     attempt: ExactSettlementAttemptRecord,
   ): Promise<ExactSettlementReconciliation> {
+    assertBoundNetwork(attempt.network ?? "kaspa:testnet-10", this.#network);
     const transaction = await this.#client.getTransaction(
       attempt.transactionId,
     );
@@ -687,6 +702,8 @@ export class PnnBroadcastChainProvider
     requiredConfirmations: number,
   ) {
     assertPolicySelectedPnnClient(pnn);
+    if ((reads.network ?? "kaspa:testnet-10") !== pnn.network)
+      throw new Error("chain reads and PNN broadcast network mismatch");
     this.#reads = reads;
     this.#book = book;
     this.#pnn = pnn;
@@ -742,6 +759,8 @@ export class PnnBroadcastChainProvider
 }
 
 export class KaspaPnnClient {
+  readonly #network: NetworkId;
+  get network(): NetworkId { return this.#network; }
   readonly #endpoints: string[];
   readonly #timeoutMs: number;
   readonly #attempts: number;
@@ -749,6 +768,8 @@ export class KaspaPnnClient {
   readonly #sleep: SleepLike;
 
   constructor(options: KaspaPnnClientOptions) {
+    this.#network = parseKaspaNetwork(options.network ?? "kaspa:testnet-10");
+    assertMainnetAllowed(this.#network, options.allowMainnet, "KaspaPnnClient");
     if (options.rpcFactory &&
         (options.rpcFactory as unknown as Record<symbol, unknown>)[
           Symbol.for("kaspa-x402:bounded-pnn-rpc:v1")] !== true)
@@ -781,7 +802,7 @@ export class KaspaPnnClient {
       const info = await this.#checkedServerInfo(rpc, endpoint);
       return {
         ok: true,
-        networkId: "testnet-10",
+        networkId: this.#network === "kaspa:mainnet" ? "mainnet" : "testnet-10",
         endpoint,
         ...(info.virtualDaaScore !== undefined
           ? { virtualDaaScore: String(info.virtualDaaScore) }
@@ -795,6 +816,7 @@ export class KaspaPnnClient {
     utxos: PnnUtxo[];
     checkpoint: ChainCheckpoint;
   }> {
+    for (const address of addresses) scriptPublicKeyForAddress(address, this.#network);
     return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
       signal.throwIfAborted();
@@ -985,7 +1007,7 @@ export class KaspaPnnClient {
   async discoverCovenantLineage(
     request: Parameters<ServerChainProvider["discoverCovenantLineage"]>[0],
   ): Promise<CovenantSelectedChainUpdate> {
-    assertTestnet(request.network);
+    if (request.network !== this.#network) throw invalidTransaction("PNN request network does not match configured network");
     if (!Number.isSafeInteger(request.minConfirmationCount) || request.minConfirmationCount < 1) {
       throw invalidTransaction("Kaspa PNN confirmation threshold is invalid");
     }
@@ -1307,7 +1329,7 @@ export class KaspaPnnClient {
       this.#timeoutMs,
       `pnn getServerInfo ${endpoint}`,
     );
-    if (info.networkId !== "testnet-10")
+    if (info.networkId !== (this.#network === "kaspa:mainnet" ? "mainnet" : "testnet-10"))
       throw invalidTransaction(
         `Kaspa PNN endpoint returned network ${String(info.networkId)}`,
       );
@@ -1610,12 +1632,14 @@ function safePnnErrorMessage(error: unknown): string {
 export class VerifiedExactTransactionVerifier implements ExactTransactionVerifier {
   readonly #client: ChainEvidenceClient;
   readonly #maxFeeSompi: bigint;
+  readonly #network: NetworkId;
 
   constructor(
     client: ChainEvidenceClient,
-    options: { maxFeeSompi?: bigint | string } = {},
+    options: { maxFeeSompi?: bigint | string; network?: NetworkId; allowMainnet?: boolean } = {},
   ) {
     this.#client = client;
+    this.#network = boundNetwork(client, options, "VerifiedExactTransactionVerifier");
     this.#maxFeeSompi = BigInt(
       options.maxFeeSompi ?? MAX_SAFE_TRANSACTION_FEE_SOMPI,
     );
@@ -1627,7 +1651,7 @@ export class VerifiedExactTransactionVerifier implements ExactTransactionVerifie
   async verifyExactPayment(
     request: ExactTransactionVerificationRequest,
   ): Promise<ExactTransactionVerification> {
-    assertTestnet(request.network);
+    assertBoundNetwork(request.network, this.#network);
     if (request.transactionEncoding !== KIP10_EXACT_TRANSACTION_ENCODING) {
       throw invalidTransaction("unsupported exact transaction encoding");
     }
@@ -2086,6 +2110,8 @@ function trustedInputReadCache(): TrustedInputReadCache {
 }
 
 export class KaspaRestClient {
+  /** Legacy REST authority is Testnet-10 only. Mainnet uses selected PNN authorities. */
+  get network(): "kaspa:testnet-10" { return "kaspa:testnet-10"; }
   readonly #baseUrl: string;
   readonly #fetch: FetchLike;
   readonly #timeoutMs: number;
@@ -3374,11 +3400,19 @@ export function serializeSdkScriptPublicKey(value: unknown): string {
   return `${((version >>> 8) & 0xff).toString(16).padStart(2, "0")}${(version & 0xff).toString(16).padStart(2, "0")}${script}`.toLowerCase();
 }
 
-function assertTestnet(network: NetworkId): void {
-  if (network !== "kaspa:testnet-10") {
+function boundNetwork(client: ChainEvidenceClient, options: { network?: NetworkId; allowMainnet?: boolean }, component: string): NetworkId {
+  const network = parseKaspaNetwork(options.network ?? client.network ?? "kaspa:testnet-10");
+  assertMainnetAllowed(network, options.allowMainnet, component);
+  if (network === "kaspa:mainnet" && client.network !== network) throw new Error("mainnet chain client needs an explicit matching network identity");
+  if (client.network !== undefined && client.network !== network) throw new Error("chain client network mismatch");
+  return network;
+}
+
+function assertBoundNetwork(network: NetworkId, expected: NetworkId): void {
+  if (network !== expected) {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_network",
-      "hosted gateway only supports kaspa:testnet-10",
+      "chain request network does not match configured network",
     );
   }
 }

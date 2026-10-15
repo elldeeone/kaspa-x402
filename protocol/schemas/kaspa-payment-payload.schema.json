@@ -93,7 +93,7 @@
       ],
       "properties": {
         "network": {
-          "const": "kaspa:testnet-10"
+          "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
         },
         "asset": {
           "const": "KAS"

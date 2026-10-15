@@ -189,7 +189,7 @@ export interface HashChainGrantDelivery {
 
 export interface HashChainGrantClaimRequest {
   signal?: AbortSignal;
-  network: "kaspa:testnet-10";
+  network: NetworkId;
   head: NonNullable<ExactPaymentRequest["hashChainHead"]>;
   /** Trusted actual paid-resource URL; the grant endpoint must share its origin. */
   resourceUrl: string;

@@ -334,7 +334,7 @@ describe("direct-mode server", () => {
     expect(required.accepts[0]?.amount).toBe("75");
   });
 
-  it("keeps opted-in exact mainnet support while rejecting v1 RC2 batch", async () => {
+  it("keeps mainnet opt-in while accepting exact and batch configuration", async () => {
     expect(() => makeServer({ network: "kaspa:mainnet" })).toThrow(
       "allowMainnet",
     );
@@ -345,17 +345,18 @@ describe("direct-mode server", () => {
     });
     expect(server.supportedKinds().map((kind) => kind.scheme)).toEqual([
       "exact",
+      "batch-settlement",
     ]);
     expect(
       server.buildPaymentRequired({ routeAccess: "public", resource: RESOURCE, scheme: "exact" })
         .accepts[0],
     ).toMatchObject({ scheme: "exact", network: "kaspa:mainnet" });
-    expect(() =>
+    expect(
       server.buildPaymentRequired({ routeAccess: "public",
         resource: RESOURCE,
         scheme: "batch-settlement",
-      }),
-    ).toThrow("restricted to kaspa:testnet-10");
+      }).accepts[0],
+    ).toMatchObject({ scheme: "batch-settlement", network: "kaspa:mainnet" });
 
     const testnet = makeServer();
     const source = makeDepositPayment(testnet).payload;

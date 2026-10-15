@@ -126,6 +126,12 @@ mutable bundle; never derive an approval from whichever manifest arrives later.
 On pull requests the prepared revision can be GitHub's merge commit; after merge,
 use the fresh main CI bundle for the actual reviewed release commit.
 
+The consumer receipt must include every native profile on both configured
+networks. Preparation runs standard-native, additive, hash-chain and batch
+flows through installed public packages, including retry and grant restart.
+Publication rejects a missing or incomplete matrix. This is offline behavior
+with controlled chain facts; it does not close the live mainnet readiness gates.
+
 ```sh
 node protocol/scripts/inspect-sdk-release.mjs --bundle /private/new-sdk-bundle \
   --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST

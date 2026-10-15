@@ -1,7 +1,8 @@
 # Mainnet Readiness
 
-Status: mainnet is blocked. `kaspa:mainnet` is a reserved draft profile name,
-not a production readiness claim.
+Status: production mainnet enablement is blocked by the evidence and operating
+gates below. The development SDK supports explicit mainnet configuration for
+all four native profiles; this is not a production readiness claim.
 
 The development native payment surface includes:
 
@@ -20,9 +21,59 @@ Fresh [development Testnet proof](verification-2026-10-07.md) is recorded
 separately. It does not close the independent-chain, production durability or
 other mainnet gates below.
 
-`kaspa:testnet-10` is the only validation target. v1 RC2 does not provide
+`kaspa:testnet-10` remains the funded validation target. v1 RC2 does not provide
 compatibility or state migration for pre-RC runtimes. Mainnet must remain
 opt-in and disabled by default until every gate below is closed.
+
+## SDK Network Verification
+
+Run `npm run proof:mainnet-network` from `protocol/` for repeatable network-binding
+and policy-selected evidence checks over real loopback WebSocket transport.
+`npm run proof:release-artifacts` additionally builds and installs the four
+public tarballs in a fresh consumer. Its receipt records standard-native,
+additive, hash-chain-additive and batch flows on both networks, with retry,
+successor application and private-grant restart checks. The publisher requires
+that complete installed profile matrix. These proofs use controlled chain facts
+and do not establish operator independence, production durability or funded
+mainnet correctness.
+
+Reference PNN clients accept `network` and `allowMainnet`; omitted configuration
+remains Testnet-10. Every RPC read/submission checks the node's reported network.
+Mainnet policy selection requires independently declared administrative domains;
+single-source and mixed-network configurations are rejected. Mainnet native
+address codecs and generic verified adapters require explicit opt-in. Private
+grant issuers also require `allowMainnet` on each reopen. PNN receipts carry their
+network; legacy receipts are Testnet-10 and cannot recover a mainnet payment.
+The legacy REST adapter and the funded Testnet proof runner remain Testnet-only.
+Generic mainnet verifiers require a matching network identity on their chain
+client/view; missing metadata cannot relabel legacy Testnet reads. Read and
+broadcast providers must share one network. Exact settlement attempts persist
+their network, while untagged legacy attempts remain Testnet-only on recovery.
+For a mainnet hash-chain view, configure
+`new HashChainExactTransactionVerifier(view, 10000000n, 8, { network: "kaspa:mainnet", allowMainnet: true })`
+and expose the same immutable `view.network` identity.
+
+For a read-only deployment preflight, create a private JSON configuration:
+
+```json
+{
+  "network": "kaspa:mainnet",
+  "allowMainnet": true,
+  "requiredAuthorities": 2,
+  "submissionEndpoints": ["wss://submission.example/wrpc/json"],
+  "authorities": [
+    {"trustDomain": "operator_a", "endpoints": ["wss://node-a.example/wrpc/json"]},
+    {"trustDomain": "operator_b", "endpoints": ["wss://node-b.example/wrpc/json"]}
+  ],
+  "addresses": []
+}
+```
+
+Run `npm run check:chain-authorities -- --config /private/authorities.json`.
+This checks submission identity and corroborated health/UTXO reads without keys
+or broadcasts. Replace placeholders with genuinely independent operators;
+names and distinct URLs do not prove independence. Retain outage/disagreement,
+selected-chain recovery and funded evidence for the actual deployment separately.
 
 ## Required Gates
 

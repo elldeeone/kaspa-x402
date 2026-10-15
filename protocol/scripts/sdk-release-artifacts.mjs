@@ -184,6 +184,14 @@ export function verifyBundle(directory, revision, expectedDigest, publication = 
   assert.equal(sha256(manifestBytes), expectedDigest, "approved manifest digest mismatch");
   const receipt = JSON.parse(manifestBytes.toString("utf8"));
   if (receipt.schema !== "kaspa-x402-sdk-release/v1" || receipt.revision !== revision || receipt.consumer?.ok !== true) throw new Error("release provenance or consumer validation mismatch");
+  if (publication) {
+    const proof = receipt.consumer.networkProof;
+    const expected = ["kaspa:testnet-10", "kaspa:mainnet"].flatMap(network =>
+      ["standard-native", "additive", "hash-chain-additive", "batch-settlement"].map(profile => `${network}/${profile}`)).sort();
+    if (proof?.ok !== true || !Array.isArray(proof.profiles) ||
+      JSON.stringify(proof.profiles.map(p => `${p.network}/${p.profile}`).sort()) !== JSON.stringify(expected))
+      throw new Error("publication requires installed SDK proof of all profiles on both networks");
+  }
   if (!Array.isArray(receipt.packages) || receipt.packages.length !== 4 || new Set(receipt.packages.map(p => p.name)).size !== 4) throw new Error("exactly four unique SDK packages are required");
   const captured = [];
   for (const pkg of receipt.packages) {

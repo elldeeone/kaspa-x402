@@ -583,6 +583,8 @@ export interface ExactSettlementHeadClaim {
  * broadcast or invoke protected application work.
  */
 export interface ExactSettlementAttemptRecord {
+  /** Legacy untagged records are Testnet-10; mainnet recovery requires a tag. */
+  network?: NetworkId;
   transactionId: Hash32Hex;
   profile: ExactProfile;
   amount: SompiString;

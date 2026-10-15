@@ -299,7 +299,7 @@ function validateExactTerms(accepted: ExactPaymentRequirements): void {
 
 function validateHashChainTerms(accepted: ExactPaymentRequirements): void {
   const extra = accepted.extra;
-  if (accepted.network !== "kaspa:testnet-10" || extra.binding !== "kaspa-hash-chain-exact-v1" ||
+  if (!["kaspa:testnet-10", "kaspa:mainnet"].includes(accepted.network) || extra.binding !== "kaspa-hash-chain-exact-v1" ||
     extra.paymentFlow !== "upfront" || extra.assetTransferMethod !== "kaspa-v1-hash-chain-proof" ||
     extra.templateId !== "kaspa-x402-hash-chain-head-v2" || extra.paymentOutputIndex !== 0 ||
     !extra.expectedHeadOutpoint || extra.expectedHeadOutpoint.index !== 0 ||

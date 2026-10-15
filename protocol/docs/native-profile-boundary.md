@@ -1,6 +1,7 @@
 # Native profile boundary
 
-This is the capability map for the development Testnet-10 implementation.
+This is the capability map for the development implementation. All profiles
+support explicit mainnet configuration; funded validation remains Testnet-10.
 Definitions live in the [glossary](../CONTEXT.md); verification scope and
 historical template versions live in the [evidence index](evidence.md).
 
@@ -12,7 +13,7 @@ historical template versions live in the [evidence index](evidence.md).
 | batch-settlement | kaspa-escrow-v3 | Funded escrow, cumulative vouchers, partial claims, top-ups and timed refunds. | [Batch](../spec/kaspa-batch-settlement-v3.md) |
 
 All settle native KAS. There is no KCC20 settlement or runtime support for other
-x402 schemes. Mainnet is a reserved profile with [unclosed gates](mainnet-readiness.md).
+x402 schemes. Production mainnet enablement has [unclosed gates](mainnet-readiness.md).
 
 [SDK configuration](integration.md) enables batch explicitly. Exact-only
 integrations need no batch funding, voucher or refund dependencies. Client offer

@@ -250,10 +250,10 @@ function validateIntentShape(intent: BatchPaymentAuthorizationIntent): void {
       "unsupported batch payment operation",
     );
   }
-  if (intent.network !== "kaspa:testnet-10" || intent.asset !== "KAS") {
+  if (!["kaspa:testnet-10", "kaspa:mainnet"].includes(intent.network) || intent.asset !== "KAS") {
     throw new KaspaX402Error(
       "invalid_kaspa_x402_binding",
-      "batch payment intent must target Testnet-10 native KAS",
+      "batch payment intent must target supported native KAS",
     );
   }
   for (const [label, value] of [
