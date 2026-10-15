@@ -45,6 +45,13 @@ address codecs and generic verified adapters require explicit opt-in. Private
 grant issuers also require `allowMainnet` on each reopen. PNN receipts carry their
 network; legacy receipts are Testnet-10 and cannot recover a mainnet payment.
 The legacy REST adapter and the funded Testnet proof runner remain Testnet-only.
+Use one `ScriptAddressBook` per network: its first record or adapter binds the
+book, and later cross-network use is rejected before cache writes or RPC calls.
+Durable evidence stores must persist a mainnet checkpoint's `network` tag and
+filter `findPnnCheckpointBefore(daaScore, network)` by that network. Untagged
+legacy checkpoints belong to Testnet-10; mainnet rejects an unscoped/foreign
+checkpoint instead of forwarding it to a node. Testnet-only store adapters
+can keep their existing method signatures and untagged checkpoint records.
 Generic mainnet verifiers require a matching network identity on their chain
 client/view; missing metadata cannot relabel legacy Testnet reads. Read and
 broadcast providers must share one network. Exact settlement attempts persist

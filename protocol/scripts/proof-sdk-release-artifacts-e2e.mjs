@@ -238,7 +238,7 @@ try {
   await new Promise(resolve => server.close(resolve));
   const sourceFiles = ["scripts/assert-package-dist.mjs", "scripts/proof-sdk-release-artifacts-e2e.mjs",
     "scripts/sdk-release-artifacts.mjs", "scripts/prepare-sdk-release.mjs", "scripts/inspect-sdk-release.mjs",
-    "scripts/publish-sdk-release.mjs", "scripts/sdk-release-consumer.mjs", "scripts/sdk-network-consumer.mjs"];
+    "scripts/publish-sdk-release.mjs", "scripts/sdk-release-consumer.mjs", "scripts/sdk-network-consumer.mjs", "scripts/sdk-network-fixture.mjs"];
   const report = { schema: "kaspa-x402-sdk-release-e2e/v1", evidenceBoundary: "Real Git/npm/build/consumer/registry bytes; controlled compiler receipt; loopback uploads only, no public publication.",
     cases: records, passed: records.filter(c => c.passed).length, failed: records.filter(c => !c.passed).length,
     sourceSha256: Object.fromEntries(sourceFiles.map(f => [f, crypto.createHash("sha256").update(fs.readFileSync(path.join(root, f))).digest("hex")])) };

@@ -3,6 +3,7 @@ import assert from "node:assert/strict";
 import fs from "node:fs";
 import path from "node:path";
 import crypto from "node:crypto";
+import { DatabaseSync } from "node:sqlite";
 import { spawn, spawnSync } from "node:child_process";
 import { WebSocketServer } from "ws";
 import { KaspaPnnClient, NativeAddressCodec, ScriptAddressBook, PnnChainEvidence, selectPnnChainEvidenceClient,
@@ -10,6 +11,7 @@ import { KaspaPnnClient, NativeAddressCodec, ScriptAddressBook, PnnChainEvidence
 import { createNodeBoundedPnnWebSocket } from "@kaspa-x402/adapters/pnn-node";
 import { addressForScriptPublicKey } from "@kaspa-x402/adapters/native";
 import { fileURLToPath } from "node:url";
+import { writeNetworkFixture } from "./sdk-network-fixture.mjs";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
 const args = process.argv.slice(2);
@@ -23,14 +25,14 @@ async function check(name, work) {
 async function authority(networkId) {
   const server = new WebSocketServer({ host: "127.0.0.1", port: 0 }); peers.push(server);
   await new Promise(resolve => server.once("listening", resolve));
-  const state = { networkId, utxos: [], reads: [], unavailable: false };
+  const state = { networkId, checkpointHash: (networkId === "mainnet" ? "ab" : "bc").repeat(32), utxos: [], reads: [], unavailable: false };
   server.on("connection", remote => remote.on("message", bytes => {
     const r = JSON.parse(String(bytes)); state.reads.push(r);
     if (state.unavailable) { remote.close(); return; }
     const params = r.method === "getServerInfo" ? { networkId: state.networkId, isSynced: true, virtualDaaScore: "1000" }
-      : r.method === "getBlockDagInfo" ? { virtualDaaScore: "1000", sink: "ab".repeat(32) }
+      : r.method === "getBlockDagInfo" ? { virtualDaaScore: "1000", sink: state.checkpointHash }
       : r.method === "getUtxosByAddresses" ? { entries: state.utxos }
-      : r.method === "getBlock" ? { block: { header: { hash: "ab".repeat(32), blueScore: "1000", daaScore: "1000" }, verboseData: { isChainBlock: true } } }
+      : r.method === "getBlock" ? { block: { header: { hash: state.checkpointHash, blueScore: "1000", daaScore: "1000" }, verboseData: { isChainBlock: true } } }
       : {};
     remote.send(JSON.stringify({ id: r.id, params }));
   }));
@@ -61,8 +63,55 @@ try {
   await check("mainnet evidence refuses single authority policy", async () => {
     assert.throws(() => selectPnnChainEvidenceClient({ mode: "trusted-single-source", verification: main() }), /independent/);
   });
+  await check("one address book cannot overwrite addresses with another network", async () => {
+    const script = "000020" + "11".repeat(32) + "ac";
+    for (const network of ["kaspa:mainnet", "kaspa:testnet-10"]) {
+      const other = network === "kaspa:mainnet" ? "kaspa:testnet-10" : "kaspa:mainnet";
+      const book = new ScriptAddressBook(), codec = new NativeAddressCodec(book, { allowMainnet: true });
+      const address = addressForScriptPublicKey(script, network);
+      codec.scriptPublicKeyForAddress(address, network);
+      assert.throws(() => codec.scriptPublicKeyForAddress(addressForScriptPublicKey(script, other), other), /network/);
+      assert.equal(book.addressForScriptPublicKey(script), address);
+    }
+  });
   const policy = () => ({ mode: "independent-corroboration", submission: main(), requiredAuthorities: 2,
     authorities: [{ trustDomain: "operator_a", client: main() }, { trustDomain: "operator_b", client: b.client({ network: "kaspa:mainnet", allowMainnet: true }) }] });
+  await check("shared durable checkpoints retain their network across reopen and recovery", async () => {
+    const file = path.join(path.dirname(output), "network-checkpoints.sqlite");
+    fs.rmSync(file, { force: true }); let db = new DatabaseSync(file);
+    db.exec("CREATE TABLE checkpoints(network TEXT, hash TEXT, daa INTEGER, body TEXT, PRIMARY KEY(network, hash))");
+    const store = { loadPnnEvidence: async () => undefined, savePnnEvidence: async () => {},
+      recordPnnCheckpoint: async checkpoint => {
+        db.prepare("INSERT OR REPLACE INTO checkpoints VALUES(?, ?, ?, ?)").run(checkpoint.network ?? "kaspa:testnet-10", checkpoint.blockHash, Number(checkpoint.daaScore), JSON.stringify(checkpoint));
+      },
+      findPnnCheckpointBefore: async (daa, network = "kaspa:testnet-10") => {
+        const row = db.prepare("SELECT body FROM checkpoints WHERE network = ? AND daa < ? ORDER BY daa DESC").get(network, Number(daa));
+        return row ? JSON.parse(row.body) : undefined;
+      } };
+    const make = network => new PnnChainEvidence(network === "kaspa:mainnet" ? selectPnnChainEvidenceClient(policy())
+      : selectPnnChainEvidenceClient({ mode: "trusted-single-source", verification: t.client({}) }), new ScriptAddressBook(), store);
+    const id = "dd".repeat(32);
+    try {
+      await make("kaspa:mainnet").getVirtualDaaScore(); await make("kaspa:testnet-10").getVirtualDaaScore();
+      db.close(); db = new DatabaseSync(file);
+      assert.deepEqual(db.prepare("SELECT network FROM checkpoints ORDER BY network").all().map(r => r.network), ["kaspa:mainnet", "kaspa:testnet-10"]);
+      const entry = { outpoint: { transactionId: id, index: 0 }, utxoEntry: { amount: "1000", scriptPublicKey: { version: 0, script: "20" + "11".repeat(32) + "ac" }, blockDaaScore: "1001", isCoinbase: false } };
+      a.state.utxos = b.state.utxos = t.state.utxos = [entry];
+      for (const network of ["kaspa:mainnet", "kaspa:testnet-10"]) {
+        assert.equal(await make(network).getTransaction(id), null);
+        const state = network === "kaspa:mainnet" ? a.state : t.state;
+        assert.equal(state.reads.filter(r => r.method === "getVirtualChainFromBlock").at(-1).params.startHash, state.checkpointHash);
+      }
+      for (const tag of [undefined, "kaspa:testnet-10"]) {
+        const legacy = { ...store, findPnnCheckpointBefore: async () => ({ network: tag,
+          blockHash: t.state.checkpointHash, blueScore: "1000", daaScore: "1000" }) };
+        const before = a.state.reads.filter(r => r.method === "getVirtualChainFromBlock").length;
+        await assert.rejects(new PnnChainEvidence(selectPnnChainEvidenceClient(policy()), new ScriptAddressBook(), legacy).getTransaction(id), /checkpoint network/);
+        assert.equal(a.state.reads.filter(r => r.method === "getVirtualChainFromBlock").length, before);
+      }
+      return { durableReopen: true, networks: 2, foreignCheckpointUsed: false };
+    } finally { a.state.utxos = b.state.utxos = t.state.utxos = []; db.close(); fs.rmSync(file, { force: true }); }
+  });
   await check("independent mainnet authorities preserve selected network", async () => {
     const client = selectPnnChainEvidenceClient(policy());
     assert.equal(client.network, "kaspa:mainnet"); assert.equal((await client.health()).networkId, "mainnet");
@@ -154,12 +203,7 @@ try {
     fs.mkdirSync(fixtures, { recursive: true });
     const fixture = fs.mkdtempSync(path.join(fixtures, "sdk-profiles-"));
     try {
-      const mock = fs.readFileSync(path.join(root, "examples/lib/mock-direct-mode.mjs"), "utf8")
-        .replaceAll('"kaspa:testnet-10"', '"kaspa:mainnet"').replaceAll('"kaspatest:', '"kaspa:')
-        .replaceAll("new DirectModeServer({", "new DirectModeServer({ allowMainnet: true,")
-        .replaceAll("new DirectModeClient({", "new DirectModeClient({ allowMainnet: true,")
-        .replaceAll("new DirectModeFacilitator({", "new DirectModeFacilitator({ allowMainnet: true,");
-      fs.writeFileSync(path.join(fixture, "mock.mjs"), mock);
+      writeNetworkFixture(root, path.join(fixture, "mock.mjs"), "kaspa:mainnet");
       for (const name of ["proof-offline.mjs", "proof-exact-authorization-e2e.mjs"]) {
         let text = fs.readFileSync(path.join(root, "scripts", name), "utf8")
           .replaceAll('"../examples/lib/mock-direct-mode.mjs"', '"./mock.mjs"')
@@ -183,7 +227,7 @@ try {
     "packages/core/src/batch-commitment.ts", "packages/core/src/batch-authorization.ts", "packages/core/src/generated/schema-validators.js",
     "packages/client/src/direct-client.ts", "packages/client/src/hash-chain-signer.ts", "packages/server/src/direct-server.ts",
     "packages/server/src/exact-heads.ts", "packages/server/src/hash-chain-issuer.ts", "packages/server/src/hash-chain-verifier.ts",
-    "scripts/check-chain-authorities.mjs", "scripts/sdk-network-consumer.mjs", "scripts/proof-mainnet-network-e2e.mjs"];
+    "scripts/check-chain-authorities.mjs", "scripts/sdk-network-consumer.mjs", "scripts/sdk-network-fixture.mjs", "scripts/proof-mainnet-network-e2e.mjs"];
   const report = { schema: "kaspa-x402-mainnet-network-e2e/v1", evidenceBoundary: "Offline SDK APIs and real loopback transport; synthetic chain facts, no funded transactions or independent operator proof.",
     cases: records, passed: records.filter(c => c.passed).length, failed: records.filter(c => !c.passed).length,
     sourceSha256: Object.fromEntries(files.map(f => [f, crypto.createHash("sha256").update(fs.readFileSync(path.join(root, f))).digest("hex")])) };

@@ -134,8 +134,23 @@ type KaspaPnnClientOptions = {
 export class ScriptAddressBook {
   readonly #scriptToAddress = new Map<string, string>();
   readonly #outpointToAddress = new Map<string, string>();
+  #network?: NetworkId;
+
+  constructor(network?: NetworkId) { if (network !== undefined) this.bindNetwork(network); }
+
+  get network(): NetworkId | undefined { return this.#network; }
+
+  bindNetwork(network: NetworkId): void {
+    parseKaspaNetwork(network);
+    if (this.#network !== undefined && this.#network !== network) throw new Error("address book network mismatch");
+    this.#network = network;
+  }
 
   record(scriptPublicKey: string, address: string): void {
+    const network = address.startsWith("kaspa:") ? "kaspa:mainnet"
+      : address.startsWith("kaspatest:") ? "kaspa:testnet-10" : undefined;
+    if (network === undefined && this.#network === "kaspa:mainnet") throw new Error("mainnet address book requires a network-prefixed address");
+    this.bindNetwork(network ?? "kaspa:testnet-10");
     this.#scriptToAddress.set(scriptPublicKey.toLowerCase(), address);
   }
 
@@ -204,6 +219,7 @@ export class VerifiedKaspaChainProvider
     this.#book = book;
     this.#claimFeeSompi = claimFeeSompi;
     this.#network = boundNetwork(client, options, "VerifiedKaspaChainProvider");
+    book.bindNetwork(this.#network);
   }
 
   async getUtxo(
@@ -704,6 +720,7 @@ export class PnnBroadcastChainProvider
     assertPolicySelectedPnnClient(pnn);
     if ((reads.network ?? "kaspa:testnet-10") !== pnn.network)
       throw new Error("chain reads and PNN broadcast network mismatch");
+    book.bindNetwork(pnn.network);
     this.#reads = reads;
     this.#book = book;
     this.#pnn = pnn;
@@ -963,6 +980,7 @@ export class KaspaPnnClient {
     transaction: PreparedTransaction,
     book: ScriptAddressBook,
   ): Promise<TransactionBroadcast> {
+    book.bindNetwork(this.#network);
     const safe = parseSafeTransactionArtifact(transaction);
     const evidence = pnnPaymentEvidence(safe, book);
     return this.#withRpc(async ({ rpc, endpoint }) => {

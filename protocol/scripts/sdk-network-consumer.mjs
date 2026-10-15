@@ -8,6 +8,7 @@ import { signHashChainExactTransaction } from "@kaspa-x402/client";
 import { DirectModeServer, HashChainExactTransactionVerifier, MemoryServerChannelStore, MemoryChannelLockManager } from "@kaspa-x402/server";
 import { HashChainGrantIssuer, hashChainGrantClaimDigest } from "@kaspa-x402/server/hash-chain-grants";
 import { schnorr } from "@noble/curves/secp256k1.js";
+import { scriptPublicKeyForAddress } from "./sdk-native-address.mjs";
 
 const result = [];
 for (const network of ["kaspa:testnet-10", "kaspa:mainnet"]) {
@@ -32,6 +33,13 @@ for (const network of ["kaspa:testnet-10", "kaspa:mainnet"]) {
     const payment = await client.createPayment(required.headers["PAYMENT-REQUIRED"], {
       url, requestHash: fixture.mockRequestHash({ network, scheme }), paymentIdentifier: `network_${scheme.replaceAll("-", "_")}_proof`,
     });
+    if (scheme === "batch-settlement") {
+      assert.ok(payment.paymentPayload.payload.escrowAddress.startsWith(network === "kaspa:mainnet" ? "kaspa:" : "kaspatest:"),
+        "batch address must use the selected network");
+      assert.equal(scriptPublicKeyForAddress(payment.paymentPayload.payload.escrowAddress, network), payment.channel.activeScriptPublicKey);
+      assert.throws(() => scriptPublicKeyForAddress(payment.paymentPayload.payload.escrowAddress,
+        network === "kaspa:mainnet" ? "kaspa:testnet-10" : "kaspa:mainnet"), /prefix/);
+    }
     const paid = { ...route, headers: { "PAYMENT-SIGNATURE": core.encodePaymentSignatureHeader(payment.paymentPayload) } };
     const before = handlers;
     const first = await server.handlePaidRequest(paid, () => { handlers++; return { body: "paid" }; });

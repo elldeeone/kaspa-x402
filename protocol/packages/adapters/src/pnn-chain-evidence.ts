@@ -3,6 +3,7 @@ import {
   type AcceptedTransactionEvidence,
   type ChainCheckpoint,
   type FundingOutpoint,
+  type NetworkId,
 } from "@kaspa-x402/core";
 import type { ExactTransactionVerificationRequest } from "@kaspa-x402/server";
 import {
@@ -41,15 +42,21 @@ export interface PnnEvidenceRecord {
   evidence?: AcceptedTransactionEvidence;
 }
 
+/** Missing network identifies a legacy Testnet-10 checkpoint. */
+export interface PnnNetworkCheckpoint extends ChainCheckpoint {
+  network?: NetworkId;
+}
+
 export interface PnnEvidenceStore {
   loadPnnEvidence(
     transactionId: string,
   ): Promise<PnnEvidenceRecord | undefined>;
   savePnnEvidence(record: PnnEvidenceRecord, signal?: AbortSignal): Promise<void>;
-  recordPnnCheckpoint(checkpoint: ChainCheckpoint, signal?: AbortSignal): Promise<void>;
+  recordPnnCheckpoint(checkpoint: PnnNetworkCheckpoint, signal?: AbortSignal): Promise<void>;
   findPnnCheckpointBefore(
     daaScore: string,
-  ): Promise<ChainCheckpoint | undefined>;
+    network?: NetworkId,
+  ): Promise<PnnNetworkCheckpoint | undefined>;
 }
 
 /** One request's node reads; durable receipts survive Worker restarts. */
@@ -76,6 +83,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     readonly confirmations = 30,
   ) {
     assertPolicySelectedPnnClient(pnn);
+    book.bindNetwork(pnn.network);
     this.#pnn = pnn;
   }
 
@@ -176,7 +184,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     const from =
       cached?.checkpoint ??
       (current?.blockDaaScore
-        ? await this.store.findPnnCheckpointBefore(current.blockDaaScore)
+        ? await this.#checkpointBefore(current.blockDaaScore)
         : undefined);
     const accepted = await this.#pnn.findAcceptedTransaction(id, {
       ...(from ? { from } : {}),
@@ -253,7 +261,7 @@ export class PnnChainEvidence implements ChainEvidenceClient {
           "spent payment inputs have no accepted candidate output or durable receipt",
         );
       if (output.blockDaaScore)
-        from = await this.store.findPnnCheckpointBefore(output.blockDaaScore);
+        from = await this.#checkpointBefore(output.blockDaaScore);
     }
     const accepted = await this.#pnn.findAcceptedTransaction(
       candidate.id,
@@ -308,9 +316,18 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     liveSignal?.throwIfAborted();
     if (!snapshot.checkpoint.daaScore)
       throw unavailable("PNN checkpoint lacks DAA score");
-    await this.store.recordPnnCheckpoint(snapshot.checkpoint, liveSignal);
+    await this.store.recordPnnCheckpoint({ ...snapshot.checkpoint,
+      ...(this.network === "kaspa:mainnet" ? { network: this.network } : {}) }, liveSignal);
     liveSignal?.throwIfAborted();
     return snapshot.checkpoint.daaScore;
+  }
+
+  async #checkpointBefore(daaScore: string): Promise<ChainCheckpoint | undefined> {
+    const checkpoint = await this.store.findPnnCheckpointBefore(daaScore, this.network);
+    if (!checkpoint) return undefined;
+    if ((checkpoint.network ?? "kaspa:testnet-10") !== this.network) throw unavailable("PNN checkpoint network mismatch");
+    const { network: _network, ...chainCheckpoint } = checkpoint;
+    return chainCheckpoint;
   }
 
   async observeAcceptedUtxo(address: string, outpoint: FundingOutpoint) {
