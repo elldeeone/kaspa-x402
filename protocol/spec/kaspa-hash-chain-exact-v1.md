@@ -1,6 +1,6 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **development revision after `1.0.0-rc.2`, Testnet-10 only**.
+Status: **development revision after `1.0.0-rc.2`, funded validation on Testnet-10**.
 This revision uses head-v2 with signer-chosen transaction sighash types. The
 published RC2 packages and hosted demo use head-v1. The binding remains an
 interoperability candidate; mainnet and stable-release gates still apply. See
@@ -62,7 +62,7 @@ not described as a failed on-chain payment.
 | Field | Value in this binding |
 | --- | --- |
 | `scheme` | `exact` |
-| `network` | `kaspa:testnet-10` for validation; `kaspa:mainnet` is reserved |
+| `network` | `kaspa:testnet-10`, or explicit `kaspa:mainnet` configuration subject to readiness gates |
 | `asset` | `KAS` (sompi, 8 decimals) |
 | `extra.binding` | `kaspa-hash-chain-exact-v1` |
 | `extra.profile` | `hash-chain-additive` |

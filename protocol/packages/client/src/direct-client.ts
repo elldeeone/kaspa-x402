@@ -1760,8 +1760,8 @@ export class DirectModeClient {
     if (request.profile === "hash-chain-additive") {
       const provider = this.#options.fundingProvider;
       const head = request.hashChainHead;
-      if (!head || request.network !== "kaspa:testnet-10" || !provider.claimHashChainGrant || !provider.payHashChainTransaction) {
-        throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain exact requires a Testnet-10 grant and signing adapter");
+      if (!head || !provider.claimHashChainGrant || !provider.payHashChainTransaction) {
+        throw new KaspaX402Error("invalid_kaspa_transaction", "hash-chain exact requires a grant and signing adapter");
       }
       assertExactFundingPolicy(this.#options, request);
       const identity = await provider.getPublicIdentity();
@@ -1769,7 +1769,7 @@ export class DirectModeClient {
         throw new KaspaX402Error("invalid_kaspa_public_key", "hash-chain payer identity requires a funding public key");
       }
       const grant = await provider.claimHashChainGrant({
-        network: "kaspa:testnet-10", head, requestHash: request.requestHash,
+        network: request.network, head, requestHash: request.requestHash,
         payerPublicKey: identity.publicKey, resourceUrl: request.resourceUrl,
         signal,
         destinationPolicy: this.#options.hashChainGrantDestinationPolicy!,
@@ -1939,12 +1939,6 @@ export class DirectModeClient {
       );
     }
     const currentDaa = await this.#batchProvider.getVirtualDaaScore();
-    if (input.accepted.network !== "kaspa:testnet-10") {
-      throw new KaspaX402Error(
-        "invalid_kaspa_x402_network",
-        "batch payer authorization is restricted to kaspa:testnet-10",
-      );
-    }
     const timeout = parseSompiString(input.accepted.extra.refundTimeoutDaa);
     const current = parseSompiString(currentDaa);
     if (timeout <= current) {
@@ -1963,7 +1957,7 @@ export class DirectModeClient {
       operation: input.operation,
       origin: input.origin,
       resource: input.paymentRequired.resource.url,
-      network: "kaspa:testnet-10",
+      network: input.accepted.network,
       asset: "KAS",
       payTo: input.accepted.payTo,
       serverPublicKey: input.accepted.extra.serverPublicKey,

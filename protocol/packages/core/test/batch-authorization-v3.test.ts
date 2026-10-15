@@ -85,7 +85,7 @@ const policy: BatchPaymentAuthorizationPolicy = {
 
 describe("batch v3 accepted requirements hash", () => {
   it.each([
-    ["mainnet", { ...accepted, network: "kaspa:mainnet" }, "Testnet-10"],
+    ["unknown network", { ...accepted, network: "kaspa:devnet" }, "supported Kaspa network"],
     [
       "the consensus timestamp range",
       {

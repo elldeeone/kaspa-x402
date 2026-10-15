@@ -143,13 +143,28 @@ try {
     assert.equal(receipt.revision, revision);
     assert.equal(receipt.packages.length, 4);
     assert.equal(receipt.consumer.ok, true);
+    assert.equal(receipt.consumer.networkProof.ok, true);
+    assert.equal(receipt.consumer.networkProof.profiles.length, 8);
     for (const pkg of receipt.packages) assert.ok(!zlib.gunzipSync(fs.readFileSync(path.join(bundle, pkg.filename))).includes(Buffer.from("STALE_DIST_PROOF")));
     releaseFixture = { bundle, revision, manifestSha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(bundle, "manifest.json"))).digest("hex") };
-    return { revision, immutableBuild: true, packages: 4, installedConsumer: true };
+    return { revision, immutableBuild: true, packages: 4, installedConsumer: true,
+      profiles: receipt.consumer.networkProof.profiles,
+      archives: receipt.packages.map(p => ({ name: p.name, sha256: p.sha256, integrity: p.integrity })) };
   });
   await check("approved bundle inspection binds exact manifest, revision and four tarballs", async () => {
     const r = await inspect(releaseFixture.bundle, releaseFixture.manifestSha256);
     assert.equal(r.code, 0, r.stderr); return { inspected: true };
+  });
+  await check("publication requires the complete installed network/profile proof", async () => {
+    const copy = path.join(temporary, "missing-profile-proof"); fs.cpSync(releaseFixture.bundle, copy, { recursive: true });
+    const m = JSON.parse(fs.readFileSync(path.join(copy, "manifest.json"))); delete m.consumer.networkProof;
+    fs.writeFileSync(path.join(copy, "manifest.json"), JSON.stringify(m));
+    const digest = crypto.createHash("sha256").update(fs.readFileSync(path.join(copy, "manifest.json"))).digest("hex");
+    const r = await run(process.execPath, [path.join(root, "scripts/publish-sdk-release.mjs"), "--bundle", copy,
+      "--revision", releaseFixture.revision, "--manifest-sha256", digest, "--registry", registry, "--publish"], temporary,
+      { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
+    assert.notEqual(r.code, 0); assert.match(r.stderr, /installed SDK proof/); assert.equal(uploads.length, 0);
+    return { uploads: 0, missingMatrixRejected: true };
   });
   await check("tarball substitution after inspection fails before publication", async () => {
     const copy = path.join(temporary, "substituted"); fs.cpSync(releaseFixture.bundle, copy, { recursive: true });
@@ -223,7 +238,7 @@ try {
   await new Promise(resolve => server.close(resolve));
   const sourceFiles = ["scripts/assert-package-dist.mjs", "scripts/proof-sdk-release-artifacts-e2e.mjs",
     "scripts/sdk-release-artifacts.mjs", "scripts/prepare-sdk-release.mjs", "scripts/inspect-sdk-release.mjs",
-    "scripts/publish-sdk-release.mjs", "scripts/sdk-release-consumer.mjs"];
+    "scripts/publish-sdk-release.mjs", "scripts/sdk-release-consumer.mjs", "scripts/sdk-network-consumer.mjs", "scripts/sdk-network-fixture.mjs"];
   const report = { schema: "kaspa-x402-sdk-release-e2e/v1", evidenceBoundary: "Real Git/npm/build/consumer/registry bytes; controlled compiler receipt; loopback uploads only, no public publication.",
     cases: records, passed: records.filter(c => c.passed).length, failed: records.filter(c => !c.passed).length,
     sourceSha256: Object.fromEntries(sourceFiles.map(f => [f, crypto.createHash("sha256").update(fs.readFileSync(path.join(root, f))).digest("hex")])) };

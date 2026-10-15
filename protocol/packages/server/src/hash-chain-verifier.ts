@@ -3,6 +3,9 @@ import {
   exactRequestAuthorizationDigest,
   exactRequestAuthorizationId,
   stableStringify,
+  assertMainnetAllowed,
+  parseKaspaNetwork,
+  type NetworkId,
   type FundingOutpoint,
 } from "@kaspa-x402/core";
 import {
@@ -41,6 +44,7 @@ export interface HashChainSelectedTransaction {
 }
 
 export interface HashChainChainView {
+  readonly network?: NetworkId;
   /** Batch-read accepted origin outputs with one bounded, cancellable snapshot. */
   getAcceptedOrigins(
     outpoints: readonly FundingOutpoint[],
@@ -138,9 +142,9 @@ function locallyValidateHashChainPayment(
 ): LocallyValidatedHashChainPayment {
   request.signal?.throwIfAborted();
   const head = request.hashChainHead;
-  if (request.network !== "kaspa:testnet-10" || request.profile !== "hash-chain-additive" || !head ||
+  if (!["kaspa:testnet-10", "kaspa:mainnet"].includes(request.network) || request.profile !== "hash-chain-additive" || !head ||
     request.paymentOutputIndex !== 0 || request.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0") {
-    throw new Error("hash-chain verifier requires the Testnet-10 upfront profile and head challenge");
+    throw new Error("hash-chain verifier requires a supported upfront profile and head challenge");
   }
   if (!/^[0-9a-f]{64}$/.test(head.covenantId) || /^0+$/.test(head.covenantId) ||
     head.expectedHeadOutpoint.index !== 0 ||
@@ -298,11 +302,18 @@ function locallyValidateHashChainPayment(
  * inputs. Consensus acceptance supplies the final script-unit and DAG checks.
  */
 export class HashChainExactTransactionVerifier implements ExactTransactionVerifier {
+  readonly #network: NetworkId;
   constructor(
     private readonly chain: HashChainChainView,
     private readonly maxFeeSompi = 10_000_000n,
     private readonly maxInputs = 8,
+    options: { network?: NetworkId; allowMainnet?: boolean } = {},
   ) {
+    this.#network = parseKaspaNetwork(options.network ?? chain.network ?? "kaspa:testnet-10");
+    assertMainnetAllowed(this.#network, options.allowMainnet, "HashChainExactTransactionVerifier");
+    if ((chain.network !== undefined && chain.network !== this.#network) ||
+      (this.#network === "kaspa:mainnet" && chain.network !== this.#network))
+      throw new Error("hash-chain view network mismatch or missing identity");
     if (maxFeeSompi < 0n || maxFeeSompi > U64_MAX) throw new Error("invalid hash-chain fee ceiling");
     if (!Number.isSafeInteger(maxInputs) || maxInputs < 2 || maxInputs > 8) {
       throw new Error("hash-chain input budget must be an integer from 2 to 8");
@@ -310,6 +321,7 @@ export class HashChainExactTransactionVerifier implements ExactTransactionVerifi
   }
 
   async verifyExactPayment(request: ExactTransactionVerificationRequest): Promise<ExactTransactionVerification> {
+    if (request.network !== this.#network) throw new Error("hash-chain verification network does not match chain view");
     request.signal?.throwIfAborted();
     const cached = localValidationCache.get(request);
     const {

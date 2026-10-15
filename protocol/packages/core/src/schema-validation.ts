@@ -820,7 +820,7 @@ function classifyRequirementEntry(
     return "invalid_kaspa_x402_network";
   if (
     entry.scheme === "batch-settlement" &&
-    entry.network !== "kaspa:testnet-10"
+    !["kaspa:testnet-10", "kaspa:mainnet"].includes(String(entry.network))
   ) {
     return "invalid_kaspa_x402_network";
   }
@@ -855,7 +855,7 @@ function classifyPaymentPayload(value: unknown): KaspaX402ErrorCode {
 
   if (
     accepted?.scheme === "batch-settlement" &&
-    accepted.network !== "kaspa:testnet-10"
+    !["kaspa:testnet-10", "kaspa:mainnet"].includes(String(accepted.network))
   ) {
     return "invalid_kaspa_x402_network";
   }

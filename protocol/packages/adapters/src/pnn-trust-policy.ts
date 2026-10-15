@@ -23,6 +23,8 @@ export function selectPnnChainEvidenceClient(policy: PnnChainTrustPolicy): Polic
   if (policy.mode === "trusted-single-source") {
     if (!(policy.verification instanceof KaspaPnnClient))
       throw new Error("trusted PNN verification authority is required");
+    if (policy.verification.network === "kaspa:mainnet")
+      throw new Error("mainnet requires independent chain-evidence authorities");
     return registerPolicySelectedPnnClient(new SelectedKaspaPnnClient(policy.verification, policy.verification));
   }
   if (!(policy.submission instanceof KaspaPnnClient))
@@ -40,7 +42,8 @@ class SelectedKaspaPnnClient extends KaspaPnnClient {
     verification: KaspaPnnClient,
     submission: KaspaPnnClient,
   ) {
-    super({ endpoints: [] });
+    super({ endpoints: [], network: verification.network, allowMainnet: verification.network === "kaspa:mainnet" });
+    if (submission.network !== verification.network) throw new Error("PNN submission network mismatch");
     this.#verification = verification;
     this.#submission = submission;
   }
@@ -76,7 +79,9 @@ export class CorroboratedKaspaPnnClient extends KaspaPnnClient {
   readonly #required: number;
 
   constructor(submission: KaspaPnnClient, authorities: readonly PnnVerificationAuthority[], required: number) {
-    super({ endpoints: [] });
+    super({ endpoints: [], network: submission.network, allowMainnet: submission.network === "kaspa:mainnet" });
+    if (authorities.some(a => !(a.client instanceof KaspaPnnClient) || a.client.network !== submission.network))
+      throw new Error("independent chain-evidence authority network mismatch");
     if (!Number.isSafeInteger(required) || required < 2 || authorities.length < required ||
       new Set(authorities.map((authority) => authority.trustDomain)).size !== authorities.length ||
       new Set(authorities.map((authority) => authority.client)).size !== authorities.length ||
@@ -91,9 +96,10 @@ export class CorroboratedKaspaPnnClient extends KaspaPnnClient {
   override async health() {
     const result = await this.#agree((client) => client.health(),
       (value) => ({ ok: value.ok, networkId: value.networkId }));
-    if (!result.ok || result.networkId !== "testnet-10")
+    const networkId = this.network === "kaspa:mainnet" ? "mainnet" : "testnet-10";
+    if (!result.ok || result.networkId !== networkId)
       throw new Error("independent chain evidence is on the wrong network");
-    return { ok: true as const, networkId: "testnet-10", endpoint: "independent-authorities" };
+    return { ok: true as const, networkId, endpoint: "independent-authorities" };
   }
 
   override snapshotHashChainUtxos(...args: Parameters<KaspaPnnClient["snapshotHashChainUtxos"]>) {

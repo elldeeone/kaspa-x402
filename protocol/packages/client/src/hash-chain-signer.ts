@@ -38,8 +38,8 @@ export function signHashChainExactTransaction(input: {
   const { request, funding, feeSompi, schnorrAuxRand } = input;
   if (schnorrAuxRand && schnorrAuxRand.length !== 32) throw new Error("Schnorr auxiliary data must be 32 bytes");
   const head = request.hashChainHead;
-  if (!head || request.network !== "kaspa:testnet-10" || request.profile !== "hash-chain-additive" ||
-    request.paymentOutputIndex !== 0) throw new Error("hash-chain signer requires a Testnet-10 head challenge");
+  if (!head || !["kaspa:testnet-10", "kaspa:mainnet"].includes(request.network) || request.profile !== "hash-chain-additive" ||
+    request.paymentOutputIndex !== 0) throw new Error("hash-chain signer requires a supported head challenge");
   if (request.grant.grantId !== head.grantId || request.grant.headVersion !== Number(head.headVersion) ||
     request.grant.nextGuard !== head.nextGuard || request.grant.oneTimePublicKey !== head.oneTimePublicKey ||
     hashChainOneTimePublicKey(request.grant.oneTimePrivateKey) !== head.oneTimePublicKey ||

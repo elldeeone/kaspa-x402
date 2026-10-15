@@ -3,6 +3,7 @@ import type { HashChainChainView, HashChainSelectedTransaction, HashChainTrusted
 
 /** Bounded Testnet-10 REST readback; both the transaction and its accepting block must remain selected. */
 export class HashChainRestView implements HashChainChainView {
+  get network(): "kaspa:testnet-10" { return "kaspa:testnet-10"; }
   readonly #baseUrl: string;
   constructor(baseUrl: string, private readonly fetcher: typeof fetch = (input, init) => globalThis.fetch(input, init)) {
     const parsed = new URL(baseUrl);

@@ -223,12 +223,12 @@ export class DirectModeServer {
       "DirectModeServer",
     );
     if (this.#config.exactProfile === "hash-chain-additive" &&
-      (this.#config.network !== "kaspa:testnet-10" || !this.#config.hashChainIssuer ||
+      (!this.#config.hashChainIssuer ||
         !this.#config.hashChainHeadId || !this.#config.hashChainGrantClaimUrl ||
         !this.#config.admitHashChainChallenge ||
         !this.#config.exactTransactionVerifier || !this.#config.hashChainIsSelected ||
         !this.#config.hashChainGetCurrentUtxo)) {
-      throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact requires Testnet-10 challenge admission, issuer, head, grant URL, verifier, and current selected-chain observers");
+      throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact requires challenge admission, issuer, head, grant URL, verifier, and current selected-chain observers");
     }
     if (this.#config.exactProfile === "hash-chain-additive" && this.#config.acceptedFinality !== "accepted") {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain exact currently supports accepted finality only");
@@ -355,7 +355,7 @@ export class DirectModeServer {
       const issuer = this.#config.hashChainIssuer;
       const headId = this.#config.hashChainHeadId;
       const claimUrl = this.#config.hashChainGrantClaimUrl;
-      if (!issuer || !headId || !claimUrl || !options.requestHash || this.#config.network !== "kaspa:testnet-10") {
+      if (!issuer || !headId || !claimUrl || !options.requestHash) {
         throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain issuer, head, grant URL and request hash are required");
       }
       if (!options.trustedSecurityContext) {
@@ -587,6 +587,8 @@ export class DirectModeServer {
       throw new KaspaX402Error("invalid_kaspa_x402_payload", "hash-chain grant issuance is not configured");
     }
     const headId = this.#config.hashChainHeadId;
+    if (this.#config.hashChainIssuer.getCurrent(headId).network !== this.#config.network)
+      throw new KaspaX402Error("invalid_kaspa_x402_network", "hash-chain issuer network does not match server");
     parentSignal?.throwIfAborted();
     const admissionKey = publicBoundaryCallerKey(trustedSecurityContext);
     const requestPermit = this.#publicBoundary.enterRequestKey!(
@@ -637,6 +639,8 @@ export class DirectModeServer {
   ): Promise<void> {
     const issuer = this.#config.hashChainIssuer!;
     const getCurrentUtxo = this.#config.hashChainGetCurrentUtxo!;
+    if (current.network !== this.#config.network)
+      throw new KaspaX402Error("invalid_kaspa_x402_network", "hash-chain issuer network does not match server");
     if (current.phase !== "ready" && current.phase !== "assigned") {
       throw new KaspaX402Error("invalid_kaspa_transaction", "current hash-chain grant is unavailable");
     }
@@ -672,7 +676,7 @@ export class DirectModeServer {
       (this.#config.exactProfile !== "additive" ||
         this.#config.exactSettlementReconciler) &&
       (this.#config.exactProfile !== "hash-chain-additive" ||
-        (this.#config.hashChainIssuer && this.#config.hashChainHeadId && this.#config.hashChainGrantClaimUrl && this.#config.network === "kaspa:testnet-10"))
+        (this.#config.hashChainIssuer && this.#config.hashChainHeadId && this.#config.hashChainGrantClaimUrl))
     ) {
       kinds.push({
         x402Version: X402_VERSION,
@@ -695,7 +699,7 @@ export class DirectModeServer {
         },
       });
     }
-    if (this.#config.batch && this.#config.network === "kaspa:testnet-10") {
+    if (this.#config.batch) {
       kinds.push({
         x402Version: X402_VERSION,
         scheme: "batch-settlement",
@@ -3816,6 +3820,7 @@ export class DirectModeServer {
       safePaymentScopeIdHint(verified.paymentPayload) ??
       exactPaymentScopeId(verified.transactionId);
     const attempt: ExactSettlementAttemptRecord = {
+      network: this.#config.network,
       transactionId: verified.transactionId,
       profile: verified.profile,
       amount: verified.accepted.amount,
@@ -4875,12 +4880,6 @@ function makeAcceptedRequirement(
   }
 
   const batch = requireBatch(config);
-  if (config.network !== "kaspa:testnet-10") {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_network",
-      "batch settlement is restricted to kaspa:testnet-10 in v1 RC2",
-    );
-  }
   const amount = options.amount ?? config.amount;
   if (
     options.mcpErrorChargeSompi !== undefined &&
@@ -5253,7 +5252,7 @@ function validateExactTerms(
     );
   }
   if (config.exactProfile === "hash-chain-additive") {
-    if (config.network !== "kaspa:testnet-10" || !config.hashChainIssuer || !config.hashChainHeadId || !config.hashChainGrantClaimUrl ||
+    if (!config.hashChainIssuer || !config.hashChainHeadId || !config.hashChainGrantClaimUrl ||
       accepted.extra.paymentFlow !== "upfront" || accepted.extra.finality !== config.acceptedFinality ||
       accepted.extra.transactionEncoding !== "kaspa-sdk-safe-json-v2.0.0" ||
       accepted.extra.paymentOutputIndex !== 0 || !accepted.extra.headAmount ||
@@ -5440,12 +5439,6 @@ function validateChannelTerms(
   channelConfig: ChannelConfig,
 ): void {
   const batch = requireBatch(config);
-  if (config.network !== "kaspa:testnet-10") {
-    throw new KaspaX402Error(
-      "invalid_kaspa_x402_network",
-      "batch settlement is restricted to kaspa:testnet-10 in v1 RC2",
-    );
-  }
   if (
     accepted.network !== config.network ||
     channelConfig.network !== config.network

@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 import { PUBLIC_PACKAGES, argumentsFor, cleanEnvironment, run, sha256, integrity, readFile,
   exportRevision, inspectTarball, validateCompilerProof } from "./sdk-release-artifacts.mjs";
 import { normalizeNpmPackOutput } from "./npm-pack-output.mjs";
+import { writeNetworkFixture } from "./sdk-network-fixture.mjs";
 
 const args = argumentsFor(process.argv.slice(2), ["--revision", "--out", "--compiler-proof"]);
 if (!args["--revision"] || !args["--out"]) throw new Error("usage: prepare-sdk-release.mjs --revision <commit> --out <new-directory> [--compiler-proof <receipt.json>]");
@@ -55,6 +56,11 @@ try {
   const consumerTool = fs.readFileSync(new URL("./sdk-release-consumer.mjs", import.meta.url));
   fs.writeFileSync(path.join(consumer, "sdk-consumer.mjs"), consumerTool);
   const consumerProof = JSON.parse(run(process.execPath, ["sdk-consumer.mjs"], consumer, env));
+  const networkTool = fs.readFileSync(new URL("./sdk-network-consumer.mjs", import.meta.url));
+  fs.writeFileSync(path.join(consumer, "sdk-network-consumer.mjs"), networkTool);
+  writeNetworkFixture(snapshot, path.join(consumer, "mock-testnet.mjs"), "kaspa:testnet-10", { facilitator: false });
+  writeNetworkFixture(snapshot, path.join(consumer, "mock-mainnet.mjs"), "kaspa:mainnet", { facilitator: false });
+  const networkProof = JSON.parse(run(process.execPath, ["sdk-network-consumer.mjs"], consumer, env));
   fs.writeFileSync(path.join(consumer, "consumer.mts"), entries.map((name, i) => `import * as m${i} from ${JSON.stringify(name)}; void m${i};`).join("\n"));
   run(process.execPath, ["node_modules/typescript/bin/tsc", "--noEmit", "--strict", "--module", "NodeNext", "--moduleResolution", "NodeNext", "--target", "ES2022", "--types", "node", "consumer.mts"], consumer, env);
   for (const [file, original] of Object.entries(source.files)) {
@@ -66,7 +72,9 @@ try {
       preparationToolSha256: sha256(fs.readFileSync(fileURLToPath(import.meta.url))),
       librarySha256: sha256(fs.readFileSync(new URL("./sdk-release-artifacts.mjs", import.meta.url))) },
     compilerProof: compilerBytes ? { sha256: sha256(compilerBytes), provenance: compilerProvenance } : null,
-    consumer: { ok: true, exports: entries, proof: consumerProof, toolSha256: sha256(consumerTool), lockSha256: sha256(fs.readFileSync(path.join(consumer, "package-lock.json"))) }, packages };
+    consumer: { ok: true, exports: entries, proof: consumerProof, networkProof, networkToolSha256: sha256(networkTool),
+      networkFixtureToolSha256: sha256(fs.readFileSync(new URL("./sdk-network-fixture.mjs", import.meta.url))),
+      toolSha256: sha256(consumerTool), lockSha256: sha256(fs.readFileSync(path.join(consumer, "package-lock.json"))) }, packages };
   const bytes = Buffer.from(JSON.stringify(receipt, null, 2) + "\n");
   fs.writeFileSync(path.join(output, "manifest.json"), bytes, { flag: "wx", mode: 0o600 });
   console.log(JSON.stringify({ bundle: output, revision: receipt.revision, manifestSha256: sha256(bytes), consumer: true,

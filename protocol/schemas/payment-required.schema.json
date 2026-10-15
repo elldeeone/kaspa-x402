@@ -154,7 +154,7 @@
                   "const": "batch-settlement"
                 },
                 "network": {
-                  "const": "kaspa:testnet-10"
+                  "enum": ["kaspa:mainnet", "kaspa:testnet-10"]
                 },
                 "amount": {
                   "$ref": "#/$defs/positiveBatchAmount"

@@ -213,6 +213,7 @@ const RECOVERY_BYTES_PER_HEAD = 512 * 1024;
 const RECOVERY_RECORDS_PER_HEAD = 1025;
 
 export interface HashChainGrantStorageOptions {
+  allowMainnet?: boolean;
   database: HashChainSqlDatabase;
   transactionSync: <T>(callback: () => T) => T;
   /** Caller-managed 32-byte encryption key; loss loses outstanding grants. */
@@ -250,6 +251,7 @@ export class HashChainChallengeCapacityError extends Error {
 
 /** Private capability issuer; storage commits every mutation before key delivery. */
 export class HashChainGrantIssuer {
+  readonly #allowMainnet: boolean;
   protected constructor(
     private readonly db: HashChainSqlDatabase,
     private readonly key: Buffer,
@@ -257,7 +259,8 @@ export class HashChainGrantIssuer {
     private readonly maxLiveChallengesPerAdmissionKey: number,
     private readonly now: () => Date,
     private readonly transactionSync: HashChainGrantStorageOptions["transactionSync"],
-  ) {}
+    allowMainnet = false,
+  ) { this.#allowMainnet = allowMainnet; }
 
   static fromStorage(options: HashChainGrantStorageOptions): HashChainGrantIssuer {
     if (options.encryptionKey.length !== 32) throw new Error("grant encryption key must be 32 bytes");
@@ -279,7 +282,7 @@ export class HashChainGrantIssuer {
     if (options.storageLimits) validateStorageLimits(options.storageLimits);
     try {
       const issuer = new this(db, key, options.admissionPolicy, maxLiveChallengesPerAdmissionKey,
-        options.now ?? (() => new Date()), options.transactionSync);
+        options.now ?? (() => new Date()), options.transactionSync, options.allowMainnet === true);
       options.transactionSync(() => {
         const capacityTable = db.prepare("SELECT name FROM sqlite_master WHERE type = 'table' AND name = 'hash_chain_capacity'").get();
         const policy = capacityTable
@@ -384,7 +387,7 @@ export class HashChainGrantIssuer {
       throw new Error("ready-head pool limit is invalid");
     const headId = hex32(input.headId, "headId");
     const ownerPublicKey = hex32(input.ownerPublicKey, "ownerPublicKey");
-    assertSupportedGrantNetwork(input.network);
+    assertSupportedGrantNetwork(input.network, this.#allowMainnet);
     const head = normalizeHead(input.head, ownerPublicKey);
     if (!input.grants.length || input.grants.length > 1024) throw new Error("grant chain length is invalid");
     const grants = input.grants.map((grant) => normalizeGrant(grant));
@@ -1112,7 +1115,7 @@ export class HashChainGrantIssuer {
     const row = this.db.prepare("SELECT sealed FROM hash_chain_grants WHERE head_id = ?").get(headId) as { sealed: Uint8Array } | undefined;
     if (!row) throw new Error("grant head is missing");
     const state = JSON.parse(unseal(this.key, headId, Buffer.from(row.sealed)).toString("utf8")) as StoredHead;
-    assertSupportedGrantNetwork(state.network);
+    assertSupportedGrantNetwork(state.network, this.#allowMainnet);
     if (state.assignment &&
       (state.assignment.claimantId === undefined) !==
       (state.assignment.qualifyingFundingOutpoint === undefined)) {
@@ -1165,7 +1168,7 @@ export class HashChainGrantIssuer {
       this.db.configureStorageCapacity?.(this.readStorageLimits().maxBytes);
       const row = this.db.prepare("SELECT sealed FROM hash_chain_grants WHERE head_id = ?").get(headId) as { sealed: Uint8Array } | undefined;
       const current = row ? JSON.parse(unseal(this.key, headId, Buffer.from(row.sealed)).toString("utf8")) as StoredHead : undefined;
-      if (current) assertSupportedGrantNetwork(current.network);
+      if (current) assertSupportedGrantNetwork(current.network, this.#allowMainnet);
       const wasAssigned = !!current?.assignment;
       const [next, result] = change(current);
       this.db.prepare("INSERT INTO hash_chain_grants(head_id, sealed) VALUES(?, ?) ON CONFLICT(head_id) DO UPDATE SET sealed = excluded.sealed")
@@ -1343,8 +1346,8 @@ function invalidClaimAdmissionKey(headId: string): string {
     .digest("hex");
 }
 
-function assertSupportedGrantNetwork(network: string): void {
-  if (network !== "kaspa:testnet-10") throw new Error("unsupported grant network");
+function assertSupportedGrantNetwork(network: string, allowMainnet = false): void {
+  if (network !== "kaspa:testnet-10" && !(allowMainnet && network === "kaspa:mainnet")) throw new Error("unsupported grant network; mainnet requires allowMainnet");
 }
 
 function hex32(value: string, label: string): string {

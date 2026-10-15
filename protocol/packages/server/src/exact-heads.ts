@@ -1,4 +1,4 @@
-import { parseSompiString } from "@kaspa-x402/core";
+import { parseSompiString, parseKaspaNetwork } from "@kaspa-x402/core";
 import {
   parseKip10AdditiveRedeemScript,
   payToScriptHashScript,
@@ -115,6 +115,7 @@ export function normalizeExactHeadRecord(
 export function normalizeExactSettlementAttempt(
   input: ExactSettlementAttemptRecord,
 ): ExactSettlementAttemptRecord {
+  if (input.network !== undefined) parseKaspaNetwork(input.network);
   if (!/^[0-9a-fA-F]{64}$/.test(input.transactionId))
     throw new Error("exact settlement transaction id must be 32-byte hex");
   if (!/^[0-9a-fA-F]{64}$/.test(input.requestFingerprint))
@@ -266,6 +267,7 @@ export function claimExactHead(
   head: ExactHeadRecord,
   attempt: ExactSettlementAttemptRecord,
 ): ExactHeadRecord {
+  if (head.network !== (attempt.network ?? "kaspa:testnet-10")) throw new Error("exact head and settlement attempt network mismatch");
   const claim = attempt.head;
   if (
     !claim ||
@@ -442,7 +444,7 @@ function exactAttemptTerms(
     recoveryReason: _recoveryReason,
     ...terms
   } = record;
-  return terms;
+  return { ...terms, network: record.network ?? "kaspa:testnet-10" };
 }
 
 function sameOutpoint(

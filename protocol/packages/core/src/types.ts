@@ -164,7 +164,7 @@ export interface BatchPaymentAuthorizationIntent extends JsonRecord {
   operation: BatchPaymentOperation;
   origin: string;
   resource: string;
-  network: "kaspa:testnet-10";
+  network: NetworkId;
   asset: "KAS";
   payTo: string;
   serverPublicKey: PublicKeyHex;
