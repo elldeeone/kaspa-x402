@@ -8,6 +8,7 @@ export {
   VerifiedExactTransactionVerifier,
   PnnBroadcastChainProvider,
   KaspaPnnClient,
+  JsonPnnRpc,
   KaspaRestClient,
   type ChainEvidenceClient,
   type RestObservedUtxo,

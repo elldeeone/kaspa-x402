@@ -155,6 +155,8 @@ jobs:
         run: npm run generate:schema-validators && git diff --exit-code -- protocol/packages/core/src/generated
       - name: Site build
         run: npm run site:build
+      - name: Bounded PNN acceptance window proof
+        run: node verification/proof-pnn-acceptance-window-e2e.mjs --out proof-artifacts/pnn-acceptance-window.json
       - name: Demo release integration proof
         run: node verification/proof-demo-release-e2e.mjs --out proof-artifacts/demo-release.json
       - name: Retain demo release proof
@@ -162,7 +164,9 @@ jobs:
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: demo-release-linux
-          path: proof-artifacts/demo-release.json
+          path: |
+            proof-artifacts/demo-release.json
+            proof-artifacts/pnn-acceptance-window.json
           if-no-files-found: error
       - name: Site checks
         run: npm run site:check

@@ -2,8 +2,8 @@ import fs from 'node:fs';
 import { pathToFileURL } from 'node:url';
 import { createServer } from 'node:http';
 import { timingSafeEqual } from 'node:crypto';
-import WebSocket from 'ws';
-import { trustedNodeUrl } from '@kaspa-x402/adapters';
+import { JsonPnnRpc, trustedNodeUrl } from '@kaspa-x402/adapters';
+import { createNodeBoundedPnnWebSocket } from '@kaspa-x402/adapters/pnn-node';
 
 const MAX_BYTES = 4_259_840;
 const METHODS = new Set(['getServerInfo', 'getUtxosByAddresses', 'getBlockDagInfo',
@@ -19,6 +19,17 @@ export async function startDemoPnnRelay({ endpoints, token, host = '127.0.0.1', 
   if (!allowed.size) throw Error('Explicit PNN endpoints are required');
   const expected = Buffer.from(`Bearer ${token}`);
   let active = 0;
+  const sessions = new Map();
+  const drop = sessionId => {
+    const entry = sessions.get(sessionId);
+    if (!entry) return;
+    sessions.delete(sessionId); clearTimeout(entry.timer);
+    void entry.rpc.disconnect(); entry.socket?.terminate();
+  };
+  const touch = (sessionId, entry) => {
+    clearTimeout(entry.timer);
+    entry.timer = setTimeout(() => drop(sessionId), 2 * timeoutMs);
+  };
   const server = createServer(async (req, res) => {
     const answer = (status, body) => {
       if (res.destroyed) return;
@@ -36,7 +47,8 @@ export async function startDemoPnnRelay({ endpoints, token, host = '127.0.0.1', 
     const timer = setTimeout(() => controller.abort(), timeoutMs);
     const disconnected = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', disconnected);
-    const abortBody = () => { if (!req.complete) req.destroy(); };
+    let sessionId;
+    const abortBody = () => { if (sessionId) drop(sessionId); if (!req.complete) req.destroy(); };
     controller.signal.addEventListener('abort', abortBody);
     try {
       const parts = []; let size = 0;
@@ -48,13 +60,41 @@ export async function startDemoPnnRelay({ endpoints, token, host = '127.0.0.1', 
       let payload;
       try { payload = JSON.parse(Buffer.concat(parts, size).toString('utf8')); }
       catch { answer(400, '{}'); return; }
-      if (!payload || !allowed.has(payload.endpoint) || !METHODS.has(payload.method) ||
+      if (!payload || !allowed.has(payload.endpoint) ||
+          !/^[0-9a-f-]{36}$/.test(payload.sessionId ?? '') ||
+          ![...METHODS, 'connect', 'disconnect'].includes(payload.method) ||
           !payload.params || typeof payload.params !== 'object' || Array.isArray(payload.params)) {
         answer(400, '{}'); return;
       }
-      const body = await rpcCall(payload, controller.signal);
-      answer(200, body);
-    } catch { answer(503, '{}'); }
+      sessionId = payload.sessionId;
+      controller.signal.throwIfAborted();
+      if (payload.method === 'disconnect') { drop(sessionId); answer(200, '{}'); return; }
+      let entry = sessions.get(sessionId);
+      if (entry && entry.endpoint !== payload.endpoint) { answer(400, '{}'); return; }
+      if (payload.method === 'connect') {
+        if (!entry) {
+          if (sessions.size >= maxConcurrency) { answer(503, '{}'); return; }
+          entry = { endpoint: payload.endpoint };
+          const connection = entry;
+          entry.rpc = new JsonPnnRpc(payload.endpoint, timeoutMs, (endpoint, maxBytes) => {
+            connection.socket = createNodeBoundedPnnWebSocket(endpoint, maxBytes);
+            return connection.socket;
+          });
+          sessions.set(sessionId, entry); touch(sessionId, entry);
+          entry.ready = entry.rpc.connect();
+        }
+        await entry.ready; controller.signal.throwIfAborted();
+        touch(sessionId, entry); answer(200, '{}'); return;
+      }
+      if (!entry) { answer(503, '{}'); return; }
+      await entry.ready; touch(sessionId, entry);
+      const params = payload.method === 'getUtxosByAddresses' ? payload.params.addresses : payload.params;
+      const result = await entry.rpc[payload.method](params);
+      controller.signal.throwIfAborted();
+      const body = JSON.stringify(result);
+      if (Buffer.byteLength(body) > MAX_BYTES) throw Error('PNN response limit');
+      touch(sessionId, entry); answer(200, body);
+    } catch { if (sessionId) drop(sessionId); answer(503, '{}'); }
     finally {
       clearTimeout(timer); active--;
       res.removeListener('close', disconnected);
@@ -65,41 +105,7 @@ export async function startDemoPnnRelay({ endpoints, token, host = '127.0.0.1', 
   server.maxConnections = 128;
   await new Promise((resolve, reject) => { server.once('error', reject); server.listen(port, host, resolve); });
   return { origin: `http://${host.includes(':') ? `[${host}]` : host}:${server.address().port}`,
-    async close() { server.closeAllConnections(); await new Promise(r => server.close(r)); } };
-}
-
-function rpcCall({ endpoint, method, params }, signal) {
-  signal.throwIfAborted();
-  return new Promise((resolve, reject) => {
-    // maxPayload covers fragmented/reassembled messages before JS delivery.
-    const ws = new WebSocket(endpoint, { maxPayload: MAX_BYTES, perMessageDeflate: false,
-      followRedirects: false });
-    let settled = false; let messages = 0; let total = 0;
-    const finish = (error, value) => {
-      if (settled) return; settled = true;
-      signal.removeEventListener('abort', abort);
-      ws.terminate();
-      error ? reject(error) : resolve(value);
-    };
-    const abort = () => finish(Error('PNN operation aborted'));
-    signal.addEventListener('abort', abort, { once: true });
-    if (signal.aborted) { abort(); return; }
-    ws.on('error', () => finish(Error('PNN transport failed')));
-    ws.on('close', () => finish(Error('PNN closed before response')));
-    ws.on('open', () => ws.send(JSON.stringify({ id: 1, method, params })));
-    ws.on('message', (raw, binary) => {
-      try {
-        total += raw.length;
-        if (binary || ++messages > 5 || total > 2 * MAX_BYTES) throw Error('PNN response limit');
-        const result = JSON.parse(raw.toString('utf8'));
-        if (result.id !== 1) return;
-        if (result.error !== undefined || !Object.hasOwn(result, 'params')) throw Error('PNN RPC failed');
-        const body = JSON.stringify(result.params);
-        if (Buffer.byteLength(body) > MAX_BYTES) throw Error('PNN response limit');
-        finish(null, body);
-      } catch (error) { finish(error); }
-    });
-  });
+    async close() { for (const id of sessions.keys()) drop(id); server.closeAllConnections(); await new Promise(r => server.close(r)); } };
 }
 
 if (process.argv[1] && import.meta.url === pathToFileURL(process.argv[1]).href) {

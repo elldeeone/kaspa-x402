@@ -97,7 +97,7 @@ describe("bounded Node PNN transport", () => {
             verboseData: { hash: params.hash, isChainBlock: true, selectedParentHash: parent },
           } }
         : request.method === "getVirtualChainFromBlock" ? {
-            removedChainBlockHashes: [], addedChainBlockHashes: [accepting],
+            removedChainBlockHashes: [], addedChainBlockHashes: [accepting, sink],
             acceptedTransactionIds: [{ acceptingBlockHash: accepting, acceptedTransactionIds: [txid] }],
           }
         : request.method === "getVirtualChainFromBlockV2" ? {

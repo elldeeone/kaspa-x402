@@ -1,3 +1,5 @@
+# Demo Gateway Operations
+
 ## 1.0.0 demo cutover
 
 The release candidate includes the matching frontend and demo Worker. The
@@ -71,7 +73,7 @@ preparing this PR. A working demo is a release requirement.
 
 ---
 
-# Demo Gateway Operations
+## Recorded RC2 operations
 
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2

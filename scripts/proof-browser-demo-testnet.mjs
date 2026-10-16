@@ -103,6 +103,7 @@ try {
     compatibilityDate: '2026-06-02', compatibilityFlags: ['nodejs_compat', 'enable_request_signal', 'request_signal_passthrough'],
     durableObjects: { GATEWAY_STATE: { className: 'GatewayState', useSQLite: true } },
     durableObjectsPersist: path.join(out, 'worker-state'),
+    resourcePersistencePath: path.join(out, 'worker-state'),
     bindings: { KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HASH_CHAIN_ENABLED: 'true',
       KASPA_X402_CHAIN_TRUST_MODE: 'trusted-single-source', KASPA_X402_ADMISSION_HMAC_KEY: token,
       KASPA_X402_ADMIN_TOKEN: admin, KASPA_X402_RELEASE_VERSION: '1.0.0',
@@ -113,6 +114,7 @@ try {
       KASPA_X402_PNN_RPC_TOKEN: token, KASPA_X402_ALLOW_INSECURE_LOOPBACK: 'true',
       KASPA_X402_CLAIM_FEE_SOMPI: '1000000',
     } };
+  privateWrite('worker-bindings.json', options.bindings);
   worker = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
   const registered = await worker.dispatchFetch(base + '/admin/hash-chain/register', { method: 'POST',
     headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' }, body: JSON.stringify(registration) });

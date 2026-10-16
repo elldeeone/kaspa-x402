@@ -14,12 +14,13 @@ export function createRelayPnnRpcFactory(origin: string, token: string, allowLoo
   if (new TextEncoder().encode(token).length < 32) throw new Error("PNN RPC token requires at least 32 bytes");
   const factory: RpcFactory = (endpoint, timeoutMs) => {
     const lifetime = new AbortController();
+    const sessionId = crypto.randomUUID();
     let count = 0;
     let total = 0;
     const call = async <T>(method: string, params: unknown): Promise<T> => {
       lifetime.signal.throwIfAborted();
       if (++count > 256) throw new Error("PNN RPC operation budget exceeded");
-      const body = JSON.stringify({ endpoint, method, params });
+      const body = JSON.stringify({ endpoint, sessionId, method, params });
       if (new TextEncoder().encode(body).length > MAX_BYTES) throw new Error("PNN request limit exceeded");
       const response = await fetch(new URL("/rpc", url), { method: "POST", body,
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
@@ -46,8 +47,18 @@ export function createRelayPnnRpcFactory(origin: string, token: string, allowLoo
       return JSON.parse(new TextDecoder("utf-8", { fatal: true, ignoreBOM: true }).decode(bytes)) as T;
     };
     return {
-      async connect() { lifetime.signal.throwIfAborted(); },
-      async disconnect() { lifetime.abort(); },
+      async connect() { await call("connect", {}); },
+      async disconnect() {
+        lifetime.abort();
+        // A lost teardown request is bounded by the relay's idle expiry.
+        try {
+          const response = await fetch(new URL("/rpc", url), { method: "POST",
+            headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+            body: JSON.stringify({ endpoint, sessionId, method: "disconnect", params: {} }),
+            redirect: "manual", signal: AbortSignal.timeout(1000) });
+          await response.body?.cancel();
+        } catch { /* The session expires at the relay even if teardown is lost. */ }
+      },
       getServerInfo: () => call("getServerInfo", {}),
       submitTransaction: request => call("submitTransaction", request),
       getUtxosByAddresses: addresses => call("getUtxosByAddresses", { addresses }),

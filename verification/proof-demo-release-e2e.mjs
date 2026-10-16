@@ -14,10 +14,11 @@ async function check(name, fn) { try { cases.push({ name, passed: true, evidence
 let relay;
 let worker;
 let upstreamCalls = 0;
+let connections = 0;
 const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
 await new Promise(r => peer.once('listening', r));
 const endpoint = `ws://127.0.0.1:${peer.address().port}/wrpc/json`;
-peer.on('connection', ws => ws.on('message', raw => {
+peer.on('connection', ws => { connections++; ws.on('message', raw => {
   upstreamCalls++;
   const { id, method, params } = JSON.parse(raw.toString());
   if (params?.hash === 'oversize') {
@@ -30,7 +31,7 @@ peer.on('connection', ws => ws.on('message', raw => {
     : method === 'getUtxosByAddresses' ? { entries: [] }
     : { network: 'testnet-10', pruningPointHash: '11'.repeat(32), virtualDaaScore: '1000000' };
   ws.send(JSON.stringify({ id, method, params: result }));
-}));
+}); });
 const token = 'test-only-private-relay-token-at-least-32-bytes';
 const temporary = mkdtempSync(path.join(tmpdir(), 'x402-demo-release-'));
 try {
@@ -43,11 +44,17 @@ try {
     assert.equal((await call({ endpoint: 'ws://127.0.0.1:1/', method: 'getServerInfo', params: {} })).status, 400);
     assert.equal((await call({ endpoint, method: 'subscribeBlockAdded', params: {} })).status, 400);
     assert.equal(upstreamCalls, 0);
-    const good = await call({ endpoint, method: 'getServerInfo', params: {} });
+    const sessionId = '12345678-1234-4123-8123-123456789012';
+    assert.equal((await call({ endpoint, sessionId, method: 'connect', params: {} })).status, 200);
+    const good = await call({ endpoint, sessionId, method: 'getServerInfo', params: {} });
     assert.equal(good.status, 200);
     assert.equal((await good.json()).networkId, 'testnet-10');
+    assert.equal((await call({ endpoint, sessionId, method: 'getServerInfo', params: {} })).status, 200);
+    assert.equal(connections, 1, 'RPC methods must share the same bounded node connection');
     for (const hash of ['oversize', 'timeout']) {
-      const response = await call({ endpoint, method: 'getBlock', params: { hash, includeTransactions: true } });
+      await call({ endpoint, sessionId, method: 'disconnect', params: {} });
+      assert.equal((await call({ endpoint, sessionId, method: 'connect', params: {} })).status, 200);
+      const response = await call({ endpoint, sessionId, method: 'getBlock', params: { hash, includeTransactions: true } });
       assert.equal(response.status, 503, hash);
     }
     const large = await fetch(relay.origin + '/rpc', { method: 'POST',
