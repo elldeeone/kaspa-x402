@@ -23,8 +23,9 @@ and [production operating requirements](mainnet-readiness.md).
 
 The candidate pairs the browser with the 1.0.0 demo Worker and fresh head-v2 /
 escrow-v5 state. Its bounded Node transport relay holds no payment keys or state;
-the existing Durable Object remains authoritative. A funded browser payment and
-same-transaction retry are required before release. Preparing this PR does not
+the existing Durable Object remains authoritative. The actual browser payment and
+same-transaction retry passed on funded Testnet through a local Worker preview;
+see the [demo proof](../../verification/demo-release-RESULTS.md). Preparing this PR does not
 deploy the demo; see the [cutover procedure](../../docs/demo-operations.md#100-demo-cutover).
 
 ## Changes since RC2

@@ -4,7 +4,9 @@
 
 The release candidate includes the matching frontend and demo Worker. The
 recorded public RC2 deployment below is historical; it has not been upgraded by
-preparing this PR. A working demo is a release requirement.
+preparing this PR. A working demo is a release requirement. The candidate
+passed its [funded browser qualification](../verification/demo-release-RESULTS.md)
+through the local Worker and bounded relay; public deployment is still pending.
 
 1. Run the authenticated transport relay on a Node host behind an HTTPS reverse
    proxy. It has no wallet, grants or payment database. Create a private 0600

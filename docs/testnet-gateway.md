@@ -1,3 +1,8 @@
+> The 1.0.0 candidate now has a matching browser/Worker and a successful
+> [funded Testnet browser proof](../verification/demo-release-RESULTS.md), using
+> a local HTTPS preview and the actual Worker/SQLite runtime. It has not been
+> deployed. The observed RC2 public deployment below remains a separate record.
+
 # Testnet Gateway
 
 The 1.0.0 SDK candidate uses escrow-v5 and head-v2 with signer-chosen sighash
