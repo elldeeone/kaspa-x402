@@ -1,0 +1,22 @@
+{
+  "name": "kaspa-x402-demo-pnn-relay",
+  "account_id": "4d306be42951e0fb5e88bc49f0af7137",
+  "main": "worker.mjs",
+  "compatibility_date": "2026-10-16",
+  "workers_dev": true,
+  "observability": { "enabled": true, "traces": { "enabled": true } },
+  "containers": [{
+    "name": "kaspa-x402-demo-pnn-relay",
+    "class_name": "DemoPnnRelay",
+    "image": "./Dockerfile",
+    "instance_type": "lite",
+    "max_instances": 1
+  }],
+  "durable_objects": {
+    "bindings": [{ "name": "RELAY", "class_name": "DemoPnnRelay" }]
+  },
+  "migrations": [{ "tag": "v1", "new_sqlite_classes": ["DemoPnnRelay"] }],
+  "vars": {
+    "PNN_ENDPOINTS": "wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json"
+  }
+}

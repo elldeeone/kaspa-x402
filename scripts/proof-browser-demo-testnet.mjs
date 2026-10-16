@@ -15,6 +15,7 @@ const option = name => process.argv[process.argv.indexOf(name) + 1];
 assert.ok(process.argv.includes('--live') && process.argv.includes('--config') && process.argv.includes('--out'),
   'Usage: --live --config <private-json> --out <fresh-private-directory>');
 const config = JSON.parse(fs.readFileSync(option('--config'), 'utf8'));
+const hosted = process.argv.includes('--hosted');
 const out = path.resolve(option('--out'));
 assert.ok(!fs.existsSync(out), 'Use a fresh run directory; failed attempts must be retained');
 fs.mkdirSync(out, { recursive: true, mode: 0o700 });
@@ -26,7 +27,7 @@ globalThis.WebSocket = requireSdk('websocket').w3cwebsocket;
 const sdk = requireSdk(config.sdkModule);
 const rpc = new sdk.RpcClient({ url: config.rpcUrl, networkId: 'testnet-10' });
 const report = { revision, startedAt: new Date().toISOString(), network: 'kaspa:testnet-10',
-  environment: 'Local HTTPS browser preview and actual Worker/SQLite DO, funded public Testnet-10',
+  environment: hosted ? 'Public HTTPS website and deployed Cloudflare Worker/SQLite DO, funded Testnet-10' : 'Local HTTPS browser preview and actual Worker/SQLite DO, funded public Testnet-10',
   independentlyOperatedSources: 1, broadcasts: [], ok: false };
 let worker, relay, server, browser, ws;
 const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-funded-browser-'));
@@ -39,10 +40,11 @@ const payerKey = new sdk.PrivateKey(preparedRun
   : crypto.randomBytes(32).toString("hex"));
 fs.writeFileSync(path.join(out, 'payer-key'), payerKey.toString(), { mode: 0o600 });
 const payerAddress = payerKey.toAddress('testnet-10').toString();
-const admin = crypto.randomBytes(32).toString('hex');
+const admin = hosted ? fs.readFileSync(config.adminTokenFile, 'utf8').trim() : crypto.randomBytes(32).toString('hex');
 const token = crypto.randomBytes(32).toString('hex');
 const base = 'https://demo.kaspa-x402.org';
 const save = () => privateWrite('report.json', report);
+const wire = [];
 try {
   await rpc.connect({ timeoutDuration: 15000, retries: 2 });
   const info = await rpc.getServerInfo();
@@ -53,6 +55,15 @@ try {
     'site/dist/assets/hash-chain-client.js', 'scripts/demo-pnn-relay.mjs'].map(f => [f,
     crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')]));
   save();
+  if (hosted) {
+    report.siteRelease = await (await fetch('https://kaspa-x402.org/release.json', { redirect: 'error' })).json();
+    report.gatewayHealth = await (await fetch(base + '/health', { redirect: 'error' })).json();
+    assert.equal(report.siteRelease.version, '1.0.0');
+    assert.equal(report.siteRelease.sourceState, 'git-head');
+    assert.equal(report.gatewayHealth.releaseVersion, '1.0.0');
+    assert.equal(report.gatewayHealth.enabled, true);
+    save();
+  }
   let registration;
   if (preparedRun) {
     const prior = JSON.parse(fs.readFileSync(path.join(preparedRun, 'report.json')));
@@ -95,6 +106,7 @@ try {
   report.broadcasts.push({ role: 'payer-funding', transactionId: signed.id, feeSompi: '1000000' }); save();
   await waitForAcceptedTransactionEvidence({ rpc, transactionId: signed.id, fromCheckpoint: checkpoint, minConfirmationCount: 30 });
   }
+  if (!hosted) {
   const endpoint = config.rpcUrl.replace('/wrpc/borsh', '/wrpc/json');
   relay = await startDemoPnnRelay({ endpoints: [endpoint], token });
   const require = createRequire(createRequire(import.meta.url).resolve('wrangler/package.json'));
@@ -116,14 +128,17 @@ try {
     } };
   privateWrite('worker-bindings.json', options.bindings);
   worker = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
-  const registered = await worker.dispatchFetch(base + '/admin/hash-chain/register', { method: 'POST',
+  }
+  const dispatch = hosted ? (url, options) => fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(60000) }) : (url, options) => worker.dispatchFetch(url, options);
+  const registered = await dispatch(base + '/admin/hash-chain/register', { method: 'POST',
     headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' }, body: JSON.stringify(registration) });
   assert.equal(registered.status, 200, await registered.clone().text());
   report.headBefore = { outpoint: registration.head.outpoint, amount: registration.head.amount, version: '0' }; save();
+  let port;
+  if (!hosted) {
   const tls = path.join(out, 'tls'); fs.mkdirSync(tls);
   execFileSync('openssl', ['req', '-x509', '-newkey', 'rsa:2048', '-nodes', '-keyout', tls + '/key.pem',
     '-out', tls + '/cert.pem', '-days', '1', '-subj', '/CN=kaspa-x402.org'], { stdio: 'ignore' });
-  const wire = [];
   server = https.createServer({ key: fs.readFileSync(tls + '/key.pem'), cert: fs.readFileSync(tls + '/cert.pem') }, async (req, res) => {
     try {
       if (req.headers.host?.startsWith('demo.kaspa-x402.org')) {
@@ -153,11 +168,12 @@ try {
     } catch { res.writeHead(500); res.end('{}'); }
   });
   await new Promise(r => server.listen(0, '127.0.0.1', r));
-  const port = server.address().port;
+  port = server.address().port;
+  }
   // Chromium host rules map the two real HTTPS origins to this local preview.
   const chrome = config.chrome ?? process.env.CHROME_BIN ?? 'google-chrome';
-  browser = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu', '--ignore-certificate-errors',
-    `--host-resolver-rules=MAP kaspa-x402.org 127.0.0.1:${port},MAP demo.kaspa-x402.org 127.0.0.1:${port}`,
+  browser = spawn(chrome, ['--headless=new', '--no-sandbox', '--disable-gpu',
+    ...(!hosted ? ['--ignore-certificate-errors', `--host-resolver-rules=MAP kaspa-x402.org 127.0.0.1:${port},MAP demo.kaspa-x402.org 127.0.0.1:${port}`] : []),
     '--remote-debugging-port=0', `--user-data-dir=${profile}`, 'about:blank'], { stdio: ['ignore', 'ignore', 'pipe'] });
   let stderr = ''; browser.stderr.on('data', chunk => { stderr += chunk; });
   for (let i = 0; i < 100 && !stderr.includes('DevTools listening on'); i++) await new Promise(r => setTimeout(r, 100));
@@ -167,9 +183,18 @@ try {
   ws = new (await import('ws')).default(target.webSocketDebuggerUrl);
   await new Promise((r, j) => { ws.once('open', r); ws.once('error', j); });
   let nextId = 1; const pending = new Map(); const errors = [];
+  const requests = new Map();
   ws.on('message', raw => { const m = JSON.parse(raw.toString());
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
     if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text);
+    if (hosted && m.method === 'Network.requestWillBeSent' && m.params.request.url.startsWith(base + '/')) {
+      const request = m.params.request;
+      requests.set(m.params.requestId, { path: new URL(request.url).pathname, method: request.method,
+        paid: Object.keys(request.headers).some(h => h.toLowerCase() === 'payment-signature') });
+    }
+    if (hosted && m.method === 'Network.responseReceived' && requests.has(m.params.requestId)) {
+      wire.push({ ...requests.get(m.params.requestId), status: m.params.response.status }); report.wire = wire; save();
+    }
   });
   const send = (method, params = {}) => new Promise((resolve, reject) => {
     const id = nextId++; const timer = setTimeout(() => { pending.delete(id); reject(Error(`Browser command timed out: ${method}`)); }, 240_000);
@@ -177,6 +202,7 @@ try {
     ws.send(JSON.stringify({ id, method, params }));
   });
   await send('Runtime.enable'); await send('Page.enable');
+  if (hosted) await send('Network.enable');
   await send('Page.navigate', { url: 'https://kaspa-x402.org/demo/' });
   const evaluate = async (expression, awaitPromise = true) => {
     const r = await send('Runtime.evaluate', { expression, awaitPromise, returnByValue: true });
@@ -201,9 +227,9 @@ try {
     await new Promise(r=>setTimeout(r,100));}throw Error('retry timed out')})()`);
   const retry = await evaluate('JSON.parse(document.getElementById("demo-hash-output").textContent)');
   assert.equal(retry.transactionId, payment.transactionId);
-  const status = await (await worker.dispatchFetch(base + '/hash-chain/status')).json();
+  const status = await (await dispatch(base + '/hash-chain/status')).json();
   assert.equal(status.headVersion, 1); assert.equal(status.headAmount, '120000000');
-  const head = (await (await worker.dispatchFetch(base + '/admin/hash-chain', { headers: { authorization: `Bearer ${admin}` } })).json()).head;
+  const head = (await (await dispatch(base + '/admin/hash-chain', { headers: { authorization: `Bearer ${admin}` } })).json()).head;
   const headAddress = new sdk.ScriptPublicKey(parseInt(head.head.scriptPublicKey.slice(0, 4), 16), head.head.scriptPublicKey.slice(4));
   const address = sdk.addressFromScriptPublicKey(headAddress, 'testnet-10').toString();
   // Reconnect the independent observer after browser/Worker work; an idle

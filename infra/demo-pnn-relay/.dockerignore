@@ -1,0 +1,4 @@
+*
+!Dockerfile
+!dist/
+!dist/relay.mjs

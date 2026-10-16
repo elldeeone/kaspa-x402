@@ -9,7 +9,10 @@ passed its [funded browser qualification](../verification/demo-release-RESULTS.m
 through the local Worker and bounded relay; public deployment is still pending.
 
 1. Run the authenticated transport relay on a Node host behind an HTTPS reverse
-   proxy. It has no wallet, grants or payment database. Create a private 0600
+   proxy. The public demo uses the [Cloudflare Container host](../infra/demo-pnn-relay/README.md)
+   in the existing demo account; this packages the same bounded relay and needs
+   no separate server. It has no wallet, grants or payment database. For another
+   Node host, create a private 0600
    token file with at least 32 random bytes and a private JSON config:
 
    ```json
