@@ -146,7 +146,7 @@ try {
     assert.equal(receipt.consumer.networkProof.ok, true);
     assert.equal(receipt.consumer.networkProof.profiles.length, 8);
     for (const pkg of receipt.packages) assert.ok(!zlib.gunzipSync(fs.readFileSync(path.join(bundle, pkg.filename))).includes(Buffer.from("STALE_DIST_PROOF")));
-    releaseFixture = { bundle, revision, manifestSha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(bundle, "manifest.json"))).digest("hex") };
+    releaseFixture = { bundle, revision, tag: manifest.publishConfig.tag, manifestSha256: crypto.createHash("sha256").update(fs.readFileSync(path.join(bundle, "manifest.json"))).digest("hex") };
     return { revision, immutableBuild: true, packages: 4, installedConsumer: true,
       profiles: receipt.consumer.networkProof.profiles,
       archives: receipt.packages.map(p => ({ name: p.name, sha256: p.sha256, integrity: p.integrity })) };
@@ -202,7 +202,7 @@ try {
   await check("publisher uploads only the approved archives without lifecycle execution", async () => {
     const r = await run(process.execPath, [path.join(root, "scripts/publish-sdk-release.mjs"), "--bundle", releaseFixture.bundle,
       "--revision", releaseFixture.revision, "--manifest-sha256", releaseFixture.manifestSha256,
-      "--registry", registry, "--tag", "rc", "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
+      "--registry", registry, "--tag", releaseFixture.tag, "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
     assert.equal(r.code, 0, r.stderr); assert.equal(uploads.length, 4);
     const manifest = JSON.parse(fs.readFileSync(path.join(releaseFixture.bundle, "manifest.json")));
     for (const upload of uploads) assert.equal(upload.sha256, manifest.packages.find(p => p.name === upload.name).sha256);
@@ -216,7 +216,7 @@ try {
       fs.rmSync(path.join(copy, "publication.json"), { force: true });
       const r = await run(process.execPath, [path.join(root, "scripts/publish-sdk-release.mjs"), "--bundle", copy,
         "--revision", releaseFixture.revision, "--manifest-sha256", releaseFixture.manifestSha256,
-        "--registry", registry, "--tag", "rc", "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
+        "--registry", registry, "--tag", releaseFixture.tag, "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
       assert.notEqual(r.code, 0);
       assert.match(r.stderr, fault === "metadata" ? /registry integrity differs/ : /registry bytes differ/);
       assert.equal(uploads.length, 1, "publication continued after registry integrity failure");
@@ -229,7 +229,7 @@ try {
     fs.writeFileSync(path.join(copy, "publication.json"), "PRIOR_APPROVAL_RECORD");
     const r = await run(process.execPath, [path.join(root, "scripts/publish-sdk-release.mjs"), "--bundle", copy,
       "--revision", releaseFixture.revision, "--manifest-sha256", releaseFixture.manifestSha256,
-      "--registry", registry, "--tag", "rc", "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
+      "--registry", registry, "--tag", releaseFixture.tag, "--publish"], temporary, { NODE_AUTH_TOKEN: "LOCAL_PROOF_ONLY" });
     assert.notEqual(r.code, 0); assert.equal(uploads.length, 0);
     assert.equal(fs.readFileSync(path.join(copy, "publication.json"), "utf8"), "PRIOR_APPROVAL_RECORD");
     return { priorJournalRetained: true, uploads: 0 };
