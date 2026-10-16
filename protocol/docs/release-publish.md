@@ -106,7 +106,8 @@ each production deployment.
    npm publication; finalize the release-note status, check built pages/links and
    deploy the documentation website with separate deployment authorization.
    Keep the recorded demo deployment version independent and Testnet-only.
-   Do not redeploy or migrate the demo gateway as part of this SDK release.
+   A separately authorized coordinated demo cutover follows the operator runbook;
+   SDK publication alone does not authorize resetting or migrating payment state.
 
 ## Exact SDK release artifacts
 

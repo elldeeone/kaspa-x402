@@ -5,7 +5,7 @@ an independently installable workspace: it contains the specifications, wire
 schemas, contracts, SDKs, reusable chain adapters and their verification evidence.
 The website and hosted gateway are consumers outside this folder.
 
-This branch prepares the **1.0.0 standard and SDK release**, covering
+The stable **1.0.0 standard and SDK release** covers
 standard-native exact, additive exact, hash-chain-additive exact and batch
 settlement. The four public packages use escrow-v5/head-v2 where applicable.
 See the [release notes](docs/v1-release.md) for compatibility and validation.

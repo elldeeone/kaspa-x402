@@ -42,17 +42,17 @@ try {
         }
     }
     const home = await (await get('/')).text();
-    await check('candidate metadata separates SDK release and hosted demo', async () => {
+    await check('metadata records SDK publication and the separate demo deployment', async () => {
         const r = await (await get('/release.json')).json();
         assert.equal(r.version, '1.0.0');
         assert.equal(r.channel, 'latest');
         assert.equal(r.publicationStatus, publicationStatus);
         assert.deepEqual(r.supportedNetworks, ['kaspa:testnet-10', 'kaspa:mainnet']);
-        assert.equal(r.demo.version, '1.0.0-rc.2');
+        assert.equal(r.demo.version, publicationStatus === 'published' ? '1.0.0' : '1.0.0-rc.2');
         assert.equal(r.demo.network, 'kaspa:testnet-10');
         return r;
     });
-    await check('homepage has honest candidate status and exact post-publication install command', async () => {
+    await check('homepage has honest publication status and exact install commands', async () => {
         if (publicationStatus === "candidate") {
             assert.match(home, /1\.0\.0 candidate/);
             assert.doesNotMatch(home, /<strong>1\.0\.0 released<\/strong>/);
@@ -65,10 +65,16 @@ try {
             assert.ok(home.includes(`@kaspa-x402/${name}@1.0.0`));
         assert.doesNotMatch(home, /Install it with <code>@rc/);
         assert.match(home, /SDK supports/);
-        assert.match(home, /1\.0\.0-rc\.2/);
+        const demoStatus = home.match(/<li>Hosted demo:[\s\S]*?<\/li>/)?.[0];
+        assert.ok(demoStatus);
+        if (publicationStatus === 'published') {
+            assert.match(demoStatus, /<code>1\.0\.0<\/code>/);
+            assert.match(demoStatus, /kaspa-x402-escrow-v5/);
+            assert.match(demoStatus, /kaspa-x402-hash-chain-head-v2/);
+        } else assert.match(demoStatus, /1\.0\.0-rc\.2/);
         return { installPackages: 4 };
     });
-    await check('release notes are published and linked as current candidate', async () => {
+    await check('release notes are published and linked', async () => {
         const notes = await (await get('/docs/v1-release/')).text();
         assert.match(notes, /1\.0\.0 release/);
         assert.match(await (await get('/docs/')).text(), /\/docs\/v1-release\//);

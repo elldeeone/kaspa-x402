@@ -1,32 +1,18 @@
-> For the 1.0.0 candidate, use the matching browser and Worker, escrow-v5/head-v2,
-> and fresh Testnet state. See the [demo cutover](demo-operations.md#100-demo-cutover)
-> and [current SDK release notes](../protocol/docs/v1-release.md). The RC2
-> deployment instructions and evidence below describe the historical runtime.
-
 # Demo Implementer Guide
 
-This guide describes the separately deployed **RC2 Testnet gateway**. For the
-1.0.0 SDK use the [SDK integration guide](../protocol/docs/integration.md) and
-[release notes](../protocol/docs/v1-release.md). Its escrow-v5/head-v2 builders
-cannot spend the gateway's escrow-v4/head-v1 covenant state. See the
+This guide describes the deployed **1.0.0 Testnet gateway** and matching SDK.
+Use the [SDK integration guide](../protocol/docs/integration.md),
+[release notes](../protocol/docs/v1-release.md), and
 [compatibility table](testnet-gateway.md#sdkbrowser-compatibility).
 
+The gateway uses escrow-v5/head-v2. Reference signers default to ALL; builders
+support the specified consensus sighash scopes. Historical RC2 state used
+escrow-v4/head-v1 and must be completed or recovered with its original runtime.
+See the [template transition](../protocol/docs/versioning-policy.md#sighash-template-transition).
 
-Development source uses escrow-v5 and head-v2 with signer-chosen sighash
-types; reference signing still defaults to ALL. The published/deployed RC2
-service described below uses escrow-v4 and head-v1. Follow the
-[signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
-for a development integration or operator cutover; the existing hosted RC2
-service is not evidence of deployment of the new templates.
-
-Status: published `1.0.0-rc.2`, Testnet-10 only. The hosted gateway is an
-integration target, not a production or mainnet service.
-
-This guide describes the published v1 RC2 source and deployed public gateway.
-The npm `rc` tag and `demo.kaspa-x402.org` both serve `1.0.0-rc.2`.
-
-v1 RC2 uses `kaspa-escrow-v3` / `kaspa-x402-escrow-v4` for batch settlement.
-Pre-RC batch payloads are not accepted.
+The npm `latest` tag serves 1.0.0. The public gateway and browser remain
+Testnet-only integration tools, not hosted mainnet services. Batch settlement
+uses binding `kaspa-escrow-v3` and template `kaspa-x402-escrow-v5`.
 
 ## Start With The Artifacts
 
@@ -47,13 +33,12 @@ Useful entry points:
 Install the current recommended Testnet release explicitly:
 
 ```sh
-npm install @kaspa-x402/core@1.0.0-rc.2 @kaspa-x402/client@1.0.0-rc.2
+npm install @kaspa-x402/core@1.0.0 @kaspa-x402/client@1.0.0
 ```
 
-Use `@rc` or exact version `1.0.0-rc.2`; `@rc` is the npm channel for release
-candidates. v1 RC2 remains prerelease software and does not imply a stable API,
-frozen wire format, or mainnet readiness. The hosted gateway package is not
-published.
+Use exact version `1.0.0` for repeatable integration, or `@latest` for the stable
+channel. Production deployments must meet the SDK operating requirements. The
+hosted gateway package is private and is not published to npm.
 
 ## Validate Schemas And Vectors
 
@@ -79,13 +64,13 @@ transaction-specific mass and reserve analysis.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Before submitting a v1 RC2 payment, confirm the response advertises the
+Before submitting a 1.0.0 payment, confirm the response advertises the
 expected release and capability. The current public gateway advertises:
 
 - `network: "kaspa:testnet-10"`;
 - `asset: "KAS"`;
 - `scheme: "batch-settlement"`, binding `kaspa-escrow-v3`, and template
-  `kaspa-x402-escrow-v4`;
+  `kaspa-x402-escrow-v5`;
 - `scheme: "exact"` under the configured exact profile; and
 - accepted finality `accepted`.
 
@@ -149,7 +134,7 @@ cached HTTP `200`. Reusing the same exact transaction for a different resource
 must be rejected. If an additive gateway has no available head, clients should
 use `batch-settlement` or another server.
 
-The hosted RC2 gateway uses public Testnet-10 PNN/WSS nodes for funding,
+The hosted 1.0.0 gateway uses public Testnet-10 PNN/WSS nodes for funding,
 UTXOs, DAA, fees, transaction submission, acceptance, and selected-chain
 lineage. It does not require the public REST transaction index. Durable
 receipts and pre-broadcast checkpoints support retries and Worker restart
@@ -157,7 +142,7 @@ recovery without treating uncertain transactions as new payments.
 
 ## Hash-chain Browser Demo
 
-The RC2 `hash-chain-additive` flow is available from the browser demo
+The 1.0.0 `hash-chain-additive` flow is available from the browser demo
 when the operator enables its gateway Durable Object issuer and registers a
 funded head. Check `/supported` for
 `extra.profile: "hash-chain-additive"` before expecting a live quote.
@@ -194,7 +179,7 @@ curl -i https://demo.kaspa-x402.org/batch
 
 The `402` response must contain `batch-settlement` requirements with
 `extra.binding: "kaspa-escrow-v3"` and
-`extra.templateId: "kaspa-x402-escrow-v4"`.
+`extra.templateId: "kaspa-x402-escrow-v5"`.
 
 Open a lane by building and funding the advertised singleton KIP-20 genesis.
 Before signing the first voucher, derive and retain its stable `covenantId` and

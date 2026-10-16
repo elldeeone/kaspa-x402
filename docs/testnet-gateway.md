@@ -1,58 +1,30 @@
-> The 1.0.0 candidate now has a matching browser/Worker and a successful
-> [funded Testnet browser proof](../verification/demo-release-RESULTS.md), using
-> a local HTTPS preview and the actual Worker/SQLite runtime. It has not been
-> deployed. The observed RC2 public deployment below remains a separate record.
-
 # Testnet Gateway
 
-The 1.0.0 SDK candidate uses escrow-v5 and head-v2 with signer-chosen sighash
-types; reference signing still defaults to ALL. The published/deployed RC2
-service described below uses escrow-v4 and head-v1. Follow the
-[signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
-for a 1.0.0 integration or operator cutover; the existing hosted RC2
-service is not evidence of deployment of the new templates.
+Status: deployed **1.0.0**, `kaspa:testnet-10` only. The matching browser and
+Worker use escrow-v5/head-v2. A funded payment and same-transaction retry passed
+through the public website; see the [deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json).
 
-RC2 includes an optional native-KAS `hash-chain-additive` demo in the gateway
-Durable Object. It is advertised when the operator enables it and registers an
-available funded head. Use `/hash-chain/report` for the protected resource,
-`/hash-chain/grant` for signed private grant claims, and `/hash-chain/status`
-for availability. See the [browser walkthrough](./demo-implementer-guide.md#hash-chain-browser-demo)
-and [operator setup](./demo-operations.md#hash-chain-demo). The RC2 public
-gateway has this profile enabled with a registered head; its live status may
-change if a grant is abandoned or operator recovery is required.
+The gateway is a public integration target, not a wallet, custodian, mainnet
+service or availability commitment. The bounded transport relay runs in the
+same Cloudflare account; payment state remains in the gateway Durable Object.
 
-Status: deployed `1.0.0-rc.2` release for `kaspa:testnet-10`. Release and
-hosted validation evidence is attached to the [published prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2).
-
-The hosted gateway is a public integration target for implementers exercising
-the Kaspa x402 wire flow against a real server. It is not a wallet, custodian,
-mainnet service, or availability commitment.
-
-The RC2 gateway uses `kaspa-exact-v2` with the default
-`standard-native` profile and also supports `batch-settlement`. The optional
-`additive` exact profile is implemented but is advertised only when a current
-KIP-10 head is available.
+The gateway advertises standard-native exact, batch settlement and hash-chain
+additive when a funded head is available. Optional additive exact requires its
+own available KIP-10 head. Inspect `/supported` and `/hash-chain/status` for
+current availability.
 
 ## SDK/browser compatibility
 
-The gateway is versioned independently from the SDK. A read-only check on
-2026-10-16 observed `/health` reporting `1.0.0-rc.2`, a standard-native exact
-402 offer, a batch offer using escrow-v4, and an available hash-chain head.
-These observations do not claim a fresh paid hosted run.
-
 | Surface | 1.0.0 browser/SDK relationship |
 | --- | --- |
-| Standard-native exact quote | Same binding and profile; quote shape can be inspected with the current schema. This is not a fresh paid settlement proof. |
-| Batch covenant | Hosted escrow-v4 is incompatible with the 1.0.0 escrow-v5 builders. |
-| Hash-chain covenant | Hosted head-v1 is incompatible with the 1.0.0 head-v2 signer; the new browser rejects its quote and leaves payment disabled. |
-| Existing RC2 demo | Use a matching RC2 browser/runtime for its historical covenant state. |
+| Standard-native exact | Matching payment binding and profile. |
+| Batch covenant | Escrow-v5, compatible with 1.0.0 builders. |
+| Hash-chain covenant | Head-v2; public funded browser payment and retry verified. |
+| Historical RC2 state | Escrow-v4/head-v1 cannot be upgraded in place; retain recovery keys and use the original runtime. |
 
-The new browser is a Testnet-only inspection and test tool, not an automatic
-upgrade of the deployed service. To reproduce the original demo locally, check
-out `v1.0.0-rc.2` in a separate directory and follow that release's instructions.
-For 1.0.0 covenant tests use the current mock examples or a matching Testnet
-server with fresh heads/channels. This release PR does not migrate or redeploy
-the gateway.
+See the [template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
+and [operator cutover](demo-operations.md#100-demo-cutover). The RC2 deployment
+record below remains historical evidence.
 
 ## Base URL
 

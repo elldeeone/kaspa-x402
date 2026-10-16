@@ -1,6 +1,7 @@
 # 1.0.0 release
 
-Status: candidate under review. Not merged or published by this PR.
+Status: published on npm as `1.0.0` with the `latest` tag.
+[GitHub release](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0).
 
 The release covers the Kaspa x402 standard and four public packages:
 `@kaspa-x402/core`, `@kaspa-x402/covenant`, `@kaspa-x402/client` and
@@ -21,12 +22,13 @@ and [production operating requirements](mainnet-readiness.md).
 
 ## Demo compatibility
 
-The candidate pairs the browser with the 1.0.0 demo Worker and fresh head-v2 /
-escrow-v5 state. Its bounded Node transport relay holds no payment keys or state;
-the existing Durable Object remains authoritative. The actual browser payment and
-same-transaction retry passed on funded Testnet through a local Worker preview;
-see the [demo proof](../../verification/demo-release-RESULTS.md). Preparing this PR does not
-deploy the demo; see the [cutover procedure](../../docs/demo-operations.md#100-demo-cutover).
+The public website and demo Worker run 1.0.0 with fresh head-v2 / escrow-v5
+state. The bounded Node transport runs in a Cloudflare Container and holds no
+payment keys or payment state. The existing Durable Object remains authoritative.
+A funded payment and same-transaction retry passed through the public HTTPS
+browser flow; see the [deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json).
+The earlier [local browser proof](../../verification/demo-release-RESULTS.md)
+remains a separate record. See the [cutover procedure](../../docs/demo-operations.md#100-demo-cutover).
 
 ## Changes since RC2
 
@@ -44,7 +46,7 @@ Existing RC2 scripts cannot be upgraded in place. Complete or recover their
 channels/heads under the original runtime and open new state under 1.0.0. See
 the [template transition](versioning-policy.md#sighash-template-transition).
 
-## Candidate validation
+## Release validation
 
 Completed candidate qualification: **55/55 external scenario groups**, including
 the four documented mock examples; **18/18 funded exact/batch flows** and all
@@ -59,14 +61,16 @@ not establish mainnet acceptance or production performance. Qualification binds
 the four archive hashes; documentation-only changes preserve that evidence only
 when rebuilt archives are byte-identical.
 
-Before publication, retain the clean candidate commit, independent compiler and
-pinned consensus results, approved archive manifest, external installed-package
-qualification and fresh funded Testnet-10 report. The release PR records the
-exact revision, hashes and outcomes. The earlier
+Release source: `e5f5b0ed34657dc4e8c67c9153818e0ba07b1828`.
+[Main CI](https://github.com/elldeeone/kaspa-x402/actions/runs/38848724921) passed.
+The four registry archives match the qualified package hashes exactly. The
+compiler/consensus evidence, archive approval and funded reports are retained.
+See the [security review and merged fixes](security-review-1.0.0.md). The earlier
 [qualification campaign](../../verification/external-sdk-qualification/RESULTS.md)
 is supporting evidence, not a substitute for checking the final 1.0.0 archives.
 
 This release does not publish adapters, facilitator or CLI workspaces, provide a
 hosted production payment service, claim upstream x402 adoption, or deploy the
-website/demo. Testnet evidence does not establish mainnet acceptance or certify
+website/demo automatically. The separately authorized Testnet demo cutover is
+recorded above. Testnet evidence does not establish mainnet acceptance or certify
 an application's production topology.

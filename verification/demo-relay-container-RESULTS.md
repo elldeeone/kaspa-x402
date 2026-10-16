@@ -22,3 +22,10 @@ by these read-only tests; the public funded browser payment is a separate proof.
 
 Repeat with `verification/proof-demo-relay-container-e2e.mjs`; see the
 [hosting procedure](../infra/demo-pnn-relay/README.md).
+
+The public gateway canary initially failed with Cloudflare error 1042 when the
+scheduled Worker called the relay. Enabling `global_fetch_strictly_public`
+restored the same bounded transport in that context: real node health, the empty
+UTXO snapshot, persisted checkpoint, canary checks and public exact/batch 402
+offers passed. The deployed gateway retains the funded head after the config
+redeploy. This changes no public SDK package or payment-verification code.

@@ -1,0 +1,102 @@
+{
+  "sourceRevision": "046503c39c6b2a9bfed62f16bd049d32ed54f19d",
+  "environment": "Public HTTPS website and deployed Cloudflare Worker/SQLite DO, funded Testnet-10",
+  "network": "kaspa:testnet-10",
+  "independentlyOperatedSources": 1,
+  "gatewayVersion": "61ee0ee8-80b9-428e-b9b2-06f9fd3ab15d",
+  "paymentTransactionId": "ccdf2c1371ae134ee15848569fd999add25192d319e117d1a45ed8bbc09640ea",
+  "headBefore": {
+    "outpoint": {
+      "txid": "81a7947344f53000468b59ae1592f0fdc771ed983a5f1000986366905a514ad5",
+      "index": 0
+    },
+    "amount": "100000000",
+    "version": "0"
+  },
+  "headAfter": {
+    "outpoint": {
+      "txid": "ccdf2c1371ae134ee15848569fd999add25192d319e117d1a45ed8bbc09640ea",
+      "index": 0
+    },
+    "amount": "120000000",
+    "version": 1
+  },
+  "sameTransactionRetry": true,
+  "wire": [
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "paid": false,
+      "status": 402
+    },
+    {
+      "path": "/hash-chain/grant",
+      "method": "OPTIONS",
+      "paid": false,
+      "status": 204
+    },
+    {
+      "path": "/hash-chain/grant",
+      "method": "POST",
+      "paid": false,
+      "status": 200
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "OPTIONS",
+      "paid": false,
+      "status": 204
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "paid": true,
+      "status": 200
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "OPTIONS",
+      "paid": false,
+      "status": 204
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "paid": true,
+      "status": 200
+    }
+  ],
+  "browserExceptions": [],
+  "totalFeesSompi": "3000000",
+  "privateReportSha256": "4f1d9157b7ea87d8053b43682930c505f0bc0bc04a2bf6fc1cab08ed9cb3849d",
+  "sdkReleaseRevision": "e5f5b0ed34657dc4e8c67c9153818e0ba07b1828",
+  "archiveManifestSha256": "5849373e89a665e24491413d7b83816a835e55880f216e3d5a1ead20b6c5b276",
+  "registryPackagesVerified": 4,
+  "registryConsumerExportsVerified": 7,
+  "postDeployment": {
+    "gatewayVersion": "e68dba08-aae6-4e15-8801-b2d1fc326a0e",
+    "runtimeCodeUnchanged": true,
+    "routingFix": "global_fetch_strictly_public",
+    "canaryOk": true,
+    "exactOfferStatus": 402,
+    "batchOfferStatus": 402
+  },
+  "packageArchiveHashes": [
+    {
+      "name": "@kaspa-x402/core",
+      "sha256": "53fc5b794a57b1dc26b7ed5394bc8c59627f8631d924644216252c1c68ba5adf"
+    },
+    {
+      "name": "@kaspa-x402/covenant",
+      "sha256": "515d4fed206b7c32ee3cdbff4d9cb23edb668c56c60a9f6a3e7ee8d594daaaa5"
+    },
+    {
+      "name": "@kaspa-x402/client",
+      "sha256": "c1082961008f71ae6f6440aaa0a4d80fb51253d7787ef73db70b0314b3c58563"
+    },
+    {
+      "name": "@kaspa-x402/server",
+      "sha256": "865ccbc727d061643b24b8af427b4cff790bedc650d72bae64156b960209a835"
+    }
+  ]
+}

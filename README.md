@@ -8,12 +8,13 @@ specifications, schemas, SilverScript contracts, SDKs, reusable chain adapters,
 examples and verification tools. It installs and verifies independently of the
 website and hosted gateway.
 
-This branch prepares the **1.0.0 standard and four-package SDK release**.
+The **1.0.0 standard and four-package SDK release** is published on npm.
 The SDK supports Testnet-10 and explicitly configured mainnet; funded validation
 uses Testnet-10. Read the [release notes](protocol/docs/v1-release.md) and
 [deployment requirements](protocol/docs/mainnet-readiness.md). The website and
-hosted demo are separate: the recorded demo deployment remains RC2/Testnet-only
-and uses older covenant templates. No package or website is published by this PR.
+hosted demo are separate deployments. The public demo now runs the matching
+1.0.0 Testnet runtime with escrow-v5/head-v2 and a verified browser payment and
+retry. See the [security review record](protocol/docs/security-review-1.0.0.md).
 
 | Folder | Responsibility |
 | --- | --- |

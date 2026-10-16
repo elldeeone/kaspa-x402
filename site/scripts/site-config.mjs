@@ -110,6 +110,7 @@ export const CONTRACT_FILES = [
 
 export const PUBLIC_DOC_FILES = [
   "docs/v1-release.md",
+  "docs/security-review-1.0.0.md",
   "docs/rc2-release.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
@@ -130,7 +131,8 @@ export const PUBLIC_DOC_FILES = [
 
 // One-line purpose for each published artifact, shown next to it in index pages.
 export const ARTIFACT_NOTES = {
-  "docs/v1-release.md": "1.0.0 SDK candidate, supported profiles, compatibility and exact-package validation.",
+  "docs/v1-release.md": "Stable 1.0.0 SDK, supported profiles, compatibility and exact-package validation.",
+  "docs/security-review-1.0.0.md": "AI-assisted security review, merged fixes, release evidence and limitations.",
   "schemas/payment-required.schema.json":
     "x402 v2 `PaymentRequired` envelope: the 402 offer body listing accepted payment requirements.",
   "schemas/payment-payload.schema.json":
@@ -174,7 +176,7 @@ export const ARTIFACT_NOTES = {
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
   "docs/testnet-gateway.md":
-    "Deployed RC2 Testnet-10 PNN gateway for native exact, hash-chain, and batch integration tests.",
+    "Deployed 1.0.0 Testnet-10 gateway, matching templates, browser proof and historical RC2 evidence.",
   "docs/rc2-release.md":
     "Published RC2 packages, payment profiles, PNN gateway, browser demo, and validation evidence.",
   "docs/demo-operations.md":
@@ -203,7 +205,7 @@ export const ARTIFACT_NOTES = {
 
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
-  { title: "SDK Release", files: ["docs/v1-release.md"] },
+  { title: "SDK Release", files: ["docs/v1-release.md", "docs/security-review-1.0.0.md"] },
   { title: "Historical Releases", files: ["docs/rc2-release.md"] },
   { title: "Adoption", files: ["docs/adoption-examples.md"] },
   {
@@ -298,6 +300,7 @@ export const SITE_PACKAGE_NAMES = [
 // Public routes remain stable when their repository sources move.
 const PROTOCOL_DOC_FILES = new Set([
   "docs/v1-release.md",
+  "docs/security-review-1.0.0.md",
   "docs/adoption-examples.md",
   "docs/hash-chain-live-proof.md",
   "docs/hash-chain-otp-research.md",

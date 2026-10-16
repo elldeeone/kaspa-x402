@@ -19,7 +19,9 @@ bundled relay and Dockerfile; the transport token is injected at runtime.
 The host pins its own Wrangler for container hosting; SDK dependencies
 and the existing gateway's toolchain are unchanged.
 Configure the gateway with the returned HTTPS origin and the same transport token.
-Requests without that token fail before starting a container.
+Requests without that token fail before starting a container. The gateway must
+use `global_fetch_strictly_public` for public Worker-to-Worker relay calls;
+without it Cloudflare returns error 1042 outside the Durable Object context.
 
 ```sh
 node verification/proof-demo-relay-container-e2e.mjs --out /private/local.json

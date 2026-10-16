@@ -2,11 +2,12 @@
 
 ## 1.0.0 demo cutover
 
-The release candidate includes the matching frontend and demo Worker. The
-recorded public RC2 deployment below is historical; it has not been upgraded by
-preparing this PR. A working demo is a release requirement. The candidate
-passed its [funded browser qualification](../verification/demo-release-RESULTS.md)
-through the local Worker and bounded relay; public deployment is still pending.
+The public website and demo Worker now run 1.0.0. The funded browser payment
+and same-transaction retry passed through the actual public origins; see the
+[deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json). The earlier
+[local qualification](../verification/demo-release-RESULTS.md) and RC2
+deployment records remain separate historical evidence. The steps below repeat
+the fresh-state cutover; do not reset active payment state on routine redeploys.
 
 1. Run the authenticated transport relay on a Node host behind an HTTPS reverse
    proxy. The public demo uses the [Cloudflare Container host](../infra/demo-pnn-relay/README.md)

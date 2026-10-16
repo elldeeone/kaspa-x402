@@ -3,10 +3,10 @@
 This workspace owns the static standards reference site, browser demo and build tools.
 The generated output lives in `site/dist/` and is ignored.
 
-The 1.0.0 candidate artifacts and browser bundle use escrow-v5/head-v2 with
-signer-chosen transaction sighash types and ALL as the signing default.
-Published RC2 and its hosted gateway still use escrow-v4/head-v1. Use a matching
-development server and fresh covenant state when testing the new templates;
+The published 1.0.0 artifacts, browser bundle and hosted Testnet gateway use
+escrow-v5/head-v2 with signer-chosen sighash types and ALL as the signing default.
+Historical RC2 covenant state remains incompatible and must be recovered under
+its original runtime;
 see the [signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition).
 
 Install once with `npm ci` at the repository root. Build this host independently:
@@ -60,10 +60,10 @@ npm tag come from the public package manifests. Demo version, network, templates
 and last verification date are independent recorded deployment metadata; update
 them only after checking the actual service. Do not derive them from SDK versions.
 
-The recorded RC2 gateway is incompatible with current covenant builders. The
-browser rejects an old quote before enabling payment. Mock browser tests use a
-matching head-v2 fixture; they are separate from read-only live compatibility
-checks and from the funded installed-SDK campaign.
+The deployed gateway now matches the 1.0.0 browser and covenant builders. A
+funded browser payment and same-transaction retry passed through the public
+origins; see `verification/release-1.0.0-hosted.json`. The browser still rejects
+incompatible old quotes. Mock and local preview proofs remain separate evidence.
 
 Cloudflare Pages configuration:
 
