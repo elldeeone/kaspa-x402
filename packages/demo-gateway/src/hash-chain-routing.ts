@@ -27,7 +27,7 @@ export async function routeHashChainRequest(request: Request, config: GatewayCon
   if (config.hashChainOrigin) return proxyHashChainRequest(request, config);
   const path = new URL(request.url).pathname;
   if (!config.enabled || !config.hashChainEnabled || !config.adminToken ||
-      (!config.boundedPnnWebSocketFactory && path !== "/hash-chain/status")) return unavailable();
+      ((!config.boundedPnnWebSocketFactory && !config.boundedPnnRpcFactory) && path !== "/hash-chain/status")) return unavailable();
   if (request.method !== (path === "/hash-chain/grant" ? "POST" : "GET"))
     return Response.json({ error: "method_not_allowed" }, { status: 405, headers: { "cache-control": "no-store" } });
   const ip = request.headers.get("cf-connecting-ip")?.trim();
@@ -49,7 +49,7 @@ export async function routeHashChainRequest(request: Request, config: GatewayCon
 export async function hostedHashChainSupportedKinds(config: GatewayConfig, env: GatewayEnv, signal?: AbortSignal): Promise<SupportedKind[]> {
   signal?.throwIfAborted();
   if (!config.enabled || (!config.hashChainOrigin && !config.hashChainEnabled)) return [];
-  if (!config.hashChainOrigin && !config.boundedPnnWebSocketFactory) return [];
+  if (!config.hashChainOrigin && (!config.boundedPnnWebSocketFactory && !config.boundedPnnRpcFactory)) return [];
   const key = config.hashChainOrigin
     ? `proxy:${config.hashChainOrigin}:${config.hashChainProxyToken ?? ""}`
     : `local:${config.gatewayBaseUrl}:${config.adminToken ? "configured" : "unconfigured"}`;

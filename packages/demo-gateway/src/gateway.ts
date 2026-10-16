@@ -188,7 +188,7 @@ export async function handleGatewayRequest(
       { status: 503, headers: corsHeaders(config) },
     );
   }
-  if (!config.boundedPnnWebSocketFactory) {
+  if ((!config.boundedPnnWebSocketFactory && !config.boundedPnnRpcFactory)) {
     return json({ ok: false, error: "payment_transport_unavailable" },
       { status: 503, headers: corsHeaders(config) });
   }
@@ -758,7 +758,7 @@ async function hostedExactAvailable(
 ): Promise<boolean> {
   signal?.throwIfAborted();
   if (!hostedExactConfigured(config)) return false;
-  if (!config.boundedPnnWebSocketFactory) return false;
+  if ((!config.boundedPnnWebSocketFactory && !config.boundedPnnRpcFactory)) return false;
   if (config.exactProfile === "standard-native") return true;
   const stats = await state.exactHeadStats(signal);
   signal?.throwIfAborted();
@@ -777,7 +777,7 @@ function gatewaySupportedKinds(
   config: GatewayConfig,
   exactAvailable: boolean,
 ): SupportedKind[] {
-  if (!config.enabled || !config.boundedPnnWebSocketFactory) return [];
+  if (!config.enabled || (!config.boundedPnnWebSocketFactory && !config.boundedPnnRpcFactory)) return [];
   const kinds: SupportedKind[] = [];
   if (exactAvailable) {
     kinds.push({

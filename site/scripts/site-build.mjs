@@ -191,7 +191,7 @@ function writeHomePage() {
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
-    <p>The SDK also includes the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. The <a href="/demo/#demo-hash-chain">browser test client</a> requires a matching head-v2 issuer; the deployed RC2 gateway uses head-v1.</p>
+    <p>The SDK also includes the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. The <a href="/demo/#demo-hash-chain">browser test client</a> uses the matching 1.0.0 head-v2 issuer. The release includes a demo upgrade with fresh Testnet state; the recorded RC2 deployment remains historical evidence.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated requests with a payer-approved fixed charge per invocation against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -377,7 +377,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser test client for inspecting offers, checking node connectivity and rehearsing payment headers. This build uses the 1.0.0 SDK with escrow-v5/head-v2. The separate hosted RC2 gateway uses escrow-v4/head-v1: its standard-native quote is inspectable, but its batch and hash-chain covenants are incompatible with this client. Hash-chain payment stays disabled for an incompatible quote. Use the matching RC2 browser/runtime when testing the existing gateway; use fresh state and a matching server for 1.0.0 covenant tests. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
+    <p class="muted">Testnet-only browser test client for inspecting offers, checking node connectivity and rehearsing payment headers. This build uses the 1.0.0 SDK with escrow-v5/head-v2. The 1.0.0 release pairs this browser with the matching demo Worker and fresh Testnet covenant state. Its paid hash-chain flow claims a grant, signs and broadcasts in your browser, then returns the protected report; retry keeps the same payment. The recorded RC2 gateway requires an operator cutover before this candidate can be deployed. Incompatible quotes are rejected before spending. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -428,7 +428,7 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-hash-chain">
       <h2 id="demo-hash-chain">Hash-chain exact — live Testnet payment</h2>
-      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote to check compatibility. Payment requires a matching head-v2 quote; the recorded RC2 gateway uses head-v1 and cannot be paid with this client.</p>
+      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to receive the protected report. Retry returns the same payment without another charge. This candidate requires the matching 1.0.0 demo runtime and fresh head-v2 state; its deployment is pending.</p>
       <p class="muted">One payment increases the merchant head by the quoted price. The target fee is 0.01 KAS; small change may be included in the fee, up to 0.1 KAS total. The result shows the actual fee. If someone abandons a claimed grant, the operator resets the head manually.</p>
       <div class="demo-actions">
         <button type="button" id="demo-hash-quote">Get hash-chain quote</button>

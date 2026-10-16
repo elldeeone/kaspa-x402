@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/demo-gateway",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0",
   "private": true,
   "description": "Private Cloudflare Worker for the Kaspa x402 testnet gateway.",
   "license": "MIT",

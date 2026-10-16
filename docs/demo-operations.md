@@ -1,3 +1,76 @@
+## 1.0.0 demo cutover
+
+The release candidate includes the matching frontend and demo Worker. The
+recorded public RC2 deployment below is historical; it has not been upgraded by
+preparing this PR. A working demo is a release requirement.
+
+1. Run the authenticated transport relay on a Node host behind an HTTPS reverse
+   proxy. It has no wallet, grants or payment database. Create a private 0600
+   token file with at least 32 random bytes and a private JSON config:
+
+   ```json
+   {
+     "endpoints": ["wss://vector-10.kaspa.green/kaspa/testnet-10/wrpc/json"],
+     "tokenFile": "/private/demo-pnn-token",
+     "host": "127.0.0.1",
+     "port": 8789
+   }
+   ```
+
+   ```sh
+   npm ci
+   node scripts/demo-pnn-relay.mjs /private/demo-pnn-relay.json
+   ```
+
+   Only explicitly listed endpoints and seven required RPC methods are allowed.
+   Requests/responses are capped at 4,259,840 bytes, sockets enforce the same
+   reassembled-message cap, calls time out, and concurrency is limited to 32.
+   HTTP redirects are rejected. Keep this transport token out of the browser.
+
+2. Configure the candidate Worker with the same PNN endpoints,
+   `KASPA_X402_PNN_RPC_ORIGIN=https://your-private-relay.example`, and secret
+   `KASPA_X402_PNN_RPC_TOKEN` containing the relay token. Keep the explicit
+   Testnet trust policy and configure the existing admission/admin secrets.
+   `KASPA_X402_RELEASE_VERSION` is `1.0.0`. Enable the gateway and hash-chain
+   demo only when the relay and fresh state are ready. A failed/missing relay
+   must not fall back to an unbounded native WebSocket.
+
+3. Use a **new private data directory** with the existing `demo:hash-chain init`
+   operator command to create a funded head-v2 genesis. Retain the owner key,
+   signed setup and registration privately. Register its `cloudflare-head.json`
+   using the admin endpoint. The candidate's `demo-gateway-state-v2` object is
+   separate from RC2's `demo-gateway-v1.0.0-rc.2`; do not copy old heads/channels.
+   Preserve RC2 recovery keys and refund outstanding old channels separately.
+
+4. Before authorizing deployment, run the actual candidate locally against
+   funded Testnet. The config contains `sdkModule` (the Node Kaspa WASM module),
+   `rpcUrl` (a synced Testnet-10 Borsh endpoint), and `walletFile` (an isolated
+   Testnet private-key file). Start with a clean committed candidate:
+
+   ```sh
+   npm run build
+   npm run site:build
+   node verification/proof-demo-release-e2e.mjs --out /private/controlled.json
+   node scripts/proof-browser-demo-testnet.mjs --live \
+     --config /private/browser-proof.json --out /private/fresh-browser-run
+   ```
+
+   The proof creates fresh head/payer state and exercises the built page through
+   local HTTPS origins, the actual Worker/SQLite DO and the bounded relay. The
+   browser claims the grant, signs/broadcasts on Testnet and receives the paid
+   report. Retry must return the same transaction; the head must advance once.
+   Keep the entire output directory private: it includes recovery keys/grants.
+   Publish only the sanitized report. This is single-source Testnet evidence,
+   not a deployed-host or independent-mainnet claim.
+
+5. After separate deployment authorization, coordinate the Worker and website
+   cutover and run the same paid smoke on the public origins. Update
+   `site/release.json`'s observed deployment fields only after verifying them.
+   Do not treat relabelling the RC2 gateway, or disabling its payments, as a
+   completed 1.0.0 demo release.
+
+---
+
 # Demo Gateway Operations
 
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash

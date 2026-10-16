@@ -7,6 +7,7 @@ export function configuredPnnClient(config: GatewayConfig): PolicySelectedPnnCli
   const options = (endpoints: string[]) => ({ endpoints,
     timeoutMs: config.pnnTimeoutMs, attempts: config.pnnAttempts,
     allowInsecureLoopback: config.allowInsecureLoopback,
+    rpcFactory: config.boundedPnnRpcFactory,
     boundedWebSocketFactory: config.boundedPnnWebSocketFactory });
   const submission = new KaspaPnnClient(options(config.pnnEndpoints));
   if (config.chainTrustMode === "trusted-single-source")

@@ -6,6 +6,13 @@
     "network": "kaspa:testnet-10",
     "escrowTemplate": "kaspa-x402-escrow-v4",
     "hashChainTemplate": "kaspa-x402-hash-chain-head-v1",
-    "lastVerifiedOn": "2026-10-16"
+    "lastVerifiedOn": "2026-10-16",
+    "candidate": {
+      "version": "1.0.0",
+      "network": "kaspa:testnet-10",
+      "escrowTemplate": "kaspa-x402-escrow-v5",
+      "hashChainTemplate": "kaspa-x402-hash-chain-head-v2",
+      "deploymentStatus": "pending"
+    }
   }
 }

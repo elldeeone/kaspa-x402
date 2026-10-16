@@ -3,6 +3,12 @@
 This internal runbook covers the current release candidate and the eventual
 stable `1.0.0` release. It is not published on the standards site.
 
+The 1.0.0 release also requires a working matching Testnet demo. Follow the
+[demo cutover](../../docs/demo-operations.md#100-demo-cutover), including the
+funded actual-browser proof. Preparing the PR does not authorize a deployment.
+SDK qualification can be preserved by archive-byte identity when only demo or
+frontend files change; demo proof is recorded separately at its actual revision.
+
 ## Release candidate
 
 1. Choose `1.0.0-rc.N`; update every workspace package and exact internal

@@ -23,7 +23,7 @@ export function readHashChainQuote(response) {
   if (!header) throw new Error('The gateway did not return a payment quote.');
   let required;
   try { required = decodePaymentRequiredHeader(header); }
-  catch { throw new Error('Unsupported or malformed quote: this browser requires a valid head-v2 quote. The hosted RC2 gateway uses head-v1; use a matching browser and server.'); }
+  catch { throw new Error('Unsupported or malformed quote: this browser requires a valid head-v2 quote. Use the matching 1.0.0 demo runtime and fresh head-v2 state.'); }
   const accepted = required.accepts.find((item) => item.scheme === 'exact' &&
     item.network === 'kaspa:testnet-10' && item.extra.profile === 'hash-chain-additive');
   if (!accepted) throw new Error('This gateway does not offer hash-chain exact.');

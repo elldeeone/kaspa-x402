@@ -19,6 +19,14 @@ trusted chain evidence, durable transactional stores, shared locks, signers and
 their authenticated request context. See the [integration guide](integration.md)
 and [production operating requirements](mainnet-readiness.md).
 
+## Demo compatibility
+
+The candidate pairs the browser with the 1.0.0 demo Worker and fresh head-v2 /
+escrow-v5 state. Its bounded Node transport relay holds no payment keys or state;
+the existing Durable Object remains authoritative. A funded browser payment and
+same-transaction retry are required before release. Preparing this PR does not
+deploy the demo; see the [cutover procedure](../../docs/demo-operations.md#100-demo-cutover).
+
 ## Changes since RC2
 
 - Escrow-v5 and hash-chain-head-v2 support consensus transaction signature scopes;

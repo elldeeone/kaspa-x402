@@ -9,12 +9,17 @@ chain evidence live in [protocol/packages/adapters](../../protocol/packages/adap
 The gateway imports `@kaspa-x402/adapters`; it implements the adapter's evidence
 store with `GatewayLedger`. It also consumes the core, covenant and server SDKs.
 
-The hosted Worker currently has no pre-delivery bounded PNN WebSocket transport.
-Until one is supplied, `/supported` omits exact and batch settlement, paid
-routes return 503 without a payment offer, and the local hash-chain route is
-unavailable. A separately configured hash-chain proxy can still serve its own
-bounded upstream route. Node integration tests supply the bounded WebSocket
-factory explicitly to exercise the working transport path.
+The 1.0.0 demo uses an authenticated bounded PNN relay configured with
+`KASPA_X402_PNN_RPC_ORIGIN` and the `KASPA_X402_PNN_RPC_TOKEN` secret.
+The relay runs [scripts/demo-pnn-relay.mjs](../../scripts/demo-pnn-relay.mjs)
+on Node and enforces WebSocket frame/reassembled-message limits before delivery.
+The Worker bounds the HTTP response before parsing it. Payment state and grants
+stay in the existing SQLite Durable Object; the relay holds no signing keys.
+
+Without a bounded transport, paid offers remain unavailable. Native Worker
+WebSockets must never be marked as bounded. See the
+[1.0.0 demo cutover](../../docs/demo-operations.md#100-demo-cutover) for setup,
+fresh covenant state and the funded browser proof. Build/tests do not deploy.
 
 Run from the repository root:
 
