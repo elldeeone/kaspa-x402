@@ -169,7 +169,11 @@ try {
     if (m.id && pending.has(m.id)) { pending.get(m.id)(m); pending.delete(m.id); }
     if (m.method === 'Runtime.exceptionThrown') errors.push(m.params.exceptionDetails.text);
   });
-  const send = (method, params = {}) => new Promise(resolve => { const id = nextId++; pending.set(id, resolve); ws.send(JSON.stringify({ id, method, params })); });
+  const send = (method, params = {}) => new Promise((resolve, reject) => {
+    const id = nextId++; const timer = setTimeout(() => { pending.delete(id); reject(Error(`Browser command timed out: ${method}`)); }, 240_000);
+    pending.set(id, value => { clearTimeout(timer); resolve(value); });
+    ws.send(JSON.stringify({ id, method, params }));
+  });
   await send('Runtime.enable'); await send('Page.enable');
   await send('Page.navigate', { url: 'https://kaspa-x402.org/demo/' });
   const evaluate = async (expression, awaitPromise = true) => {
@@ -200,6 +204,12 @@ try {
   const head = (await (await worker.dispatchFetch(base + '/admin/hash-chain', { headers: { authorization: `Bearer ${admin}` } })).json()).head;
   const headAddress = new sdk.ScriptPublicKey(parseInt(head.head.scriptPublicKey.slice(0, 4), 16), head.head.scriptPublicKey.slice(4));
   const address = sdk.addressFromScriptPublicKey(headAddress, 'testnet-10').toString();
+  // Reconnect the independent observer after browser/Worker work; an idle
+  // setup socket may have closed while the separate browser paid.
+  await rpc.disconnect().catch(() => {});
+  await rpc.connect({ timeoutDuration: 15000, retries: 2 });
+  const observedInfo = await rpc.getServerInfo();
+  assert.equal(observedInfo.networkId, 'testnet-10'); assert.ok(observedInfo.isSynced);
   const found = (await getAddressUtxos(rpc, address)).find(u => u.outpoint.txid === payment.transactionId);
   assert.ok(found && found.amount === '120000000', 'Node did not independently observe the funded successor');
   assert.ok(wire.some(w => w.method === 'GET' && w.status === 402));
@@ -216,5 +226,6 @@ finally {
   ws?.close(); browser?.kill('SIGTERM');
   if (server) await new Promise(r => server.close(r));
   await worker?.dispose(); await relay?.close(); await rpc.disconnect().catch(() => {});
+  rpc.free();
   fs.rmSync(profile, { recursive: true, force: true, maxRetries: 20, retryDelay: 100 });
 }
