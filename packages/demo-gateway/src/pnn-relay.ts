@@ -23,7 +23,7 @@ export function createRelayPnnRpcFactory(origin: string, token: string, allowLoo
       if (new TextEncoder().encode(body).length > MAX_BYTES) throw new Error("PNN request limit exceeded");
       const response = await fetch(new URL("/rpc", url), { method: "POST", body,
         headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-        redirect: "error", signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(timeoutMs)]),
+        redirect: "manual", signal: AbortSignal.any([lifetime.signal, AbortSignal.timeout(timeoutMs)]),
       });
       if (!response.ok || !response.body) {
         await response.body?.cancel(); throw new Error("PNN RPC relay unavailable");

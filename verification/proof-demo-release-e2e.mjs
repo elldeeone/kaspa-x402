@@ -67,6 +67,7 @@ try {
         KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: 'true', KASPA_X402_RELEASE_VERSION: '1.0.0',
         KASPA_X402_CHAIN_TRUST_MODE: 'trusted-single-source',
         KASPA_X402_ADMISSION_HMAC_KEY: 'private-test-admission-key-at-least-32-bytes',
+        KASPA_X402_ADMIN_TOKEN: token,
         KASPA_X402_PAY_TO: 'kaspatest:qzlws9lm7uyt0tftzffshnyeu2zcqk4kf7hw5ghk6v0zh093vnkljcy2fl0fh',
         KASPA_X402_SERVER_PUBLIC_KEY: 'bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9',
         KASPA_X402_PNN_ENDPOINTS: endpoint, KASPA_X402_ALLOW_INSECURE_LOOPBACK: 'true',
@@ -90,6 +91,20 @@ try {
     assert.equal(offer.accepts[0].extra.templateId, 'kaspa-x402-escrow-v5');
     return { exact: exact.status, batch: batch.status, batchTemplate: offer.accepts[0].extra.templateId };
   });
+  await check('actual Worker reaches the bounded node transport during head registration', async () => {
+    const before = upstreamCalls;
+    const response = await worker.dispatchFetch('https://demo.kaspa-x402.org/admin/hash-chain/register', {
+      method: 'POST', headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ network: 'kaspa:testnet-10', headId: 'aa'.repeat(32),
+        ownerPublicKey: 'bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9',
+        grants: [], head: { outpoint: { txid: '11'.repeat(32), index: 0 }, amount: '100000000',
+          scriptPublicKey: '000020bee817fbf708b7ad2b12530bcc99e285805ab64faeea22f6d31e2bbcb164edf9ac',
+          covenantId: '22'.repeat(32) } }) });
+    assert.equal(response.status, 409, 'nonexistent fixture head must remain rejected');
+    assert.ok(upstreamCalls > before, 'Worker could not invoke the configured bounded transport');
+    return { nodeCalls: upstreamCalls - before, missingHeadRejected: true };
+  });
+
 } finally {
   await worker?.dispose(); await relay?.close();
   for (const client of peer.clients) client.terminate();

@@ -33,7 +33,10 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'x402-funded-browser-'));
 const keyText = fs.readFileSync(config.walletFile, 'utf8').trim();
 const fundingKey = new sdk.PrivateKey(keyText.startsWith('{') ? JSON.parse(keyText).private_key : keyText);
 const fundingAddress = fundingKey.toAddress('testnet-10').toString();
-const payerKey = new sdk.PrivateKey(crypto.randomBytes(32).toString("hex"));
+const preparedRun = config.reusePreparedRun ? path.resolve(config.reusePreparedRun) : undefined;
+const payerKey = new sdk.PrivateKey(preparedRun
+  ? fs.readFileSync(path.join(preparedRun, 'payer-key'), 'utf8').trim()
+  : crypto.randomBytes(32).toString("hex"));
 fs.writeFileSync(path.join(out, 'payer-key'), payerKey.toString(), { mode: 0o600 });
 const payerAddress = payerKey.toAddress('testnet-10').toString();
 const admin = crypto.randomBytes(32).toString('hex');
@@ -50,13 +53,27 @@ try {
     'site/dist/assets/hash-chain-client.js', 'scripts/demo-pnn-relay.mjs'].map(f => [f,
     crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')]));
   save();
+  let registration;
+  if (preparedRun) {
+    const prior = JSON.parse(fs.readFileSync(path.join(preparedRun, 'report.json')));
+    assert.equal(prior.network, 'kaspa:testnet-10');
+    assert.ok(!prior.payment, 'Do not reuse a run that already attempted a browser payment');
+    fs.cpSync(path.join(preparedRun, 'head'), path.join(out, 'head'), { recursive: true });
+    registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
+    report.preparedInRevision = prior.revision;
+    report.broadcasts = prior.broadcasts.map(t => ({ ...t, reusedPreparation: true }));
+    assert.equal(report.broadcasts.length, 2);
+    const funding = await getAddressUtxos(rpc, payerAddress);
+    assert.ok(funding.some(u => u.amount === '70000000'), 'Prepared payer funding is spent');
+    save();
+  } else {
   const setupConfig = { ...config, dataDir: path.join(out, 'head') };
   privateWrite('setup.json', setupConfig);
   // Existing operator command persists owner keys and signed setup before broadcast.
   const init = execFileSync(process.execPath, ['scripts/hash-chain-demo.mjs', 'init', '--config', path.join(out, 'setup.json'), '--live'],
     { encoding: 'utf8', timeout: 180000 });
   fs.writeFileSync(path.join(out, 'setup.log'), init);
-  const registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
+  registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
   report.broadcasts.push({ role: 'head-genesis', transactionId: registration.head.outpoint.txid, feeSompi: '1000000' });
   save();
   const source = (await getAddressUtxos(rpc, fundingAddress)).find(u => !u.covenantId && BigInt(u.amount) > 100_000_000n);
@@ -77,6 +94,7 @@ try {
   assert.equal(submitted.transactionId, signed.id);
   report.broadcasts.push({ role: 'payer-funding', transactionId: signed.id, feeSompi: '1000000' }); save();
   await waitForAcceptedTransactionEvidence({ rpc, transactionId: signed.id, fromCheckpoint: checkpoint, minConfirmationCount: 30 });
+  }
   const endpoint = config.rpcUrl.replace('/wrpc/borsh', '/wrpc/json');
   relay = await startDemoPnnRelay({ endpoints: [endpoint], token });
   const require = createRequire(createRequire(import.meta.url).resolve('wrangler/package.json'));
