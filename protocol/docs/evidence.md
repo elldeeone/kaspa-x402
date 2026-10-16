@@ -1,7 +1,8 @@
 # Verification evidence
 
-Use this index to choose a check and interpret its result. The package version
-is still `1.0.0-rc.2`, but current source uses **escrow-v5 / head-v2**. Published
+Use this index to choose a check and interpret its result. The 1.0.0 candidate
+uses **escrow-v5 / head-v2**. See its [release notes](v1-release.md) and the
+[external qualification record](../../verification/external-sdk-qualification/RESULTS.md). Published
 RC2 and its release records use **escrow-v4 / head-v1**. The
 [2026-10-07 development verification](verification-2026-10-07.md) separately
 records fresh escrow-v5/head-v2 funded runs. Neither is mainnet evidence.

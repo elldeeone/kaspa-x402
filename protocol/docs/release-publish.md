@@ -76,10 +76,26 @@ stable `1.0.0` release. It is not published on the standards site.
 
 ## Stable `1.0.0`
 
-Stable publication remains blocked by the [mainnet readiness gates](mainnet-readiness.md). When every
-gate is closed, repeat the clean release validation and funded proof on the
-exact stable commit, publish `1.0.0`, move npm `latest`, deploy the site and
-gateway, then create the GitHub release.
+The stable release covers the standard and four public SDK packages. It does
+not bundle a production backend or deploy the site/gateway. The
+[mainnet operating requirements](mainnet-readiness.md) remain obligations for
+each production deployment.
+
+1. Set all protocol workspace versions and exact internal dependencies to
+   `1.0.0`, with public packages configured for npm `latest`; refresh both
+   lockfiles. Align host dependency pins without changing host behavior.
+2. Run the SDK-only `validate:release` gate above on the candidate commit and
+   prepare its authenticated archives with the compiler receipt.
+3. Run the [external qualification campaign](../../verification/external-sdk-qualification/README.md)
+   and fresh funded Testnet-10 proof using those exact installed archives.
+   Retain the candidate commit, manifest digest, package hashes and reports.
+4. Review and merge the release PR. Do not publish during preparation. If the
+   merged revision is different, prepare its authenticated bundle and compare
+   archive hashes with the qualified candidate before authorizing publication.
+   Changed archive bytes require candidate verification.
+5. With separate publication authorization, publish the verified archives using
+   `--tag latest`, then create the matching tag and GitHub release. Do not deploy
+   the demo as part of this SDK release.
 
 ## Exact SDK release artifacts
 

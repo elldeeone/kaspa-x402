@@ -1,7 +1,7 @@
 # Kaspa x402 Binding v1
 
-Status: development revision after the published RC2 release; interoperability
-draft. Examples use the unpublished escrow-v5 template. See the
+Status: specification for the 1.0.0 standard and SDK release candidate.
+Examples use escrow-v5. Upstream x402 adoption is separate. See the
 [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition)
 for the distinction from published RC2.
 
@@ -31,10 +31,9 @@ outside this binding. Kaspa clients must not reject the envelope because such
 entries are present: they must skip entries that do not validate as Kaspa
 requirements during offer selection and fail with `invalid_kaspa_x402_accepted`
 only when no supported Kaspa entry remains. Kaspa servers, in contrast, must
-emit only entries defined by this binding. In the published RC2 release,
-`kaspa:testnet-10` is the testnet validation target and `kaspa:mainnet` is a
-reserved profile name that requires explicit runtime opt-in plus the mainnet
-gates in `docs/mainnet-readiness.md`.
+emit only entries defined by this binding. `kaspa:testnet-10` is the funded
+validation target. `kaspa:mainnet` requires explicit runtime opt-in and the
+[production operating requirements](../docs/mainnet-readiness.md).
 
 ## Scheme Selection
 

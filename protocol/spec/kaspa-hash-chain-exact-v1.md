@@ -1,9 +1,9 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **development revision after `1.0.0-rc.2`, funded validation on Testnet-10**.
+Status: **hash-chain binding for the 1.0.0 standard and SDK release candidate**.
 This revision uses head-v2 with signer-chosen transaction sighash types. The
-published RC2 packages and hosted demo use head-v1. The binding remains an
-interoperability candidate; mainnet and stable-release gates still apply. See
+published RC2 packages and hosted demo use head-v1. Production deployments must meet the
+[mainnet operating requirements](../docs/mainnet-readiness.md). See
 the [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition)
 and [RC2 release reference](../docs/rc2-release.md).
 
@@ -497,13 +497,14 @@ meet the [native-profile readiness bar](../docs/native-profile-boundary.md#readi
 RC2 also advertises `paymentFlow: "upfront"` on existing Kaspa exact offers
 that settle before the handler. The successor `payTo` net-gain interpretation
 requires upstream exact interoperability review before general advertising.
-Mainnet and stable release remain under their own readiness gates.
+Upstream adoption is separate from this SDK release; production deployments
+remain subject to their own operating requirements.
 
 No cryptographic property here implies on-chain price or time enforcement.
 No private grant should be represented as revoked until a conflicting owner
 transition is accepted. The actual contract and network evidence must prove
-the specified behavior before the binding is promoted beyond its RC2
-Testnet-10 interoperability candidate status.
+the specified behavior. Funded Testnet validation does not establish mainnet
+acceptance for an operator deployment.
 
 ## Signature scope
 

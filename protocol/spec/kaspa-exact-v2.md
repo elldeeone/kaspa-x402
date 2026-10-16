@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: development revision after the published `1.0.0-rc.2` Testnet-10 release.
+Status: exact binding for the 1.0.0 standard and SDK release candidate.
 
 Transaction signature verification honors each signature's encoded
 consensus-supported sighash type; reference signers default to `SIGHASH_ALL`.
@@ -8,7 +8,7 @@ The signer chooses its scope, while exact output amounts, recipient scripts,
 accepted profiles, and request authorization remain mandatory. Off-chain
 request-authorization signatures have no transaction sighash flag. See the
 [signature policy](../docs/versioning-policy.md#sighash-template-transition)
-for the related development covenant changes after RC2.
+for the incompatible covenant changes since RC2.
 
 This document defines the active Kaspa network binding for x402 v2 `exact`.
 
@@ -47,7 +47,7 @@ Every v2 exact requirement uses:
 }
 ```
 
-Recognized draft network identifiers are:
+Recognized network identifiers are:
 
 ```text
 kaspa:mainnet
@@ -55,8 +55,9 @@ kaspa:testnet-10
 ```
 
 The `kaspa` CAIP namespace is proposed, not registered. `kaspa:testnet-10` is
-the v1 RC2 validation target. `kaspa:mainnet` is a reserved profile name and
-does not imply mainnet, custody, or production readiness.
+the funded validation target. `kaspa:mainnet` requires explicit opt-in and
+matching network-bound evidence. SDK support does not certify production
+readiness for a deployment.
 
 The binding settles native KAS only.
 
@@ -64,7 +65,7 @@ The binding settles native KAS only.
 
 Every exact offer MUST explicitly include `extra.paymentFlow: "upfront"`.
 An omitted flow, `authorization`, or `escrow` is invalid for these profiles.
-This development revision makes the schema match the reference server's
+This requirement matches the reference server's
 existing settlement-before-service behavior. Do not insert this field into
 an already signed `accepted` object: obtain fresh terms and authorization.
 
