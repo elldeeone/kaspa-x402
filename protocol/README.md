@@ -5,12 +5,14 @@ an independently installable workspace: it contains the specifications, wire
 schemas, contracts, SDKs, reusable chain adapters and their verification evidence.
 The website and hosted gateway are consumers outside this folder.
 
-This is a Testnet-10 reference implementation. The public SDK version remains
-`1.0.0-rc.2`; current source uses escrow-v5/head-v2. Historical RC2 funded evidence
-must not be treated as proof of these newer covenant templates. The
-[evidence index](docs/evidence.md) links the completed development Testnet runs
-and their limits. See [readiness gates](docs/mainnet-readiness.md) before making
-deployment claims.
+This branch prepares the **1.0.0 standard and SDK release**, covering
+standard-native exact, additive exact, hash-chain-additive exact and batch
+settlement. The four public packages use escrow-v5/head-v2 where applicable.
+See the [release notes](docs/v1-release.md) for compatibility and validation.
+Published RC2 uses older covenant templates; its evidence does not validate
+these replacements. Mainnet use requires explicit opt-in and the deployment's
+own [operating requirements](docs/mainnet-readiness.md). The hosted demo remains
+separate and Testnet-only.
 
 ## Install and verify
 

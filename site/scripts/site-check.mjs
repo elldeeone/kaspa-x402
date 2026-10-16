@@ -107,10 +107,14 @@ function checkMetadataFreshness() {
   );
   const dirtyInputs = dirtyPublishableInputs();
   const headersPath = path.join(outDir, "_headers");
+  const presentation = readJson(path.join(root, "site/release.json"));
   const expectedRelease = {
     version: manifest.releaseVersion,
-    channel: "rc",
-    network: "kaspa:testnet-10",
+    channel: publicPackages[0].publishTag,
+    publicationStatus: presentation.publicationStatus,
+    supportedNetworks: ["kaspa:testnet-10", "kaspa:mainnet"],
+    defaultNetwork: "kaspa:testnet-10",
+    demo: presentation.demo,
     generatedFrom: manifest.generatedFrom,
     commitDate: manifest.commitDate,
     sourceState: manifest.sourceState,
@@ -302,11 +306,13 @@ function checkContent() {
   }
 
   const { releaseVersion } = readJson(path.join(outDir, "site-manifest.json"));
+  const { publicationStatus } = readJson(path.join(outDir, "release.json"));
+  const statusLabel = publicationStatus === "published" ? "released" : "candidate";
   for (const file of textFiles.filter((file) => file.endsWith(".html"))) {
     assertContains(
       file,
-      `<strong>${releaseVersion} released</strong>`,
-      "shared published-release status",
+      `<strong>${releaseVersion} ${statusLabel}</strong>`,
+      "shared SDK publication status",
     );
     assertContains(file, "<!--email_off-->", "protect technical examples from email rewriting");
     assertContains(file, "<!--/email_off-->", "close email rewriting exclusion");
@@ -334,7 +340,7 @@ function checkContent() {
   assertContains(
     path.join(outDir, "demo/index.html"),
     "Current Lane And Voucher",
-    "browser demo exposes v1 RC2 batch lane state",
+    "browser demo exposes batch lane state",
   );
   assertContains(
     path.join(outDir, "assets/demo.js"),
@@ -488,6 +494,7 @@ function dirtyPublishableInputs() {
     "package.json",
     "wrangler.jsonc",
     "site/README.md",
+    "site/release.json",
     ...SCHEMA_FILES.map(artifactSource),
     ...SPEC_FILES.map(artifactSource),
     ...CONTRACT_FILES.map(artifactSource),

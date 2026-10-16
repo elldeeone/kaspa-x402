@@ -1,12 +1,12 @@
 {
   "name": "@kaspa-x402/core",
-  "version": "1.0.0-rc.2",
+  "version": "1.0.0",
   "description": "Core types and canonical encoders for Kaspa x402.",
   "license": "MIT",
   "type": "module",
   "publishConfig": {
     "access": "public",
-    "tag": "rc"
+    "tag": "latest"
   },
   "main": "./dist/index.js",
   "types": "./dist/index.d.ts",

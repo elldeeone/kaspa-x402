@@ -571,7 +571,7 @@ function buildBatchPaymentRetry(accepted) {
     lanePreview: lane.preview,
   });
   setStatus(
-    "v1 RC2 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
+    "1.0.0 batch voucher retry and partial-claim preview built; the sample signature is not settlement evidence.",
   );
 }
 

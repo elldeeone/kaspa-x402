@@ -895,13 +895,13 @@ export class KaspaPnnClient {
       const accepting = pnnSelectedBlockCheckpoint(acceptingRaw, acceptingHash, "accepting block");
       const parent = hashValue(requiredRecord(unwrapRecord(acceptingRaw, "block").verboseData,
         "PNN accepting block data").selectedParentHash, "PNN accepting block parent");
-      const positions = await pnnSelectedChainFromCheckpoint(rpc, parent, 0,
-        this.#timeoutMs, "Low", before.blockHash, undefined, signal);
+      const positions = await pnnSelectedChainPositions(rpc, parent, before.blockHash, this.#timeoutMs, signal);
       const acceptingPosition = positions.addedChainBlocks.findIndex(block => block.blockHash === acceptingHash);
       if (acceptingPosition < 0 || positions.removedChainBlockHashes.includes(from.blockHash))
         throw invalidTransaction("PNN origin checkpoint left the selected chain");
       const confirmationCount = positions.addedChainBlocks.length - acceptingPosition;
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, 0,
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent,
+        await pnnAcceptanceRangeFilter(rpc, accepting.blueScore, this.#timeoutMs, signal),
         this.#timeoutMs, "Full", acceptingHash, undefined, signal);
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
         this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
@@ -936,14 +936,14 @@ export class KaspaPnnClient {
       const accepting = pnnSelectedBlockCheckpoint(rawAccepting, acceptingHash, "hash-chain accepting block");
       const verbose = requiredRecord(unwrapRecord(rawAccepting, "block").verboseData, "PNN accepting block verbose data");
       const parent = hashValue(verbose.selectedParentHash, "PNN accepting block selected parent");
-      const positions = await pnnSelectedChainFromCheckpoint(rpc, parent, 0, this.#timeoutMs,
-        "Low", before.blockHash, undefined, active);
+      const positions = await pnnSelectedChainPositions(rpc, parent, before.blockHash, this.#timeoutMs, active);
       const acceptingPosition = positions.addedChainBlocks.findIndex(block => block.blockHash === acceptingHash);
       if (acceptingPosition < 0 || positions.removedChainBlockHashes.includes(from.blockHash))
         throw invalidTransaction("PNN hash-chain payment left the selected chain");
       const confirmationCount = positions.addedChainBlocks.length - acceptingPosition;
       // Limit full transaction data to the accepting block, as in cached-payment confirmation.
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent, 0, this.#timeoutMs, "High", acceptingHash, undefined, active);
+      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent,
+        await pnnAcceptanceRangeFilter(rpc, accepting.blueScore, this.#timeoutMs, active), this.#timeoutMs, "High", acceptingHash, undefined, active);
       const after = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
       const verified = pnnSelectedBlockCheckpoint(await withTimeout(
         rpc.getBlock({ hash: before.blockHash, includeTransactions: false }), this.#timeoutMs,
@@ -1092,7 +1092,7 @@ export class KaspaPnnClient {
       await this.#checkedServerInfo(rpc, endpoint);
       active.throwIfAborted();
       if (
-        !rpc.getVirtualChainFromBlockV2 ||
+        !rpc.getVirtualChainFromBlock ||
         !rpc.getBlockDagInfo ||
         !rpc.getBlock
       ) {
@@ -1153,35 +1153,16 @@ export class KaspaPnnClient {
           verbose.selectedParentHash ?? verbose.selected_parent_hash,
           "Kaspa PNN accepting block selected parent",
         );
-        const selected = await pnnSelectedChainFromCheckpoint(
-          rpc,
-          selectedParent,
-          0,
-          this.#timeoutMs,
-          "Low",
-          before.blockHash,
-          undefined,
-          active,
+        const selected = await pnnSelectedChainPositions(
+          rpc, selectedParent, before.blockHash, this.#timeoutMs, active,
         );
         const proofBlock = selected.addedChainBlocks.find(
           (block) => block.blockHash === evidence.acceptingBlockHash.toLowerCase(),
         );
-        const transactionAccepted = proofBlock?.transactions.some(
-          (transaction) =>
-            pnnAcceptedTransactionId(transaction) ===
-            evidence.transactionId.toLowerCase(),
-        );
-        if (
-          proofBlock &&
-          uintStringValue(
-            proofBlock.header.blueScore,
-            "Kaspa PNN selected-chain proof block blue score",
-          ) !== acceptingBlockBlueScore
-        ) {
-          throw invalidTransaction(
-            "Kaspa PNN selected-chain proof conflicts with the accepting block",
-          );
-        }
+        const transactionAccepted = proofBlock?.transactionIds.includes(evidence.transactionId.toLowerCase());
+        // V1 supplies selected-chain hashes/accepted IDs without transaction
+        // bodies. The accepting header/score was checked above and is rechecked
+        // below; confirmation depth comes only from the ordered hash positions.
         if (!proofBlock || !transactionAccepted) {
           throw invalidTransaction(
             "Kaspa PNN did not prove the accepted transaction at the configured selected-chain depth",
@@ -2839,6 +2820,23 @@ function pnnSelectedBlockCheckpoint(
   };
 }
 
+/** Trim unrelated later transaction bodies at the node, before WebSocket
+ * delivery. This RPC option is a blue-score range filter, NOT confirmation
+ * depth; the separate Low traversal still proves selected-parent depth.
+ * Rusty Kaspa strips distance <= minConfirmationCount, hence the minus one.
+ * A moving tip may append a few blocks; transport/cumulative caps still apply. */
+async function pnnAcceptanceRangeFilter(rpc: PnnRpc, acceptingBlueScore: string,
+  timeoutMs: number, signal?: AbortSignal): Promise<number> {
+  // Refresh after the position traversal: using its earlier tip can include
+  // many new transaction bodies on a slow connection.
+  const tip = await pnnChainCheckpoint(rpc, timeoutMs, signal);
+  const delta = BigInt(tip.blueScore) - BigInt(acceptingBlueScore);
+  if (delta < 0n) throw invalidTransaction("PNN accepting block exceeds the checkpoint");
+  const filter = delta > 0n ? delta - 1n : 0n;
+  if (filter > BigInt(Number.MAX_SAFE_INTEGER)) throw invalidTransaction("PNN acceptance range exceeds the safe RPC filter");
+  return Number(filter);
+}
+
 async function pnnSelectedChainFromCheckpoint(
   rpc: PnnRpc,
   initialHash: Hash32Hex,
@@ -2986,6 +2984,53 @@ async function pnnSelectedChainFromCheckpoint(
     startHash = added.at(-1)!;
   }
   throw invalidTransaction("Kaspa PNN selected-chain response did not converge");
+}
+
+/** V2 Low still contains signature scripts and output bodies. Use V1 hash/ID
+ * pages to count selected-parent positions without downloading those bodies. */
+async function pnnSelectedChainPositions(rpc: PnnRpc, initialHash: string,
+  stopHash: string, timeoutMs: number, signal?: AbortSignal): Promise<{
+    removedChainBlockHashes: string[];
+    addedChainBlocks: { blockHash: string; transactionIds: string[] }[];
+  }> {
+  const removedChainBlockHashes: string[] = [];
+  const addedChainBlocks: { blockHash: string; transactionIds: string[] }[] = [];
+  const seenAdded = new Set<string>();
+  const seenRemoved = new Set<string>();
+  let startHash = initialHash;
+  let bytes = 0;
+  for (let page = 0; page < 64; page++) {
+    signal?.throwIfAborted();
+    const raw = await withTimeout(rpc.getVirtualChainFromBlock!({ startHash,
+      includeAcceptedTransactionIds: true, minConfirmationCount: 0 }), timeoutMs, "pnn selected-chain positions");
+    signal?.throwIfAborted();
+    bytes += new TextEncoder().encode(JSON.stringify(raw)).byteLength;
+    if (bytes > MAX_PNN_SELECTED_CHAIN_BYTES) throw invalidTransaction("PNN selected-chain positions exceed the byte limit");
+    const response = unwrapRecord(raw, "virtualChainFromBlockResponse");
+    for (const value of optionalArray(response.removedChainBlockHashes, "PNN removed chain blocks")) {
+      const hash = hashValue(value, "PNN removed chain block");
+      if (seenRemoved.has(hash) || seenRemoved.size >= 4096) throw invalidTransaction("PNN removed-chain positions repeat or exceed the block limit");
+      seenRemoved.add(hash); removedChainBlockHashes.push(hash);
+    }
+    const added = optionalArray(response.addedChainBlockHashes, "PNN added chain blocks")
+      .map(value => hashValue(value, "PNN added chain block"));
+    const ids = new Map<string, string[]>();
+    for (const item of optionalArray(response.acceptedTransactionIds, "PNN accepted transaction ID blocks")) {
+      const block = requiredRecord(item, "PNN accepted transaction ID block");
+      const hash = hashValue(block.acceptingBlockHash, "PNN accepting block hash");
+      if (!added.includes(hash) || ids.has(hash)) throw invalidTransaction("PNN acceptance IDs do not match unique added-chain blocks");
+      ids.set(hash, optionalArray(block.acceptedTransactionIds, "PNN accepted transaction IDs")
+        .map(value => hashValue(value, "PNN accepted transaction ID")));
+    }
+    for (const blockHash of added) {
+      if (seenAdded.has(blockHash) || seenAdded.size >= 4096) throw invalidTransaction("PNN selected-chain positions repeat or exceed the block limit");
+      seenAdded.add(blockHash); addedChainBlocks.push({ blockHash, transactionIds: ids.get(blockHash) ?? [] });
+      if (blockHash === stopHash) return { removedChainBlockHashes, addedChainBlocks };
+    }
+    if (!added.length) throw invalidTransaction("PNN selected-chain positions ended before the pinned checkpoint");
+    startHash = added.at(-1)!;
+  }
+  throw invalidTransaction("PNN selected-chain position traversal did not converge");
 }
 
 /** Locate acceptance using small ID lists before requesting covenant details. */

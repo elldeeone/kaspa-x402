@@ -8,10 +8,12 @@ specifications, schemas, SilverScript contracts, SDKs, reusable chain adapters,
 examples and verification tools. It installs and verifies independently of the
 website and hosted gateway.
 
-This remains a Testnet-10 release candidate. Current source uses escrow-v5 and
-head-v2. The [evidence index](protocol/docs/evidence.md) separates the completed
-development Testnet proofs from historical RC2 evidence. See
-[readiness gates](protocol/docs/mainnet-readiness.md) before deployment claims.
+This branch prepares the **1.0.0 standard and four-package SDK release**.
+The SDK supports Testnet-10 and explicitly configured mainnet; funded validation
+uses Testnet-10. Read the [release notes](protocol/docs/v1-release.md) and
+[deployment requirements](protocol/docs/mainnet-readiness.md). The website and
+hosted demo are separate: the recorded demo deployment remains RC2/Testnet-only
+and uses older covenant templates. No package or website is published by this PR.
 
 | Folder | Responsibility |
 | --- | --- |

@@ -1,5 +1,9 @@
 # RC2 Release
 
+Historical record of the 2026-10-01 release. Package channels, deployment and
+validation statements below describe that release, not the 1.0.0 SDK candidate.
+See the [current candidate notes](v1-release.md).
+
 Template scope: the RC2 release and its funded/hosted evidence use escrow-v4
 and hash-chain-head-v1. Development escrow-v5/head-v2 allow signer-chosen
 sighash types, with ALL as the reference signing default, and require fresh

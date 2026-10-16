@@ -1,7 +1,9 @@
 # Security Threat Model
 
-Status: threat model for the development Testnet-10 exact and batch-settlement
-profiles. Development source uses escrow-v5 and hash-chain-head-v2; published
+Status: threat model for the 1.0.0 SDK exact and batch-settlement profiles,
+including the optional hash-chain profile. Funded validation is Testnet-10;
+mainnet deployments require their own operating controls. Source uses escrow-v5
+and hash-chain-head-v2; published
 RC2 uses escrow-v4 and head-v1. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 Pre-RC runtime profiles are not supported.

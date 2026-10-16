@@ -157,6 +157,7 @@ function assertBrowserResult(value) {
   assert(value.pageOrigin.startsWith("https://kaspa-x402.org:"), "browser page did not load from the apex origin");
   assert(value.paymentOrigin === baseUrl, "browser payment did not target the separate gateway origin");
   assert(value.hashChain.amount === "140000000", "browser hash-chain successor amount is wrong");
+  assert(value.legacyQuoteRejectedBeforeFunding === true, "legacy quote enabled payment or touched wallet RPC");
   assert(value.hashChain.retryMatched, "browser hash-chain retry changed the payment");
   assert(value.addressPrefix === "kaspatest:", `unexpected address prefix: ${value.addressPrefix}`);
   assert(value.acceptedScheme === "exact", `unexpected accepted scheme: ${value.acceptedScheme}`);
@@ -323,12 +324,13 @@ function demoExerciseExpression() {
       if (base === 'https://demo.kaspa-x402.org') paymentOrigin = this.origin;
     }
   };
+  let fundingReads = 0;
   const fakeRpc = {
     async connect() {},
     async disconnect() {},
     async getServerInfo() { return { networkId: 'testnet-10', isSynced: true }; },
     async getBlockDagInfo() { return { virtualDaaScore: 1234 }; },
-    async getUtxosByAddresses() { return (await fetch('/__hash-demo/funding')).json(); },
+    async getUtxosByAddresses() { fundingReads++; return (await fetch('/__hash-demo/funding')).json(); },
     async submitTransaction({ transaction }) {
       return (await fetch('/__hash-demo/broadcast', { method: 'POST', body: transaction.serializeToSafeJSON() })).json();
     },
@@ -341,6 +343,16 @@ function demoExerciseExpression() {
   await click('demo-import-key');
   const hashAddress = byId('demo-address').value;
   if (!hashAddress.startsWith('kaspatest:')) throw new Error('Hash-chain payer import failed');
+  // A legacy gateway quote must fail in the real DOM before any wallet read.
+  const originalFetch = globalThis.fetch;
+  globalThis.fetch = async () => new Response('{}', { status: 402, headers: {
+    'PAYMENT-REQUIRED': "eyJ4NDAyVmVyc2lvbiI6MiwicmVzb3VyY2UiOnsidXJsIjoiaHR0cHM6Ly9hcGkuZXhhbXBsZS50ZXN0L2hhc2gtY2hhaW4vZmlsZSIsImRlc2NyaXB0aW9uIjoiT25lLXVzZSBoYXNoLWNoYWluIHBheW1lbnQiLCJtaW1lVHlwZSI6ImFwcGxpY2F0aW9uL29jdGV0LXN0cmVhbSJ9LCJhY2NlcHRzIjpbeyJzY2hlbWUiOiJleGFjdCIsIm5ldHdvcmsiOiJrYXNwYTp0ZXN0bmV0LTEwIiwiYW1vdW50IjoiMjAwMDAwMDAiLCJhc3NldCI6IktBUyIsInBheVRvIjoia2FzcGF0ZXN0OnB6anVxdHBtOGgwOWR5OTZ4cXpjcmNndzRxcnpkOHhyOHV1N3I4OWdudGU4NzVoOHI2eDR4czVoNHlnenEiLCJtYXhUaW1lb3V0U2Vjb25kcyI6NjAsImV4dHJhIjp7ImJpbmRpbmciOiJrYXNwYS1oYXNoLWNoYWluLWV4YWN0LXYxIiwicHJvZmlsZSI6Imhhc2gtY2hhaW4tYWRkaXRpdmUiLCJhc3NldFRyYW5zZmVyTWV0aG9kIjoia2FzcGEtdjEtaGFzaC1jaGFpbi1wcm9vZiIsInBheW1lbnRGbG93IjoidXBmcm9udCIsInRlbXBsYXRlSWQiOiJrYXNwYS14NDAyLWhhc2gtY2hhaW4taGVhZC12MSIsImZpbmFsaXR5IjoiYWNjZXB0ZWQiLCJ0cmFuc2FjdGlvbkVuY29kaW5nIjoia2FzcGEtc2RrLXNhZmUtanNvbi12Mi4wLjAiLCJwYXlUb1NjcmlwdFB1YmxpY0tleSI6IjAwMDBhYTIwYmJiOTcwMTNjZDE5OTZiM2E0ZmY5NmJjMDVhYjU0YWU5NGQzMmY5YTRhZTMzZmJkNmZlMGFkMGFlMTZjMWZlODg3IiwiaGVhZElkIjoiOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MDkwOTA5MCIsImhlYWRWZXJzaW9uIjoiMCIsImNvdmVuYW50SWQiOiI4MDg0Yjc1NjZkY2Y4NzQ5M2UyYjFlMTcxYjNmNzAwZDc4MWIxMjEwMzI3N2Q0Mjg1ZDA3ZTZmZWNmMThjOTg1IiwiZXhwZWN0ZWRIZWFkT3V0cG9pbnQiOnsiaW5kZXgiOjAsInR4aWQiOiIzNDdiYzJhYTkyOTdmODYyMWU5MjJiOGYwOWU1ODkwNGM2NWE3ZjRiM2E2MzE3OWRmMTEzYjUwZGM1NzZhYjE2In0sImhlYWRBbW91bnQiOiIxMDAwMDAwMDAiLCJoZWFkU2NyaXB0UHVibGljS2V5IjoiMDAwMGFhMjA0ODhjNTZmMGFiZWRiM2E2M2Y4NDEwZWIzMjhhMzE0ZWYzODc5MzVhN2MzMGVkM2E2ZmUxZmY4NGZlZjYwZGFlODciLCJoZWFkUmVkZWVtU2NyaXB0IjoiNmIyMGEwNTM3MjIwMmM0OTFjODNjMzA2OTMyOTYxMWExMTY3ZTk2OGQ4YjY4NWI4NDAwMjJjZDJjMzgyNjcwMGRjYmI2Yzc2MDRjNmUxZDcwNTg3NjM3NTUzNzk4MjAxMjA5ZDc1NTI3OTgyMDEyMDlkNzU3ODgyMDE0MTlkNzU1Mzc5NTM3OTdlZDk3ODg3NjliMjUxOWM2OWI1MDA5YzY5YjM1MmEyNjliNDAwYTA2OWI0NTJhMTY5YjkwMDljNjkwMGJkMDgwMDAwMDAwMDAwMDAwMDAwODc2OTc4NTM3OWFjNjkwMGNmNzZkMDUxOWM2OTc2ZDI1MTljNjkwMGNiNTE5YzY5MDAwMGNjMDA5YzY5MDBkNTc4ODc2OTAwYzIwMGJlYTA2OWI0NTI5YzYzNTFkNTIwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDg3Njk1MWMyMDBhMDY5Njg1NDc5MDEyMDc4N2ViOTc2YzkwMjg3MDI5NDc2NTE5M2JjN2M3ZWI5NzZjOTc2MDI2NTgyOTM3Y2JjN2VhYTAyMDAwMDAxYWE3ZTAxMjA3ZTdjN2UwMTg3N2UwMGMzODg3NTc1NzU3NTc1NzU1MTY3NzYwNDYwMTA0YTIzODc2Mzc1NTI3OTgyMDEyMDlkNzU3ODgyMDE0MTlkNzU1Mjc5Nzg4NzkxNjliMjUxOWM2OWI1MDA5YzY5YjM1MmEyNjliNDAwYTA2OWI0NTJhMTY5YjkwMDljNjkwMGJkMDgwMDAwMDAwMDAwMDAwMDAwODc2OTc4MjA1NmIzMjhiMzBjOGJmNTgzOWUyNDA1ODc0Nzg3OTQwOGJkYjM2MjQxZGM5YzJlN2M2MTlmYWExMmIyOTIwOTY3YWM2OTAwY2Y3NmQwNTE5YzY5NzZkMjUxOWM2OTAwY2I1MTljNjkwMDAwY2MwMDljNjkwMGQ1Nzg4NzY5MDBjMjAwYmVhMjY5YjQ1MjljNjM1MWQ1MjAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwODc2OTUxYzIwMGEwNjk2ODUzNzkwMTIwNzg3ZWI5NzZjOTAyODcwMjk0NzY1MTkzYmM3YzdlYjk3NmM5NzYwMjY1ODI5MzdjYmM3ZWFhMDIwMDAwMDFhYTdlMDEyMDdlN2M3ZTAxODc3ZTAwYzM4ODc1NzU3NTc1NzU1MTY3NzYwNDg5ZDU5YzA2ODc2Mzc1Nzg4MjAxNDE5ZDc1YjI1MTljNjliNTAwOWM2OWI5MDA5YzY5YjM1MTljNjliNDUxOWM2OTAwYmQwODAwMDAwMDAwMDAwMDAwMDA4NzY5NzgyMDU2YjMyOGIzMGM4YmY1ODM5ZTI0MDU4NzQ3ODc5NDA4YmRiMzYyNDFkYzljMmU3YzYxOWZhYTEyYjI5MjA5NjdhYzY5MDBjZjc2ZDA1MTljNjk3NmQyMDA5YzY5MDBjYjAwOWM2OTAwZDUyMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDAwMDA4NzY5MDBjMjAwYTA2OTAwYzIwMGJlYTE2OTc1NzU3NTUxNjc2YTY4Njg2OCIsImN1cnJlbnRHdWFyZCI6ImEwNTM3MjIwMmM0OTFjODNjMzA2OTMyOTYxMWExMTY3ZTk2OGQ4YjY4NWI4NDAwMjJjZDJjMzgyNjcwMGRjYmIiLCJuZXh0R3VhcmQiOiJhOGMwNDAxZWM0MmEwYjE1NGQ0NzI1ZWZjN2Q4NGM0NzdhMWEzMzc5NGJhOGViNzkyZjBlYzNjMzUwM2FjYWNmIiwib25lVGltZVB1YmxpY0tleSI6IjBmMGZiOWEyNDRhZDMxYTM2OWVlMDJiN2FiZmJiYjBiZmEzODEyYjlhMzllZDkzMzQ2ZDAzZDY3ZDQxMmQxNzciLCJncmFudElkIjoiOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MTkxOTE5MSIsImdyYW50Q2xhaW1VcmwiOiJodHRwczovL2FwaS5leGFtcGxlLnRlc3QvaGFzaC1jaGFpbi9ncmFudCIsImNoYWxsZW5nZUlkIjoiOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MjkyOTI5MiIsImNoYWxsZW5nZUlzc3VlZEF0IjoiMjA5OC0xMi0zMVQyMzo1OTowMC4wMDBaIiwiY2hhbGxlbmdlRXhwaXJlc0F0IjoiMjA5OS0wMS0wMVQwMDowMDowMC4wMDBaIiwicGF5bWVudE91dHB1dEluZGV4IjowfX1dLCJleHRlbnNpb25zIjp7InBheW1lbnQtaWRlbnRpZmllciI6eyJpbmZvIjp7InJlcXVpcmVkIjp0cnVlfSwic2NoZW1hIjp7IiRzY2hlbWEiOiJodHRwczovL2pzb24tc2NoZW1hLm9yZy9kcmFmdC8yMDIwLTEyL3NjaGVtYSIsIiRpZCI6Imh0dHBzOi8va2FzcGEteDQwMi5vcmcvc2NoZW1hcy9wYXltZW50LWlkZW50aWZpZXIuc2NoZW1hLmpzb24iLCJ0aXRsZSI6Ikthc3BhIHg0MDIgUGF5bWVudCBJZGVudGlmaWVyIEV4dGVuc2lvbiBJbmZvIiwidHlwZSI6Im9iamVjdCIsInJlcXVpcmVkIjpbInJlcXVpcmVkIl0sInByb3BlcnRpZXMiOnsicmVxdWlyZWQiOnsidHlwZSI6ImJvb2xlYW4ifSwiaWQiOnsidHlwZSI6InN0cmluZyIsIm1pbkxlbmd0aCI6MTYsIm1heExlbmd0aCI6MTI4LCJwYXR0ZXJuIjoiXltBLVphLXowLTlfLV0rJCJ9fSwiYWRkaXRpb25hbFByb3BlcnRpZXMiOnRydWV9fX19",
+    'X-KASPA-X402-DEMO-CALLER': '11'.repeat(32)
+  }});
+  await click('demo-hash-quote');
+  await waitFor(() => byId('demo-hash-status').value.includes('requires a valid head-v2 quote'), 'legacy quote compatibility message');
+  const legacyQuoteRejectedBeforeFunding = byId('demo-hash-pay').disabled && fundingReads === 0;
+  globalThis.fetch = originalFetch;
   let hashResult;
   let hashRetry;
   for (let index = 0; index < 2; index++) {
@@ -358,6 +370,7 @@ function demoExerciseExpression() {
   globalThis.URL = NativeURL;
   await click('demo-reset');
   return {
+    legacyQuoteRejectedBeforeFunding,
     pageOrigin: location.origin,
     paymentOrigin,
     hashChain: { amount: hashResult.headAfter.amount, retryMatched: hashRetry.transactionId === hashResult.transactionId },

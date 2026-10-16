@@ -3,7 +3,7 @@
 This workspace owns the static standards reference site, browser demo and build tools.
 The generated output lives in `site/dist/` and is ignored.
 
-Development artifacts and the browser bundle use escrow-v5/head-v2 with
+The 1.0.0 candidate artifacts and browser bundle use escrow-v5/head-v2 with
 signer-chosen transaction sighash types and ALL as the signing default.
 Published RC2 and its hosted gateway still use escrow-v4/head-v1. Use a matching
 development server and fresh covenant state when testing the new templates;
@@ -51,6 +51,19 @@ Check browser SDK connectivity from Node:
 ```sh
 npm run check:pnn-browser
 ```
+
+Release presentation is controlled by `site/release.json`. While the release
+PR is under review, `publicationStatus` remains `candidate`: pages and JSON must
+not claim npm publication. After separately authorized SDK publication, change
+it to `published` before the coordinated website deployment. SDK version and
+npm tag come from the public package manifests. Demo version, network, templates
+and last verification date are independent recorded deployment metadata; update
+them only after checking the actual service. Do not derive them from SDK versions.
+
+The recorded RC2 gateway is incompatible with current covenant builders. The
+browser rejects an old quote before enabling payment. Mock browser tests use a
+matching head-v2 fixture; they are separate from read-only live compatibility
+checks and from the funded installed-SDK campaign.
 
 Cloudflare Pages configuration:
 

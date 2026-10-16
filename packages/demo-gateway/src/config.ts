@@ -4,7 +4,8 @@ import {
   type NetworkId,
   type SompiString,
 } from "@kaspa-x402/core";
-import { trustedNodeUrl, type PnnChainTrustMode } from "@kaspa-x402/adapters";
+import { createRelayPnnRpcFactory } from "./pnn-relay.js";
+import { trustedNodeUrl, type KaspaPnnClient, type PnnChainTrustMode } from "@kaspa-x402/adapters";
 
 /** Reference gateway policy, not a universal Kaspa consensus dust constant. */
 export const MIN_REFERENCE_ONCHAIN_OUTPUT_SOMPI = 10_000_000n;
@@ -18,6 +19,8 @@ type GeneratedGatewayEnv = WidenStringBindings<Env>;
 /** Generated Wrangler bindings, widened for test/operator overrides plus secrets. */
 export type GatewayEnv = Partial<Omit<GeneratedGatewayEnv, "GATEWAY_STATE">> &
   Pick<GeneratedGatewayEnv, "GATEWAY_STATE"> & {
+    KASPA_X402_PNN_RPC_ORIGIN?: string;
+    KASPA_X402_PNN_RPC_TOKEN?: string;
     KASPA_X402_ADMIN_TOKEN?: string;
     KASPA_X402_HASH_CHAIN_PROXY_TOKEN?: string;
     KASPA_X402_ADMISSION_HMAC_KEY?: string;
@@ -62,6 +65,7 @@ export interface GatewayConfig {
   allowInsecureLoopback: boolean;
   pnnTimeoutMs: number;
   pnnAttempts: number;
+  boundedPnnRpcFactory?: NonNullable<ConstructorParameters<typeof KaspaPnnClient>[0]["rpcFactory"]>;
   boundedPnnWebSocketFactory?: (endpoint: string, maxBytes: number) => WebSocket;
   hashChainOrigin?: string;
   hashChainProxyToken?: string;
@@ -230,7 +234,7 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_SITE_BASE_URL",
     ),
     releaseVersion: releaseVersion(
-      env.KASPA_X402_RELEASE_VERSION ?? "1.0.0-rc.2",
+      env.KASPA_X402_RELEASE_VERSION ?? "1.0.0",
     ),
     gatewayBaseUrl: baseUrl(
       env.KASPA_X402_GATEWAY_BASE_URL ?? "https://demo.kaspa-x402.org",
@@ -241,6 +245,8 @@ export function readGatewayConfig(env: GatewayEnv): GatewayConfig {
       "KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED",
     ),
     chainBroadcastMode,
+    ...(env.KASPA_X402_PNN_RPC_ORIGIN?.trim() ? { boundedPnnRpcFactory: createRelayPnnRpcFactory(
+      env.KASPA_X402_PNN_RPC_ORIGIN.trim(), env.KASPA_X402_PNN_RPC_TOKEN?.trim() ?? "", allowInsecureLoopback) } : {}),
     ...(boundedPnnWebSocketFactory ? { boundedPnnWebSocketFactory } : {}),
     pnnEndpoints: endpoints,
     chainTrustMode,
@@ -276,9 +282,9 @@ function hashChainOrigin(value: string): string {
 
 function releaseVersion(value: string): string {
   const normalized = value.trim();
-  if (normalized !== "1.0.0-rc.2") {
+  if (normalized !== "1.0.0") {
     throw new Error(
-      "KASPA_X402_RELEASE_VERSION must be 1.0.0-rc.2",
+      "KASPA_X402_RELEASE_VERSION must be 1.0.0",
     );
   }
   return normalized;

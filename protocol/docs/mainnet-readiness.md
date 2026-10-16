@@ -1,10 +1,13 @@
 # Mainnet Readiness
 
-Status: production mainnet enablement is blocked by the evidence and operating
-gates below. The development SDK supports explicit mainnet configuration for
-all four native profiles; this is not a production readiness claim.
+This document describes requirements for operating a production mainnet
+deployment. The 1.0.0 standard and SDK release supports explicit mainnet
+configuration for all four native profiles. Publishing the SDK does not certify
+a deployment, provide its storage/signing infrastructure, or enable the hosted
+Testnet demo on mainnet. Operators must satisfy the requirements below for their
+actual topology; these are not a requirement to ship a bundled backend.
 
-The development native payment surface includes:
+The 1.0.0 native payment surface includes:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile);
@@ -22,8 +25,9 @@ separately. It does not close the independent-chain, production durability or
 other mainnet gates below.
 
 `kaspa:testnet-10` remains the funded validation target. v1 RC2 does not provide
-compatibility or state migration for pre-RC runtimes. Mainnet must remain
-opt-in and disabled by default until every gate below is closed.
+compatibility or state migration for pre-RC runtimes. Mainnet remains
+opt-in and disabled by default. Operators must close the gates below before
+enabling their production deployment.
 
 ## SDK Network Verification
 
@@ -230,7 +234,7 @@ and state, while the durable current outpoint advances.
 
 ### Release Controls
 
-Mainnet enablement must require explicit configuration. Packages, examples,
-hosted services, and docs must continue to reject or describe mainnet as
-reserved until audits, durable-store requirements, live evidence, and operator
-runbooks are complete.
+Mainnet enablement requires explicit configuration and the deployment-specific
+audit, durable stores, live evidence and recovery procedures above. The SDK
+release and its Testnet evidence do not certify those operator choices. Hosted
+demo services remain Testnet-only; publishing the SDK does not deploy them.

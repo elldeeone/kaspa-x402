@@ -1619,38 +1619,16 @@ describe("KaspaPnnClient", () => {
           },
         };
       },
-      async getVirtualChainFromBlockV2(request) {
+      async getVirtualChainFromBlock(request) {
         expect(request.minConfirmationCount).toBe(0);
-        expect(request.dataVerbosityLevel).toBe("Low");
+        expect(request.includeAcceptedTransactionIds).toBe(true);
         selectedCalls += 1;
-        if (selectedCalls === 1) {
-          expect(request.startHash).toBe(selectedParentHash);
-          const intermediate = Array.from({ length: selectedDepth - 2 }, (_, index) =>
-            (index + 1).toString(16).padStart(64, "0"));
-          return {
-            removedChainBlockHashes: [],
-            addedChainBlockHashes: [acceptingBlockHash, ...intermediate, checkpoint.blockHash],
-            chainBlockAcceptedTransactions: [
-              {
-                chainBlockHeader: {
-                  hash: acceptingBlockHash,
-                  blueScore: "971",
-                  daaScore: "971",
-                },
-                acceptedTransactions: [{ transactionId }],
-              }, ...intermediate.map((hash, index) => ({
-                chainBlockHeader: { hash, blueScore: String(972 + index), daaScore: String(972 + index) },
-                acceptedTransactions: [],
-              })), { chainBlockHeader: { hash: checkpoint.blockHash,
-                blueScore: checkpoint.blueScore, daaScore: checkpoint.daaScore }, acceptedTransactions: [] },
-            ],
-          };
-        }
-        expect(request.startHash).toBe(checkpoint.blockHash);
-        return {
-          removedChainBlockHashes: [],
-          addedChainBlockHashes: [],
-          chainBlockAcceptedTransactions: [],
+        expect(request.startHash).toBe(selectedParentHash);
+        const intermediate = Array.from({ length: selectedDepth - 2 }, (_, index) =>
+          (index + 1).toString(16).padStart(64, "0"));
+        return { removedChainBlockHashes: [],
+          addedChainBlockHashes: [acceptingBlockHash, ...intermediate, checkpoint.blockHash],
+          acceptedTransactionIds: [{ acceptingBlockHash, acceptedTransactionIds: [transactionId] }],
         };
       },
     }));
@@ -3001,6 +2979,11 @@ type MockPnnRpc = {
     allowOrphan: boolean;
   }): Promise<{ transactionId?: unknown }>;
   getUtxosByAddresses(addresses: string[]): Promise<{ entries?: unknown[] }>;
+  getVirtualChainFromBlock?(request: {
+    startHash: string;
+    includeAcceptedTransactionIds: boolean;
+    minConfirmationCount: number;
+  }): Promise<unknown>;
   getVirtualChainFromBlockV2?(request: {
     startHash: string;
     dataVerbosityLevel: "Low" | "High";

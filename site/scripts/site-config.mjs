@@ -109,6 +109,7 @@ export const CONTRACT_FILES = [
 ];
 
 export const PUBLIC_DOC_FILES = [
+  "docs/v1-release.md",
   "docs/rc2-release.md",
   "docs/adoption-examples.md",
   "docs/testnet-gateway.md",
@@ -129,6 +130,7 @@ export const PUBLIC_DOC_FILES = [
 
 // One-line purpose for each published artifact, shown next to it in index pages.
 export const ARTIFACT_NOTES = {
+  "docs/v1-release.md": "1.0.0 SDK candidate, supported profiles, compatibility and exact-package validation.",
   "schemas/payment-required.schema.json":
     "x402 v2 `PaymentRequired` envelope: the 402 offer body listing accepted payment requirements.",
   "schemas/payment-payload.schema.json":
@@ -150,7 +152,7 @@ export const ARTIFACT_NOTES = {
   "spec/kaspa-exact-v2.md":
     "Active `exact` binding: default standard-native transfer and optional KIP-10 additive head payment.",
   "spec/kaspa-hash-chain-exact-v1.md":
-    "Development head-v2 exact profile: OTP-style grants, signer-chosen sighash, payer broadcast, and accepted payment proof.",
+    "Head-v2 exact profile: OTP-style grants, signer-chosen sighash, payer broadcast, and accepted payment proof.",
   "spec/kaspa-batch-settlement-v3.md":
     "Active `batch-settlement` profile: singleton genesis, stable covenant identity, A/S/T/V/R, repeated partial claims, top-up, refund, and restart recovery.",
   "spec/http-profile.md":
@@ -162,11 +164,11 @@ export const ARTIFACT_NOTES = {
   "spec/errors.md":
     "Error reasons: public x402 error codes and mapping rules for Kaspa-local diagnostics.",
   "contracts/kaspa-x402-escrow-v5.sil":
-    "Development escrow-v5 SilverScript source with signer-chosen transaction sighash types.",
+    "Escrow-v5 SilverScript source with signer-chosen transaction sighash types.",
   "contracts/fixtures/kaspa-x402-escrow-v5.json":
     "Language-neutral constructor layout, compiled bytes, script public keys, covenant arguments, and voucher digest fixture.",
   "contracts/kaspa-x402-hash-chain-head-v2.sil":
-    "Development head-v2 SilverScript source with signer-chosen transaction sighash types.",
+    "Head-v2 SilverScript source with signer-chosen transaction sighash types.",
   "contracts/fixtures/kaspa-x402-hash-chain-head-v2.json":
     "Hash-chain constructor layout, compiled bytes, and borrow/owner selectors.",
   "docs/adoption-examples.md":
@@ -184,11 +186,11 @@ export const ARTIFACT_NOTES = {
   "docs/live-testnet-report.md":
     "RC2 funded Testnet-10 evidence, with the earlier RC1 run retained as history.",
   "docs/live-testnet-proof.md":
-    "How exact and full v1 RC2 batch-lifecycle proof artifacts are produced and independently validated.",
+    "How current exact and batch-lifecycle proof artifacts are produced and independently validated.",
   "docs/security-threat-model.md":
     "Threat model: trust boundaries, attacker capabilities, and mitigations.",
   "docs/mainnet-readiness.md":
-    "The gates that block mainnet use and what closing each one requires.",
+    "Operating requirements for each production deployment; separate from SDK publication.",
   "docs/versioning-policy.md":
     "Compatibility and versioning rules for schemas, specs, vectors, and packages.",
   "docs/native-profile-boundary.md":
@@ -201,7 +203,8 @@ export const ARTIFACT_NOTES = {
 
 // Grouping for the /docs/ index page, in display order.
 export const DOC_GROUPS = [
-  { title: "Current Release", files: ["docs/rc2-release.md"] },
+  { title: "SDK Release", files: ["docs/v1-release.md"] },
+  { title: "Historical Releases", files: ["docs/rc2-release.md"] },
   { title: "Adoption", files: ["docs/adoption-examples.md"] },
   {
     title: "Implementation",
@@ -294,6 +297,7 @@ export const SITE_PACKAGE_NAMES = [
 
 // Public routes remain stable when their repository sources move.
 const PROTOCOL_DOC_FILES = new Set([
+  "docs/v1-release.md",
   "docs/adoption-examples.md",
   "docs/hash-chain-live-proof.md",
   "docs/hash-chain-otp-research.md",

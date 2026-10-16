@@ -1,4 +1,16 @@
+> For the 1.0.0 candidate, use the matching browser and Worker, escrow-v5/head-v2,
+> and fresh Testnet state. See the [demo cutover](demo-operations.md#100-demo-cutover)
+> and [current SDK release notes](../protocol/docs/v1-release.md). The RC2
+> deployment instructions and evidence below describe the historical runtime.
+
 # Demo Implementer Guide
+
+This guide describes the separately deployed **RC2 Testnet gateway**. For the
+1.0.0 SDK use the [SDK integration guide](../protocol/docs/integration.md) and
+[release notes](../protocol/docs/v1-release.md). Its escrow-v5/head-v2 builders
+cannot spend the gateway's escrow-v4/head-v1 covenant state. See the
+[compatibility table](testnet-gateway.md#sdkbrowser-compatibility).
+
 
 Development source uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2

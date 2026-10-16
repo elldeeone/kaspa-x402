@@ -15,7 +15,7 @@ accounting, runtime fingerprints and reproduction inputs. It is development
 Testnet evidence from one configured PNN, separate from the published RC2
 release and hosted gateway below.
 
-## RC2 — Current Published Release
+## RC2 — Historical Published Release
 
 `1.0.0-rc.2` was published on 2026-10-01 from
 `724c5fff22de500fcf729c43b59d25036fbffa9c`. Its fresh funded proof completed

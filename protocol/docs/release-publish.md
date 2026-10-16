@@ -3,6 +3,12 @@
 This internal runbook covers the current release candidate and the eventual
 stable `1.0.0` release. It is not published on the standards site.
 
+The 1.0.0 release also requires a working matching Testnet demo. Follow the
+[demo cutover](../../docs/demo-operations.md#100-demo-cutover), including the
+funded actual-browser proof. Preparing the PR does not authorize a deployment.
+SDK qualification can be preserved by archive-byte identity when only demo or
+frontend files change; demo proof is recorded separately at its actual revision.
+
 ## Release candidate
 
 1. Choose `1.0.0-rc.N`; update every workspace package and exact internal
@@ -76,10 +82,31 @@ stable `1.0.0` release. It is not published on the standards site.
 
 ## Stable `1.0.0`
 
-Stable publication remains blocked by the [mainnet readiness gates](mainnet-readiness.md). When every
-gate is closed, repeat the clean release validation and funded proof on the
-exact stable commit, publish `1.0.0`, move npm `latest`, deploy the site and
-gateway, then create the GitHub release.
+The stable release covers the standard and four public SDK packages. It does
+not bundle a production backend or deploy the site/gateway. The
+[mainnet operating requirements](mainnet-readiness.md) remain obligations for
+each production deployment.
+
+1. Set all protocol workspace versions and exact internal dependencies to
+   `1.0.0`, with public packages configured for npm `latest`; refresh both
+   lockfiles. Align host dependency pins without changing host behavior.
+2. Run the SDK-only `validate:release` gate above on the candidate commit and
+   prepare its authenticated archives with the compiler receipt.
+3. Run the [external qualification campaign](../../verification/external-sdk-qualification/README.md)
+   and fresh funded Testnet-10 proof using those exact installed archives.
+   Retain the candidate commit, manifest digest, package hashes and reports.
+4. Review and merge the release PR. Do not publish during preparation. If the
+   merged revision is different, prepare its authenticated bundle and compare
+   archive hashes with the qualified candidate before authorizing publication.
+   Changed archive bytes require candidate verification.
+5. With separate publication authorization, publish the verified archives using
+   `--tag latest`, then create the matching tag and GitHub release. Smoke-test
+   installation from npm.
+6. Set `site/release.json` publication status to `published` only after successful
+   npm publication; finalize the release-note status, check built pages/links and
+   deploy the documentation website with separate deployment authorization.
+   Keep the recorded demo deployment version independent and Testnet-only.
+   Do not redeploy or migrate the demo gateway as part of this SDK release.
 
 ## Exact SDK release artifacts
 
@@ -136,8 +163,11 @@ with controlled chain facts; it does not close the live mainnet readiness gates.
 node protocol/scripts/inspect-sdk-release.mjs --bundle /private/new-sdk-bundle \
   --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST
 node protocol/scripts/publish-sdk-release.mjs --bundle /private/new-sdk-bundle \
-  --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST --tag rc
+  --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST --tag latest
 ```
+
+The example uses the stable `latest` tag. Use `--tag rc` only for a
+release-candidate bundle whose approved manifests specify `rc`.
 
 The publisher validates without uploading by default. An explicit `--publish`
 and `NODE_AUTH_TOKEN` enable publication. It captures and validates every archive

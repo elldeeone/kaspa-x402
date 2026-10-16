@@ -1,7 +1,6 @@
 # Versioning Policy
 
-Status: development policy after the published RC2 release. This file describes how changes
-are labeled before the stable `1.0.0` release.
+Status: versioning policy for the `1.0.0` standard and SDK release.
 
 ## Spec Versions
 
@@ -9,30 +8,27 @@ The umbrella Kaspa x402 proposal is `v1`; bindings, signed domains, and
 covenant templates are versioned independently. Breaking changes must update
 the affected identifiers, schemas, vectors, packages, and docs together.
 
-The development surface uses `kaspa-exact-v2`,
+The 1.0.0 surface uses `kaspa-exact-v2`,
 `kaspa-escrow-v3`, and `kaspa-x402-escrow-v5`, plus
 `kaspa-hash-chain-exact-v1` and `kaspa-x402-hash-chain-head-v2`. These templates
-are unpublished development changes after RC2. The escrow covenant was
+replace the incompatible templates published in RC2. The escrow covenant was
 compiled with
 SilverScript v1.0.0 commit `3ed973335b59269293564805cc2c58a14595ec03`
 (the portable artifact reports compiler version `0.1.0`). It uses explicit DAA
 lock semantics and four-byte KCC-01 dispatch tags.
 
-This is a clean RC state model. Current runtimes do not accept or migrate
-pre-RC batch bindings or channel state.
+Current runtimes do not accept or migrate incompatible older batch bindings
+or channel state.
 
 ## Package Versions
 
-The current packages use a SemVer release candidate for the intended stable
-`1.0.0` release:
-
-```text
-1.0.0-rc.N
-```
+The four public SDK packages use SemVer and move together. This release is
+`1.0.0`; subsequent compatible fixes use patch versions and compatible additions
+use minor versions. Breaking changes require a major version.
 
 Rules:
 
-- increment `N` for each release-candidate publish;
+- use `MAJOR.MINOR.PATCH-rc.N` for release candidates;
 - keep internal package dependency versions exact;
 - publish release-candidate packages with the `rc` dist-tag;
 - do not move `latest` until the stable `1.0.0` release is approved;
@@ -85,8 +81,9 @@ kaspa:testnet-10
 kaspa:mainnet
 ```
 
-`kaspa:mainnet` is a reserved profile name in the draft spec. It is not a
-readiness claim.
+`kaspa:mainnet` requires explicit opt-in and matching network-bound evidence.
+SDK support is not evidence that a particular deployment satisfies the
+[production operating requirements](mainnet-readiness.md).
 
 ## Sighash template transition
 

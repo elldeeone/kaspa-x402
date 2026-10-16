@@ -21,7 +21,9 @@ export function readHashChainQuote(response) {
   if (response.status !== 402) throw new Error('Hash-chain demo is busy or unavailable. Try again after the operator resets it.');
   const header = response.headers.get('PAYMENT-REQUIRED');
   if (!header) throw new Error('The gateway did not return a payment quote.');
-  const required = decodePaymentRequiredHeader(header);
+  let required;
+  try { required = decodePaymentRequiredHeader(header); }
+  catch { throw new Error('Unsupported or malformed quote: this browser requires a valid head-v2 quote. Use the matching 1.0.0 demo runtime and fresh head-v2 state.'); }
   const accepted = required.accepts.find((item) => item.scheme === 'exact' &&
     item.network === 'kaspa:testnet-10' && item.extra.profile === 'hash-chain-additive');
   if (!accepted) throw new Error('This gateway does not offer hash-chain exact.');

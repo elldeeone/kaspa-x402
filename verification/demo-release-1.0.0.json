@@ -1,0 +1,132 @@
+{
+  "executionRevision": "61ae121a7962b76fc7e4ea171c18beb13280b2c6",
+  "network": "kaspa:testnet-10",
+  "environment": "Local HTTPS browser preview and actual Worker/SQLite DO, funded public Testnet-10",
+  "independentlyOperatedSources": 1,
+  "fundedReportSha256": "a68fea2dda6698abc3b99b42839ec10edb307fae0a4320657613e3e5bf13c745",
+  "runtimeSha256": {
+    "packages/demo-gateway/dist/index.js": "14a76912742be563f6f8d8076e71c7a3057765679456d21d3d3f70aa6fb9d641",
+    "site/dist/assets/demo.js": "31178a7a612976673c84f5d72a5536c45fc957b62163674a8445fdcab3fb1ed9",
+    "site/dist/assets/hash-chain-client.js": "d6e71be2c1979c8e845585be297dfa76dbbb122c8a0c0e1d2873b10c4af2933c",
+    "scripts/demo-pnn-relay.mjs": "5652663aa26ada59f887c1aae28bbe96d86458d59227850d861dedb4e933580f"
+  },
+  "broadcasts": [
+    {
+      "role": "head-genesis",
+      "transactionId": "8bf7088d39947dea0b00add9f01c6e1b092669c8c17f0d1ac43dab87df5e3e4f",
+      "feeSompi": "1000000"
+    },
+    {
+      "role": "payer-funding",
+      "transactionId": "463f96fd7a8e083c7720181462345e277d87bfffd8fd25b09d7ed3dc30c49e8b",
+      "feeSompi": "1000000"
+    },
+    {
+      "role": "browser-payment",
+      "transactionId": "e8ac3fb2a29c97e7cbe654c43ce015a5a70e30e31eacaf6a38fdc35793888a1d",
+      "feeSompi": "1000000"
+    }
+  ],
+  "http": [
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "status": 402,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/grant",
+      "method": "OPTIONS",
+      "status": 204,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/grant",
+      "method": "POST",
+      "status": 200,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "OPTIONS",
+      "status": 204,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "status": 503,
+      "paid": true
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "OPTIONS",
+      "status": 204,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "status": 200,
+      "paid": true
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "OPTIONS",
+      "status": 204,
+      "paid": false
+    },
+    {
+      "path": "/hash-chain/report",
+      "method": "GET",
+      "status": 200,
+      "paid": true
+    }
+  ],
+  "transactionId": "e8ac3fb2a29c97e7cbe654c43ce015a5a70e30e31eacaf6a38fdc35793888a1d",
+  "headBefore": {
+    "outpoint": {
+      "txid": "8bf7088d39947dea0b00add9f01c6e1b092669c8c17f0d1ac43dab87df5e3e4f",
+      "index": 0
+    },
+    "amount": "100000000",
+    "version": "0"
+  },
+  "headAfter": {
+    "outpoint": {
+      "txid": "e8ac3fb2a29c97e7cbe654c43ce015a5a70e30e31eacaf6a38fdc35793888a1d",
+      "index": 0
+    },
+    "amount": "120000000",
+    "version": 1
+  },
+  "retrySameTransaction": true,
+  "browserExceptions": [],
+  "totalFeesSompi": "3000000",
+  "ok": true,
+  "publicSdkArchivesUnchanged": true,
+  "originalSdkQualificationRevision": "02ad8db29a160b3df10c8717847edb3af8104b36",
+  "publicSdkArchives": [
+    {
+      "name": "@kaspa-x402/core",
+      "sha256": "53fc5b794a57b1dc26b7ed5394bc8c59627f8631d924644216252c1c68ba5adf"
+    },
+    {
+      "name": "@kaspa-x402/covenant",
+      "sha256": "515d4fed206b7c32ee3cdbff4d9cb23edb668c56c60a9f6a3e7ee8d594daaaa5"
+    },
+    {
+      "name": "@kaspa-x402/client",
+      "sha256": "c1082961008f71ae6f6440aaa0a4d80fb51253d7787ef73db70b0314b3c58563"
+    },
+    {
+      "name": "@kaspa-x402/server",
+      "sha256": "865ccbc727d061643b24b8af427b4cff790bedc650d72bae64156b960209a835"
+    }
+  ],
+  "limitations": [
+    "Local HTTPS preview and actual Worker runtime; no deployment",
+    "One configured Testnet node; not independent mainnet evidence",
+    "Private PNN adapter and demo integration are newly tested here; original qualification is retained for the unchanged four public package archives"
+  ]
+}
