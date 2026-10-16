@@ -1,6 +1,6 @@
 # Facilitator Profile
 
-Status: optional local facilitator API for the 1.0.0 SDK candidate.
+Status: optional local facilitator API for the 1.0.0 SDK release.
 The facilitator remains a private source workspace, not a public SDK package.
 
 Kaspa x402 supports facilitators for `exact` and `batch-settlement`, but must not require a third-party hosted facilitator.

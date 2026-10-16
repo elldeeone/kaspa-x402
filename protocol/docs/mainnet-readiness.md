@@ -16,15 +16,11 @@ The 1.0.0 native payment surface includes:
 - `batch-settlement` with `kaspa-escrow-v3` and
   `kaspa-x402-escrow-v5`.
 
-These replacement templates use signer-chosen transaction sighash types with
-ALL as the reference signing default. Published RC2 remains on head-v1 and
-escrow-v4; its funded and hosted evidence does not validate the new templates.
-See the [signature policy and template transition](versioning-policy.md#sighash-template-transition).
-Fresh [development Testnet proof](verification-2026-10-07.md) is recorded
-separately. It does not close the independent-chain, production durability or
-other mainnet gates below.
+Reference signing defaults to ALL. See the [signature policy](versioning-policy.md#sighash-template-transition)
+and [1.0.0 validation record](v1-release.md#release-validation). Funded Testnet
+qualification does not certify an operator's mainnet deployment.
 
-`kaspa:testnet-10` remains the funded validation target. v1 RC2 does not provide
+`kaspa:testnet-10` remains the funded validation target. 1.0.0 does not provide
 compatibility or state migration for pre-RC runtimes. Mainnet remains
 opt-in and disabled by default. Operators must close the gates below before
 enabling their production deployment.

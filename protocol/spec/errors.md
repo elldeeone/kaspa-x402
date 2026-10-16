@@ -1,6 +1,6 @@
 # Error Reasons
 
-Status: specification included in the published RC2 release; interoperability draft.
+Status: error mapping for the 1.0.0 standard and SDK release; interoperability proposal.
 
 Kaspa x402 transports expose upstream x402 error reasons on public `PaymentRequired.error`, corrective response bodies, facilitator `invalidReason`, and settlement `errorReason` fields. Kaspa-specific failures are retained as local diagnostic codes, but they must be mapped before they cross the x402 wire surface.
 

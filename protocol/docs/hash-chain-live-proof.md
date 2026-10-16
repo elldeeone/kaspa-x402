@@ -2,11 +2,9 @@
 
 Commands below run from the `protocol/` workspace.
 
-Template scope: the RC2 release and its funded/hosted evidence use escrow-v4
-and hash-chain-head-v1. Development escrow-v5/head-v2 allow signer-chosen
-sighash types, with ALL as the reference signing default, and require fresh
-funded proof before a release claim. See the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+Current release: [1.0.0](v1-release.md#release-validation). The funded browser
+payment and retry are recorded in the [gateway guide](../../docs/testnet-gateway.md).
+Historical runs below retain their original covenant versions and source scope.
 
 The [2026-10-07 development verification](verification-2026-10-07.md) records a
 fresh head-v2 run: two accepted paid HTTP requests and successful owner recovery
@@ -26,7 +24,7 @@ attached transaction evidence and checksums.
 
 The runs below record earlier Testnet-10 candidate validation and retain
 their original evidence-source boundaries. They do not describe the current
-RC2 hosted deployment. The latest historical run below used committed runtime
+hosted deployment. The latest historical run below used committed runtime
 code `6d02163` on 2026-09-26.
 Its detailed report is ignored by Git at
 `.kaspa-x402-live/hash-chain-security-6d02163-20260926-run1/report.json`;

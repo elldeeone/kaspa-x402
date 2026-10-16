@@ -8,7 +8,8 @@ transaction signatures permit signer-chosen scopes while reference signers
 default to ALL. The [development verification record](verification-2026-10-07.md)
 documents completed runs for these templates. The RC2 proof exercised
 escrow-v4/head-v1; do not attribute its transactions to the new templates.
-A release still requires a funded proof of the exact release candidate. See the
+The [1.0.0 release record](v1-release.md#release-validation) records the completed
+exact-package funded proof. Future releases require their own qualification. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).
 
 Status: reproduction guide for the current development `kaspa:testnet-10` proof.

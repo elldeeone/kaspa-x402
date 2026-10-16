@@ -166,12 +166,10 @@ function writeHomePage() {
     <h2 id="status">Status</h2>
     <ul>
       <li>Standard and SDK: <code>${escapeHtml(releaseLabel)}</code>, covering all four native profiles. ${publicationStatus === "published" ? "The four public packages are available" : "The packages are awaiting publication"} on npm's <code>${escapeHtml(releaseChannel)}</code> channel. See the <a href="/docs/v1-release/">1.0.0 release notes</a>.</li>
-      <li>SDK supports <code>kaspa:testnet-10</code> and explicit opt-in <code>kaspa:mainnet</code>. Testnet-10 is the default and funded validation target. Operators supply their own trusted chain evidence, stores, locks and signers; see <a href="/docs/mainnet-readiness/">production operating requirements</a>.</li>
-      <li>Hosted demo: <a href="${escapeAttribute(demo.origin)}"><code>demo.kaspa-x402.org</code></a> is a separate <strong>Testnet-only</strong> deployment. Last verified ${escapeHtml(demo.lastVerifiedOn)}: <code>${escapeHtml(demo.version)}</code>, <code>${escapeHtml(demo.escrowTemplate)}</code> / <code>${escapeHtml(demo.hashChainTemplate)}</code>. The SDK version does not identify the deployed gateway. See <a href="/docs/testnet-gateway/">demo compatibility</a>.</li>
+      <li>SDK supports <code>kaspa:testnet-10</code> and explicit opt-in <code>kaspa:mainnet</code>. Testnet-10 is the default. See <a href="/docs/mainnet-readiness/">production operating requirements</a>.</li>
+      <li>Hosted demo: <a href="${escapeAttribute(demo.origin)}"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(demo.version)}</code> on <strong>Testnet only</strong>. <a href="/demo/">Try a payment</a> or read the <a href="/docs/testnet-gateway/">gateway guide</a>.</li>
       <li>Standards: the <code>kaspa:*</code> identifiers remain proposed x402/CAIP names. This release does not claim upstream registry adoption.</li>
-      <li>Compatibility: 1.0.0 uses escrow-v5/head-v2; existing RC2 covenant state cannot be upgraded in place. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
     </ul>
-    <p class="muted">Generated from commit <code>${escapeHtml(commit.slice(0, 12))}</code> (${escapeHtml(commitDate.slice(0, 10))}). <a href="/release.json"><code>release.json</code></a> identifies this SDK build and the separately recorded demo deployment.</p>
 
     <h2>What is x402</h2>
     <p>x402 is an open protocol that turns the HTTP <code>402 Payment Required</code> status code into a machine-payable flow: a server answers an unpaid request with a 402 carrying a machine-readable offer, the client retries with a signed payment payload, and the server verifies the payment, settles it, and serves the response. The same primitives work over HTTP headers and MCP <code>_meta</code> fields, so paid APIs and tools are usable by autonomous agents. See <a href="https://www.x402.org">x402.org</a>.</p>
@@ -191,7 +189,7 @@ function writeHomePage() {
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
-    <p>The SDK also includes the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. The <a href="/demo/#demo-hash-chain">browser test client</a> uses the matching 1.0.0 head-v2 issuer. The release includes a demo upgrade with fresh Testnet state; the recorded RC2 deployment remains historical evidence.</p>
+    <p>The SDK also includes the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. <a href="/demo/#demo-hash-chain">Try it in the browser demo</a> on Testnet.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated requests with a payer-approved fixed charge per invocation against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
@@ -231,7 +229,6 @@ function writeSchemasPage() {
   <main>
     <h1>Schemas</h1>
     <p>Canonical JSON Schemas for the wire format. Each schema's <code>$id</code> resolves to its path on this site, and the served files are byte-identical to the repository sources.</p>
-    ${statusLine()}
     ${annotatedTable("Schema", rows)}
   </main>
       `,
@@ -256,7 +253,6 @@ function writeSpecsPage() {
   <main>
     <h1>Spec</h1>
     <p>Current binding and transport documents, in suggested reading order.</p>
-    ${statusLine()}
     ${annotatedTable("Document", rows, { hashes: false })}
   </main>
       `,
@@ -284,7 +280,6 @@ function writeDocsPage() {
   <main>
     <h1>Docs</h1>
     <p>Selected public documents, grouped by what they are for.</p>
-    ${statusLine()}
     ${sections}
   </main>
       `,
@@ -345,7 +340,6 @@ function writeVectorsPage() {
   <main>
     <h1>Vectors</h1>
     <p>Conformance fixtures for implementations to validate against. <a href="/vectors/index.json"><code>index.json</code></a> lists byte counts and SHA-256 digests for every file; <a href="/vectors/README.md"><code>README.md</code></a> covers how fixtures are produced.</p>
-    ${statusLine()}
     ${sections}
     ${otherRows.length > 0 ? `<h2>Other files</h2>\n    ${annotatedTable("File", otherRows, { notes: false })}` : ""}
   </main>
@@ -377,7 +371,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only browser test client for inspecting offers, checking node connectivity and rehearsing payment headers. This build uses the 1.0.0 SDK with escrow-v5/head-v2. The 1.0.0 release pairs this browser with the matching demo Worker and fresh Testnet covenant state. Its paid hash-chain flow claims a grant, signs and broadcasts in your browser, then returns the protected report; retry keeps the same payment. The recorded RC2 gateway requires an operator cutover before this candidate can be deployed. Incompatible quotes are rejected before spending. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
+    <p class="muted">Try a payment with the 1.0.0 SDK on Testnet-10. Your browser signs and broadcasts the payment; a successful payment unlocks the protected report. Retrying reuses the same payment. Use a throwaway key and Testnet funds only. See the <a href="/docs/testnet-gateway/">gateway guide</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -428,7 +422,7 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-hash-chain">
       <h2 id="demo-hash-chain">Hash-chain exact — live Testnet payment</h2>
-      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to receive the protected report. Retry returns the same payment without another charge. This candidate requires the matching 1.0.0 demo runtime and fresh head-v2 state; its deployment is pending.</p>
+      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to receive the protected report. Retry returns the same payment without another charge. The gateway runs the matching 1.0.0 payment runtime.</p>
       <p class="muted">One payment increases the merchant head by the quoted price. The target fee is 0.01 KAS; small change may be included in the fee, up to 0.1 KAS total. The result shows the actual fee. If someone abandons a claimed grant, the operator resets the head manually.</p>
       <div class="demo-actions">
         <button type="button" id="demo-hash-quote">Get hash-chain quote</button>
@@ -618,10 +612,10 @@ function writePnnSpikeJson() {
     },
     worker: {
       recordedDeployment: demo,
-      evidenceScope: "Historical RC2 deployment; current browser covenant compatibility is separate",
+      evidenceScope: "1.0.0 Testnet deployment; funded public browser payment and retry verified",
       browserCompatibility: { batch: "requires escrow-v5", hashChain: "requires head-v2" },
       status:
-        `Separate Testnet deployment: ${demo.version}, last verified ${demo.lastVerifiedOn}; historical RC2 paid evidence does not qualify this SDK build`,
+        `Testnet deployment: ${demo.version}, last verified ${demo.lastVerifiedOn}`,
       verifiedCapabilities: [
         "PNN chain health and selected-chain evidence",
         "Durable Object state",
@@ -653,10 +647,6 @@ function writePnnSpikeJson() {
       ],
     },
   });
-}
-
-function statusLine() {
-  return `<p class="muted">SDK: <code>${escapeHtml(releaseLabel)}</code>. See the <a href="/docs/v1-release/">release notes</a>. The <a href="/demo/">browser demo</a> is Testnet-only; production SDK deployments require explicit mainnet opt-in and their own operating controls.</p>`;
 }
 
 function annotatedRow(href, label, note, sha256) {
@@ -844,7 +834,6 @@ ${options.head ?? ""}
   </header>
   <p class="release-status"><strong>${escapeHtml(releaseLabel)}</strong> · Standard and SDK · <a href="/docs/v1-release/">Release details</a></p>
   <!--email_off-->
-  <p class="muted">SDK templates: escrow-v5 and head-v2; reference signing defaults to ALL. The separately recorded RC2 demo uses escrow-v4 and head-v1. SDK qualification and demo deployment evidence are distinct. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a>.</p>
   ${body}
   <!--/email_off-->
   <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/v1-release/">SDK release notes</a>. <a href="/docs/evidence/">Validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>

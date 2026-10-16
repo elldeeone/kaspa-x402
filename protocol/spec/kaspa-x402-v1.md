@@ -1,6 +1,6 @@
 # Kaspa x402 Binding v1
 
-Status: specification for the 1.0.0 standard and SDK release candidate.
+Status: specification for the 1.0.0 standard and SDK release.
 Examples use escrow-v5. Upstream x402 adoption is separate. See the
 [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition)
 for the distinction from published RC2.

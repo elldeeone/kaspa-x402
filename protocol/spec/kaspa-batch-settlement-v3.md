@@ -1,6 +1,6 @@
 # Kaspa x402 Batch Settlement Binding v3
 
-Status: batch binding for the 1.0.0 standard and SDK release candidate.
+Status: batch binding for the 1.0.0 standard and SDK release.
 This revision uses escrow-v5 with signer-chosen transaction sighash
 types. Published RC2 uses escrow-v4. See the
 [signature policy and template transition](../docs/versioning-policy.md#sighash-template-transition).

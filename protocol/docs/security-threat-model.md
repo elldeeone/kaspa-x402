@@ -27,7 +27,7 @@ Pre-RC runtime profiles are not supported.
 - optional self-hosted facilitator endpoints;
 - operator live-testnet adapters and recovery journals.
 
-The v1 RC2 reference gateway trusts one configured Testnet-10 evidence source
+The hosted Testnet reference gateway trusts one configured Testnet-10 evidence source
 at a time. Multiple endpoint URLs are availability failover, not independent
 corroboration. This accepted test boundary must not be treated as Byzantine-safe
 or used to enable mainnet.

@@ -69,8 +69,6 @@ try {
         assert.ok(demoStatus);
         if (publicationStatus === 'published') {
             assert.match(demoStatus, /<code>1\.0\.0<\/code>/);
-            assert.match(demoStatus, /kaspa-x402-escrow-v5/);
-            assert.match(demoStatus, /kaspa-x402-hash-chain-head-v2/);
         } else assert.match(demoStatus, /1\.0\.0-rc\.2/);
         return { installPackages: 4 };
     });

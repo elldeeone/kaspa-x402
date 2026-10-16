@@ -1,6 +1,6 @@
 # Kaspa x402 Hash-Chain Exact Binding v1
 
-Status: **hash-chain binding for the 1.0.0 standard and SDK release candidate**.
+Status: **hash-chain binding for the 1.0.0 standard and SDK release**.
 This revision uses head-v2 with signer-chosen transaction sighash types. The
 published RC2 packages and hosted demo use head-v1. Production deployments must meet the
 [mainnet operating requirements](../docs/mainnet-readiness.md). See

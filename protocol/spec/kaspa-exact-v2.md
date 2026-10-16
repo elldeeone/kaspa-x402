@@ -1,6 +1,6 @@
 # Kaspa x402 Exact Binding v2
 
-Status: exact binding for the 1.0.0 standard and SDK release candidate.
+Status: exact binding for the 1.0.0 standard and SDK release.
 
 Transaction signature verification honors each signature's encoded
 consensus-supported sighash type; reference signers default to `SIGHASH_ALL`.

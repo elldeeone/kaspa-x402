@@ -1,14 +1,11 @@
 # RC2 Release
 
 Historical record of the 2026-10-01 release. Package channels, deployment and
-validation statements below describe that release, not the 1.0.0 SDK candidate.
-See the [current candidate notes](v1-release.md).
+validation statements below describe that release, not the current 1.0.0 release.
+See the [1.0.0 release notes](v1-release.md).
 
-Template scope: the RC2 release and its funded/hosted evidence use escrow-v4
-and hash-chain-head-v1. Development escrow-v5/head-v2 allow signer-chosen
-sighash types, with ALL as the reference signing default, and require fresh
-funded proof before a release claim. See the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+RC2 used escrow-v4 and hash-chain-head-v1. Its covenant state cannot be
+upgraded in place; see the [template transition](versioning-policy.md#sighash-template-transition).
 
 Status: **`1.0.0-rc.2` released on 2026-10-01 for Testnet-10**.
 
@@ -33,8 +30,8 @@ For example:
 npm install @kaspa-x402/core@1.0.0-rc.2 @kaspa-x402/client@1.0.0-rc.2
 ```
 
-`latest` remains on the earlier alpha channel. Use the exact RC2 version or
-`@rc` for this release. The facilitator, CLI, and hosted gateway are available
+At the time of RC2, `latest` remained on the earlier alpha channel. For new
+integrations, use [1.0.0](v1-release.md); the commands above reproduce RC2. The facilitator, CLI, and hosted gateway are available
 as repository source rather than public npm packages.
 
 ## Payment Profiles
@@ -58,7 +55,7 @@ of RC2 does not establish upstream registry acceptance or mainnet readiness.
 
 ## Hosted Gateway And Browser Demo
 
-The [Testnet-10 gateway](https://demo.kaspa-x402.org) serves RC2 standard-native,
+At the time of this release, the [Testnet-10 gateway](https://demo.kaspa-x402.org) served RC2 standard-native,
 batch, and hash-chain payments. KIP-10 additive offers require an operator to
 configure and register an available head.
 

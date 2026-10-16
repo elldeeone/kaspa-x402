@@ -1,12 +1,10 @@
 # Live Testnet Report
 
-Template scope: the RC2 release and its funded/hosted evidence use escrow-v4
-and hash-chain-head-v1. Development escrow-v5/head-v2 allow signer-chosen
-sighash types, with ALL as the reference signing default, and require fresh
-funded proof before a release claim. See the
-[signature policy and template transition](versioning-policy.md#sighash-template-transition).
+Current release: [1.0.0](v1-release.md#release-validation). The funded browser
+payment and retry are recorded in the [gateway guide](../../docs/testnet-gateway.md).
+Historical runs below retain their original covenant versions and source scope.
 
-## Current development verification — 2026-10-07
+## Development verification — 2026-10-07
 
 Fresh escrow-v5/head-v2 runs passed all 18 exact/batch flows and two hash-chain
 HTTP payments followed by abandoned-grant owner recovery. The

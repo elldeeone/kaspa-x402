@@ -2,8 +2,8 @@
 
 Commands below run from the `protocol/` workspace.
 
-Status: source-workspace examples for the 1.0.0 SDK candidate.
-Current builds use escrow-v5/head-v2; published RC2 uses escrow-v4/head-v1.
+Source-workspace examples for the 1.0.0 SDK.
+The covenants use escrow-v5/head-v2.
 Reference transaction signing defaults to ALL, while the new covenants accept
 signer-chosen scopes. See the
 [signature policy and template transition](versioning-policy.md#sighash-template-transition).

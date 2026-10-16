@@ -1,6 +1,6 @@
 # Verification evidence
 
-Use this index to choose a check and interpret its result. The 1.0.0 candidate
+Use this index to choose a check and interpret its result. The 1.0.0 release
 uses **escrow-v5 / head-v2**. See its [release notes](v1-release.md) and the
 [external qualification record](../../verification/external-sdk-qualification/RESULTS.md). Published
 RC2 and its release records use **escrow-v4 / head-v1**. The
