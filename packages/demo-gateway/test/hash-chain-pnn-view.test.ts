@@ -64,6 +64,7 @@ describe("hash-chain PNN grant eligibility", () => {
     expect(rogueRead).not.toHaveBeenCalled();
   });
 
+  // Real SQLite restart and signing can exceed 5s on a cold Windows runner.
   it("uses fresh funding when a lower-sorting abandoned outpoint remains unspent after restart", async () => {
     const folder = mkdtempSync(path.join(tmpdir(), "kaspa-gateway-grant-funding-"));
     const file = path.join(folder, "grants.sqlite");
@@ -131,7 +132,7 @@ describe("hash-chain PNN grant eligibility", () => {
       await expect(claimOn(heads[1]!, "ce".repeat(32))).resolves.toMatchObject({ grantId: expect.any(String) });
       expect(issuer.getCurrent(heads[1]!).phase).toBe("assigned");
     } finally { issuer.close(); rmSync(folder, { recursive: true, force: true }); }
-  });
+  }, 15_000);
 
   it("rejects a grant claim without an uncovenanted payer UTXO covering quote and fee", async () => {
     const head = { outpoint: HEAD, amount: "100000000", scriptPublicKey: HEAD_SCRIPT, covenantId: "88".repeat(32) };
