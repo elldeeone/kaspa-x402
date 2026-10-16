@@ -131,6 +131,7 @@ try {
           ...(body ? { body } : {}) });
         wire.push({ path: req.url.split('?')[0], method: req.method, status: result.status,
           paid: !!headers.get('payment-signature') });
+        report.wire = wire; save();
         res.writeHead(result.status, Object.fromEntries(result.headers)); res.end(await result.text()); return;
       }
       const pathname = new URL(req.url, 'https://kaspa-x402.org').pathname;
@@ -175,7 +176,7 @@ try {
     const r = await send('Runtime.evaluate', { expression, awaitPromise, returnByValue: true });
     assert.ok(!r.result.exceptionDetails, JSON.stringify(r.result.exceptionDetails)); return r.result.result.value;
   };
-  for (let i = 0; i < 100; i++) { if (await evaluate('!!document.getElementById("demo-private-key")')) break; await new Promise(r => setTimeout(r, 100)); }
+  for (let i = 0; i < 100; i++) { if (await evaluate('document.readyState === "complete" && !!document.getElementById("demo-private-key")')) break; await new Promise(r => setTimeout(r, 100)); }
   await evaluate(`(async()=>{
     const e=id=>document.getElementById(id);
     const wait=async fn=>{for(let i=0;i<1800;i++){if(fn())return;await new Promise(r=>setTimeout(r,100));}throw Error(e('demo-status').value+'; '+e('demo-hash-status').value)};
