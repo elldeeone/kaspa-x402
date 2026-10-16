@@ -37,6 +37,19 @@ the [template transition](versioning-policy.md#sighash-template-transition).
 
 ## Candidate validation
 
+Completed candidate qualification: **55/55 external scenario groups**, including
+the four documented mock examples; **18/18 funded exact/batch flows** and all
+**five hash-chain stages**, with two paid HTTP 200 responses and accepted owner
+rotation. The run accepted 20 transactions plus one intentional stale-claim
+rejection, spending 6.624786 Testnet KAS in fees.
+
+Funded report SHA-256:
+`3b9bdb1a01b93da25a9adc06d144d78373df5d6143d6e279f8d07a9367d75d57`.
+Evidence uses one Testnet RPC; stress acceptance facts are controlled. It does
+not establish mainnet acceptance or production performance. Qualification binds
+the four archive hashes; documentation-only changes preserve that evidence only
+when rebuilt archives are byte-identical.
+
 Before publication, retain the clean candidate commit, independent compiler and
 pinned consensus results, approved archive manifest, external installed-package
 qualification and fresh funded Testnet-10 report. The release PR records the

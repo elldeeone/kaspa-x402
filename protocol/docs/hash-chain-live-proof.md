@@ -12,7 +12,7 @@ The [2026-10-07 development verification](verification-2026-10-07.md) records a
 fresh head-v2 run: two accepted paid HTTP requests and successful owner recovery
 after an abandoned grant. Historical head-v1 records remain below.
 
-## RC2 — Current Published Evidence
+## RC2 — Historical Published Evidence
 
 The published [`v1.0.0-rc.2` prerelease](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.0-rc.2)
 includes the optional native-KAS `hash-chain-additive` profile and hosted

@@ -1,6 +1,6 @@
 # MCP Profile
 
-Status: specification included in the published RC2 release; interoperability draft.
+Status: MCP transport profile for the 1.0.0 standard and SDK candidate.
 
 Kaspa x402 treats MCP as a first-class transport for paid tools using `exact` and `batch-settlement`.
 

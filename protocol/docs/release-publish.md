@@ -94,8 +94,13 @@ each production deployment.
    archive hashes with the qualified candidate before authorizing publication.
    Changed archive bytes require candidate verification.
 5. With separate publication authorization, publish the verified archives using
-   `--tag latest`, then create the matching tag and GitHub release. Do not deploy
-   the demo as part of this SDK release.
+   `--tag latest`, then create the matching tag and GitHub release. Smoke-test
+   installation from npm.
+6. Set `site/release.json` publication status to `published` only after successful
+   npm publication; finalize the release-note status, check built pages/links and
+   deploy the documentation website with separate deployment authorization.
+   Keep the recorded demo deployment version independent and Testnet-only.
+   Do not redeploy or migrate the demo gateway as part of this SDK release.
 
 ## Exact SDK release artifacts
 

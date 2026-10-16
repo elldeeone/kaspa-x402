@@ -1,6 +1,6 @@
 # HTTP Profile
 
-Status: specification included in the published RC2 release; interoperability draft.
+Status: HTTP transport profile for the 1.0.0 standard and SDK candidate.
 
 Kaspa x402 uses the x402 v2 HTTP transport for `exact` and `batch-settlement`.
 

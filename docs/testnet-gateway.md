@@ -1,10 +1,10 @@
 # Testnet Gateway
 
-Development source uses escrow-v5 and head-v2 with signer-chosen sighash
+The 1.0.0 SDK candidate uses escrow-v5 and head-v2 with signer-chosen sighash
 types; reference signing still defaults to ALL. The published/deployed RC2
 service described below uses escrow-v4 and head-v1. Follow the
 [signature policy and template transition](../protocol/docs/versioning-policy.md#sighash-template-transition)
-for a development integration or operator cutover; the existing hosted RC2
+for a 1.0.0 integration or operator cutover; the existing hosted RC2
 service is not evidence of deployment of the new templates.
 
 RC2 includes an optional native-KAS `hash-chain-additive` demo in the gateway
@@ -27,6 +27,27 @@ The RC2 gateway uses `kaspa-exact-v2` with the default
 `standard-native` profile and also supports `batch-settlement`. The optional
 `additive` exact profile is implemented but is advertised only when a current
 KIP-10 head is available.
+
+## SDK/browser compatibility
+
+The gateway is versioned independently from the SDK. A read-only check on
+2026-10-16 observed `/health` reporting `1.0.0-rc.2`, a standard-native exact
+402 offer, a batch offer using escrow-v4, and an available hash-chain head.
+These observations do not claim a fresh paid hosted run.
+
+| Surface | 1.0.0 browser/SDK relationship |
+| --- | --- |
+| Standard-native exact quote | Same binding and profile; quote shape can be inspected with the current schema. This is not a fresh paid settlement proof. |
+| Batch covenant | Hosted escrow-v4 is incompatible with the 1.0.0 escrow-v5 builders. |
+| Hash-chain covenant | Hosted head-v1 is incompatible with the 1.0.0 head-v2 signer; the new browser rejects its quote and leaves payment disabled. |
+| Existing RC2 demo | Use a matching RC2 browser/runtime for its historical covenant state. |
+
+The new browser is a Testnet-only inspection and test tool, not an automatic
+upgrade of the deployed service. To reproduce the original demo locally, check
+out `v1.0.0-rc.2` in a separate directory and follow that release's instructions.
+For 1.0.0 covenant tests use the current mock examples or a matching Testnet
+server with fresh heads/channels. This release PR does not migrate or redeploy
+the gateway.
 
 ## Base URL
 

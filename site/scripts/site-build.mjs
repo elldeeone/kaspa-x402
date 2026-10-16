@@ -67,6 +67,15 @@ const releaseVersion = packages.find(
 )?.version;
 if (releaseVersion === undefined)
   throw new Error("missing @kaspa-x402/core release version");
+const presentation = readJson("site/release.json");
+if (!["candidate", "published"].includes(presentation.publicationStatus))
+  throw new Error("site release must explicitly be candidate or published");
+const releaseChannel = publicPackages[0].publishTag;
+if (publicPackages.some(pkg => pkg.version !== releaseVersion || pkg.publishTag !== releaseChannel))
+  throw new Error("public SDK versions and npm tags must agree");
+const publicationStatus = presentation.publicationStatus;
+const releaseLabel = `${releaseVersion} ${publicationStatus === "published" ? "released" : "candidate"}`;
+const demo = presentation.demo;
 const commit = git(["rev-parse", "HEAD"]);
 const commitDate = git(["show", "-s", "--format=%cI", "HEAD"]);
 const dirtyInputs = dirtyPublishableInputs();
@@ -156,14 +165,13 @@ function writeHomePage() {
 
     <h2 id="status">Status</h2>
     <ul>
-      <li>Released Testnet candidate: <a href="${repositoryUrl}/releases/tag/v${escapeHtml(releaseVersion)}"><code>${escapeHtml(releaseVersion)}</code></a>. All four public npm packages are published under the <code>rc</code> tag, with specifications, JSON schemas, and conformance vectors.</li>
-      <li>Network target: <code>kaspa:testnet-10</code> only.</li>
-      <li>Hosted gateway: <a href="https://demo.kaspa-x402.org"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(releaseVersion)}</code> using Testnet-10 PNN nodes for native exact, batch, and hash-chain payments. Release validation covered all 18 funded exact/batch flows, hosted payments, browser payments, owner rotation, and retries after redeployment. See the <a href="/docs/rc2-release/">RC2 release and evidence</a>.</li>
-      <li>Mainnet: blocked. <code>kaspa:mainnet</code> is a reserved profile name; the blocking gates are listed in <a href="/docs/mainnet-readiness/">mainnet readiness</a>. Do not use any of this with production funds.</li>
-      <li>Standards: the <code>kaspa:*</code> network identifiers are draft binding names, not accepted x402 registry or CAIP entries.</li>
-      <li>Stability: package names, schemas, and field names may change before stable <code>1.0.0</code>. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
+      <li>Standard and SDK: <code>${escapeHtml(releaseLabel)}</code>, covering all four native profiles. ${publicationStatus === "published" ? "The four public packages are available" : "The packages are awaiting publication"} on npm's <code>${escapeHtml(releaseChannel)}</code> channel. See the <a href="/docs/v1-release/">1.0.0 release notes</a>.</li>
+      <li>SDK supports <code>kaspa:testnet-10</code> and explicit opt-in <code>kaspa:mainnet</code>. Testnet-10 is the default and funded validation target. Operators supply their own trusted chain evidence, stores, locks and signers; see <a href="/docs/mainnet-readiness/">production operating requirements</a>.</li>
+      <li>Hosted demo: <a href="${escapeAttribute(demo.origin)}"><code>demo.kaspa-x402.org</code></a> is a separate <strong>Testnet-only</strong> deployment. Last verified ${escapeHtml(demo.lastVerifiedOn)}: <code>${escapeHtml(demo.version)}</code>, escrow-v4/head-v1. The SDK version does not identify the deployed gateway. See <a href="/docs/testnet-gateway/">demo compatibility</a>.</li>
+      <li>Standards: the <code>kaspa:*</code> identifiers remain proposed x402/CAIP names. This release does not claim upstream registry adoption.</li>
+      <li>Compatibility: 1.0.0 uses escrow-v5/head-v2; existing RC2 covenant state cannot be upgraded in place. See the <a href="/docs/versioning-policy/">versioning policy</a>.</li>
     </ul>
-    <p class="muted">Generated from commit <code>${escapeHtml(commit.slice(0, 12))}</code> (${escapeHtml(commitDate.slice(0, 10))}). <a href="/release.json"><code>release.json</code></a> identifies the current release.</p>
+    <p class="muted">Generated from commit <code>${escapeHtml(commit.slice(0, 12))}</code> (${escapeHtml(commitDate.slice(0, 10))}). <a href="/release.json"><code>release.json</code></a> identifies this SDK build and the separately recorded demo deployment.</p>
 
     <h2>What is x402</h2>
     <p>x402 is an open protocol that turns the HTTP <code>402 Payment Required</code> status code into a machine-payable flow: a server answers an unpaid request with a 402 carrying a machine-readable offer, the client retries with a signed payment payload, and the server verifies the payment, settles it, and serves the response. The same primitives work over HTTP headers and MCP <code>_meta</code> fields, so paid APIs and tools are usable by autonomous agents. See <a href="https://www.x402.org">x402.org</a>.</p>
@@ -183,20 +191,20 @@ function writeHomePage() {
     <h2>Payment schemes</h2>
     <p>The binding ships two schemes with different settlement shapes.</p>
     <p><code>exact</code> — fixed-price one-shot native transfer under <a href="/spec/kaspa-exact-v2/">kaspa-exact-v2</a>. <code>standard-native</code> is the default ordinary KAS transfer. The optional <code>additive</code> profile consumes and recreates a reusable merchant KIP-10 head; the successor increase is the sole exact payment, with no second merchant output and no per-offer inventory reservation.</p>
-    <p>RC2 also ships the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. Try it in the <a href="/demo/#demo-hash-chain">browser demo</a> when the hosted issuer is available.</p>
+    <p>The SDK also includes the optional <a href="/spec/kaspa-hash-chain-exact-v1/"><code>hash-chain-additive</code></a> exact profile with OTP-style one-time signing grants. The payer independently broadcasts a payment that increases the head and advances its hash guard. The <a href="/demo/#demo-hash-chain">browser test client</a> requires a matching head-v2 issuer; the deployed RC2 gateway uses head-v1.</p>
     <pre><code>${escapeHtml(exactSnippet)}</code></pre>
     <p><code>batch-settlement</code> — repeated requests with a payer-approved fixed charge per invocation against a KIP-20 escrow lane. Its lifecycle is singleton genesis → repeated partial claims → top-up → refund. The current outpoint and V rotate while the stable covenant ID and lifetime A/S/T remain recoverable; R is the advertised minimum successor reserve. Spec: <a href="/spec/kaspa-batch-settlement-v3/">kaspa-batch-settlement-v3</a>.</p>
     <pre><code>${escapeHtml(batchSnippet)}</code></pre>
 
     <h2>Start here</h2>
     <ul>
-      <li><strong>Implementing:</strong> read the <a href="/docs/demo-implementer-guide/">implementer guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v3/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
+      <li><strong>Implementing:</strong> read the <a href="/docs/integration/">SDK integration guide</a>, the <a href="/spec/kaspa-x402-v1/">core binding</a>, the relevant <a href="/spec/kaspa-exact-v2/">exact</a> or <a href="/spec/kaspa-batch-settlement-v3/">batch-settlement</a> scheme, and the <a href="/vectors/">conformance vectors</a>.</li>
       <li><strong>Testing:</strong> use the <a href="/docs/testnet-gateway/">hosted gateway reference</a> and the <a href="/demo/">browser demo</a>.</li>
       <li><strong>Reviewing:</strong> start with the <a href="/docs/security-threat-model/">threat model</a>, <a href="/docs/live-testnet-report/">live testnet report</a>, and <a href="/docs/mainnet-readiness/">mainnet readiness gates</a>.</li>
     </ul>
 
     <h2 id="packages">Packages</h2>
-    <p><code>${escapeHtml(releaseVersion)}</code> is the current recommended Testnet release. Install it with <code>@rc</code> or the exact version; <code>@rc</code> is the npm channel for release candidates.</p>
+    <p>${publicationStatus === "published" ? "Install the stable SDK using the exact versions below, or npm latest." : "After publication, install the SDK using the exact versions below. These candidate packages are not yet available on npm; use the PR’s verified archives for pre-publication testing."}</p>
     <pre><code>npm install ${escapeHtml(releaseNpmInstall().join(" "))}</code></pre>
     ${packagesTable()}
     <p class="muted">Machine-readable: <a href="/packages.json"><code>packages.json</code></a>, <a href="/site-manifest.json"><code>site-manifest.json</code></a>.</p>
@@ -354,7 +362,7 @@ function writeNotFoundPage() {
       `
   <main>
     <h1>Not Found</h1>
-    <p>The requested page is not published on this site. Return to the <a href="/">current release candidate</a>.</p>
+    <p>The requested page is not published on this site. Return to the <a href="/">SDK release reference</a>.</p>
   </main>
       `,
     ),
@@ -369,7 +377,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Testnet-only development browser client for inspecting Kaspa x402 offers, checking public-node connectivity, and rehearsing exact or batch payment headers. Current source uses escrow-v5 and head-v2; testing those templates requires a matching development server and fresh heads/channels. The published RC2 gateway uses the earlier templates. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
+    <p class="muted">Testnet-only browser test client for inspecting offers, checking node connectivity and rehearsing payment headers. This build uses the 1.0.0 SDK with escrow-v5/head-v2. The separate hosted RC2 gateway uses escrow-v4/head-v1: its standard-native quote is inspectable, but its batch and hash-chain covenants are incompatible with this client. Hash-chain payment stays disabled for an incompatible quote. Use the matching RC2 browser/runtime when testing the existing gateway; use fresh state and a matching server for 1.0.0 covenant tests. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a> and <a href="/docs/testnet-gateway/">recorded gateway evidence</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -420,7 +428,7 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-hash-chain">
       <h2 id="demo-hash-chain">Hash-chain exact — live Testnet payment</h2>
-      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to claim a one-use grant and retrieve the protected report.</p>
+      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote to check compatibility. Payment requires a matching head-v2 quote; the recorded RC2 gateway uses head-v1 and cannot be paid with this client.</p>
       <p class="muted">One payment increases the merchant head by the quoted price. The target fee is 0.01 KAS; small change may be included in the fee, up to 0.1 KAS total. The result shows the actual fee. If someone abandons a claimed grant, the operator resets the head manually.</p>
       <div class="demo-actions">
         <button type="button" id="demo-hash-quote">Get hash-chain quote</button>
@@ -609,8 +617,11 @@ function writePnnSpikeJson() {
       ],
     },
     worker: {
+      recordedDeployment: demo,
+      evidenceScope: "Historical RC2 deployment; current browser covenant compatibility is separate",
+      browserCompatibility: { batch: "requires escrow-v5", hashChain: "requires head-v2" },
       status:
-        "1.0.0-rc.2 is released at https://demo.kaspa-x402.org with PNN-only chain evidence; funded native, batch, and browser hash-chain validation completed",
+        `Separate Testnet deployment: ${demo.version}, last verified ${demo.lastVerifiedOn}; historical RC2 paid evidence does not qualify this SDK build`,
       verifiedCapabilities: [
         "PNN chain health and selected-chain evidence",
         "Durable Object state",
@@ -645,7 +656,7 @@ function writePnnSpikeJson() {
 }
 
 function statusLine() {
-  return `<p class="muted">Published release: <code>${escapeHtml(releaseVersion)}</code> for <code>kaspa:testnet-10</code>. See the <a href="/docs/rc2-release/">release details</a>. Mainnet use remains blocked by the documented readiness gates.</p>`;
+  return `<p class="muted">SDK: <code>${escapeHtml(releaseLabel)}</code>. See the <a href="/docs/v1-release/">release notes</a>. The <a href="/demo/">browser demo</a> is Testnet-only; production SDK deployments require explicit mainnet opt-in and their own operating controls.</p>`;
 }
 
 function annotatedRow(href, label, note, sha256) {
@@ -705,8 +716,11 @@ function copyStaticAssets() {
 function currentRelease() {
   return {
     version: releaseVersion,
-    channel: "rc",
-    network: "kaspa:testnet-10",
+    channel: releaseChannel,
+    publicationStatus,
+    supportedNetworks: ["kaspa:testnet-10", "kaspa:mainnet"],
+    defaultNetwork: "kaspa:testnet-10",
+    demo,
     generatedFrom: commit,
     commitDate,
     sourceState,
@@ -807,10 +821,10 @@ function layout(title, body, options = {}) {
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>${escapeHtml(fullTitle)}</title>
-  <meta name="description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: released Testnet-10 packages, payment profiles, schemas, and PNN gateway.">
+  <meta name="description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: standard and SDK profiles, schemas, and a separate Testnet demo.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="${escapeHtml(fullTitle)}">
-  <meta property="og:description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: released Testnet-10 packages, payment profiles, schemas, and PNN gateway.">
+  <meta property="og:description" content="Kaspa x402 ${escapeHtml(releaseVersion)}: standard and SDK profiles, schemas, and a separate Testnet demo.">
   <meta property="og:image" content="${SITE_BASE_URL}/assets/og.png">
   <meta name="twitter:card" content="summary_large_image">
   <link rel="stylesheet" href="/assets/styles.css">
@@ -828,12 +842,12 @@ ${options.head ?? ""}
       <a href="${repositoryUrl}">GitHub</a>
     </nav>
   </header>
-  <p class="release-status"><strong>${escapeHtml(releaseVersion)} released</strong> · Testnet-10 · <a href="/docs/rc2-release/">Release details</a></p>
+  <p class="release-status"><strong>${escapeHtml(releaseLabel)}</strong> · Standard and SDK · <a href="/docs/v1-release/">Release details</a></p>
   <!--email_off-->
-  <p class="muted">Development reference: escrow-v5 and head-v2 accept signer-chosen sighash types; reference signing defaults to ALL. Published RC2 packages and gateway use escrow-v4 and head-v1. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a>.</p>
+  <p class="muted">SDK templates: escrow-v5 and head-v2; reference signing defaults to ALL. The separately recorded RC2 demo uses escrow-v4 and head-v1. SDK qualification and demo deployment evidence are distinct. See the <a href="/docs/versioning-policy/#sighash-template-transition">signature policy and template transition</a>.</p>
   ${body}
   <!--/email_off-->
-  <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/rc2-release/">Published release and validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>
+  <footer>Kaspa x402 ${escapeHtml(releaseVersion)} documentation. <a href="/docs/v1-release/">SDK release notes</a>. <a href="/docs/evidence/">Validation evidence</a>. <a href="https://demo.kaspa-x402.org">PNN-based Testnet-10 gateway</a>.</footer>
 </body>
 </html>`;
 }
@@ -963,6 +977,7 @@ function dirtyPublishableInputs() {
     "package.json",
     "wrangler.jsonc",
     "site/README.md",
+    "site/release.json",
     ...schemaFiles.map(artifactSource),
     ...specFiles.map(artifactSource),
     ...contractFiles.map(artifactSource),

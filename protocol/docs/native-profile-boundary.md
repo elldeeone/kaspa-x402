@@ -1,6 +1,6 @@
 # Native profile boundary
 
-This is the capability map for the development implementation. All profiles
+This is the capability map for the 1.0.0 SDK. All profiles
 support explicit mainnet configuration; funded validation remains Testnet-10.
 Definitions live in the [glossary](../CONTEXT.md); verification scope and
 historical template versions live in the [evidence index](evidence.md).
@@ -13,7 +13,7 @@ historical template versions live in the [evidence index](evidence.md).
 | batch-settlement | kaspa-escrow-v3 | Funded escrow, cumulative vouchers, partial claims, top-ups and timed refunds. | [Batch](../spec/kaspa-batch-settlement-v3.md) |
 
 All settle native KAS. There is no KCC20 settlement or runtime support for other
-x402 schemes. Production mainnet enablement has [unclosed gates](mainnet-readiness.md).
+x402 schemes. Each production deployment must meet its [operating requirements](mainnet-readiness.md).
 
 [SDK configuration](integration.md) enables batch explicitly. Exact-only
 integrations need no batch funding, voucher or refund dependencies. Client offer
@@ -38,8 +38,8 @@ selected scheme. This changes SDK configuration, not wire bindings or schemas.
   validate as Kaspa requirements. A client fails an offer only when no
   supported Kaspa entry remains, so mixed multi-rail envelopes from upstream
   x402 servers stay consumable.
-- Documentation and examples must frame `kaspa:mainnet` as a reserved profile
-  name, not a readiness claim.
+- Documentation must distinguish explicit SDK mainnet support from deployment
+  certification. The hosted demo and funded proof remain Testnet-only.
 
 ## Readiness Expectations
 

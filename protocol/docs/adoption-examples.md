@@ -2,7 +2,7 @@
 
 Commands below run from the `protocol/` workspace.
 
-Status: examples for the development Testnet-10 source after RC2.
+Status: source-workspace examples for the 1.0.0 SDK candidate.
 Current builds use escrow-v5/head-v2; published RC2 uses escrow-v4/head-v1.
 Reference transaction signing defaults to ALL, while the new covenants accept
 signer-chosen scopes. See the
@@ -65,7 +65,7 @@ node examples/self-hosted-facilitator/index.mjs
 
 The facilitator example shows compatibility endpoints over the direct-mode
 server verification and settlement path. The facilitator is available from
-repository source; the four public RC2 npm packages are core, covenant, client,
+repository source; the four public SDK packages are core, covenant, client,
 and server.
 
 ## Inspect Recovery Behavior
