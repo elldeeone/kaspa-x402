@@ -152,8 +152,11 @@ with controlled chain facts; it does not close the live mainnet readiness gates.
 node protocol/scripts/inspect-sdk-release.mjs --bundle /private/new-sdk-bundle \
   --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST
 node protocol/scripts/publish-sdk-release.mjs --bundle /private/new-sdk-bundle \
-  --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST --tag rc
+  --revision FULL_REVIEWED_COMMIT --manifest-sha256 APPROVED_MANIFEST_DIGEST --tag latest
 ```
+
+The example uses the stable `latest` tag. Use `--tag rc` only for a
+release-candidate bundle whose approved manifests specify `rc`.
 
 The publisher validates without uploading by default. An explicit `--publish`
 and `NODE_AUTH_TOKEN` enable publication. It captures and validates every archive
