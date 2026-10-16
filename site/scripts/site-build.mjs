@@ -163,6 +163,9 @@ function writeHomePage() {
     <h1>Kaspa x402</h1>
     <p>Kaspa x402 is a proposed native Kaspa binding for <a href="https://www.x402.org">x402</a>, the HTTP 402 payment protocol. It lets HTTP APIs and MCP tools charge native KAS per request, and lets servers verify and settle those payments directly against the Kaspa network.</p>
 
+    <h2 id="security-and-use">Security and use</h2>
+    <p>This SDK supports mainnet configuration. It has undergone extensive AI-assisted security review, and all four payment profiles were tested on funded Testnet. It has not received an independent third-party security audit. Undiscovered bugs may result in loss of funds. Provided as is, without warranty. <a href="/docs/security-review-1.0.0/">Review and testing details</a>.</p>
+
     <h2 id="status">Status</h2>
     <ul>
       <li>Standard and SDK: <code>${escapeHtml(releaseLabel)}</code>, covering all four native profiles. ${publicationStatus === "published" ? "The four public packages are available" : "The packages are awaiting publication"} on npm's <code>${escapeHtml(releaseChannel)}</code> channel. See the <a href="/docs/v1-release/">1.0.0 release notes</a>.</li>

@@ -3,6 +3,12 @@
 Kaspa bindings and reference implementations for x402 payments: one-shot
 `exact` payments and covenant-backed `batch-settlement`.
 
+**Security and use:** This SDK supports mainnet configuration. It has undergone
+extensive AI-assisted security review, and all four payment profiles were tested
+on funded Testnet. It has not received an independent third-party security audit.
+Undiscovered bugs may result in loss of funds. Provided as is, without warranty.
+[Review and testing details](protocol/docs/security-review-1.0.0.md).
+
 **Engineers: start in [protocol/](protocol/README.md).** It contains the
 specifications, schemas, SilverScript contracts, SDKs, reusable chain adapters,
 examples and verification tools. It installs and verifies independently of the
