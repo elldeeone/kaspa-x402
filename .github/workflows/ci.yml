@@ -196,7 +196,7 @@ jobs:
           sudo apt-get install -y --no-install-recommends build-essential clang libclang-dev cmake pkg-config
       - name: Install consensus harness Rust toolchain
         run: rustup toolchain install 1.95.0 --profile minimal
-      - name: Validate transaction vectors against Kaspa consensus
+      - name: Prove vector consensus and default node relay policy
         shell: bash
         env:
           RUSTUP_TOOLCHAIN: 1.95.0
@@ -206,13 +206,16 @@ jobs:
         run: |
           set -o pipefail
           mkdir -p proof-artifacts
-          node protocol/scripts/validate-tx-v1-consensus.mjs --kaspa-root .kaspa-consensus 2> >(tee proof-artifacts/tx-v1-consensus.stderr.log >&2) | tee proof-artifacts/tx-v1-consensus.json
+          node protocol/scripts/proof-pnn-snapshot-e2e.mjs --out proof-artifacts/pnn-snapshot.json
+          node protocol/scripts/proof-live-input-preflight-e2e.mjs --out proof-artifacts/live-input-preflight.json
+          KASPA_X402_KASPA_CONSENSUS_ROOT="$GITHUB_WORKSPACE/.kaspa-consensus" node protocol/scripts/proof-vector-relay-policy-e2e.mjs --out proof-artifacts/vector-relay-policy.json
       - name: Retain consensus proof report
         if: always()
         uses: actions/upload-artifact@ea165f8d65b6e75b540449e92b4886f43607fa02 # v4.6.2
         with:
           name: tx-v1-consensus-linux
           path: |
-            proof-artifacts/tx-v1-consensus.json
-            proof-artifacts/tx-v1-consensus.stderr.log
+            proof-artifacts/vector-relay-policy.json*
+            proof-artifacts/live-input-preflight.json
+            proof-artifacts/pnn-snapshot.json
           if-no-files-found: warn

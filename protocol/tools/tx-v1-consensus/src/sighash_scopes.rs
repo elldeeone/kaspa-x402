@@ -17,6 +17,7 @@ pub(super) fn validate(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Val
                 calc_schnorr_signature_hash(&populated, index, scope, &SigHashReusedValuesUnsync::new()).to_string()
             }).collect();
             transactions.push(json!({"kind": kind, "hashType": flag,
+                "relayPolicy": relay_policy::validate(&tx, &entries)?,
                 "transaction": exact_evidence(kind, &tx, &entries, &[])["transaction"].clone(), "digests": digests}));
             // Even NONE must not bypass the independently enforced payout/refund destination.
             if kind == "claim" || kind == "refund" {
@@ -37,6 +38,7 @@ pub(super) fn validate(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Val
             calc_schnorr_signature_hash(&populated, index, scope, &SigHashReusedValuesUnsync::new()).to_string()
         }).collect();
         transactions.push(json!({"kind": "standard-native", "hashType": flag,
+            "relayPolicy": relay_policy::validate(&tx, &entries)?,
             "transaction": exact_evidence("standard-native", &tx, &entries, &[])["transaction"].clone(), "digests": digests}));
     }
     let top_up = &vectors.iter().find(|(_, vector)| vector.expected.kind == "batch-top-up")
@@ -54,7 +56,7 @@ pub(super) fn validate(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Val
             tx.inputs[0].signature_script[67..132].copy_from_slice(&provider[1..66]);
             tx.finalize();
             validate_full_consensus(&tx, &entries).context("mixed top-up signatures")?;
-            mixed_top_ups.push(json!({"client": client_flag, "provider": provider_flag, "status": "consensus-accepted"}));
+            mixed_top_ups.push(json!({"client": client_flag, "provider": provider_flag, "status": "consensus-accepted", "relayPolicy": relay_policy::validate(&tx, &entries)?}));
         }
     }
     for flag in [4, 132] {
@@ -72,6 +74,7 @@ pub(super) fn validate(vectors: &[(&str, VectorFile)]) -> Result<serde_json::Val
             calc_schnorr_signature_hash(&populated, index, scope, &SigHashReusedValuesUnsync::new()).to_string()
         }).collect();
         transactions.push(json!({"kind": "single-without-output", "hashType": flag,
+            "relayPolicy": relay_policy::validate(&tx, &entries)?,
             "transaction": exact_evidence("single-without-output", &tx, &entries, &[])["transaction"].clone(), "digests": digests}));
     }
     Ok(json!({"status": "full-consensus-cross-validated", "transactions": transactions, "mixedTopUps": mixed_top_ups}))

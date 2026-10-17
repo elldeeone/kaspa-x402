@@ -4,7 +4,8 @@ use super::*;
 
 const HEAD_VALUE: u64 = 100_000_000;
 const PAYMENT: u64 = 20_000_000;
-const FEE: u64 = 300_000;
+// Example fee, checked against upstream default relay policy for each shape.
+const FEE: u64 = 500_000;
 const PAYER_KEY: [u8; 32] = [7; 32];
 const OWNER_KEY: [u8; 32] = [9; 32];
 const FIRST_LINK_KEY: [u8; 32] = [11; 32];
@@ -517,6 +518,7 @@ fn check_valid_borrow(tx: &Transaction, entries: &[UtxoEntry], old: &Head, next:
 fn evidence(kind: &str, tx: &Transaction, entries: &[UtxoEntry], amount: u64) -> Result<serde_json::Value> {
     let units = (0..tx.inputs.len()).map(|index| measure_input_units(tx, entries, index)).collect::<Result<Vec<_>>>()?;
     let mut value = exact_evidence(kind, tx, entries, &units);
+    value["relayPolicy"] = relay_policy::validate(tx, entries)?;
     value["amount"] = json!(amount.to_string());
     value["headCovenantId"] = entries.first().and_then(|entry| entry.covenant_id).map(|id| json!(id.to_string())).unwrap_or(serde_json::Value::Null);
     Ok(value)

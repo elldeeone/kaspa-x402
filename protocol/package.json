@@ -60,9 +60,12 @@
     "check:covenant-fixtures:internal": "npm --workspace @kaspa-x402/covenant run build && node scripts/check-covenant-fixtures.mjs --internal-consistency-only",
     "proof:covenant-compiler": "node scripts/proof-covenant-compiler-e2e.mjs",
     "proof:issuer-storage": "npm --workspace @kaspa-x402/server run build && node scripts/proof-hash-chain-issuer-storage-e2e.mjs --out .kaspa-x402-live/issuer-storage/report.json",
-    "validate:release": "npm run verify && npm run check:covenant-fixtures && npm run validate:tx-v1-consensus",
+    "validate:release": "npm run verify && npm run check:covenant-fixtures && npm run proof:pnn-snapshot && npm run proof:live-input-preflight && npm run proof:vector-relay-policy",
     "proof:mainnet-network": "npm --workspace @kaspa-x402/adapters run build && node scripts/proof-mainnet-network-e2e.mjs --out .kaspa-x402-live/mainnet-network/report.json",
-    "check:chain-authorities": "node scripts/check-chain-authorities.mjs"
+    "check:chain-authorities": "node scripts/check-chain-authorities.mjs",
+    "proof:vector-relay-policy": "node scripts/proof-vector-relay-policy-e2e.mjs --out .kaspa-x402-live/vector-relay-policy/report.json",
+    "proof:live-input-preflight": "node scripts/proof-live-input-preflight-e2e.mjs --out .kaspa-x402-live/live-input-preflight/report.json",
+    "proof:pnn-snapshot": "node scripts/proof-pnn-snapshot-e2e.mjs --out .kaspa-x402-live/pnn-snapshot/report.json"
   },
   "workspaces": [
     "packages/*"

@@ -49,7 +49,7 @@ function request() {
 describe("hash-chain payer signing and HTTP grant claim", () => {
   it("reproduces the independently consensus-validated borrow transaction ID", () => {
     const signed = signHashChainExactTransaction({
-      request: request(), feeSompi: "300000",
+      request: request(), feeSompi: borrow.fee,
       funding: {
         outpoint: borrow.transaction.inputs[1].previousOutpoint,
         amount: borrow.transaction.inputs[1].utxo.amount,
@@ -63,7 +63,7 @@ describe("hash-chain payer signing and HTTP grant claim", () => {
     expect(artifact.outputs[0]).toMatchObject({
       value: "120000000", covenant: { covenantId: vector.covenantId, authorizingInput: 0 },
     });
-    expect(artifact.outputs[1].value).toBe("29700000");
+    expect(artifact.outputs[1].value).toBe(borrow.transaction.outputs[1].amount);
     expect(artifact.inputs[0].signatureScript).toMatch(/^20/);
     expect(artifact.inputs[1].signatureScript).toMatch(/^41/);
   });

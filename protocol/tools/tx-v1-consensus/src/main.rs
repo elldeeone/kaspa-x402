@@ -41,13 +41,16 @@ use serde_json::json;
 use std::{env, fs, path::Path, str::FromStr};
 
 mod hash_chain;
+mod mempool;
+mod relay_policy;
 mod sighash_scopes;
 
 const SOURCE_COMMIT: &str = env!("KASPA_X402_CONSENSUS_SOURCE_COMMIT");
 const SOURCE_VERSION: &str = env!("KASPA_X402_CONSENSUS_SOURCE_VERSION");
 const STORAGE_MASS_PARAMETER: u64 = 1_000_000_000_000;
 const POST_TOCCATA_DAA_SCORE: u64 = 600_000_000;
-const EXACT_FEE_SOMPI: u64 = 200_000;
+// Fixed deterministic example fee; relay_policy independently enforces the node floor.
+const EXACT_FEE_SOMPI: u64 = 300_000;
 const EXACT_PAYMENT_SOMPI: u64 = 20_000_000;
 
 #[derive(Debug, Deserialize)]
@@ -1338,6 +1341,10 @@ fn validate_exact_consensus_profiles() -> Result<serde_json::Value> {
 
     Ok(json!({
         "standardNative": exact_evidence("standard-native", &standard.0, &standard.1, &[measure_input_units(&standard.0, &standard.1, 0)?]),
+        "relayPolicy": {
+            "standardNative": relay_policy::validate(&standard.0, &standard.1)?,
+            "additive": relay_policy::validate(&additive.0, &additive.1)?,
+        },
         "additive": exact_evidence(
             "additive",
             &additive.0,
@@ -2290,6 +2297,7 @@ fn validate_vector(vector: &VectorFile) -> Result<serde_json::Value> {
 
     Ok(json!({
         "fullTransactionValidator": "accepted",
+        "relayPolicy": relay_policy::validate(&tx, &batch_entries)?,
         "scriptExecution": "accepted",
         "mutatedSignature": "rejected",
         "inputs": measured,

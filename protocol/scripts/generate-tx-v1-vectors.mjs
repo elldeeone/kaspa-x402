@@ -35,7 +35,7 @@ const PAYOUT_SCRIPT_PUBLIC_KEY = `000020${PAYOUT_PUBLIC_KEY}ac`;
 // full Rusty Kaspa TransactionValidator harness. During a contract change the
 // harness rejects stale values and reports the newly measured units.
 const FIRST_CLAIM_SCRIPT_UNITS = 208049;
-const SECOND_CLAIM_SCRIPT_UNITS = 208053;
+const SECOND_CLAIM_SCRIPT_UNITS = 208051;
 const TOP_UP_SCRIPT_UNITS = 207357;
 const REFUND_SCRIPT_UNITS = 102551;
 
@@ -83,6 +83,7 @@ const consensusValidation = {
     "transaction.inputs[].utxo.covenantId",
     "transaction.outputs[].covenant",
     "fullTransactionValidator",
+    "defaultNodeRelayPolicy",
     "measuredScriptUnits",
     "minimumComputeBudget",
     "mutatedSignatureRejection",
@@ -202,12 +203,12 @@ try {
 
 function buildSignedGenesis() {
   const base = {
-    fundingInputs: [fundingInput("01", 0, "90001000")],
+    fundingInputs: [fundingInput("01", 0, "91000000")],
     escrowAmount: "90000000",
     escrowScriptPublicKey: state0.scriptPublicKey,
     escrowRedeemScript: state0.redeemScript,
     initialClaimedCumulativeAmount: "0",
-    fee: "1000",
+    fee: "1000000",
   };
   const mass = buildBatchGenesisTxV1Artifact(base).transaction.mass;
   const unsigned = buildBatchGenesisTxV1Artifact({ ...base, mass });
@@ -242,7 +243,7 @@ function buildSignedClaim({ active, claimedCumulativeAmount, successor, claimAmo
     successorRedeemScript: successor.redeemScript,
     serverOutputScriptPublicKey: PAYOUT_SCRIPT_PUBLIC_KEY,
     expectedPayoutScriptPublicKeyHash: escrowBaseParams.payoutScriptPublicKeyHash,
-    fee: "1000",
+    fee: "1000000",
     serverSignature: "00".repeat(65),
     voucherSignature,
     computeBudget: computeBudgetForScriptUnits(scriptUnits),
@@ -276,10 +277,10 @@ function buildSignedTopUp() {
     providerSignature: "00".repeat(65),
     fundingInputs: [fundingInput("05", 0, "20000000")],
     changeOutputs: [
-      { amount: "2999000", scriptPublicKey: CLIENT_SCRIPT_PUBLIC_KEY, covenant: null },
+      { amount: "2000000", scriptPublicKey: CLIENT_SCRIPT_PUBLIC_KEY, covenant: null },
     ],
     expectedRefundScriptPublicKeyHash: escrowBaseParams.refundScriptPublicKeyHash,
-    fee: "1000",
+    fee: "1000000",
     computeBudget: computeBudgetForScriptUnits(TOP_UP_SCRIPT_UNITS),
     scriptUnitsEstimate: TOP_UP_SCRIPT_UNITS,
   };
@@ -318,7 +319,7 @@ function buildSignedRefund() {
     covenantId,
     refundOutputScriptPublicKey: CLIENT_SCRIPT_PUBLIC_KEY,
     expectedRefundScriptPublicKeyHash: escrowBaseParams.refundScriptPublicKeyHash,
-    fee: "900",
+    fee: "1000000",
     clientSignature: "00".repeat(65),
     timeoutDaa: escrowBaseParams.timeoutDaa,
     lockTimeDaa: escrowBaseParams.timeoutDaa,

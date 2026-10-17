@@ -24,6 +24,9 @@ const CONSENSUS_SOURCE_PATHS = [
   "crypto/txscript/errors",
   "crypto/txscript",
   "math",
+  "mining/src/mempool/config.rs",
+  "mining/src/mempool/check_transaction_standard.rs",
+  "mining/errors",
   "utils",
 ];
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
@@ -138,6 +141,21 @@ try {
     path.join(root, "tools/tx-v1-consensus/src/sighash_scopes.rs"),
     path.join(srcDir, "sighash_scopes.rs"),
   );
+  fs.copyFileSync(
+    path.join(root, "tools/tx-v1-consensus/src/relay_policy.rs"),
+    path.join(srcDir, "relay_policy.rs"),
+  );
+  // Compile upstream policy verbatim. The real Mempool is crate-private; this
+  // shell supplies only its config field, not a second fee implementation.
+  fs.writeFileSync(path.join(srcDir, "mempool.rs"), `
+#[allow(dead_code)]
+#[path = ${JSON.stringify(path.join(kaspaRoot, "mining/src/mempool/config.rs"))}]
+pub mod config;
+pub mod errors { pub use kaspa_mining_errors::mempool::*; }
+pub struct Mempool { pub config: config::Config }
+#[path = ${JSON.stringify(path.join(kaspaRoot, "mining/src/mempool/check_transaction_standard.rs"))}]
+mod check_transaction_standard;
+`);
   fs.writeFileSync(path.join(tempDir, "Cargo.toml"), cargoToml(kaspaRoot));
   if (options.refreshLock) {
     const lock = spawnSync(
@@ -178,7 +196,7 @@ try {
         "--manifest-path",
         path.join(tempDir, "Cargo.toml"),
         "--",
-        root,
+        options.fixtureRoot ?? root,
       ],
       {
         cwd: root,
@@ -209,6 +227,7 @@ if (process.exitCode) process.exit(process.exitCode);
 function parseArgs(args) {
   const parsed = {
     kaspaRoot: undefined,
+    fixtureRoot: undefined,
     allowDifferentSource: false,
     refreshLock: false,
   };
@@ -216,6 +235,9 @@ function parseArgs(args) {
     const arg = args[index];
     if (arg === "--kaspa-root") {
       parsed.kaspaRoot = args[++index];
+    } else if (arg === "--fixture-root") {
+      if (!args[index + 1] || args[index + 1].startsWith("--")) fail("--fixture-root requires a directory");
+      parsed.fixtureRoot = path.resolve(args[++index]);
     } else if (arg === "--allow-different-source") {
       parsed.allowDifferentSource = true;
     } else if (arg === "--refresh-lock") {
@@ -260,6 +282,7 @@ kaspa-consensus = { path = "${validatorPath}" }
 kaspa-addresses = { path = "${addressesPath}" }
 kaspa-hashes = { path = "${hashesPath}" }
 kaspa-txscript = { path = "${txscriptPath}" }
+kaspa-mining-errors = { path = "${path.join(kaspaRoot, "mining/errors").replaceAll("\\", "\\\\")}" }
 secp256k1 = { version = "0.29.0", features = ["global-context"] }
 `;
 }
