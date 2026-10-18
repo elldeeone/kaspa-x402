@@ -92,6 +92,9 @@ const REPO_ROOT = path.resolve(
 );
 
 export async function runLiveProof(context) {
+  // Resolve every required compute fixture before loading credentials or
+  // funding anything. Isolated consumer bundles must include these inputs.
+  for (const operation of ["claim", "top-up", "refund"]) batchComputeProfile(operation);
   const sdkPath = process.env.KASPA_X402_KASPA_WASM_MODULE;
   if (!sdkPath)
     throw new Error(

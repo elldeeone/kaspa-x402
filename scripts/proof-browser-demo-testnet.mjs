@@ -19,14 +19,18 @@ const hosted = process.argv.includes('--hosted');
 const out = path.resolve(option('--out'));
 assert.ok(!fs.existsSync(out), 'Use a fresh run directory; failed attempts must be retained');
 fs.mkdirSync(out, { recursive: true, mode: 0o700 });
-assert.equal(execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim(), '', 'Commit the candidate before funded proof');
+const sourceStatus = execFileSync('git', ['status', '--porcelain'], { encoding: 'utf8' }).trim();
+assert.ok(!sourceStatus || process.argv.includes('--allow-dirty'),
+  'Commit the candidate before release proof, or use --allow-dirty for a development proof');
 const revision = execFileSync('git', ['rev-parse', 'HEAD'], { encoding: 'utf8' }).trim();
 const privateWrite = (file, data) => fs.writeFileSync(path.join(out, file), JSON.stringify(data, (_, v) => typeof v === 'bigint' ? String(v) : v, 2) + '\n', { mode: 0o600 });
 const requireSdk = createRequire(config.sdkModule);
 globalThis.WebSocket = requireSdk('websocket').w3cwebsocket;
 const sdk = requireSdk(config.sdkModule);
 const rpc = new sdk.RpcClient({ url: config.rpcUrl, networkId: 'testnet-10' });
-const report = { revision, startedAt: new Date().toISOString(), network: 'kaspa:testnet-10',
+const report = { revision, sourceState: sourceStatus ? 'development-worktree' : 'git-head',
+  sourceStatus, sourceDiffSha256: crypto.createHash('sha256').update(execFileSync('git', ['diff', 'HEAD', '--binary'])).digest('hex'),
+  harnessSha256: crypto.createHash('sha256').update(fs.readFileSync(new URL(import.meta.url))).digest('hex'), startedAt: new Date().toISOString(), network: 'kaspa:testnet-10',
   environment: hosted ? 'Public HTTPS website and deployed Cloudflare Worker/SQLite DO, funded Testnet-10' : 'Local HTTPS browser preview and actual Worker/SQLite DO, funded public Testnet-10',
   independentlyOperatedSources: 1, broadcasts: [], ok: false };
 let worker, relay, server, browser, ws;
@@ -55,6 +59,7 @@ try {
     'site/dist/assets/hash-chain-client.js', 'scripts/demo-pnn-relay.mjs'].map(f => [f,
     crypto.createHash('sha256').update(fs.readFileSync(f)).digest('hex')]));
   save();
+  let registration;
   if (hosted) {
     report.siteRelease = await (await fetch('https://kaspa-x402.org/release.json', { redirect: 'error' })).json();
     report.gatewayHealth = await (await fetch(base + '/health', { redirect: 'error' })).json();
@@ -62,22 +67,51 @@ try {
     assert.equal(report.siteRelease.sourceState, 'git-head');
     assert.equal(report.gatewayHealth.releaseVersion, '1.0.0');
     assert.equal(report.gatewayHealth.enabled, true);
-    save();
+    // Read-only preflight before creating or funding anything. The hosted
+    // pool belongs to the deployed service; a proof consumes its ready head.
+    const fetchJson = async (route, options) => {
+      const response = await fetch(base + route, { ...options, redirect: 'error', signal: AbortSignal.timeout(60000) });
+      assert.equal(response.status, 200, `Hosted preflight ${route}: HTTP ${response.status}`);
+      return response.json();
+    };
+    const status = await fetchJson('/hash-chain/status');
+    report.preflight = { status, broadcasts: report.broadcasts.length }; save();
+    assert.equal(status.network, 'kaspa:testnet-10');
+    assert.ok(status.available && status.phase === 'ready' && status.readyHeads > 0,
+      'Hosted head is unavailable; no setup funds were spent');
+    assert.equal(status.capacity, 1, 'This browser proof requires a single-head hosted pool');
+    registration = (await fetchJson('/admin/hash-chain', { headers: { authorization: `Bearer ${admin}` } })).head;
+    assert.equal(registration.phase, 'ready');
+    assert.equal(registration.network, 'kaspa:testnet-10');
+    assert.equal(registration.headVersion, status.headVersion);
+    assert.equal(registration.head.amount, status.headAmount);
+    const spk = new sdk.ScriptPublicKey(parseInt(registration.head.scriptPublicKey.slice(0, 4), 16), registration.head.scriptPublicKey.slice(4));
+    const address = sdk.addressFromScriptPublicKey(spk, 'testnet-10').toString();
+    const observed = (await getAddressUtxos(rpc, address)).find(u =>
+      u.outpoint.txid === registration.head.outpoint.txid && u.outpoint.index === registration.head.outpoint.index);
+    assert.ok(observed && observed.amount === registration.head.amount &&
+      observed.scriptPublicKey === registration.head.scriptPublicKey && observed.covenantId === registration.head.covenantId,
+      'Hosted head is stale or differs from the node UTXO; no setup funds were spent');
+    report.headBefore = { outpoint: registration.head.outpoint, amount: registration.head.amount, version: registration.headVersion };
+    report.preflight.ok = true; save();
   }
-  let registration;
   if (preparedRun) {
     const prior = JSON.parse(fs.readFileSync(path.join(preparedRun, 'report.json')));
     assert.equal(prior.network, 'kaspa:testnet-10');
     assert.ok(!prior.payment, 'Do not reuse a run that already attempted a browser payment');
-    fs.cpSync(path.join(preparedRun, 'head'), path.join(out, 'head'), { recursive: true });
-    registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
+    if (!hosted) {
+      fs.cpSync(path.join(preparedRun, 'head'), path.join(out, 'head'), { recursive: true });
+      registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
+    }
     report.preparedInRevision = prior.revision;
-    report.broadcasts = prior.broadcasts.map(t => ({ ...t, reusedPreparation: true }));
-    assert.equal(report.broadcasts.length, 2);
+    report.broadcasts = prior.broadcasts.filter(t => !hosted || t.role === 'payer-funding').map(t => ({ ...t, reusedPreparation: true }));
+    assert.equal(report.broadcasts.length, hosted ? 1 : 2);
     const funding = await getAddressUtxos(rpc, payerAddress);
-    assert.ok(funding.some(u => u.amount === '70000000'), 'Prepared payer funding is spent');
+    assert.ok(funding.some(u => !u.covenantId && BigInt(u.amount) >= 21_000_000n),
+      'Prepared payer needs an unspent input covering the 20m quote and 1m target fee');
     save();
   } else {
+  if (!hosted) {
   const setupConfig = { ...config, dataDir: path.join(out, 'head') };
   privateWrite('setup.json', setupConfig);
   // Existing operator command persists owner keys and signed setup before broadcast.
@@ -87,6 +121,7 @@ try {
   registration = JSON.parse(fs.readFileSync(path.join(out, 'head/cloudflare-head.json')));
   report.broadcasts.push({ role: 'head-genesis', transactionId: registration.head.outpoint.txid, feeSompi: '1000000' });
   save();
+  }
   const source = (await getAddressUtxos(rpc, fundingAddress)).find(u => !u.covenantId && BigInt(u.amount) > 100_000_000n);
   assert.ok(source, 'Insufficient isolated wallet funding');
   const script = new sdk.ScriptPublicKey(parseInt(source.scriptPublicKey.slice(0, 4), 16), source.scriptPublicKey.slice(4));
@@ -130,10 +165,14 @@ try {
   worker = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
   }
   const dispatch = hosted ? (url, options) => fetch(url, { ...options, redirect: 'error', signal: AbortSignal.timeout(60000) }) : (url, options) => worker.dispatchFetch(url, options);
+  if (!hosted) {
   const registered = await dispatch(base + '/admin/hash-chain/register', { method: 'POST',
     headers: { authorization: `Bearer ${admin}`, 'content-type': 'application/json' }, body: JSON.stringify(registration) });
   assert.equal(registered.status, 200, await registered.clone().text());
-  report.headBefore = { outpoint: registration.head.outpoint, amount: registration.head.amount, version: '0' }; save();
+  report.headBefore = { outpoint: registration.head.outpoint, amount: registration.head.amount, version: 0 }; save();
+  }
+  const expectedHeadAmount = (BigInt(report.headBefore.amount) + 20_000_000n).toString();
+  const expectedHeadVersion = Number(report.headBefore.version) + 1;
   let port;
   if (!hosted) {
   const tls = path.join(out, 'tls'); fs.mkdirSync(tls);
@@ -221,14 +260,16 @@ try {
   })()`);
   const payment = await evaluate('JSON.parse(document.getElementById("demo-hash-output").textContent)');
   report.payment = payment; report.broadcasts.push({ role: 'browser-payment', transactionId: payment.transactionId, feeSompi: payment.feeSompi }); save();
-  assert.equal(payment.headAfter.amount, '120000000');
+  assert.equal(String(payment.headBefore.version), String(report.headBefore.version));
+  assert.equal(payment.headBefore.amount, report.headBefore.amount);
+  assert.equal(payment.headAfter.amount, expectedHeadAmount);
   await evaluate(`(async()=>{document.getElementById('demo-hash-retry').click(); for(let i=0;i<1200;i++){
     if(document.getElementById('demo-hash-status').value.startsWith('Payment accepted.'))return;
     await new Promise(r=>setTimeout(r,100));}throw Error('retry timed out')})()`);
   const retry = await evaluate('JSON.parse(document.getElementById("demo-hash-output").textContent)');
   assert.equal(retry.transactionId, payment.transactionId);
   const status = await (await dispatch(base + '/hash-chain/status')).json();
-  assert.equal(status.headVersion, 1); assert.equal(status.headAmount, '120000000');
+  assert.equal(status.headVersion, expectedHeadVersion); assert.equal(status.headAmount, expectedHeadAmount);
   const head = (await (await dispatch(base + '/admin/hash-chain', { headers: { authorization: `Bearer ${admin}` } })).json()).head;
   const headAddress = new sdk.ScriptPublicKey(parseInt(head.head.scriptPublicKey.slice(0, 4), 16), head.head.scriptPublicKey.slice(4));
   const address = sdk.addressFromScriptPublicKey(headAddress, 'testnet-10').toString();
@@ -239,12 +280,12 @@ try {
   const observedInfo = await rpc.getServerInfo();
   assert.equal(observedInfo.networkId, 'testnet-10'); assert.ok(observedInfo.isSynced);
   const found = (await getAddressUtxos(rpc, address)).find(u => u.outpoint.txid === payment.transactionId);
-  assert.ok(found && found.amount === '120000000', 'Node did not independently observe the funded successor');
+  assert.ok(found && found.amount === expectedHeadAmount, 'Node did not independently observe the funded successor');
   assert.ok(wire.some(w => w.method === 'GET' && w.status === 402));
   assert.ok(wire.some(w => w.method === 'POST' && w.path === '/hash-chain/grant' && w.status === 200));
   assert.ok(wire.filter(w => w.paid && w.status === 200).length >= 2);
   report.wire = wire; report.browserExceptions = errors; assert.deepEqual(errors, []);
-  report.headAfter = { outpoint: found.outpoint, amount: found.amount, version: 1 };
+  report.headAfter = { outpoint: found.outpoint, amount: found.amount, version: expectedHeadVersion };
   report.totalFeesSompi = report.broadcasts.reduce((sum, t) => sum + BigInt(t.feeSompi), 0n).toString();
   assert.ok(BigInt(report.totalFeesSompi) <= 100_000_000n, 'Fee budget exceeded');
   report.retrySameTransaction = true; report.ok = true; save();

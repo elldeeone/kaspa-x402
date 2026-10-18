@@ -108,6 +108,9 @@ SILVERSCRIPT_DIR=/absolute/path/to/silverscript npm run check:covenant-fixtures
 RUSTUP_TOOLCHAIN=1.95.0 npm run validate:tx-v1-consensus -- --kaspa-root /absolute/path/to/rusty-kaspa
 ```
 
+The validator also checks default node relay policy. Release checks require
+the [signed low-fee regression proof](docs/vector-relay-validation.md).
+
 `check:covenant-fixtures` independently compiles escrow-v5 and head-v2 using
 `SILVERSCRIPT_DIR` and compares both fixtures and generated modules without
 writing them. `check:covenant-fixtures:internal` checks only committed artifact

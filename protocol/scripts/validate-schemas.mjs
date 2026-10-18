@@ -1541,7 +1541,7 @@ function assertHashChainConsensusVector(file, vector) {
   const names = ["genesis", "borrow1", "borrow2", "smallTopUp", "ownerRotation", "postRotationBorrow", "ownerSweep"];
   for (const name of names) {
     const item = proof.transactions?.[name];
-    if (item?.transaction?.version !== 1 || item?.version !== 1 || item?.fee !== "300000") {
+    if (item?.transaction?.version !== 1 || item?.version !== 1 || item?.fee !== "500000") {
       throw new Error(`${file}:${name}: version or fee mismatch`);
     }
     assertHash32(item.transactionId, `${file}:${name}:transactionId`);

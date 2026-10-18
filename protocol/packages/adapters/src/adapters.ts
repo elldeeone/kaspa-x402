@@ -838,18 +838,31 @@ export class KaspaPnnClient {
       await this.#checkedServerInfo(rpc, endpoint);
       signal.throwIfAborted();
       if (!rpc.getBlockDagInfo || !rpc.getBlock) throw invalidTransaction("PNN checkpoint methods are required");
-      const checkpoint = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
-      const result = await withTimeout(rpc.getUtxosByAddresses(addresses), this.#timeoutMs, "pnn snapshot hash-chain origins");
-      signal.throwIfAborted();
-      if (!Array.isArray(result.entries) || result.entries.length > MAX_PNN_UTXO_ENTRIES) {
-        throw invalidTransaction("PNN origin snapshot is incomplete or exceeds the UTXO limit");
+      // The selected tip can leave the chain while the UTXO read is in flight.
+      // Discard that entire snapshot and retry a fresh checkpoint, within the
+      // existing request deadline. Malformed or inconsistent evidence still fails.
+      for (let attempt = 0; attempt < 3; attempt++) {
+        const checkpoint = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
+        const result = await withTimeout(rpc.getUtxosByAddresses(addresses), this.#timeoutMs, "pnn snapshot hash-chain origins");
+        signal.throwIfAborted();
+        if (!Array.isArray(result.entries) || result.entries.length > MAX_PNN_UTXO_ENTRIES) {
+          throw invalidTransaction("PNN origin snapshot is incomplete or exceeds the UTXO limit");
+        }
+        let verified: ChainCheckpoint;
+        try {
+          verified = pnnSelectedBlockCheckpoint(await withTimeout(
+            rpc.getBlock({ hash: checkpoint.blockHash, includeTransactions: false }), this.#timeoutMs,
+            "pnn recheck origin checkpoint"), checkpoint.blockHash, "origin checkpoint");
+        } catch (error) {
+          signal.throwIfAborted();
+          if (error instanceof PnnCheckpointMovedError && attempt < 2) continue;
+          throw error;
+        }
+        signal.throwIfAborted();
+        if (!sameChainCheckpoint(checkpoint, verified)) throw invalidTransaction("PNN origin checkpoint changed");
+        return { utxos: result.entries.map(pnnUtxo), checkpoint };
       }
-      const verified = pnnSelectedBlockCheckpoint(await withTimeout(
-        rpc.getBlock({ hash: checkpoint.blockHash, includeTransactions: false }), this.#timeoutMs,
-        "pnn recheck origin checkpoint"), checkpoint.blockHash, "origin checkpoint");
-      signal.throwIfAborted();
-      if (!sameChainCheckpoint(checkpoint, verified)) throw invalidTransaction("PNN origin checkpoint changed");
-      return { utxos: result.entries.map(pnnUtxo), checkpoint };
+      throw invalidTransaction("PNN origin checkpoint did not stabilize");
     }, signal);
   }
 
@@ -2781,6 +2794,12 @@ async function pnnChainCheckpoint(
   };
 }
 
+class PnnCheckpointMovedError extends KaspaX402Error {
+  constructor(label: string) {
+    super("invalid_kaspa_transaction", `Kaspa PNN ${label} is not the expected selected-chain block`);
+  }
+}
+
 function pnnSelectedBlockCheckpoint(
   rawBlock: unknown,
   expectedHash: string,
@@ -2799,6 +2818,10 @@ function pnnSelectedBlockCheckpoint(
     header.hash ?? verbose.hash,
     `Kaspa PNN ${label} hash`,
   );
+  if (blockHash === expectedHash.toLowerCase() &&
+      (verbose.isChainBlock ?? verbose.is_chain_block) === false) {
+    throw new PnnCheckpointMovedError(label);
+  }
   if (
     blockHash !== expectedHash.toLowerCase() ||
     (verbose.isChainBlock ?? verbose.is_chain_block) !== true

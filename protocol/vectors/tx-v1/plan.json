@@ -17,25 +17,25 @@
         "step": 1,
         "path": "vectors/tx-v1/batch-claim.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "4c97547cf2711526b69cdc5a970785778a59114ac3832f490655a502503dd75c"
+        "transactionId": "885668df2d118d4cafcc58601b067231e7f48d930628012e96aff8e948afcd05"
       },
       {
         "step": 2,
         "path": "vectors/tx-v1/batch-claim-second.json",
         "kind": "tx-v1-batch-claim",
-        "transactionId": "e160fed6433b80d8683dcc264628aeaa77297b321b53b5663232e5f84f56f56c"
+        "transactionId": "f739d5c5ba82532b471822b53dfe706b54397ad8be035bef1342e52ac3794cdd"
       },
       {
         "step": 3,
         "path": "vectors/tx-v1/batch-top-up.json",
         "kind": "tx-v1-batch-top-up",
-        "transactionId": "415fc6a65588c38f5c3a1bd322dd1c41b082d4084e5939046e45ed1227e19016"
+        "transactionId": "51cec5b18364d5c1ccc757e7808b29fff7e723e622ab9e5b3bc0f3683670d558"
       },
       {
         "step": 4,
         "path": "vectors/tx-v1/batch-refund.json",
         "kind": "tx-v1-batch-refund",
-        "transactionId": "4bb04ca8125cc8ecd8209fbba0965f742436a17b034b5bc543d7bcfb659fecc6"
+        "transactionId": "0432cbcc47ba1a289f648e6c5fb664c9bd8850870fef41b6235b95b98ae8eefc"
       }
     ]
   },
