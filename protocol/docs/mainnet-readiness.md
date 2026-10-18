@@ -1,13 +1,13 @@
 # Mainnet Readiness
 
 This document describes requirements for operating a production mainnet
-deployment. The 1.0.0 standard and SDK release supports explicit mainnet
+deployment. The 1.0.1 standard and SDK release supports explicit mainnet
 configuration for all four native profiles. Publishing the SDK does not certify
 a deployment, provide its storage/signing infrastructure, or enable the hosted
 Testnet demo on mainnet. Operators must satisfy the requirements below for their
 actual topology; these are not a requirement to ship a bundled backend.
 
-The 1.0.0 native payment surface includes:
+The 1.0.1 native payment surface includes:
 
 - `exact` with `kaspa-exact-v2` (`standard-native` by default, optional KIP-10
   `additive` head profile);
@@ -17,10 +17,10 @@ The 1.0.0 native payment surface includes:
   `kaspa-x402-escrow-v5`.
 
 Reference signing defaults to ALL. See the [signature policy](versioning-policy.md#sighash-template-transition)
-and [1.0.0 validation record](v1-release.md#release-validation). Funded Testnet
+and [1.0.1 validation record](v1-release.md#release-validation). Funded Testnet
 qualification does not certify an operator's mainnet deployment.
 
-`kaspa:testnet-10` remains the funded validation target. 1.0.0 does not provide
+`kaspa:testnet-10` remains the funded validation target. 1.0.1 does not provide
 compatibility or state migration for pre-RC runtimes. Mainnet remains
 opt-in and disabled by default. Operators must close the gates below before
 enabling their production deployment.

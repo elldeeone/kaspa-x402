@@ -1,6 +1,6 @@
 # Native profile boundary
 
-This is the capability map for the 1.0.0 SDK. All profiles
+This is the capability map for the 1.0.1 SDK. All profiles
 support explicit mainnet configuration; funded validation remains Testnet-10.
 Definitions live in the [glossary](../CONTEXT.md); verification scope and
 historical template versions live in the [evidence index](evidence.md).

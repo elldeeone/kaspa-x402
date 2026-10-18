@@ -1,8 +1,8 @@
 # RC2 Release
 
 Historical record of the 2026-10-01 release. Package channels, deployment and
-validation statements below describe that release, not the current 1.0.0 release.
-See the [1.0.0 release notes](v1-release.md).
+validation statements below describe that release, not the current 1.0.1 release.
+See the [1.0.1 release notes](v1-release.md).
 
 RC2 used escrow-v4 and hash-chain-head-v1. Its covenant state cannot be
 upgraded in place; see the [template transition](versioning-policy.md#sighash-template-transition).
@@ -31,7 +31,7 @@ npm install @kaspa-x402/core@1.0.0-rc.2 @kaspa-x402/client@1.0.0-rc.2
 ```
 
 At the time of RC2, `latest` remained on the earlier alpha channel. For new
-integrations, use [1.0.0](v1-release.md); the commands above reproduce RC2. The facilitator, CLI, and hosted gateway are available
+integrations, use [1.0.1](v1-release.md); the commands above reproduce RC2. The facilitator, CLI, and hosted gateway are available
 as repository source rather than public npm packages.
 
 ## Payment Profiles

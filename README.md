@@ -14,12 +14,12 @@ specifications, schemas, SilverScript contracts, SDKs, reusable chain adapters,
 examples and verification tools. It installs and verifies independently of the
 website and hosted gateway.
 
-The **1.0.1 standard and four-package SDK patch** is being prepared for npm.
+The **1.0.1 standard and four-package SDK patch** is published on npm.
 The SDK supports Testnet-10 and explicitly configured mainnet; funded validation
 uses Testnet-10. Read the [release notes](protocol/docs/v1-release.md) and
 [deployment requirements](protocol/docs/mainnet-readiness.md). The website and
 hosted demo are separate deployments. The public demo now runs the matching
-1.0.0 Testnet runtime with escrow-v5/head-v2 and a verified browser payment and
+1.0.1 Testnet runtime with escrow-v5/head-v2 and a verified browser payment and
 retry. See the [security review record](protocol/docs/security-review-1.0.0.md).
 
 | Folder | Responsibility |

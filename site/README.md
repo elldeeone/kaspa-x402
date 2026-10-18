@@ -3,7 +3,7 @@
 This workspace owns the static standards reference site, browser demo and build tools.
 The generated output lives in `site/dist/` and is ignored.
 
-The published 1.0.0 artifacts, browser bundle and hosted Testnet gateway use
+The published 1.0.1 artifacts, browser bundle and hosted Testnet gateway use
 escrow-v5/head-v2 with signer-chosen sighash types and ALL as the signing default.
 Historical RC2 covenant state remains incompatible and must be recovered under
 its original runtime;
@@ -60,9 +60,9 @@ npm tag come from the public package manifests. Demo version, network, templates
 and last verification date are independent recorded deployment metadata; update
 them only after checking the actual service. Do not derive them from SDK versions.
 
-The deployed gateway now matches the 1.0.0 browser and covenant builders. A
+The deployed gateway now matches the 1.0.1 browser and covenant builders. A
 funded browser payment and same-transaction retry passed through the public
-origins; see `verification/release-1.0.0-hosted.json`. The browser still rejects
+origins; see `verification/release-1.0.1-hosted.json`. The browser still rejects
 incompatible old quotes. Mock and local preview proofs remain separate evidence.
 
 Cloudflare Pages configuration:

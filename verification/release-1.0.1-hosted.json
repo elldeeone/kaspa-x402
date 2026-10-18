@@ -1,0 +1,60 @@
+{
+  "schema": "kaspa-x402-hosted-deployment-verification/v1",
+  "sourceRevision": "56221913531bcb8367a900d28ed24c62d50591a1",
+  "releaseVersion": "1.0.1",
+  "network": "kaspa:testnet-10",
+  "workerVersion": "3b1a13c6-3616-4cd8-b149-ca4b833d69ec",
+  "workerModules": [
+    {
+      "name": "917f32ed21977f766aea7f7c6c764391a21d9848-kaspa_bg.wasm",
+      "sha256": "2fc3ed6c3666937a2598bf6a626e3ae97896e0ac8bc872ea049cb73df221191d",
+      "bytes": 11470454
+    },
+    {
+      "name": "index.js",
+      "sha256": "04db2ad693a9ea539cc23989312d7e978eba9533d5eeb8e0504510f3a350384d",
+      "bytes": 1353451
+    }
+  ],
+  "variablesSecretBindingsAndNamespacePreserved": true,
+  "preExistingHeadPreserved": true,
+  "headBefore": {
+    "outpoint": {
+      "txid": "19088d2e06d817a057f5600fe6d460d4184a2c14b508d4bbda396347ab22d6d9",
+      "index": 0
+    },
+    "amount": "140000000",
+    "version": 2
+  },
+  "headAfter": {
+    "outpoint": {
+      "txid": "c92a8fd06f7274b5c6470355f277eee2a3573340f39e07b8be3e93212a285f85",
+      "index": 0
+    },
+    "amount": "160000000",
+    "version": 3
+  },
+  "paymentTransactionId": "c92a8fd06f7274b5c6470355f277eee2a3573340f39e07b8be3e93212a285f85",
+  "sameTransactionRetry": true,
+  "publicBrowserOperator": "User on a separate network; private key retained by user",
+  "agentVerification": "30-deep selected-chain acceptance and exact current successor UTXO on a configured Testnet observer",
+  "browserExceptionCapture": false,
+  "wireCapture": false,
+  "localAutomatedBrowserPayment": "838a97bab77619fdaad26865f7ad5fbfd4a96a9d08adf1a25e819f85484850e9",
+  "localAutomatedBrowserExceptions": [],
+  "localRuntimeSha256": {
+    "packages/demo-gateway/dist/index.js": "04db2ad693a9ea539cc23989312d7e978eba9533d5eeb8e0504510f3a350384d",
+    "site/dist/assets/demo.js": "31178a7a612976673c84f5d72a5536c45fc957b62163674a8445fdcab3fb1ed9",
+    "site/dist/assets/hash-chain-client.js": "d6e71be2c1979c8e845585be297dfa76dbbb122c8a0c0e1d2873b10c4af2933c",
+    "scripts/demo-pnn-relay.mjs": "5652663aa26ada59f887c1aae28bbe96d86458d59227850d861dedb4e933580f"
+  },
+  "priorCallerRejectedByExpectedQuota": true,
+  "quotaWindowSeconds": 86400,
+  "quotaOrStateReset": false,
+  "diagnosticRemovedAndApprovedModulesRestored": true,
+  "limits": [
+    "One configured Testnet-10 chain authority; no independent operator corroboration or mainnet acceptance proof.",
+    "Implementing-agent tests and review; not an independent security audit.",
+    "Public browser payment/retry operated and confirmed by the user; agent independently checked the accepted transaction and successor UTXO."
+  ]
+}

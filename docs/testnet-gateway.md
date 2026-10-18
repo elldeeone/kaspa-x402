@@ -1,8 +1,8 @@
 # Testnet Gateway
 
-Status: deployed **1.0.0**, `kaspa:testnet-10` only. The matching browser and
+Status: deployed **1.0.1**, `kaspa:testnet-10` only. The matching browser and
 Worker use escrow-v5/head-v2. A funded payment and same-transaction retry passed
-through the public website; see the [deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json).
+through the public website; see the [deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.1-hosted.json).
 
 The gateway is a public integration target, not a wallet, custodian, mainnet
 service or availability commitment. The bounded transport relay runs in the
@@ -15,10 +15,10 @@ current availability.
 
 ## SDK/browser compatibility
 
-| Surface | 1.0.0 browser/SDK relationship |
+| Surface | 1.0.1 browser/SDK relationship |
 | --- | --- |
 | Standard-native exact | Matching payment binding and profile. |
-| Batch covenant | Escrow-v5, compatible with 1.0.0 builders. |
+| Batch covenant | Escrow-v5, compatible with 1.0.1 builders. |
 | Hash-chain covenant | Head-v2; public funded browser payment and retry verified. |
 | Historical RC2 state | Escrow-v4/head-v1 cannot be upgraded in place; retain recovery keys and use the original runtime. |
 

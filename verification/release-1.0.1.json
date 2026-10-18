@@ -1,0 +1,99 @@
+{
+  "schema": "kaspa-x402-release-qualification/v1",
+  "version": "1.0.1",
+  "sourceRevision": "56221913531bcb8367a900d28ed24c62d50591a1",
+  "sourceTree": "9cdf1da3dd5935df9787674b55eb7636958419cd",
+  "fundedCandidateRevision": "343777d0375b50bee7f865ab69a1856c43ee4265",
+  "identicalCandidateAndReleaseTrees": true,
+  "manifestSha256": "5b05faa2003bc2b8458e8c62502688514d922ecc38bd51be2e80301bdc4b7e93",
+  "ci": {
+    "pullRequestRun": "https://github.com/elldeeone/kaspa-x402/actions/runs/39088216691",
+    "mainRun": "https://github.com/elldeeone/kaspa-x402/actions/runs/39089223091",
+    "jobs": {
+      "verify": "success",
+      "covenant-reproduction": "success",
+      "windows": "success",
+      "sdk-release-artifacts": "success"
+    }
+  },
+  "checks": {
+    "sdkAndGatewayTests": 1021,
+    "externalScenarioGroups": 55,
+    "installedFilesMatchingCandidate": 42,
+    "relayPolicyPaths": 124,
+    "signedLowFeeNegativeControl": true,
+    "pnnSnapshotCases": 6,
+    "liveInputPreflightCases": 3,
+    "fundedExactBatchFlows": 18,
+    "fundedHashChainStages": 5,
+    "fundedHashChainPaidResponses": 2,
+    "fundedFeeBoundaryCases": 8,
+    "localFundedBrowserAndIdenticalRetry": true,
+    "terminalBatchRefundAccepted": true
+  },
+  "fundedTransactions": {
+    "localBrowserPayment": "838a97bab77619fdaad26865f7ad5fbfd4a96a9d08adf1a25e819f85484850e9",
+    "terminalBatchRefund": "3abe4c1ca6b33f1cc18dd7d6d6dc02b554e4d664bac0caeceadb171afbb5029f",
+    "hashChainOwnerRotation": "81bfd9fa7b714e3e8bc3761351bcf6ef8f592f91ec858c43594adbd162045dff"
+  },
+  "archives": [
+    {
+      "name": "@kaspa-x402/core",
+      "version": "1.0.1",
+      "filename": "kaspa-x402-core-1.0.1.tgz",
+      "sha256": "46fe16acdaf35ff45fd3646df879c32854e341765e8370911ef68119be4154ba",
+      "integrity": "sha512-UdNOa+eqnALcgGw6aL71DkrLYea8accE0lMLQ5QVX6vGlDP6j3Ldxqo1ECq4sasTbTPP+x6loJjCfeclQmm+eQ=="
+    },
+    {
+      "name": "@kaspa-x402/covenant",
+      "version": "1.0.1",
+      "filename": "kaspa-x402-covenant-1.0.1.tgz",
+      "sha256": "64e7e80c83486b2cfbf4be38b221aed7f88c04585b26bbbacdc0a9a3efbd5a3d",
+      "integrity": "sha512-90ubyxup1IJLezxIxoJkfhO24TnoTnLFa+edAH6VbQCAlMFVzB/FEg5LbTmnI33ijHK3c1iAJ9hfWhMH+HFGqg=="
+    },
+    {
+      "name": "@kaspa-x402/client",
+      "version": "1.0.1",
+      "filename": "kaspa-x402-client-1.0.1.tgz",
+      "sha256": "055f4e9613db8fc8e015419c40bc8fdcd53569e89430c6e584761aeadaf90d1d",
+      "integrity": "sha512-KoDpB7u4L6KT4Te+ohfl0vAUCn413b4SrURMt3u14RVGn+fPrAUFSJmUcwlfyBn3YkfWX7dS7tUAznqZWNUvQg=="
+    },
+    {
+      "name": "@kaspa-x402/server",
+      "version": "1.0.1",
+      "filename": "kaspa-x402-server-1.0.1.tgz",
+      "sha256": "d8f1e0bed37a6574054146053ed57e71033ebea451e604ae98f12121611ed0e5",
+      "integrity": "sha512-J+sjWA8k2zDjYaRuoDVKrv93QDtxhfm9+Hr8nlHUlwPTeD896cWu5wMVe273SaddFHKrM3nouDwJxxJJEQpN7g=="
+    }
+  ],
+  "registryArchivesVerified": true,
+  "freshRegistryInstallationVerified": true,
+  "publicPayment": {
+    "transactionId": "c92a8fd06f7274b5c6470355f277eee2a3573340f39e07b8be3e93212a285f85",
+    "headBefore": {
+      "outpoint": {
+        "txid": "19088d2e06d817a057f5600fe6d460d4184a2c14b508d4bbda396347ab22d6d9",
+        "index": 0
+      },
+      "amount": "140000000",
+      "version": 2
+    },
+    "headAfter": {
+      "outpoint": {
+        "txid": "c92a8fd06f7274b5c6470355f277eee2a3573340f39e07b8be3e93212a285f85",
+        "index": 0
+      },
+      "amount": "160000000",
+      "version": 3
+    },
+    "retryConfirmedByUser": true,
+    "acceptedByConfiguredTestnetObserver": true,
+    "browserOperation": "User-operated public browser on a separate network",
+    "browserExceptionCapture": false
+  },
+  "limits": [
+    "One configured Testnet-10 chain authority; no independent operator corroboration or mainnet acceptance proof.",
+    "Implementing-agent tests and review; not an independent security audit.",
+    "Public browser payment/retry operated and confirmed by the user; agent independently checked the accepted transaction and successor UTXO."
+  ]
+}

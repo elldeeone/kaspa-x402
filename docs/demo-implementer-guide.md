@@ -1,6 +1,6 @@
 # Demo Implementer Guide
 
-This guide describes the deployed **1.0.0 Testnet gateway** and matching SDK.
+This guide describes the deployed **1.0.1 Testnet gateway** and matching SDK.
 Use the [SDK integration guide](../protocol/docs/integration.md),
 [release notes](../protocol/docs/v1-release.md), and
 [compatibility table](testnet-gateway.md#sdkbrowser-compatibility).
@@ -10,7 +10,7 @@ support the specified consensus sighash scopes. Historical RC2 state used
 escrow-v4/head-v1 and must be completed or recovered with its original runtime.
 See the [template transition](../protocol/docs/versioning-policy.md#sighash-template-transition).
 
-The npm `latest` tag serves 1.0.0. The public gateway and browser remain
+The npm `latest` tag serves 1.0.1. The public gateway and browser remain
 Testnet-only integration tools, not hosted mainnet services. Batch settlement
 uses binding `kaspa-escrow-v3` and template `kaspa-x402-escrow-v5`.
 
@@ -33,10 +33,10 @@ Useful entry points:
 Install the current recommended Testnet release explicitly:
 
 ```sh
-npm install @kaspa-x402/core@1.0.0 @kaspa-x402/client@1.0.0
+npm install @kaspa-x402/core@1.0.1 @kaspa-x402/client@1.0.1
 ```
 
-Use exact version `1.0.0` for repeatable integration, or `@latest` for the stable
+Use exact version `1.0.1` for repeatable integration, or `@latest` for the stable
 channel. Production deployments must meet the SDK operating requirements. The
 hosted gateway package is private and is not published to npm.
 
@@ -64,7 +64,7 @@ transaction-specific mass and reserve analysis.
 curl -fsS https://demo.kaspa-x402.org/supported
 ```
 
-Before submitting a 1.0.0 payment, confirm the response advertises the
+Before submitting a 1.0.1 payment, confirm the response advertises the
 expected release and capability. The current public gateway advertises:
 
 - `network: "kaspa:testnet-10"`;
@@ -134,7 +134,7 @@ cached HTTP `200`. Reusing the same exact transaction for a different resource
 must be rejected. If an additive gateway has no available head, clients should
 use `batch-settlement` or another server.
 
-The hosted 1.0.0 gateway uses public Testnet-10 PNN/WSS nodes for funding,
+The hosted 1.0.1 gateway uses public Testnet-10 PNN/WSS nodes for funding,
 UTXOs, DAA, fees, transaction submission, acceptance, and selected-chain
 lineage. It does not require the public REST transaction index. Durable
 receipts and pre-broadcast checkpoints support retries and Worker restart
@@ -142,7 +142,7 @@ recovery without treating uncertain transactions as new payments.
 
 ## Hash-chain Browser Demo
 
-The 1.0.0 `hash-chain-additive` flow is available from the browser demo
+The 1.0.1 `hash-chain-additive` flow is available from the browser demo
 when the operator enables its gateway Durable Object issuer and registers a
 funded head. Check `/supported` for
 `extra.profile: "hash-chain-additive"` before expecting a live quote.

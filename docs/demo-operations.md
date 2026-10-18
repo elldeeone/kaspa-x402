@@ -1,8 +1,27 @@
 # Demo Gateway Operations
 
+## 1.0.1 patch deployment
+
+The public website and demo Worker run 1.0.1. Actual Worker modules, current
+configuration, secret bindings and the existing Durable Object namespace were
+verified. The pre-existing funded head was preserved. A user-operated public
+browser payment on a separate network advanced it from 1.4 to 1.6 Testnet KAS;
+the user confirmed the identical retry, and the agent independently verified
+selected-chain acceptance and the successor UTXO. The automated local browser
+payment/retry also passed. See the
+[deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.1-hosted.json).
+
+The original test caller correctly hit the one-grant rolling 24-hour quota.
+Bounded logging confirmed that category; the approved Worker was restored and
+its module hashes rechecked. No quota or payment state was reset.
+
+This patch retains escrow-v5/head-v2 and `demo-gateway-state-v2`. Routine patch
+deployment preserves active payment state. The historical clean-cutover
+procedure below is not needed for this patch.
+
 ## 1.0.0 demo cutover
 
-The public website and demo Worker now run 1.0.0. The funded browser payment
+This section records the original 1.0.0 website and demo Worker cutover. The funded browser payment
 and same-transaction retry passed through the actual public origins; see the
 [deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json). The earlier
 [local qualification](../verification/demo-release-RESULTS.md) and RC2

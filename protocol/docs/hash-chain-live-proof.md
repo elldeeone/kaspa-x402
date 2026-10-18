@@ -2,7 +2,7 @@
 
 Commands below run from the `protocol/` workspace.
 
-Current release: [1.0.0](v1-release.md#release-validation). The funded browser
+Current release: [1.0.1](v1-release.md#release-validation). The funded browser
 payment and retry are recorded in the [gateway guide](../../docs/testnet-gateway.md).
 Historical runs below retain their original covenant versions and source scope.
 

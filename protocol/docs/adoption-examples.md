@@ -2,7 +2,7 @@
 
 Commands below run from the `protocol/` workspace.
 
-Source-workspace examples for the 1.0.0 SDK.
+Source-workspace examples for the 1.0.1 SDK.
 The covenants use escrow-v5/head-v2.
 Reference transaction signing defaults to ALL, while the new covenants accept
 signer-chosen scopes. See the

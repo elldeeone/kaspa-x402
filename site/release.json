@@ -1,11 +1,11 @@
 {
-  "publicationStatus": "candidate",
+  "publicationStatus": "published",
   "demo": {
     "origin": "https://demo.kaspa-x402.org",
-    "version": "1.0.0",
+    "version": "1.0.1",
     "network": "kaspa:testnet-10",
     "escrowTemplate": "kaspa-x402-escrow-v5",
     "hashChainTemplate": "kaspa-x402-hash-chain-head-v2",
-    "lastVerifiedOn": "2026-10-16"
+    "lastVerifiedOn": "2026-10-18"
   }
 }

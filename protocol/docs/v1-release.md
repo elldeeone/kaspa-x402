@@ -1,7 +1,9 @@
 # 1.0.1 release
 
-Status: candidate. The four packages will be published together on npm with the
-`latest` tag after validation: `@kaspa-x402/core`, `@kaspa-x402/covenant`,
+Status: published on npm as `1.0.1` with the `latest` tag.
+[GitHub release](https://github.com/elldeeone/kaspa-x402/releases/tag/v1.0.1).
+
+The release includes `@kaspa-x402/core`, `@kaspa-x402/covenant`,
 `@kaspa-x402/client` and `@kaspa-x402/server`, all at `1.0.1` with exact internal
 dependencies.
 
@@ -31,10 +33,19 @@ See the [integration guide](integration.md) and [production operating requiremen
 
 ## Release validation
 
-The patch candidate is being checked with the complete release gate, independently
-reproduced compiler artifacts, the pinned consensus/default-relay oracle, and
-fresh funded Testnet transactions using the exact installed release archives.
-Published release evidence will identify the source revision and archive hashes.
+The clean candidate passed the complete release gate: **1,021 SDK/gateway tests**,
+fresh pinned covenant reproduction, **124 default relay-policy paths** with a
+signed low-fee negative control, six bounded snapshot cases and three
+pre-funding checks. The exact installed 1.0.1 archives passed **55 external
+scenario groups**, **18 funded exact/batch flows** with terminal refund, all
+**five hash-chain stages**, **eight live fee-boundary cases**, and a funded
+browser payment plus identical retry.
+
+Release source: `56221913531bcb8367a900d28ed24c62d50591a1`. The final main CI archives are
+byte-identical to the funded candidate. The
+[qualification receipt](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.1.json)
+and attached GitHub release manifest record source revisions and archive hashes.
+The registry archives were downloaded and checked against those exact hashes.
 
 These checks do not establish mainnet acceptance, independent chain authority,
 production performance or an independent security audit. The
@@ -42,12 +53,20 @@ production performance or an independent security audit. The
 
 ## Demo compatibility
 
-The last recorded public demo is 1.0.0 on Testnet-10. Its
-[funded deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.0-hosted.json)
-is historical evidence. The 1.0.1 Worker deployment will preserve existing
-Durable Object payment state and the same covenant templates; no state reset or
-channel migration is needed for this patch. The website records the separately
-verified demo version and date in `release.json`.
+The public website and demo Worker run 1.0.1 on Testnet-10 with the same
+escrow-v5/head-v2 templates. Actual deployed modules, configuration, secret
+bindings, Durable Object namespace and the existing funded head were verified.
+A user-operated public browser payment on a separate network advanced that head
+from 1.4 to 1.6 Testnet KAS; the user confirmed retry, and the agent independently
+verified selected-chain acceptance and the successor UTXO. The automated local
+browser payment/retry also passed. See the
+[deployment proof](https://github.com/elldeeone/kaspa-x402/blob/main/verification/release-1.0.1-hosted.json).
+
+The original test caller was correctly blocked by the existing rolling 24-hour
+grant quota. Bounded logging confirmed that category; the approved Worker was
+restored and its module hashes rechecked. No quota, payment state or channel was
+reset or migrated. `release.json` records the verified demo version and date
+independently from npm publication.
 
 The adapters, facilitator and CLI remain private workspaces. This release does
 not claim upstream x402 adoption or certify an application's production topology.
