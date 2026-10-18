@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/facilitator",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "private": true,
   "description": "Self-hosted facilitator endpoints for Kaspa x402.",
   "license": "MIT",
@@ -24,7 +24,7 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
-    "@kaspa-x402/core": "1.0.0",
-    "@kaspa-x402/server": "1.0.0"
+    "@kaspa-x402/core": "1.0.1",
+    "@kaspa-x402/server": "1.0.1"
   }
 }

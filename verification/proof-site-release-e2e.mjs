@@ -9,7 +9,10 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const out = path.resolve(process.argv[process.argv.indexOf('--out') + 1] || '.kaspa-x402-live/site-release/report.json');
 assert.ok(process.argv.includes('--out'), '--out is required');
 fs.mkdirSync(path.dirname(out), { recursive: true });
-const publicationStatus = JSON.parse(fs.readFileSync(path.join(root, "site/release.json"))).publicationStatus;
+const presentation = JSON.parse(fs.readFileSync(path.join(root, "site/release.json")));
+const publicationStatus = presentation.publicationStatus;
+const releaseVersion = JSON.parse(fs.readFileSync(new URL('../protocol/packages/core/package.json', import.meta.url))).version;
+const escapedVersion = releaseVersion.replaceAll('.', '\\.');
 assert.ok(["candidate", "published"].includes(publicationStatus));
 const cases = [];
 async function check(name, fn) { try {
@@ -44,37 +47,35 @@ try {
     const home = await (await get('/')).text();
     await check('metadata records SDK publication and the separate demo deployment', async () => {
         const r = await (await get('/release.json')).json();
-        assert.equal(r.version, '1.0.0');
+        assert.equal(r.version, releaseVersion);
         assert.equal(r.channel, 'latest');
         assert.equal(r.publicationStatus, publicationStatus);
         assert.deepEqual(r.supportedNetworks, ['kaspa:testnet-10', 'kaspa:mainnet']);
-        assert.equal(r.demo.version, publicationStatus === 'published' ? '1.0.0' : '1.0.0-rc.2');
+        assert.deepEqual(r.demo, presentation.demo);
         assert.equal(r.demo.network, 'kaspa:testnet-10');
         return r;
     });
     await check('homepage has honest publication status and exact install commands', async () => {
         if (publicationStatus === "candidate") {
-            assert.match(home, /1\.0\.0 candidate/);
-            assert.doesNotMatch(home, /<strong>1\.0\.0 released<\/strong>/);
+            assert.match(home, new RegExp(`${escapedVersion} candidate`));
+            assert.doesNotMatch(home, new RegExp(`<strong>${escapedVersion} released</strong>`));
             assert.match(home, /After publication/);
         } else {
-            assert.match(home, /<strong>1\.0\.0 released<\/strong>/);
+            assert.match(home, new RegExp(`<strong>${escapedVersion} released</strong>`));
             assert.match(home, /Install the stable SDK/);
         }
         for (const name of ['core', 'covenant', 'client', 'server'])
-            assert.ok(home.includes(`@kaspa-x402/${name}@1.0.0`));
+            assert.ok(home.includes(`@kaspa-x402/${name}@${releaseVersion}`));
         assert.doesNotMatch(home, /Install it with <code>@rc/);
         assert.match(home, /SDK supports/);
         const demoStatus = home.match(/<li>Hosted demo:[\s\S]*?<\/li>/)?.[0];
         assert.ok(demoStatus);
-        if (publicationStatus === 'published') {
-            assert.match(demoStatus, /<code>1\.0\.0<\/code>/);
-        } else assert.match(demoStatus, /1\.0\.0-rc\.2/);
+        assert.ok(demoStatus.includes(`<code>${presentation.demo.version}</code>`));
         return { installPackages: 4 };
     });
     await check('release notes are published and linked', async () => {
         const notes = await (await get('/docs/v1-release/')).text();
-        assert.match(notes, /1\.0\.0 release/);
+        assert.match(notes, new RegExp(`${escapedVersion} release`));
         assert.match(await (await get('/docs/')).text(), /\/docs\/v1-release\//);
         assert.match(home, /\/docs\/v1-release\//);
     });

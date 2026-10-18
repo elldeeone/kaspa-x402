@@ -93,7 +93,7 @@ async function smokeGateway(baseUrl) {
     })) },
   });
   assert(health.status === 200 && health.body.ok === true &&
-    health.body.enabled === true && health.body.releaseVersion === "1.0.0",
+    health.body.enabled === true && health.body.releaseVersion === wranglerVars.KASPA_X402_RELEASE_VERSION,
     "health endpoint failed");
   assert(supported.status === 200 && supported.body.enabled === true &&
     Array.isArray(supported.body.kinds) && supported.body.kinds.length === 0,

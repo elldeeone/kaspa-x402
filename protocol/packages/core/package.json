@@ -1,6 +1,6 @@
 {
   "name": "@kaspa-x402/core",
-  "version": "1.0.0",
+  "version": "1.0.1",
   "description": "Core types and canonical encoders for Kaspa x402.",
   "license": "MIT",
   "type": "module",

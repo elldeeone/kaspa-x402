@@ -11,6 +11,7 @@ import crypto from 'node:crypto';
 import { startDemoPnnRelay } from './demo-pnn-relay.mjs';
 import { liveChainCheckpoint, getAddressUtxos, waitForAcceptedTransactionEvidence } from '../protocol/scripts/live-adapter-reference.mjs';
 
+const releaseVersion = JSON.parse(fs.readFileSync(new URL('../protocol/packages/core/package.json', import.meta.url))).version;
 const option = name => process.argv[process.argv.indexOf(name) + 1];
 assert.ok(process.argv.includes('--live') && process.argv.includes('--config') && process.argv.includes('--out'),
   'Usage: --live --config <private-json> --out <fresh-private-directory>');
@@ -63,9 +64,9 @@ try {
   if (hosted) {
     report.siteRelease = await (await fetch('https://kaspa-x402.org/release.json', { redirect: 'error' })).json();
     report.gatewayHealth = await (await fetch(base + '/health', { redirect: 'error' })).json();
-    assert.equal(report.siteRelease.version, '1.0.0');
+    assert.equal(report.siteRelease.version, releaseVersion);
     assert.equal(report.siteRelease.sourceState, 'git-head');
-    assert.equal(report.gatewayHealth.releaseVersion, '1.0.0');
+    assert.equal(report.gatewayHealth.releaseVersion, releaseVersion);
     assert.equal(report.gatewayHealth.enabled, true);
     // Read-only preflight before creating or funding anything. The hosted
     // pool belongs to the deployed service; a proof consumes its ready head.
@@ -153,7 +154,7 @@ try {
     resourcePersistencePath: path.join(out, 'worker-state'),
     bindings: { KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HASH_CHAIN_ENABLED: 'true',
       KASPA_X402_CHAIN_TRUST_MODE: 'trusted-single-source', KASPA_X402_ADMISSION_HMAC_KEY: token,
-      KASPA_X402_ADMIN_TOKEN: admin, KASPA_X402_RELEASE_VERSION: '1.0.0',
+      KASPA_X402_ADMIN_TOKEN: admin, KASPA_X402_RELEASE_VERSION: releaseVersion,
       KASPA_X402_PAY_TO: fundingAddress, KASPA_X402_SERVER_PUBLIC_KEY: registration.ownerPublicKey,
       KASPA_X402_GATEWAY_BASE_URL: base, KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: 'true',
       KASPA_X402_CORS_ORIGIN: 'https://kaspa-x402.org',

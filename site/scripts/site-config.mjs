@@ -131,7 +131,7 @@ export const PUBLIC_DOC_FILES = [
 
 // One-line purpose for each published artifact, shown next to it in index pages.
 export const ARTIFACT_NOTES = {
-  "docs/v1-release.md": "Stable 1.0.0 SDK, supported profiles, compatibility and exact-package validation.",
+  "docs/v1-release.md": "Stable SDK, supported profiles, compatibility and exact-package validation.",
   "docs/security-review-1.0.0.md": "AI-assisted security review, merged fixes, release evidence and limitations.",
   "schemas/payment-required.schema.json":
     "x402 v2 `PaymentRequired` envelope: the 402 offer body listing accepted payment requirements.",
@@ -176,7 +176,7 @@ export const ARTIFACT_NOTES = {
   "docs/adoption-examples.md":
     "How existing x402 servers, clients, and facilitators would adopt the Kaspa profiles.",
   "docs/testnet-gateway.md":
-    "Deployed 1.0.0 Testnet-10 gateway, matching templates, browser proof and historical RC2 evidence.",
+    "Deployed Testnet-10 gateway, matching templates, browser proof and historical RC2 evidence.",
   "docs/rc2-release.md":
     "Published RC2 packages, payment profiles, PNN gateway, browser demo, and validation evidence.",
   "docs/demo-operations.md":
