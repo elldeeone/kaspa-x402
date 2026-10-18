@@ -1567,7 +1567,7 @@ function stubCanaryFetches(): void {
       });
     }
     if (url.startsWith("https://kaspa-x402.org/release.json?")) {
-      return Response.json({ version: "1.0.0" });
+      return Response.json({ version: BASE_ENV.KASPA_X402_RELEASE_VERSION });
     }
     if (url === "https://kaspa-x402.org/docs/") {
       return new Response("<!doctype html><h1>Docs</h1>", {
