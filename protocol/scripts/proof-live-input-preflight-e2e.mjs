@@ -2,7 +2,9 @@
 // available: incomplete proof bundles must fail before trying either.
 import assert from "node:assert/strict";
 import { spawnSync } from "node:child_process";
+import { createRequire } from "node:module";
 import fs from "node:fs";
+import os from "node:os";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -12,12 +14,19 @@ assert.equal(args[0], "--out");
 assert.equal(args.length, 2);
 const out = path.resolve(args[1]);
 fs.mkdirSync(path.dirname(out), { recursive: true });
-const temporary = fs.mkdtempSync(path.join(path.dirname(out), "live-input-preflight-"));
+const temporary = fs.mkdtempSync(path.join(os.tmpdir(), "live-input-preflight-"));
 const report = { kind: "live-input-preflight-e2e", ok: false, cases: [] };
 try {
   fs.cpSync(path.join(root, "scripts"), path.join(temporary, "scripts"), { recursive: true });
   fs.symlinkSync(path.join(root, "packages"), path.join(temporary, "packages"), "junction");
-  fs.symlinkSync(path.join(root, "node_modules"), path.join(temporary, "node_modules"), "junction");
+  // Root workspaces and standalone protocol installs keep dependencies in
+  // different directories. Resolve the actual workspace installation instead
+  // of inheriting dependencies from the report directory's ancestors.
+  const dependencies = createRequire(import.meta.url).resolve.paths("@kaspa-x402/core")
+    .find(directory => ["core", "client", "covenant", "server"].every(name =>
+      fs.existsSync(path.join(directory, "@kaspa-x402", name))));
+  assert.ok(dependencies, "installed protocol dependencies are required");
+  fs.symlinkSync(dependencies, path.join(temporary, "node_modules"), "junction");
   fs.mkdirSync(path.join(temporary, "vectors/tx-v1"), { recursive: true });
   fs.writeFileSync(path.join(temporary, "invoke.mjs"), `
 import { runLiveProof } from './scripts/live-adapter-reference.mjs';
