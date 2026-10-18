@@ -168,7 +168,7 @@ function writeHomePage() {
 
     <h2 id="status">Status</h2>
     <ul>
-      <li>Standard and SDK: <code>${escapeHtml(releaseLabel)}</code>, covering all four native profiles. ${publicationStatus === "published" ? "The four public packages are available" : "The packages are awaiting publication"} on npm's <code>${escapeHtml(releaseChannel)}</code> channel. See the <a href="/docs/v1-release/">1.0.0 release notes</a>.</li>
+      <li>Standard and SDK: <code>${escapeHtml(releaseLabel)}</code>, covering all four native profiles. ${publicationStatus === "published" ? "The four public packages are available" : "The packages are awaiting publication"} on npm's <code>${escapeHtml(releaseChannel)}</code> channel. See the <a href="/docs/v1-release/">${escapeHtml(releaseVersion)} release notes</a>.</li>
       <li>SDK supports <code>kaspa:testnet-10</code> and explicit opt-in <code>kaspa:mainnet</code>. Testnet-10 is the default. See <a href="/docs/mainnet-readiness/">production operating requirements</a>.</li>
       <li>Hosted demo: <a href="${escapeAttribute(demo.origin)}"><code>demo.kaspa-x402.org</code></a> runs <code>${escapeHtml(demo.version)}</code> on <strong>Testnet only</strong>. <a href="/demo/">Try a payment</a> or read the <a href="/docs/testnet-gateway/">gateway guide</a>.</li>
       <li>Standards: the <code>kaspa:*</code> identifiers remain proposed x402/CAIP names. This release does not claim upstream registry adoption.</li>
@@ -374,7 +374,7 @@ function writeDemoPage() {
       `
   <main>
     <h1>Browser Test Client</h1>
-    <p class="muted">Try a payment with the 1.0.0 SDK on Testnet-10. Your browser signs and broadcasts the payment; a successful payment unlocks the protected report. Retrying reuses the same payment. Use a throwaway key and Testnet funds only. See the <a href="/docs/testnet-gateway/">gateway guide</a>.</p>
+    <p class="muted">Try a payment with the ${escapeHtml(releaseVersion)} SDK on Testnet-10. Your browser signs and broadcasts the payment; a successful payment unlocks the protected report. Retrying reuses the same payment. Use a throwaway key and Testnet funds only. See the <a href="/docs/testnet-gateway/">gateway guide</a>.</p>
 
     <section class="demo-panel" aria-labelledby="demo-safety">
       <h2 id="demo-safety">Safety Boundary</h2>
@@ -425,7 +425,7 @@ function writeDemoPage() {
 
     <section class="demo-panel" aria-labelledby="demo-hash-chain">
       <h2 id="demo-hash-chain">Hash-chain exact — live Testnet payment</h2>
-      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to receive the protected report. Retry returns the same payment without another charge. The gateway runs the matching 1.0.0 payment runtime.</p>
+      <p>Generate or import a throwaway key above, fund its Testnet-10 address, and connect to a node. Fetch a quote, then pay to receive the protected report. Retry returns the same payment without another charge. The gateway runs the ${escapeHtml(demo.version)} payment runtime.</p>
       <p class="muted">One payment increases the merchant head by the quoted price. The target fee is 0.01 KAS; small change may be included in the fee, up to 0.1 KAS total. The result shows the actual fee. If someone abandons a claimed grant, the operator resets the head manually.</p>
       <div class="demo-actions">
         <button type="button" id="demo-hash-quote">Get hash-chain quote</button>
@@ -615,7 +615,7 @@ function writePnnSpikeJson() {
     },
     worker: {
       recordedDeployment: demo,
-      evidenceScope: "1.0.0 Testnet deployment; funded public browser payment and retry verified",
+      evidenceScope: `Recorded ${demo.version} Testnet deployment, last verified ${demo.lastVerifiedOn}; funded public browser payment and retry`,
       browserCompatibility: { batch: "requires escrow-v5", hashChain: "requires head-v2" },
       status:
         `Testnet deployment: ${demo.version}, last verified ${demo.lastVerifiedOn}`,

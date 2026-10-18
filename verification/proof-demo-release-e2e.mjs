@@ -8,6 +8,7 @@ import { WebSocketServer } from 'ws';
 const out = process.argv[process.argv.indexOf('--out') + 1];
 assert.ok(process.argv.includes('--out') && out, '--out is required');
 fs.mkdirSync(path.dirname(out), { recursive: true });
+const releaseVersion = JSON.parse(fs.readFileSync(new URL('../protocol/packages/core/package.json', import.meta.url))).version;
 const cases = [];
 async function check(name, fn) { try { cases.push({ name, passed: true, evidence: await fn() }); }
   catch (error) { cases.push({ name, passed: false, error: error.message }); } }
@@ -62,7 +63,7 @@ try {
     assert.equal(large.status, 413);
     return { fragmentedMessageCap: 4_259_840, deadlineMs: 1000, unauthorizedDials: 0 };
   });
-  await check('actual Worker accepts 1.0.0 and serves current payable offers through the relay', async () => {
+  await check('actual Worker accepts the release version and serves current payable offers through the relay', async () => {
     assert.ok(relay, 'relay unavailable');
     const require = createRequire(createRequire(import.meta.url).resolve('wrangler/package.json'));
     const { Miniflare, convertV4MiniflareOptions } = await import(require.resolve('miniflare'));
@@ -71,7 +72,7 @@ try {
       durableObjects: { GATEWAY_STATE: { className: 'GatewayState', useSQLite: true } },
       durableObjectsPersist: temporary,
       bindings: {
-        KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: 'true', KASPA_X402_RELEASE_VERSION: '1.0.0',
+        KASPA_X402_GATEWAY_ENABLED: 'true', KASPA_X402_HOSTED_EXACT_SETTLEMENT_ENABLED: 'true', KASPA_X402_RELEASE_VERSION: releaseVersion,
         KASPA_X402_CHAIN_TRUST_MODE: 'trusted-single-source',
         KASPA_X402_ADMISSION_HMAC_KEY: 'private-test-admission-key-at-least-32-bytes',
         KASPA_X402_ADMIN_TOKEN: token,
@@ -83,7 +84,7 @@ try {
     worker = new Miniflare(convertV4MiniflareOptions ? convertV4MiniflareOptions(options) : options);
     const request = route => worker.dispatchFetch('https://demo.kaspa-x402.org' + route, {
       headers: { 'cf-connecting-ip': '192.0.2.1' } });
-    assert.equal((await (await request('/health')).json()).releaseVersion, '1.0.0');
+    assert.equal((await (await request('/health')).json()).releaseVersion, releaseVersion);
     const { GATEWAY_STATE } = await worker.getBindings();
     const state = GATEWAY_STATE.get(GATEWAY_STATE.idFromName('demo-gateway-state-v2'));
     const seeded = await state.fetch('https://state/rpc', { method: 'POST',
