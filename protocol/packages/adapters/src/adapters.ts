@@ -874,58 +874,60 @@ export class KaspaPnnClient {
     return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
       signal.throwIfAborted();
-      if (!rpc.getBlock || !rpc.getBlockDagInfo || !rpc.getVirtualChainFromBlock || !rpc.getVirtualChainFromBlockV2) {
-        throw invalidTransaction("PNN selected-chain methods are required");
-      }
-      const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
-      let from = options.from;
-      if (!from) {
-        let hash = before.blockHash;
-        const deadline = Date.now() + this.#timeoutMs;
-        for (let count = 0; count < 1024; count++) {
-          signal.throwIfAborted();
-          if (Date.now() > deadline) throw invalidTransaction("PNN origin discovery deadline exceeded");
-          const block = unwrapRecord(await withTimeout(rpc.getBlock({ hash, includeTransactions: false }),
-            this.#timeoutMs, "pnn origin checkpoint"), "block");
-          signal.throwIfAborted();
-          const checkpoint = pnnSelectedBlockCheckpoint({ block }, hash, "origin discovery");
-          if (count > 0 && (options.originDaaScore !== undefined
-            ? BigInt(checkpoint.daaScore!) < BigInt(options.originDaaScore)
-            : count >= 64)) {
-            from = checkpoint;
-            break;
-          }
-          hash = hashValue(requiredRecord(block.verboseData, "PNN origin block data").selectedParentHash,
-            "PNN origin selected parent");
+      return retryPnnCheckpointRead(signal, async () => {
+        if (!rpc.getBlock || !rpc.getBlockDagInfo || !rpc.getVirtualChainFromBlock || !rpc.getVirtualChainFromBlockV2) {
+          throw invalidTransaction("PNN selected-chain methods are required");
         }
-        if (!from) throw invalidTransaction("PNN origin discovery exceeded the bounded history window");
-      }
-      const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
-      if (!acceptingHash) return null;
-      const acceptingRaw = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
-        this.#timeoutMs, "pnn accepting block");
-      signal.throwIfAborted();
-      const accepting = pnnSelectedBlockCheckpoint(acceptingRaw, acceptingHash, "accepting block");
-      const parent = hashValue(requiredRecord(unwrapRecord(acceptingRaw, "block").verboseData,
-        "PNN accepting block data").selectedParentHash, "PNN accepting block parent");
-      const positions = await pnnSelectedChainPositions(rpc, parent, before.blockHash, this.#timeoutMs, signal);
-      const acceptingPosition = positions.addedChainBlocks.findIndex(block => block.blockHash === acceptingHash);
-      if (acceptingPosition < 0 || positions.removedChainBlockHashes.includes(from.blockHash))
-        throw invalidTransaction("PNN origin checkpoint left the selected chain");
-      const confirmationCount = positions.addedChainBlocks.length - acceptingPosition;
-      const selected = await pnnSelectedChainFromCheckpoint(rpc, parent,
-        await pnnAcceptanceRangeFilter(rpc, accepting.blueScore, this.#timeoutMs, signal),
-        this.#timeoutMs, "Full", acceptingHash, undefined, signal);
-      const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
-        this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
-      signal.throwIfAborted();
-      if (!sameChainCheckpoint(before, verified)) throw invalidTransaction("PNN acceptance checkpoint changed");
-      const raw = selected.addedChainBlocks.find(block => block.blockHash === acceptingHash)?.transactions
-        .find(transaction => pnnAcceptedTransactionId(transaction) === transactionId.toLowerCase());
-      if (!raw) return null;
-      return { raw, evidence: { status: "accepted", transactionId: transactionId.toLowerCase(),
-        acceptingBlockHash: acceptingHash, acceptingBlockBlueScore: accepting.blueScore,
-        confirmationCount, checkpoint: before } };
+        const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, signal);
+        let from = options.from;
+        if (!from) {
+          let hash = before.blockHash;
+          const deadline = Date.now() + this.#timeoutMs;
+          for (let count = 0; count < 1024; count++) {
+            signal.throwIfAborted();
+            if (Date.now() > deadline) throw invalidTransaction("PNN origin discovery deadline exceeded");
+            const block = unwrapRecord(await withTimeout(rpc.getBlock({ hash, includeTransactions: false }),
+              this.#timeoutMs, "pnn origin checkpoint"), "block");
+            signal.throwIfAborted();
+            const checkpoint = pnnSelectedBlockCheckpoint({ block }, hash, "origin discovery");
+            if (count > 0 && (options.originDaaScore !== undefined
+              ? BigInt(checkpoint.daaScore!) < BigInt(options.originDaaScore)
+              : count >= 64)) {
+              from = checkpoint;
+              break;
+            }
+            hash = hashValue(requiredRecord(block.verboseData, "PNN origin block data").selectedParentHash,
+              "PNN origin selected parent");
+          }
+          if (!from) throw invalidTransaction("PNN origin discovery exceeded the bounded history window");
+        }
+        const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
+        if (!acceptingHash) return null;
+        const acceptingRaw = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
+          this.#timeoutMs, "pnn accepting block");
+        signal.throwIfAborted();
+        const accepting = pnnSelectedBlockCheckpoint(acceptingRaw, acceptingHash, "accepting block");
+        const parent = hashValue(requiredRecord(unwrapRecord(acceptingRaw, "block").verboseData,
+          "PNN accepting block data").selectedParentHash, "PNN accepting block parent");
+        const positions = await pnnSelectedChainPositions(rpc, parent, before.blockHash, this.#timeoutMs, signal);
+        const acceptingPosition = positions.addedChainBlocks.findIndex(block => block.blockHash === acceptingHash);
+        if (acceptingPosition < 0 || positions.removedChainBlockHashes.includes(from.blockHash))
+          throw invalidTransaction("PNN origin checkpoint left the selected chain");
+        const confirmationCount = positions.addedChainBlocks.length - acceptingPosition;
+        const selected = await pnnSelectedChainFromCheckpoint(rpc, parent,
+          await pnnAcceptanceRangeFilter(rpc, accepting.blueScore, this.#timeoutMs, signal),
+          this.#timeoutMs, "Full", acceptingHash, undefined, signal);
+        const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
+          this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
+        signal.throwIfAborted();
+        if (!sameChainCheckpoint(before, verified)) throw invalidTransaction("PNN acceptance checkpoint changed");
+        const raw = selected.addedChainBlocks.find(block => block.blockHash === acceptingHash)?.transactions
+          .find(transaction => pnnAcceptedTransactionId(transaction) === transactionId.toLowerCase());
+        if (!raw) return null;
+        return { raw, evidence: { status: "accepted", transactionId: transactionId.toLowerCase(),
+          acceptingBlockHash: acceptingHash, acceptingBlockBlueScore: accepting.blueScore,
+          confirmationCount, checkpoint: before } };
+      });
     }, signal);
   }
 
@@ -1104,17 +1106,16 @@ export class KaspaPnnClient {
     return this.#withRpc(async ({ rpc, endpoint, signal: active }) => {
       await this.#checkedServerInfo(rpc, endpoint);
       active.throwIfAborted();
-      if (
-        !rpc.getVirtualChainFromBlock ||
-        !rpc.getBlockDagInfo ||
-        !rpc.getBlock
-      ) {
-        throw invalidTransaction(
-          "Kaspa PNN endpoint does not expose selected-chain confirmation methods",
-        );
-      }
-      for (let attempt = 0; attempt < 3; attempt += 1) {
-        active.throwIfAborted();
+      return retryPnnCheckpointRead(active, async () => {
+        if (
+          !rpc.getVirtualChainFromBlock ||
+          !rpc.getBlockDagInfo ||
+          !rpc.getBlock
+        ) {
+          throw invalidTransaction(
+            "Kaspa PNN endpoint does not expose selected-chain confirmation methods",
+          );
+        }
         const before = await pnnChainCheckpoint(rpc, this.#timeoutMs, active);
         const rawAcceptingBlock = await withTimeout(
           rpc.getBlock({
@@ -1140,7 +1141,9 @@ export class KaspaPnnClient {
             "Kaspa PNN accepting block response does not match transaction evidence",
           );
         }
-        if ((verbose.isChainBlock ?? verbose.is_chain_block) !== true) {
+        const isChainBlock = verbose.isChainBlock ?? verbose.is_chain_block;
+        if (isChainBlock === false) throw new PnnCheckpointMovedError("accepting block");
+        if (isChainBlock !== true) {
           throw invalidTransaction(
             "Kaspa PNN accepting block is not a selected-chain block",
           );
@@ -1231,10 +1234,7 @@ export class KaspaPnnClient {
           confirmationCount,
           checkpoint: before,
         };
-      }
-      throw invalidTransaction(
-        "Kaspa PNN confirmation checkpoint changed during every bounded read",
-      );
+      });
     }, signal);
   }
 
@@ -2815,6 +2815,21 @@ class PnnCheckpointMovedError extends KaspaX402Error {
   }
 }
 
+async function retryPnnCheckpointRead<T>(
+  signal: AbortSignal,
+  read: () => Promise<T>,
+): Promise<T> {
+  for (let attempt = 1; ; attempt += 1) {
+    signal.throwIfAborted();
+    try {
+      return await read();
+    } catch (error) {
+      if (!(error instanceof PnnCheckpointMovedError) || attempt === 3)
+        throw error;
+    }
+  }
+}
+
 function pnnSelectedBlockCheckpoint(
   rawBlock: unknown,
   expectedHash: string,
@@ -3065,6 +3080,15 @@ async function pnnSelectedChainPositions(rpc: PnnRpc, initialHash: string,
       seenAdded.add(blockHash); addedChainBlocks.push({ blockHash, transactionIds: ids.get(blockHash) ?? [] });
       if (blockHash === stopHash) return { removedChainBlockHashes, addedChainBlocks };
     }
+    // The captured tip can leave the chain before the positions page arrives.
+    // Confirm that change before restarting the proof from a new tip.
+    const pinned = await withTimeout(
+      rpc.getBlock!({ hash: stopHash, includeTransactions: false }),
+      timeoutMs,
+      "pnn recheck selected-chain position checkpoint",
+    );
+    signal?.throwIfAborted();
+    pnnSelectedBlockCheckpoint(pinned, stopHash, "selected-chain position checkpoint");
     if (!added.length) throw invalidTransaction("PNN selected-chain positions ended before the pinned checkpoint");
     startHash = added.at(-1)!;
   }

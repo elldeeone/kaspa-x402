@@ -24,9 +24,12 @@ let connections = 0;
 const checkpointHash = '11'.repeat(32);
 const readbackHash = '22'.repeat(32);
 const recoveryChain = Array.from({ length: 30 }, (_, index) => sha256Hex('recovery-block-' + index));
+const removedRecoveryTip = sha256Hex('removed-recovery-tip');
 const exactPayments = [];
 let pendingPayment;
 let recoveryReadbacks = 0;
+let recoveryDagReads = 0;
+let removedRecoveryTipsServed = 0;
 const vector = JSON.parse(fs.readFileSync(new URL('../protocol/vectors/exact/consensus-profiles.json', import.meta.url))).expected.standardNative;
 
 function signedExactPayment(accepted, url, sequence, label = sequence) {
@@ -65,7 +68,8 @@ function signedExactPayment(accepted, url, sequence, label = sequence) {
 }
 
 function recoveryBlockHeader(hash) {
-  const score = String(1_000_001 + recoveryChain.indexOf(hash));
+  const position = hash === removedRecoveryTip ? recoveryChain.length : recoveryChain.indexOf(hash);
+  const score = String(1_000_001 + position);
   return { hash, blueScore: score, daaScore: score };
 }
 
@@ -123,7 +127,8 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
   } else if (method === 'getBlock') {
     const position = recoveryChain.indexOf(params.hash);
     const block = { header: recoveryBlockHeader(params.hash),
-      verboseData: { hash: params.hash, isChainBlock: true, selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
+      verboseData: { hash: params.hash, isChainBlock: params.hash !== removedRecoveryTip,
+        selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
     if (params.hash === readbackHash && params.includeTransactions) {
       block.transactions = exactPayments.map(transactionReadback);
     }
@@ -149,7 +154,20 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
   } else if (method === 'getUtxosByAddresses') {
     result = { entries: fixtureUtxos(params.addresses) };
   } else {
-    const sink = pendingPayment?.submissions.length ? recoveryChain.at(-1) : checkpointHash;
+    let sink = checkpointHash;
+    if (pendingPayment?.submissions.length) {
+      recoveryDagReads += 1;
+      // The gateway and funding snapshots are the first two reads. Lose the
+      // tip during transaction lookup and again during the depth confirmation.
+      const lookupTipMoved = recoveryDagReads === 3;
+      const confirmationTipMoved = recoveryReadbacks === 1 && removedRecoveryTipsServed === 1;
+      if (lookupTipMoved || confirmationTipMoved) {
+        removedRecoveryTipsServed += 1;
+        sink = removedRecoveryTip;
+      } else {
+        sink = recoveryChain.at(-1);
+      }
+    }
     result = { network: 'testnet-10', sink, pruningPointHash: checkpointHash, virtualDaaScore: recoveryBlockHeader(sink).daaScore };
   }
   ws.send(JSON.stringify({ id, method, params: result }));
@@ -261,7 +279,7 @@ try {
       await call('disconnect');
     }
   });
-  await check('actual Worker recovers a maximum-sequence payment after the node response is lost', async () => {
+  await check('actual Worker recovers a maximum-sequence payment across lost acknowledgement and checkpoint movement', async () => {
     const url = 'https://demo.kaspa-x402.org/exact/report';
     const headers = { 'cf-connecting-ip': '192.0.2.1' };
     const offer = await worker.dispatchFetch(url, { headers });
@@ -286,8 +304,10 @@ try {
     assert.equal((await retry.json()).payment.finality, 'accepted');
     assert.deepEqual(pendingPayment.submissions, [sequence]);
     assert.equal(recoveryReadbacks, 1);
+    assert.equal(removedRecoveryTipsServed, 2);
     return { sequence, transactionId: settlement.transaction, first: first.status,
-      recovered: retry.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks };
+      recovered: retry.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks,
+      removedCheckpoints: removedRecoveryTipsServed };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
