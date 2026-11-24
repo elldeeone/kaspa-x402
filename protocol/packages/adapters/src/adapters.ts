@@ -838,8 +838,8 @@ export class KaspaPnnClient {
       await this.#checkedServerInfo(rpc, endpoint);
       signal.throwIfAborted();
       if (!rpc.getBlockDagInfo || !rpc.getBlock) throw invalidTransaction("PNN checkpoint methods are required");
-      // A tip can leave the chain during the UTXO read. Discard that view and
-      // verify its selected parent before and after reading the UTXOs again.
+      // A tip can leave the chain during the UTXO read. Try its selected parent
+      // once, then reserve the last attempt for a fresh tip.
       let parentHash: string | undefined;
       for (let attempt = 0; attempt < 3; attempt++) {
         let block: unknown;
@@ -869,6 +869,10 @@ export class KaspaPnnClient {
         } catch (error) {
           signal.throwIfAborted();
           if (!(error instanceof PnnCheckpointMovedError) || attempt === 2) throw error;
+          if (attempt === 1) {
+            parentHash = undefined;
+            continue;
+          }
           const moved = unwrapRecord(block, "block");
           const verbose = requiredRecord(moved.verboseData ?? moved.verbose_data, "PNN origin block data");
           const parent = verbose.selectedParentHash ?? verbose.selected_parent_hash;
