@@ -265,7 +265,12 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     }
     const accepted = await this.#pnn.findAcceptedTransaction(
       candidate.id,
-      from ? { from } : {},
+      from ? {
+        from,
+        // Only a version-0 standard-native receipt with a complete funding
+        // snapshot can use the selected ancestor of a removed checkpoint.
+        recoverRemovedCheckpoint: candidate.version === 0 && cached?.origins?.length === candidate.inputs.length,
+      } : {},
       this.#signal,
     );
     if (!accepted)
@@ -279,6 +284,15 @@ export class PnnChainEvidence implements ChainEvidenceClient {
     );
     const transaction = observedTransaction(accepted.raw, evidence);
     assertChainTransactionMatchesSafe(transaction, candidate);
+    if (accepted.recoveredFromRemovedCheckpoint) {
+      const origins = acceptedOrigins(accepted.raw);
+      if (origins.length !== this.#origins.length || origins.some((origin, index) => {
+        const saved = this.#origins[index]!;
+        return !sameOutpoint(origin.outpoint, saved.outpoint) ||
+          origin.amount !== saved.amount || origin.scriptPublicKey !== saved.scriptPublicKey ||
+          origin.covenantId !== saved.covenantId;
+      })) throw unavailable("accepted payment origins conflict with the durable funding snapshot");
+    }
     if (!cached?.origins) this.#origins = acceptedOrigins(accepted.raw);
     if (this.#origins.length !== candidate.inputs.length)
       throw unavailable(
