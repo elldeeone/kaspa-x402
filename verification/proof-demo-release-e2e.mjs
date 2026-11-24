@@ -26,7 +26,6 @@ const readbackHash = '22'.repeat(32);
 const recoveryChain = Array.from({ length: 30 }, (_, index) => sha256Hex('recovery-block-' + index));
 const removedRecoveryTip = sha256Hex('removed-recovery-tip');
 const removedReceiptCheckpoint = sha256Hex('removed-receipt-checkpoint');
-const exactPayments = [];
 let pendingPayment;
 let acceptedOriginMatches = false;
 let recoveryReadbacks = 0;
@@ -34,10 +33,11 @@ let recoveryDagReads = 0;
 let removedRecoveryTipsServed = 0;
 const vector = JSON.parse(fs.readFileSync(new URL('../protocol/vectors/exact/consensus-profiles.json', import.meta.url))).expected.standardNative;
 
-function signedExactPayment(accepted, url, sequence, label = sequence) {
+function signedExactPayment(accepted, url, sequence) {
+  const paymentIdentifier = 'demo-release-exact-recovery';
   const reference = structuredClone(vector.transaction);
   const [input] = reference.inputs;
-  input.previousOutpoint.txid = sha256Hex('demo-release-exact-' + label);
+  input.previousOutpoint.txid = sha256Hex(paymentIdentifier);
   input.sequence = sequence;
   reference.outputs[0].scriptPublicKey = accepted.extra.payToScriptPublicKey;
   const sign = digest => Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), new Uint8Array(32).fill(7), new Uint8Array(32))).toString('hex');
@@ -51,7 +51,6 @@ function signedExactPayment(accepted, url, sequence, label = sequence) {
   };
   const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
   const requestHash = sha256Hex(stableStringify({ method: 'GET', url, body: null, paymentRequirementsHash }));
-  const paymentIdentifier = 'demo-release-exact-' + label;
   const expiresAt = new Date(Date.now() + 30_000).toISOString();
   const digest = exactRequestAuthorizationDigest({
     network: accepted.network, profile: 'standard-native', transactionId: id, paymentOutputIndex: 0,
@@ -84,18 +83,18 @@ function transactionReadback({ artifact }) {
 }
 
 function fixtureUtxos(addresses) {
-  return exactPayments.flatMap(({ artifact, merchant, submissions }) => {
-    const [input] = artifact.inputs;
-    const payer = addressForScriptPublicKey(input.utxo.scriptPublicKey, 'kaspa:testnet-10');
-    if (!submissions.length && addresses.includes(payer)) {
-      return [{ outpoint: input.previousOutpoint, utxoEntry: input.utxo }];
-    }
-    if (submissions.length && addresses.includes(merchant)) {
-      const { value: amount, scriptPublicKey } = artifact.outputs[0];
-      return [{ outpoint: { transactionId: artifact.id, index: 0 }, utxoEntry: { amount, scriptPublicKey } }];
-    }
-    return [];
-  });
+  if (!pendingPayment) return [];
+  const { artifact, merchant, submissions } = pendingPayment;
+  const [input] = artifact.inputs;
+  const payer = addressForScriptPublicKey(input.utxo.scriptPublicKey, 'kaspa:testnet-10');
+  if (!submissions.length && addresses.includes(payer)) {
+    return [{ outpoint: input.previousOutpoint, utxoEntry: input.utxo }];
+  }
+  if (submissions.length && addresses.includes(merchant)) {
+    const { value: amount, scriptPublicKey } = artifact.outputs[0];
+    return [{ outpoint: { transactionId: artifact.id, index: 0 }, utxoEntry: { amount, scriptPublicKey } }];
+  }
+  return [];
 }
 const peer = new WebSocketServer({ port: 0, host: '127.0.0.1' });
 await new Promise(r => peer.once('listening', r));
@@ -115,18 +114,17 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
   let result;
   if (method === 'submitTransaction') {
     const input = params.transaction.inputs[0];
-    const payment = exactPayments.find(({ artifact }) => artifact.inputs[0].previousOutpoint.transactionId === input.previousOutpoint.transactionId);
-    if (!payment) {
+    if (!pendingPayment || input.previousOutpoint.transactionId !== pendingPayment.artifact.inputs[0].previousOutpoint.transactionId) {
       ws.send(JSON.stringify({ id, method, error: 'Unexpected fixture submission' }));
       return;
     }
-    payment.submissions.push(sequenceOnWire);
-    if (payment === pendingPayment && payment.submissions.length === 1) {
+    pendingPayment.submissions.push(sequenceOnWire);
+    if (pendingPayment.submissions.length === 1) {
       // The node accepted the payment but the submission response was lost.
       ws.close();
       return;
     }
-    result = { transactionId: payment.artifact.id };
+    result = { transactionId: pendingPayment.artifact.id };
   } else if (method === 'getBlock') {
     const position = recoveryChain.indexOf(params.hash);
     const isChainBlock = params.hash !== removedRecoveryTip &&
@@ -134,8 +132,8 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
     const block = { header: recoveryBlockHeader(params.hash),
       verboseData: { hash: params.hash, isChainBlock,
         selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
-    if (params.hash === readbackHash && params.includeTransactions) {
-      block.transactions = exactPayments.map(transactionReadback);
+    if (params.hash === readbackHash && params.includeTransactions && pendingPayment) {
+      block.transactions = [transactionReadback(pendingPayment)];
     }
     result = { block };
   } else if (method === 'getVirtualChainFromBlock' && pendingPayment?.submissions.length) {
@@ -250,47 +248,6 @@ try {
     assert.equal(offer.accepts[0].extra.templateId, 'kaspa-x402-escrow-v5');
     return { exact: exact.status, batch: batch.status, batchTemplate: offer.accepts[0].extra.templateId };
   });
-  for (const sequence of ['0', vector.transaction.inputs[0].sequence]) {
-    await check('actual Worker settles and replays a signed native payment with sequence ' + sequence, async () => {
-      assert.ok(worker, 'Worker unavailable');
-      const url = 'https://demo.kaspa-x402.org/exact/report';
-      const headers = { 'cf-connecting-ip': '192.0.2.1' };
-      const offer = await worker.dispatchFetch(url, { headers });
-      assert.equal(offer.status, 402, await offer.clone().text());
-      const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
-      assert.equal(accepted.amount, vector.amount);
-      const payment = signedExactPayment(accepted, url, sequence);
-      exactPayments.push(payment);
-      const pay = () => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': payment.header } });
-      const first = await pay();
-      assert.equal(first.status, 200, await first.clone().text());
-      const settlement = decodePaymentResponseHeader(first.headers.get('payment-response'));
-      assert.equal(settlement.transaction, payment.artifact.id);
-      assert.equal((await first.json()).payment.finality, 'accepted');
-      const retry = await pay();
-      assert.equal(retry.status, 200, await retry.clone().text());
-      assert.equal(retry.headers.get('payment-response'), first.headers.get('payment-response'));
-      assert.deepEqual(payment.submissions, [sequence], 'the node must receive one exact, unquoted JSON integer');
-      return { sequence, transactionId: payment.artifact.id, submissions: payment.submissions.length, replay: retry.status };
-    });
-  }
-  await check('relay preserves the exact sequence in accepted transaction readback', async () => {
-    const sessionId = '12345678-1234-4123-8123-123456789013';
-    const call = (method, params = {}) => fetch(relay.origin + '/rpc', { method: 'POST',
-      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
-      body: JSON.stringify({ endpoint, sessionId, method, params }) });
-    assert.equal((await call('connect')).status, 200);
-    try {
-      const response = await call('getBlock', { hash: readbackHash, includeTransactions: true });
-      assert.equal(response.status, 200);
-      const { block } = await response.json();
-      assert.deepEqual(block.transactions.map(transaction => String(transaction.inputs[0].sequence)),
-        ['0', vector.transaction.inputs[0].sequence]);
-      return { sequences: block.transactions.map(transaction => String(transaction.inputs[0].sequence)) };
-    } finally {
-      await call('disconnect');
-    }
-  });
   await check('actual Worker recovers a maximum-sequence payment whose receipt checkpoint was removed', async () => {
     const url = 'https://demo.kaspa-x402.org/exact/report';
     const headers = { 'cf-connecting-ip': '192.0.2.1' };
@@ -298,15 +255,14 @@ try {
     assert.equal(offer.status, 402, await offer.clone().text());
     const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
     const sequence = vector.transaction.inputs[0].sequence;
-    pendingPayment = signedExactPayment(accepted, url, sequence, 'recovery');
-    exactPayments.push(pendingPayment);
+    pendingPayment = signedExactPayment(accepted, url, sequence);
     const pay = () => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': pendingPayment.header } });
 
     const first = await pay();
     assert.equal(first.status, 503, await first.clone().text());
     assert.deepEqual(await first.json(), { error: 'exact_settlement_recovery_required' });
     assert.equal(first.headers.get('payment-response'), null);
-    assert.deepEqual(pendingPayment.submissions, [sequence]);
+    assert.deepEqual(pendingPayment.submissions, [sequence], 'the node must receive one exact, unquoted JSON integer');
     assert.equal(recoveryReadbacks, 0);
     const { GATEWAY_STATE } = await worker.getBindings();
     const state = GATEWAY_STATE.get(GATEWAY_STATE.idFromName('demo-gateway-state-v2'));
@@ -322,15 +278,42 @@ try {
     acceptedOriginMatches = true;
     const retry = await pay();
     assert.equal(retry.status, 200, await retry.clone().text());
-    const settlement = decodePaymentResponseHeader(retry.headers.get('payment-response'));
+    const settlementHeader = retry.headers.get('payment-response');
+    const settlement = decodePaymentResponseHeader(settlementHeader);
     assert.equal(settlement.transaction, pendingPayment.artifact.id);
-    assert.equal((await retry.json()).payment.finality, 'accepted');
+    const recoveredBody = await retry.json();
+    assert.equal(recoveredBody.payment.finality, 'accepted');
+
+    const replay = await pay();
+    assert.equal(replay.status, 200, await replay.clone().text());
+    assert.equal(replay.headers.get('payment-response'), settlementHeader);
+    assert.deepEqual(await replay.json(), recoveredBody);
     assert.deepEqual(pendingPayment.submissions, [sequence]);
     assert.equal(recoveryReadbacks, 2);
     assert.equal(removedRecoveryTipsServed, 2);
     return { sequence, transactionId: settlement.transaction, first: first.status,
-      recovered: retry.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks,
+      recovered: retry.status, replay: replay.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks,
       removedCheckpoints: removedRecoveryTipsServed, conflictingOrigin: conflicting.status };
+  });
+  await check('relay preserves the exact sequence in accepted transaction readback', async () => {
+    const sessionId = '12345678-1234-4123-8123-123456789013';
+    const call = (method, params = {}) => fetch(relay.origin + '/rpc', { method: 'POST',
+      headers: { authorization: `Bearer ${token}`, 'content-type': 'application/json' },
+      body: JSON.stringify({ endpoint, sessionId, method, params }) });
+    assert.equal((await call('connect')).status, 200);
+    try {
+      const response = await call('getBlock', { hash: readbackHash, includeTransactions: true });
+      assert.equal(response.status, 200);
+      const { block } = await response.json();
+      assert.equal(block.transactions.length, 1);
+      const [transaction] = block.transactions;
+      assert.equal(transaction.id, pendingPayment.artifact.id);
+      const sequence = String(transaction.inputs[0].sequence);
+      assert.equal(sequence, vector.transaction.inputs[0].sequence);
+      return { transactionId: transaction.id, sequence };
+    } finally {
+      await call('disconnect');
+    }
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
