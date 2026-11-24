@@ -1415,6 +1415,7 @@ export class JsonPnnRpc implements PnnRpc {
       resolve: (value: unknown) => void;
       reject: (error: Error) => void;
       timeoutId: ReturnType<typeof setTimeout>;
+      preserveSequences: boolean;
     }
   >();
 
@@ -1523,7 +1524,7 @@ export class JsonPnnRpc implements PnnRpc {
     dataVerbosityLevel: "Low" | "High" | "Full";
     minConfirmationCount: number;
   }): Promise<unknown> {
-    return this.#request("getVirtualChainFromBlockV2", request);
+    return this.#request("getVirtualChainFromBlockV2", request, true);
   }
 
   getVirtualChainFromBlock(request: {
@@ -1542,10 +1543,10 @@ export class JsonPnnRpc implements PnnRpc {
     hash: string;
     includeTransactions: boolean;
   }): Promise<unknown> {
-    return this.#request("getBlock", request);
+    return this.#request("getBlock", request, request.includeTransactions);
   }
 
-  #request<T>(method: string, params: unknown): Promise<T> {
+  #request<T>(method: string, params: unknown, preserveSequences = false): Promise<T> {
     const ws = this.#ws;
     if (!ws || ws.readyState !== 1)
       return Promise.reject(new Error("pnn websocket is not connected"));
@@ -1562,6 +1563,7 @@ export class JsonPnnRpc implements PnnRpc {
         resolve: resolve as (value: unknown) => void,
         reject,
         timeoutId,
+        preserveSequences,
       });
       ws.send(body);
     });
@@ -1580,7 +1582,7 @@ export class JsonPnnRpc implements PnnRpc {
       this.#failConnection("pnn websocket response exceeded the connection limit");
       return;
     }
-    const message = parseJson(event.data, decodePnnSequence);
+    const message = parseJson(event.data);
     if (!isRecord(message)) {
       this.#failConnection("pnn websocket returned malformed JSON");
       return;
@@ -1593,13 +1595,24 @@ export class JsonPnnRpc implements PnnRpc {
         this.#failConnection("pnn websocket sent unsolicited messages");
       return;
     }
+    // Match the response to our request before choosing the decoder. UTXO
+    // snapshots and header-only reads only need the plain JSON parse.
+    let params = message.params;
+    if (pending.preserveSequences && message.error === undefined) {
+      const decoded = parseJson(event.data, decodePnnSequence);
+      if (!isRecord(decoded)) {
+        this.#failConnection("pnn websocket returned malformed JSON");
+        return;
+      }
+      params = decoded.params;
+    }
     this.#pending.delete(id!);
     clearTimeout(pending.timeoutId);
     if (message.error !== undefined) {
       pending.reject(new Error(pnnErrorMessage(message.error)));
       return;
     }
-    pending.resolve(message.params);
+    pending.resolve(params);
   }
 
   #rejectPending(message: string): void {

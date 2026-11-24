@@ -23,13 +23,16 @@ let upstreamCalls = 0;
 let connections = 0;
 const checkpointHash = '11'.repeat(32);
 const readbackHash = '22'.repeat(32);
+const recoveryChain = Array.from({ length: 30 }, (_, index) => sha256Hex('recovery-block-' + index));
 const exactPayments = [];
+let pendingPayment;
+let recoveryReadbacks = 0;
 const vector = JSON.parse(fs.readFileSync(new URL('../protocol/vectors/exact/consensus-profiles.json', import.meta.url))).expected.standardNative;
 
-function signedExactPayment(accepted, url, sequence) {
+function signedExactPayment(accepted, url, sequence, label = sequence) {
   const reference = structuredClone(vector.transaction);
   const [input] = reference.inputs;
-  input.previousOutpoint.txid = sha256Hex('demo-release-exact-' + sequence);
+  input.previousOutpoint.txid = sha256Hex('demo-release-exact-' + label);
   input.sequence = sequence;
   reference.outputs[0].scriptPublicKey = accepted.extra.payToScriptPublicKey;
   const sign = digest => Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), new Uint8Array(32).fill(7), new Uint8Array(32))).toString('hex');
@@ -43,7 +46,7 @@ function signedExactPayment(accepted, url, sequence) {
   };
   const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
   const requestHash = sha256Hex(stableStringify({ method: 'GET', url, body: null, paymentRequirementsHash }));
-  const paymentIdentifier = 'demo-release-exact-' + sequence;
+  const paymentIdentifier = 'demo-release-exact-' + label;
   const expiresAt = new Date(Date.now() + 30_000).toISOString();
   const digest = exactRequestAuthorizationDigest({
     network: accepted.network, profile: 'standard-native', transactionId: id, paymentOutputIndex: 0,
@@ -59,6 +62,18 @@ function signedExactPayment(accepted, url, sequence) {
         expiresAt, digest, signature: sign(digest) } },
   });
   return { artifact, header, merchant: accepted.payTo, submissions: [] };
+}
+
+function recoveryBlockHeader(hash) {
+  const score = String(1_000_001 + recoveryChain.indexOf(hash));
+  return { hash, blueScore: score, daaScore: score };
+}
+
+function transactionReadback({ artifact }) {
+  return {
+    ...artifact,
+    inputs: artifact.inputs.map(input => ({ ...input, sequence: JSON.rawJSON(input.sequence) })),
+  };
 }
 
 function fixtureUtxos(addresses) {
@@ -99,23 +114,43 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
       return;
     }
     payment.submissions.push(sequenceOnWire);
+    if (payment === pendingPayment && payment.submissions.length === 1) {
+      // The node accepted the payment but the submission response was lost.
+      ws.close();
+      return;
+    }
     result = { transactionId: payment.artifact.id };
   } else if (method === 'getBlock') {
-    const block = { header: { hash: params.hash, blueScore: '1000000', daaScore: '1000000' },
-      verboseData: { hash: params.hash, isChainBlock: true } };
+    const position = recoveryChain.indexOf(params.hash);
+    const block = { header: recoveryBlockHeader(params.hash),
+      verboseData: { hash: params.hash, isChainBlock: true, selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
     if (params.hash === readbackHash && params.includeTransactions) {
-      block.transactions = exactPayments.map(({ artifact }) => ({
-        ...artifact,
-        inputs: artifact.inputs.map(input => ({ ...input, sequence: JSON.rawJSON(input.sequence) })),
-      }));
+      block.transactions = exactPayments.map(transactionReadback);
     }
     result = { block };
+  } else if (method === 'getVirtualChainFromBlock' && pendingPayment?.submissions.length) {
+    const start = recoveryChain.indexOf(params.startHash) + 1;
+    const addedChainBlockHashes = recoveryChain.slice(start);
+    const [acceptingBlockHash] = recoveryChain;
+    const acceptedTransactionIds = start === 0
+      ? [{ acceptingBlockHash, acceptedTransactionIds: [pendingPayment.artifact.id] }]
+      : [];
+    result = { addedChainBlockHashes, removedChainBlockHashes: [], acceptedTransactionIds };
+  } else if (method === 'getVirtualChainFromBlockV2' && pendingPayment?.submissions.length) {
+    const [acceptingBlockHash] = recoveryChain;
+    recoveryReadbacks += 1;
+    result = { addedChainBlockHashes: [acceptingBlockHash], removedChainBlockHashes: [],
+      chainBlockAcceptedTransactions: [{
+        chainBlockHeader: recoveryBlockHeader(acceptingBlockHash),
+        acceptedTransactions: [transactionReadback(pendingPayment)],
+      }] };
   } else if (method === 'getServerInfo') {
     result = { networkId: 'testnet-10', isSynced: true, hasUtxoIndex: true, virtualDaaScore: '1000000' };
   } else if (method === 'getUtxosByAddresses') {
     result = { entries: fixtureUtxos(params.addresses) };
   } else {
-    result = { network: 'testnet-10', sink: checkpointHash, pruningPointHash: checkpointHash, virtualDaaScore: '1000000' };
+    const sink = pendingPayment?.submissions.length ? recoveryChain.at(-1) : checkpointHash;
+    result = { network: 'testnet-10', sink, pruningPointHash: checkpointHash, virtualDaaScore: recoveryBlockHeader(sink).daaScore };
   }
   ws.send(JSON.stringify({ id, method, params: result }));
 }); });
@@ -225,6 +260,34 @@ try {
     } finally {
       await call('disconnect');
     }
+  });
+  await check('actual Worker recovers a maximum-sequence payment after the node response is lost', async () => {
+    const url = 'https://demo.kaspa-x402.org/exact/report';
+    const headers = { 'cf-connecting-ip': '192.0.2.1' };
+    const offer = await worker.dispatchFetch(url, { headers });
+    assert.equal(offer.status, 402, await offer.clone().text());
+    const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
+    const sequence = vector.transaction.inputs[0].sequence;
+    pendingPayment = signedExactPayment(accepted, url, sequence, 'recovery');
+    exactPayments.push(pendingPayment);
+    const pay = () => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': pendingPayment.header } });
+
+    const first = await pay();
+    assert.equal(first.status, 503, await first.clone().text());
+    assert.deepEqual(await first.json(), { error: 'exact_settlement_recovery_required' });
+    assert.equal(first.headers.get('payment-response'), null);
+    assert.deepEqual(pendingPayment.submissions, [sequence]);
+    assert.equal(recoveryReadbacks, 0);
+
+    const retry = await pay();
+    assert.equal(retry.status, 200, await retry.clone().text());
+    const settlement = decodePaymentResponseHeader(retry.headers.get('payment-response'));
+    assert.equal(settlement.transaction, pendingPayment.artifact.id);
+    assert.equal((await retry.json()).payment.finality, 'accepted');
+    assert.deepEqual(pendingPayment.submissions, [sequence]);
+    assert.equal(recoveryReadbacks, 1);
+    return { sequence, transactionId: settlement.transaction, first: first.status,
+      recovered: retry.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
