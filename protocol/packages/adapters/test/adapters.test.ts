@@ -2254,7 +2254,7 @@ describe("VerifiedExactTransactionVerifier", () => {
     const resumedVerification = await restarted.verifyExactPayment(request);
     expect(resumedVerification).toMatchObject({ transactionId: standard.transactionId, finality: "accepted" });
     await restarted.persistOwnedEvidence(standard.transactionId, resumedVerification.evidenceReceipt);
-    expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint }, undefined);
+    expect(findSpy).toHaveBeenCalledWith(standard.transactionId, { from: checkpoint, recoverRemovedCheckpoint: true }, undefined);
     expect((await durable.loadPnnEvidence(standard.transactionId))?.evidence).toEqual(receipt);
     confirmSpy.mockRejectedValue(new Error("accepting block left the selected chain"));
     await expect(restarted.verifyExactPayment(request)).rejects.toThrow("left the selected chain");

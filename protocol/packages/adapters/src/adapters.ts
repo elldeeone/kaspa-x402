@@ -883,7 +883,12 @@ export class KaspaPnnClient {
   async findAcceptedTransaction(transactionId: string, options: {
     from?: ChainCheckpoint;
     originDaaScore?: string;
-  } = {}, signal?: AbortSignal): Promise<{ raw: unknown; evidence: AcceptedTransactionEvidence } | null> {
+    recoverRemovedCheckpoint?: boolean;
+  } = {}, signal?: AbortSignal): Promise<{
+    raw: unknown;
+    evidence: AcceptedTransactionEvidence;
+    recoveredFromRemovedCheckpoint?: true;
+  } | null> {
     return this.#withRpc(async ({ rpc, endpoint, signal }) => {
       await this.#checkedServerInfo(rpc, endpoint);
       signal.throwIfAborted();
@@ -914,7 +919,17 @@ export class KaspaPnnClient {
           }
           if (!from) throw invalidTransaction("PNN origin discovery exceeded the bounded history window");
         }
-        const acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
+        let recoveredFromRemovedCheckpoint = false;
+        let acceptingHash: string | null;
+        try {
+          acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
+        } catch (error) {
+          if (!options.from || !options.recoverRemovedCheckpoint || !(error instanceof PnnOriginCheckpointRemovedError))
+            throw error;
+          from = await pnnRecoverSelectedAncestor(rpc, from, this.#timeoutMs, signal);
+          recoveredFromRemovedCheckpoint = true;
+          acceptingHash = await pnnFindAcceptingBlock(rpc, transactionId, from.blockHash, this.#timeoutMs, signal);
+        }
         if (!acceptingHash) return null;
         const acceptingRaw = await withTimeout(rpc.getBlock({ hash: acceptingHash, includeTransactions: false }),
           this.#timeoutMs, "pnn accepting block");
@@ -930,14 +945,25 @@ export class KaspaPnnClient {
         const selected = await pnnSelectedChainFromCheckpoint(rpc, parent,
           await pnnAcceptanceRangeFilter(rpc, accepting.blueScore, this.#timeoutMs, signal),
           this.#timeoutMs, "Full", acceptingHash, undefined, signal);
-        const verified = pnnSelectedBlockCheckpoint(await withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
-          this.#timeoutMs, "pnn final checkpoint"), before.blockHash, "final checkpoint");
+        const [rawFinal, rawOrigin] = await Promise.all([
+          withTimeout(rpc.getBlock({ hash: before.blockHash, includeTransactions: false }),
+            this.#timeoutMs, "pnn final checkpoint"),
+          recoveredFromRemovedCheckpoint
+            ? withTimeout(rpc.getBlock({ hash: from.blockHash, includeTransactions: false }),
+              this.#timeoutMs, "pnn recheck recovered origin checkpoint")
+            : undefined,
+        ]);
         signal.throwIfAborted();
+        const verified = pnnSelectedBlockCheckpoint(rawFinal, before.blockHash, "final checkpoint");
         if (!sameChainCheckpoint(before, verified)) throw invalidTransaction("PNN acceptance checkpoint changed");
+        if (recoveredFromRemovedCheckpoint &&
+          !sameChainCheckpoint(from, pnnSelectedBlockCheckpoint(rawOrigin, from.blockHash, "recovered origin checkpoint")))
+          throw invalidTransaction("PNN recovered origin checkpoint changed");
         const raw = selected.addedChainBlocks.find(block => block.blockHash === acceptingHash)?.transactions
           .find(transaction => pnnAcceptedTransactionId(transaction) === transactionId.toLowerCase());
         if (!raw) return null;
-        return { raw, evidence: { status: "accepted", transactionId: transactionId.toLowerCase(),
+        return { raw, ...(recoveredFromRemovedCheckpoint ? { recoveredFromRemovedCheckpoint: true as const } : {}),
+          evidence: { status: "accepted", transactionId: transactionId.toLowerCase(),
           acceptingBlockHash: acceptingHash, acceptingBlockBlueScore: accepting.blueScore,
           confirmationCount, checkpoint: before } };
       });
@@ -2828,6 +2854,50 @@ class PnnCheckpointMovedError extends KaspaX402Error {
   }
 }
 
+class PnnOriginCheckpointRemovedError extends KaspaX402Error {
+  constructor() {
+    super("invalid_kaspa_transaction", "PNN origin checkpoint left the selected chain");
+  }
+}
+
+async function pnnRecoverSelectedAncestor(
+  rpc: PnnRpc,
+  origin: ChainCheckpoint,
+  timeoutMs: number,
+  signal: AbortSignal,
+): Promise<ChainCheckpoint> {
+  let hash = origin.blockHash;
+  const seen = new Set<string>();
+  for (let depth = 0; depth < 32; depth += 1) {
+    signal.throwIfAborted();
+    if (seen.has(hash)) throw invalidTransaction("PNN origin ancestry repeats a block");
+    seen.add(hash);
+    const raw = await withTimeout(rpc.getBlock!({ hash, includeTransactions: false }), timeoutMs,
+      "pnn read removed origin ancestry");
+    signal.throwIfAborted();
+    try {
+      const checkpoint = pnnSelectedBlockCheckpoint(raw, hash, "origin ancestor");
+      if (depth === 0) throw invalidTransaction("PNN origin removal conflicts with its selected status");
+      if (BigInt(checkpoint.daaScore) >= BigInt(origin.daaScore) ||
+        BigInt(checkpoint.blueScore) >= BigInt(origin.blueScore))
+        throw invalidTransaction("PNN recovered origin is not older than the removed checkpoint");
+      return checkpoint;
+    } catch (error) {
+      if (!(error instanceof PnnCheckpointMovedError)) throw error;
+    }
+    const block = unwrapRecord(raw, "block");
+    if (depth === 0) {
+      const header = requiredRecord(block.header, "PNN removed origin header");
+      if (uintStringValue(header.daaScore, "PNN removed origin DAA score") !== origin.daaScore ||
+        uintStringValue(header.blueScore, "PNN removed origin blue score") !== origin.blueScore)
+        throw invalidTransaction("PNN removed origin conflicts with the saved checkpoint");
+    }
+    const verbose = requiredRecord(block.verboseData ?? block.verbose_data, "PNN removed origin data");
+    hash = hashValue(verbose.selectedParentHash ?? verbose.selected_parent_hash, "PNN removed origin selected parent");
+  }
+  throw invalidTransaction("PNN removed origin ancestry exceeds the recovery limit");
+}
+
 async function retryPnnCheckpointRead<T>(
   signal: AbortSignal,
   read: () => Promise<T>,
@@ -3123,7 +3193,7 @@ async function pnnFindAcceptingBlock(rpc: PnnRpc, transactionId: string, initial
     const response = unwrapRecord(raw, "virtualChainFromBlockResponse");
     const removed = optionalArray(response.removedChainBlockHashes, "PNN removed chain blocks")
       .map(value => hashValue(value, "PNN removed chain block"));
-    if (removed.includes(initialHash)) throw invalidTransaction("PNN origin checkpoint left the selected chain");
+    if (removed.includes(initialHash)) throw new PnnOriginCheckpointRemovedError();
     const added = optionalArray(response.addedChainBlockHashes, "PNN added chain blocks")
       .map(value => hashValue(value, "PNN added chain block"));
     for (const hash of added) {

@@ -25,8 +25,10 @@ const checkpointHash = '11'.repeat(32);
 const readbackHash = '22'.repeat(32);
 const recoveryChain = Array.from({ length: 30 }, (_, index) => sha256Hex('recovery-block-' + index));
 const removedRecoveryTip = sha256Hex('removed-recovery-tip');
+const removedReceiptCheckpoint = sha256Hex('removed-receipt-checkpoint');
 const exactPayments = [];
 let pendingPayment;
+let acceptedOriginMatches = false;
 let recoveryReadbacks = 0;
 let recoveryDagReads = 0;
 let removedRecoveryTipsServed = 0;
@@ -68,7 +70,8 @@ function signedExactPayment(accepted, url, sequence, label = sequence) {
 }
 
 function recoveryBlockHeader(hash) {
-  const position = hash === removedRecoveryTip ? recoveryChain.length : recoveryChain.indexOf(hash);
+  const position = hash === removedRecoveryTip ? recoveryChain.length
+    : hash === removedReceiptCheckpoint ? 0 : recoveryChain.indexOf(hash);
   const score = String(1_000_001 + position);
   return { hash, blueScore: score, daaScore: score };
 }
@@ -126,8 +129,10 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
     result = { transactionId: payment.artifact.id };
   } else if (method === 'getBlock') {
     const position = recoveryChain.indexOf(params.hash);
+    const isChainBlock = params.hash !== removedRecoveryTip &&
+      !(params.hash === removedReceiptCheckpoint && pendingPayment?.submissions.length);
     const block = { header: recoveryBlockHeader(params.hash),
-      verboseData: { hash: params.hash, isChainBlock: params.hash !== removedRecoveryTip,
+      verboseData: { hash: params.hash, isChainBlock,
         selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
     if (params.hash === readbackHash && params.includeTransactions) {
       block.transactions = exactPayments.map(transactionReadback);
@@ -140,21 +145,28 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
     const acceptedTransactionIds = start === 0
       ? [{ acceptingBlockHash, acceptedTransactionIds: [pendingPayment.artifact.id] }]
       : [];
-    result = { addedChainBlockHashes, removedChainBlockHashes: [], acceptedTransactionIds };
+    const removedChainBlockHashes = params.startHash === removedReceiptCheckpoint ? [removedReceiptCheckpoint] : [];
+    result = { addedChainBlockHashes, removedChainBlockHashes, acceptedTransactionIds };
   } else if (method === 'getVirtualChainFromBlockV2' && pendingPayment?.submissions.length) {
     const [acceptingBlockHash] = recoveryChain;
     recoveryReadbacks += 1;
+    const transaction = transactionReadback(pendingPayment);
+    for (const input of transaction.inputs) {
+      input.verboseData = {
+        utxoEntry: { ...input.utxo, amount: acceptedOriginMatches ? input.utxo.amount : '1' },
+      };
+    }
     result = { addedChainBlockHashes: [acceptingBlockHash], removedChainBlockHashes: [],
       chainBlockAcceptedTransactions: [{
         chainBlockHeader: recoveryBlockHeader(acceptingBlockHash),
-        acceptedTransactions: [transactionReadback(pendingPayment)],
+        acceptedTransactions: [transaction],
       }] };
   } else if (method === 'getServerInfo') {
     result = { networkId: 'testnet-10', isSynced: true, hasUtxoIndex: true, virtualDaaScore: '1000000' };
   } else if (method === 'getUtxosByAddresses') {
     result = { entries: fixtureUtxos(params.addresses) };
   } else {
-    let sink = checkpointHash;
+    let sink = pendingPayment ? removedReceiptCheckpoint : checkpointHash;
     if (pendingPayment?.submissions.length) {
       recoveryDagReads += 1;
       // The gateway and funding snapshots are the first two reads. Lose the
@@ -279,7 +291,7 @@ try {
       await call('disconnect');
     }
   });
-  await check('actual Worker recovers a maximum-sequence payment across lost acknowledgement and checkpoint movement', async () => {
+  await check('actual Worker recovers a maximum-sequence payment whose receipt checkpoint was removed', async () => {
     const url = 'https://demo.kaspa-x402.org/exact/report';
     const headers = { 'cf-connecting-ip': '192.0.2.1' };
     const offer = await worker.dispatchFetch(url, { headers });
@@ -296,18 +308,29 @@ try {
     assert.equal(first.headers.get('payment-response'), null);
     assert.deepEqual(pendingPayment.submissions, [sequence]);
     assert.equal(recoveryReadbacks, 0);
+    const { GATEWAY_STATE } = await worker.getBindings();
+    const state = GATEWAY_STATE.get(GATEWAY_STATE.idFromName('demo-gateway-state-v2'));
+    const receipt = await state.fetch('https://state/rpc', { method: 'POST',
+      body: JSON.stringify({ method: 'loadPnnEvidence', payload: { transactionId: pendingPayment.artifact.id } }) });
+    assert.equal((await receipt.json()).value.checkpoint.blockHash, removedReceiptCheckpoint);
 
+    const conflicting = await pay();
+    assert.equal(conflicting.status, 402);
+    assert.deepEqual(await conflicting.json(), { error: 'invalid_transaction_state' });
+    assert.deepEqual(pendingPayment.submissions, [sequence]);
+
+    acceptedOriginMatches = true;
     const retry = await pay();
     assert.equal(retry.status, 200, await retry.clone().text());
     const settlement = decodePaymentResponseHeader(retry.headers.get('payment-response'));
     assert.equal(settlement.transaction, pendingPayment.artifact.id);
     assert.equal((await retry.json()).payment.finality, 'accepted');
     assert.deepEqual(pendingPayment.submissions, [sequence]);
-    assert.equal(recoveryReadbacks, 1);
+    assert.equal(recoveryReadbacks, 2);
     assert.equal(removedRecoveryTipsServed, 2);
     return { sequence, transactionId: settlement.transaction, first: first.status,
       recovered: retry.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks,
-      removedCheckpoints: removedRecoveryTipsServed };
+      removedCheckpoints: removedRecoveryTipsServed, conflictingOrigin: conflicting.status };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
