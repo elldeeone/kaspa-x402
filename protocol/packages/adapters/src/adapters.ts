@@ -1552,6 +1552,8 @@ export class JsonPnnRpc implements PnnRpc {
     const id = this.#nextId;
     this.#nextId += 1;
     return new Promise<T>((resolve, reject) => {
+      const replacer = method === "submitTransaction" ? encodePnnSequence : undefined;
+      const body = JSON.stringify({ id, method, params }, replacer);
       const timeoutId = setTimeout(() => {
         this.#pending.delete(id);
         reject(new Error(`pnn ${method} timed out after ${this.#timeoutMs}ms`));
@@ -1561,7 +1563,7 @@ export class JsonPnnRpc implements PnnRpc {
         reject,
         timeoutId,
       });
-      ws.send(JSON.stringify({ id, method, params }));
+      ws.send(body);
     });
   }
 
@@ -1578,7 +1580,7 @@ export class JsonPnnRpc implements PnnRpc {
       this.#failConnection("pnn websocket response exceeded the connection limit");
       return;
     }
-    const message = parseJson(event.data);
+    const message = parseJson(event.data, decodePnnSequence);
     if (!isRecord(message)) {
       this.#failConnection("pnn websocket returned malformed JSON");
       return;
@@ -4165,7 +4167,11 @@ function pnnTransactionFromSafe(
         index: input.index,
       },
       signatureScript: input.signatureScript,
-      sequence: uintSafeNumber(input.sequence, "transaction input sequence"),
+      // The private HTTP relay can carry the validated decimal string. Encode
+      // it as a JSON number only at the node's wRPC boundary.
+      sequence: BigInt(input.sequence) <= BigInt(Number.MAX_SAFE_INTEGER)
+        ? Number(input.sequence)
+        : input.sequence,
       sigOpCount: input.sigOpCount,
       computeBudget: input.computeBudget ?? 0,
       verboseData: null,
@@ -4392,10 +4398,32 @@ function uintSafeNumber(value: string, label: string): number {
   return number;
 }
 
-function parseJson(text: string): unknown {
+function encodePnnSequence(key: string, value: unknown): unknown {
+  if (key !== "sequence") return value;
+  const sequence = uintStringValue(value, "PNN transaction input sequence");
+  if (typeof value === "number") return value;
+  const { rawJSON } = JSON as typeof JSON & { rawJSON(text: string): object };
+  return rawJSON(sequence);
+}
+
+type JsonReviver = (key: string, value: unknown, context?: { source?: string }) => unknown;
+
+function decodePnnSequence(
+  key: string,
+  value: unknown,
+  context?: { source?: string },
+): unknown {
+  if (key !== "sequence" || typeof value !== "number" || Number.isSafeInteger(value))
+    return value;
+  // The parsed JS number is already rounded. Keep the original digits for
+  // relay JSON and for comparison with the signed artifact during recovery.
+  return uintStringValue(context?.source, "PNN transaction input sequence");
+}
+
+function parseJson(text: string, reviver?: JsonReviver): unknown {
   if (!text) return undefined;
   try {
-    return JSON.parse(text);
+    return JSON.parse(text, reviver);
   } catch {
     return undefined;
   }
