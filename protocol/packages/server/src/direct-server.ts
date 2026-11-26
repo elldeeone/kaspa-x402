@@ -1060,6 +1060,11 @@ export class DirectModeServer {
             ...requiredOptions,
           });
         }
+        const exactClaim = await this.#existingExactClaimDisposition(
+          paymentPayload,
+          fingerprint,
+        );
+        if (exactClaim === "conflict") return exactSettlementClaimConflictResponse();
         const cached = await this.#checkIdempotency(
           paymentIdentifier,
           fingerprint,
@@ -1091,6 +1096,13 @@ export class DirectModeServer {
           if (error instanceof PublicBoundaryError)
             return publicBoundaryResponse(error);
           if (request.signal?.aborted) return requestAbortedResponse();
+          if (exactClaim === "matching") {
+            return {
+              status: 503,
+              headers: {},
+              body: { error: "exact_settlement_recovery_required" },
+            };
+          }
           return this.#correctiveResponse(
             request.routeAccess,
             resource,
@@ -4276,6 +4288,25 @@ export class DirectModeServer {
     };
   }
 
+  async #existingExactClaimDisposition(
+    paymentPayload: PaymentPayload,
+    fingerprint: Hash32Hex,
+  ): Promise<"matching" | "conflict" | undefined> {
+    const payload = paymentPayload.payload;
+    if (paymentPayload.accepted.scheme !== "exact" ||
+        payload.type !== "exact-transaction") return undefined;
+    const transactionId = safeExactTransactionIdHint(payload.transaction);
+    if (!transactionId) return undefined;
+    const attempt = await this.#config.store.loadExactSettlementAttempt(transactionId);
+    const record = attempt ?? await this.#config.store.loadExactPayment(transactionId);
+    if (!record) return undefined;
+    return record.requestFingerprint === fingerprint &&
+      record.paymentOutputIndex === payload.paymentOutputIndex &&
+      record.requestAuthorizationId === exactRequestAuthorizationId(payload.authorization) &&
+      record.paymentPayloadHash === paymentPayloadHash(paymentPayload)
+      ? "matching" : "conflict";
+  }
+
   async #cachedHashChainPaymentSelected(
     transactionId: Hash32Hex,
     parentSignal?: AbortSignal,
@@ -4394,11 +4425,7 @@ export class DirectModeServer {
       const message = error instanceof Error ? error.message : "";
       const replay = error instanceof KaspaX402Error && error.code === "invalid_kaspa_exact_replay";
       if (replay) {
-        return {
-          status: 409,
-          headers: {},
-          body: { error: "exact_settlement_claim_conflict" },
-        };
+        return exactSettlementClaimConflictResponse();
       }
       if (!message.includes("exact head changed before settlement claim")) {
         return {
@@ -5688,6 +5715,25 @@ function safePaymentScopeIdHint(
     return exactTransactionArtifactScopeId(payload.transaction);
   }
   return undefined;
+}
+
+function safeExactTransactionIdHint(transaction: string): Hash32Hex | undefined {
+  try {
+    const value = JSON.parse(transaction) as unknown;
+    if (!isRecord(value) || typeof value.id !== "string" ||
+        !/^[0-9a-fA-F]{64}$/.test(value.id)) return undefined;
+    return value.id.toLowerCase();
+  } catch {
+    return undefined;
+  }
+}
+
+function exactSettlementClaimConflictResponse(): ServerResponse {
+  return {
+    status: 409,
+    headers: {},
+    body: { error: "exact_settlement_claim_conflict" },
+  };
 }
 
 function safePaymentLockKey(
