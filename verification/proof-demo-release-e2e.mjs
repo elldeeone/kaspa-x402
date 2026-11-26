@@ -35,6 +35,7 @@ const vector = JSON.parse(fs.readFileSync(new URL('../protocol/vectors/exact/con
 
 function signedExactPayment(accepted, url, sequence, {
   paymentIdentifier = 'demo-release-exact-recovery', fundingId = paymentIdentifier, submissionFailure,
+  authorizationLifetimeMs = 30_000,
 } = {}) {
   const reference = structuredClone(vector.transaction);
   const [input] = reference.inputs;
@@ -52,7 +53,7 @@ function signedExactPayment(accepted, url, sequence, {
   };
   const paymentRequirementsHash = sha256Hex(stableStringify(accepted));
   const requestHash = sha256Hex(stableStringify({ method: 'GET', url, body: null, paymentRequirementsHash }));
-  const expiresAt = new Date(Date.now() + 30_000).toISOString();
+  const expiresAt = new Date(Date.now() + authorizationLifetimeMs).toISOString();
   const digest = exactRequestAuthorizationDigest({
     network: accepted.network, profile: 'standard-native', transactionId: id, paymentOutputIndex: 0,
     amount: accepted.amount, payTo: accepted.payTo, payToScriptPublicKey: accepted.extra.payToScriptPublicKey,
@@ -66,7 +67,8 @@ function signedExactPayment(accepted, url, sequence, {
       authorization: { version: 'kaspa-x402-exact-request-authorization-v2', inputIndex: 0,
         expiresAt, digest, signature: sign(digest) } },
   });
-  return { artifact, header, merchant: accepted.payTo, submissionFailure, submissions: [], accepted: false };
+  return { artifact, header, merchant: accepted.payTo, authorizationExpiresAt: expiresAt,
+    submissionFailure, submissions: [], accepted: false };
 }
 
 function recoveryBlockHeader(hash) {
@@ -261,7 +263,9 @@ try {
     assert.equal(offer.status, 402, await offer.clone().text());
     const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
     const sequence = vector.transaction.inputs[0].sequence;
-    pendingPayment = signedExactPayment(accepted, url, sequence, { submissionFailure: 'lost-acknowledgement' });
+    pendingPayment = signedExactPayment(accepted, url, sequence, {
+      submissionFailure: 'lost-acknowledgement', authorizationLifetimeMs: 5_000,
+    });
     const pay = () => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': pendingPayment.header } });
 
     const first = await pay();
@@ -282,6 +286,8 @@ try {
     assert.deepEqual(pendingPayment.submissions, [sequence]);
 
     acceptedOriginMatches = true;
+    await new Promise(resolve => setTimeout(resolve,
+      Math.max(0, Date.parse(pendingPayment.authorizationExpiresAt) - Date.now() + 100)));
     const retry = await pay();
     assert.equal(retry.status, 200, await retry.clone().text());
     const settlementHeader = retry.headers.get('payment-response');
@@ -321,7 +327,8 @@ try {
       await call('disconnect');
     }
   });
-  await check('actual Worker gives a corrective offer for a new authorization on an already claimed transaction', async () => {
+  await check('actual Worker refuses a fresh authorization for an already paid transaction', async () => {
+    acceptedOriginMatches = false;
     const url = 'https://demo.kaspa-x402.org/exact/report';
     const headers = { 'cf-connecting-ip': '192.0.2.1' };
     const offer = await worker.dispatchFetch(url, { headers });
@@ -330,7 +337,7 @@ try {
     const sequence = vector.transaction.inputs[0].sequence;
     const fundingId = 'demo-release-claimed-funding';
     const original = signedExactPayment(accepted, url, sequence, {
-      paymentIdentifier: 'demo-release-original', fundingId, submissionFailure: 'reject',
+      paymentIdentifier: 'demo-release-original', fundingId, submissionFailure: 'lost-acknowledgement',
     });
     pendingPayment = original;
     const pay = payment => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': payment.header } });
@@ -348,29 +355,44 @@ try {
     };
     const recordedAttempt = await loadAttempt();
     assert.equal(recordedAttempt.status, 'pending');
-    const identical = await pay(original);
-    assert.equal(identical.status, 503, await identical.clone().text());
-    assert.equal((await identical.json()).error, 'exact_settlement_recovery_required');
+    const statusUrl = 'https://demo.kaspa-x402.org/admin/exact-settlements/status?transactionId=' + original.artifact.id;
+    const unauthenticated = await worker.dispatchFetch(statusUrl);
+    assert.equal(unauthenticated.status, 401);
+    const status = await worker.dispatchFetch(statusUrl, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(status.status, 200, await status.clone().text());
+    const statusBody = await status.json();
+    assert.equal(statusBody.claim.status, 'pending');
+    assert.equal(statusBody.transactionId, original.artifact.id);
+    assert.equal(status.headers.get('cache-control'), 'private, no-store, max-age=0');
+    assert.equal(JSON.stringify(statusBody).includes(original.header), false);
+    assert.equal(JSON.stringify(statusBody).includes(original.artifact.inputs[0].signatureScript), false);
+    acceptedOriginMatches = true;
 
     const reauthorized = signedExactPayment(accepted, url, sequence, { paymentIdentifier: 'demo-release-reauthorized', fundingId });
     assert.equal(reauthorized.artifact.id, original.artifact.id);
     const conflict = await pay(reauthorized);
-    assert.equal(conflict.status, 402, await conflict.clone().text());
-    assert.deepEqual(await conflict.json(), { error: 'invalid_transaction_state' });
-    const replacementOffer = decodePaymentRequiredHeader(conflict.headers.get('payment-required'));
-    assert.equal(replacementOffer.error, 'invalid_transaction_state');
+    assert.equal(conflict.status, 409, await conflict.clone().text());
+    assert.deepEqual(await conflict.json(), { error: 'exact_settlement_claim_conflict' });
+    assert.equal(conflict.headers.get('payment-required'), null);
     assert.deepEqual(original.submissions, [sequence], 'neither retry may rebroadcast the claimed transaction');
-    assert.equal(original.accepted, false);
     assert.deepEqual(await loadAttempt(), recordedAttempt);
-
-    pendingPayment = signedExactPayment(replacementOffer.accepts[0], url, sequence, { paymentIdentifier: 'demo-release-replacement' });
-    assert.notEqual(pendingPayment.artifact.id, original.artifact.id);
-    const replacement = await pay(pendingPayment);
-    assert.equal(replacement.status, 200, await replacement.clone().text());
-    assert.equal(decodePaymentResponseHeader(replacement.headers.get('payment-response')).transaction, pendingPayment.artifact.id);
-    assert.deepEqual(pendingPayment.submissions, [sequence]);
-    return { first: first.status, identical: identical.status, conflict: conflict.status,
-      replacement: replacement.status, originalSubmissions: original.submissions.length, replacementSubmissions: pendingPayment.submissions.length };
+    const retry = await pay(original);
+    assert.equal(retry.status, 200, await retry.clone().text());
+    assert.equal(decodePaymentResponseHeader(retry.headers.get('payment-response')).transaction, original.artifact.id);
+    assert.deepEqual(original.submissions, [sequence]);
+    const applied = await worker.dispatchFetch(statusUrl, { headers: { authorization: `Bearer ${token}` } });
+    assert.equal(applied.status, 200, await applied.clone().text());
+    const appliedBody = await applied.json();
+    assert.equal(appliedBody.claim.status, 'applied');
+    assert.equal(appliedBody.claim.handlerStarted, true);
+    assert.equal(appliedBody.claim.handlerCompleted, true);
+    assert.equal(appliedBody.payment.finality, 'accepted');
+    const afterPayment = await pay(reauthorized);
+    assert.equal(afterPayment.status, 409, await afterPayment.clone().text());
+    assert.equal(afterPayment.headers.get('payment-response'), null);
+    assert.equal(afterPayment.headers.get('payment-required'), null);
+    return { first: first.status, conflict: conflict.status,
+      retry: retry.status, afterPayment: afterPayment.status, originalSubmissions: original.submissions.length };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;

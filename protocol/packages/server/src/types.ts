@@ -314,6 +314,8 @@ export interface ExactTransactionVerificationRequest {
   paymentIdentifier: string;
   paymentRequirementsHash: Hash32Hex;
   authorization: ExactRequestAuthorization;
+  /** Authenticate expired signatures only for server-owned, acceptance-only recovery. */
+  allowExpiredAuthorizationForRecovery?: boolean;
   /** Cancellation from the public adapter boundary. */
   signal?: AbortSignal;
   head?: ExactHeadChallenge;

@@ -284,6 +284,15 @@ also requires at least one durable merchant-owned KIP-10 head. The Worker does
 not hold the merchant wallet key and does not create heads from public
 requests.
 
+For a stuck standard-native payment, an operator can read
+`GET /admin/exact-settlements/status?transactionId=<64-hex-id>` with the
+`KASPA_X402_ADMIN_TOKEN` bearer credential. The response shows the durable
+claim, payment, and saved PNN evidence status without returning the signed
+transaction or authorization. A missing record does not prove the transaction
+was never accepted. Keep the original claim pending until trusted chain
+evidence establishes the outcome; do not ask the payer to spend another UTXO
+on the basis of a REST 404 or an unavailable pruned PNN read.
+
 1. Create one or more independent merchant-owned KIP-10 additive heads from an
    isolated TN10 wallet.
 2. Record each head id/version, current outpoint and amount, serialized script

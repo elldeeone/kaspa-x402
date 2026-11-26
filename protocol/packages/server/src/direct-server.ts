@@ -2553,6 +2553,7 @@ export class DirectModeServer {
       paymentIdentifier: readPaymentIdentifier(paymentPayload)!,
       paymentRequirementsHash,
       authorization: payload.authorization,
+      ...(profile === "standard-native" ? { allowExpiredAuthorizationForRecovery: true } : {}),
       ...(head ? { head } : {}),
       ...(hashChainHead ? { hashChainHead } : {}),
     };
@@ -2725,8 +2726,12 @@ export class DirectModeServer {
       );
       if (
         !existing ||
-        (existing.status !== "accepted" && existing.status !== "applied") ||
-        !exactSettlementAttemptsMatch(existing, candidate)
+        !exactSettlementAttemptsMatch(existing, candidate) ||
+        (existing.status !== "accepted" && existing.status !== "applied" &&
+          !(profile === "standard-native" &&
+            (verification.finality === "accepted" || verification.finality === "confirmed") &&
+            exactFinalityMeets(verification.finality, existing.requiredFinality) &&
+            exactFinalityMeets(verification.finality, requiredFinality)))
       ) {
         throw new KaspaX402Error(
           "invalid_kaspa_signature",
@@ -3971,6 +3976,10 @@ export class DirectModeServer {
         verified.observedFinality,
         this.#config.acceptedFinality,
       ) &&
+      exactFinalityMeets(
+        verified.observedFinality,
+        claim.attempt.requiredFinality,
+      ) &&
       (!verified.accepted.extra.finality ||
         exactFinalityMeets(
           verified.observedFinality,
@@ -4248,7 +4257,9 @@ export class DirectModeServer {
     if (!record) return undefined;
     if (
       record.requestFingerprint === fingerprint &&
-      record.paymentOutputIndex === verified.paymentOutputIndex
+      record.paymentOutputIndex === verified.paymentOutputIndex &&
+      record.requestAuthorizationId === verified.requestAuthorizationId &&
+      record.paymentPayloadHash === paymentPayloadHash(verified.paymentPayload)
     ) {
       if (verified.profile === "hash-chain-additive" &&
         !await this.#cachedHashChainPaymentSelected(verified.transactionId, signal)) {
@@ -4348,7 +4359,9 @@ export class DirectModeServer {
       if (!record) return;
       if (
         record.requestFingerprint === fingerprint &&
-        record.paymentOutputIndex === verified.paymentOutputIndex
+        record.paymentOutputIndex === verified.paymentOutputIndex &&
+        record.requestAuthorizationId === verified.requestAuthorizationId &&
+        record.paymentPayloadHash === paymentPayloadHash(paymentPayload)
       ) {
         return;
       }
@@ -4380,7 +4393,14 @@ export class DirectModeServer {
           : "invalid_payload";
       const message = error instanceof Error ? error.message : "";
       const replay = error instanceof KaspaX402Error && error.code === "invalid_kaspa_exact_replay";
-      if (!replay && !message.includes("exact head changed before settlement claim")) {
+      if (replay) {
+        return {
+          status: 409,
+          headers: {},
+          body: { error: "exact_settlement_claim_conflict" },
+        };
+      }
+      if (!message.includes("exact head changed before settlement claim")) {
         return {
           status: 503,
           headers: {},
