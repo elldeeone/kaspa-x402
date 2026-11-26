@@ -1,5 +1,5 @@
 import type { PnnEvidenceRecord } from "@kaspa-x402/adapters";
-import type { ChainCheckpoint } from "@kaspa-x402/core";
+import { KaspaX402Error, type ChainCheckpoint } from "@kaspa-x402/core";
 import type {
   BatchCommitmentRecord,
   BatchSettlementAttemptRecord,
@@ -453,6 +453,8 @@ export class RemoteGatewayState implements GatewayStateClient {
     signal?.throwIfAborted();
     const result = await response.json<GatewayStateResponse<T>>();
     signal?.throwIfAborted();
+    if (response.status === 409 && !result.ok && result.code === "invalid_kaspa_exact_replay")
+      throw new KaspaX402Error(result.code, result.error);
     if (!response.ok) throw new Error(`gateway state method failed: ${method}`);
     if (!result.ok) throw new Error(result.error);
     return result.value as T;
@@ -467,4 +469,5 @@ type GatewayStateResponse<T> =
   | {
       ok: false;
       error: string;
+      code?: "invalid_kaspa_exact_replay";
     };

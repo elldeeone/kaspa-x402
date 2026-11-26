@@ -3793,6 +3793,8 @@ export class DirectModeServer {
       }
       return await this.#config.store.claimExactSettlement(attempt);
     } catch (error) {
+      if (error instanceof KaspaX402Error && error.code === "invalid_kaspa_exact_replay")
+        throw error;
       throw new KaspaX402Error(
         "invalid_kaspa_transaction",
         error instanceof Error
@@ -4377,7 +4379,8 @@ export class DirectModeServer {
           ? toX402ErrorReason(error.code)
           : "invalid_payload";
       const message = error instanceof Error ? error.message : "";
-      if (!message.includes("exact head changed before settlement claim")) {
+      const replay = error instanceof KaspaX402Error && error.code === "invalid_kaspa_exact_replay";
+      if (!replay && !message.includes("exact head changed before settlement claim")) {
         return {
           status: 503,
           headers: {},

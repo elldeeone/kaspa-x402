@@ -33,11 +33,12 @@ let recoveryDagReads = 0;
 let removedRecoveryTipsServed = 0;
 const vector = JSON.parse(fs.readFileSync(new URL('../protocol/vectors/exact/consensus-profiles.json', import.meta.url))).expected.standardNative;
 
-function signedExactPayment(accepted, url, sequence) {
-  const paymentIdentifier = 'demo-release-exact-recovery';
+function signedExactPayment(accepted, url, sequence, {
+  paymentIdentifier = 'demo-release-exact-recovery', fundingId = paymentIdentifier, submissionFailure,
+} = {}) {
   const reference = structuredClone(vector.transaction);
   const [input] = reference.inputs;
-  input.previousOutpoint.txid = sha256Hex(paymentIdentifier);
+  input.previousOutpoint.txid = sha256Hex(fundingId);
   input.sequence = sequence;
   reference.outputs[0].scriptPublicKey = accepted.extra.payToScriptPublicKey;
   const sign = digest => Buffer.from(schnorr.sign(Buffer.from(digest, 'hex'), new Uint8Array(32).fill(7), new Uint8Array(32))).toString('hex');
@@ -65,7 +66,7 @@ function signedExactPayment(accepted, url, sequence) {
       authorization: { version: 'kaspa-x402-exact-request-authorization-v2', inputIndex: 0,
         expiresAt, digest, signature: sign(digest) } },
   });
-  return { artifact, header, merchant: accepted.payTo, submissions: [] };
+  return { artifact, header, merchant: accepted.payTo, submissionFailure, submissions: [], accepted: false };
 }
 
 function recoveryBlockHeader(hash) {
@@ -84,13 +85,13 @@ function transactionReadback({ artifact }) {
 
 function fixtureUtxos(addresses) {
   if (!pendingPayment) return [];
-  const { artifact, merchant, submissions } = pendingPayment;
+  const { artifact, merchant, accepted } = pendingPayment;
   const [input] = artifact.inputs;
   const payer = addressForScriptPublicKey(input.utxo.scriptPublicKey, 'kaspa:testnet-10');
-  if (!submissions.length && addresses.includes(payer)) {
+  if (!accepted && addresses.includes(payer)) {
     return [{ outpoint: input.previousOutpoint, utxoEntry: input.utxo }];
   }
-  if (submissions.length && addresses.includes(merchant)) {
+  if (accepted && addresses.includes(merchant)) {
     const { value: amount, scriptPublicKey } = artifact.outputs[0];
     return [{ outpoint: { transactionId: artifact.id, index: 0 }, utxoEntry: { amount, scriptPublicKey } }];
   }
@@ -119,7 +120,12 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
       return;
     }
     pendingPayment.submissions.push(sequenceOnWire);
-    if (pendingPayment.submissions.length === 1) {
+    if (pendingPayment.submissionFailure === 'reject') {
+      ws.send(JSON.stringify({ id, method, error: 'Fixture rejected transaction before broadcast' }));
+      return;
+    }
+    pendingPayment.accepted = true;
+    if (pendingPayment.submissionFailure === 'lost-acknowledgement') {
       // The node accepted the payment but the submission response was lost.
       ws.close();
       return;
@@ -128,7 +134,7 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
   } else if (method === 'getBlock') {
     const position = recoveryChain.indexOf(params.hash);
     const isChainBlock = params.hash !== removedRecoveryTip &&
-      !(params.hash === removedReceiptCheckpoint && pendingPayment?.submissions.length);
+      !(params.hash === removedReceiptCheckpoint && pendingPayment?.accepted);
     const block = { header: recoveryBlockHeader(params.hash),
       verboseData: { hash: params.hash, isChainBlock,
         selectedParentHash: recoveryChain[position - 1] ?? checkpointHash } };
@@ -136,7 +142,7 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
       block.transactions = [transactionReadback(pendingPayment)];
     }
     result = { block };
-  } else if (method === 'getVirtualChainFromBlock' && pendingPayment?.submissions.length) {
+  } else if (method === 'getVirtualChainFromBlock' && pendingPayment?.accepted) {
     const start = recoveryChain.indexOf(params.startHash) + 1;
     const addedChainBlockHashes = recoveryChain.slice(start);
     const [acceptingBlockHash] = recoveryChain;
@@ -145,7 +151,7 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
       : [];
     const removedChainBlockHashes = params.startHash === removedReceiptCheckpoint ? [removedReceiptCheckpoint] : [];
     result = { addedChainBlockHashes, removedChainBlockHashes, acceptedTransactionIds };
-  } else if (method === 'getVirtualChainFromBlockV2' && pendingPayment?.submissions.length) {
+  } else if (method === 'getVirtualChainFromBlockV2' && pendingPayment?.accepted) {
     const [acceptingBlockHash] = recoveryChain;
     recoveryReadbacks += 1;
     const transaction = transactionReadback(pendingPayment);
@@ -165,7 +171,7 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
     result = { entries: fixtureUtxos(params.addresses) };
   } else {
     let sink = pendingPayment ? removedReceiptCheckpoint : checkpointHash;
-    if (pendingPayment?.submissions.length) {
+    if (pendingPayment?.accepted) {
       recoveryDagReads += 1;
       // The gateway and funding snapshots are the first two reads. Lose the
       // tip during transaction lookup and again during the depth confirmation.
@@ -255,7 +261,7 @@ try {
     assert.equal(offer.status, 402, await offer.clone().text());
     const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
     const sequence = vector.transaction.inputs[0].sequence;
-    pendingPayment = signedExactPayment(accepted, url, sequence);
+    pendingPayment = signedExactPayment(accepted, url, sequence, { submissionFailure: 'lost-acknowledgement' });
     const pay = () => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': pendingPayment.header } });
 
     const first = await pay();
@@ -314,6 +320,57 @@ try {
     } finally {
       await call('disconnect');
     }
+  });
+  await check('actual Worker gives a corrective offer for a new authorization on an already claimed transaction', async () => {
+    const url = 'https://demo.kaspa-x402.org/exact/report';
+    const headers = { 'cf-connecting-ip': '192.0.2.1' };
+    const offer = await worker.dispatchFetch(url, { headers });
+    assert.equal(offer.status, 402, await offer.clone().text());
+    const accepted = decodePaymentRequiredHeader(offer.headers.get('payment-required')).accepts[0];
+    const sequence = vector.transaction.inputs[0].sequence;
+    const fundingId = 'demo-release-claimed-funding';
+    const original = signedExactPayment(accepted, url, sequence, {
+      paymentIdentifier: 'demo-release-original', fundingId, submissionFailure: 'reject',
+    });
+    pendingPayment = original;
+    const pay = payment => worker.dispatchFetch(url, { headers: { ...headers, 'payment-signature': payment.header } });
+
+    const first = await pay(original);
+    assert.equal(first.status, 503, await first.clone().text());
+    assert.equal((await first.json()).error, 'exact_settlement_recovery_required');
+    const { GATEWAY_STATE } = await worker.getBindings();
+    const state = GATEWAY_STATE.get(GATEWAY_STATE.idFromName('demo-gateway-state-v2'));
+    const loadAttempt = async () => {
+      const response = await state.fetch('https://state/rpc', { method: 'POST',
+        body: JSON.stringify({ method: 'loadExactSettlementAttempt', payload: { transactionId: original.artifact.id } }) });
+      assert.equal(response.status, 200);
+      return (await response.json()).value;
+    };
+    const recordedAttempt = await loadAttempt();
+    assert.equal(recordedAttempt.status, 'pending');
+    const identical = await pay(original);
+    assert.equal(identical.status, 503, await identical.clone().text());
+    assert.equal((await identical.json()).error, 'exact_settlement_recovery_required');
+
+    const reauthorized = signedExactPayment(accepted, url, sequence, { paymentIdentifier: 'demo-release-reauthorized', fundingId });
+    assert.equal(reauthorized.artifact.id, original.artifact.id);
+    const conflict = await pay(reauthorized);
+    assert.equal(conflict.status, 402, await conflict.clone().text());
+    assert.deepEqual(await conflict.json(), { error: 'invalid_transaction_state' });
+    const replacementOffer = decodePaymentRequiredHeader(conflict.headers.get('payment-required'));
+    assert.equal(replacementOffer.error, 'invalid_transaction_state');
+    assert.deepEqual(original.submissions, [sequence], 'neither retry may rebroadcast the claimed transaction');
+    assert.equal(original.accepted, false);
+    assert.deepEqual(await loadAttempt(), recordedAttempt);
+
+    pendingPayment = signedExactPayment(replacementOffer.accepts[0], url, sequence, { paymentIdentifier: 'demo-release-replacement' });
+    assert.notEqual(pendingPayment.artifact.id, original.artifact.id);
+    const replacement = await pay(pendingPayment);
+    assert.equal(replacement.status, 200, await replacement.clone().text());
+    assert.equal(decodePaymentResponseHeader(replacement.headers.get('payment-response')).transaction, pendingPayment.artifact.id);
+    assert.deepEqual(pendingPayment.submissions, [sequence]);
+    return { first: first.status, identical: identical.status, conflict: conflict.status,
+      replacement: replacement.status, originalSubmissions: original.submissions.length, replacementSubmissions: pendingPayment.submissions.length };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
