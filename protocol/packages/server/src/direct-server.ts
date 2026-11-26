@@ -4294,7 +4294,8 @@ export class DirectModeServer {
   ): Promise<"matching" | "conflict" | undefined> {
     const payload = paymentPayload.payload;
     if (paymentPayload.accepted.scheme !== "exact" ||
-        payload.type !== "exact-transaction") return undefined;
+        payload.type !== "exact-transaction" ||
+        payload.profile !== "standard-native") return undefined;
     const transactionId = safeExactTransactionIdHint(payload.transaction);
     if (!transactionId) return undefined;
     const attempt = await this.#config.store.loadExactSettlementAttempt(transactionId);
