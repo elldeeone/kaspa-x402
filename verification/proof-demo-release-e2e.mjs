@@ -28,6 +28,7 @@ const removedRecoveryTip = sha256Hex('removed-recovery-tip');
 const removedReceiptCheckpoint = sha256Hex('removed-receipt-checkpoint');
 let pendingPayment;
 let acceptedOriginMatches = false;
+let acceptanceHistoryUnavailable = false;
 let recoveryReadbacks = 0;
 let recoveryDagReads = 0;
 let removedRecoveryTipsServed = 0;
@@ -134,6 +135,10 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
     }
     result = { transactionId: pendingPayment.artifact.id };
   } else if (method === 'getBlock') {
+    if (acceptanceHistoryUnavailable && params.hash === recoveryChain[0]) {
+      ws.send(JSON.stringify({ id, method, error: 'Fixture accepting block temporarily unavailable' }));
+      return;
+    }
     const position = recoveryChain.indexOf(params.hash);
     const isChainBlock = params.hash !== removedRecoveryTip &&
       !(params.hash === removedReceiptCheckpoint && pendingPayment?.accepted);
@@ -281,8 +286,9 @@ try {
     assert.equal((await receipt.json()).value.checkpoint.blockHash, removedReceiptCheckpoint);
 
     const conflicting = await pay();
-    assert.equal(conflicting.status, 402);
-    assert.deepEqual(await conflicting.json(), { error: 'invalid_transaction_state' });
+    assert.equal(conflicting.status, 503);
+    assert.deepEqual(await conflicting.json(), { error: 'exact_settlement_recovery_required' });
+    assert.equal(conflicting.headers.get('payment-required'), null);
     assert.deepEqual(pendingPayment.submissions, [sequence]);
 
     acceptedOriginMatches = true;
@@ -387,12 +393,19 @@ try {
     assert.equal(appliedBody.claim.handlerStarted, true);
     assert.equal(appliedBody.claim.handlerCompleted, true);
     assert.equal(appliedBody.payment.finality, 'accepted');
+    acceptanceHistoryUnavailable = true;
+    const unavailableConflict = await pay(reauthorized);
+    assert.equal(unavailableConflict.status, 409, await unavailableConflict.clone().text());
+    assert.deepEqual(await unavailableConflict.json(), { error: 'exact_settlement_claim_conflict' });
+    assert.equal(unavailableConflict.headers.get('payment-required'), null);
+    acceptanceHistoryUnavailable = false;
     const afterPayment = await pay(reauthorized);
     assert.equal(afterPayment.status, 409, await afterPayment.clone().text());
     assert.equal(afterPayment.headers.get('payment-response'), null);
     assert.equal(afterPayment.headers.get('payment-required'), null);
     return { first: first.status, conflict: conflict.status,
-      retry: retry.status, afterPayment: afterPayment.status, originalSubmissions: original.submissions.length };
+      retry: retry.status, unavailableConflict: unavailableConflict.status, afterPayment: afterPayment.status,
+      originalSubmissions: original.submissions.length };
   });
   await check('actual Worker reaches the bounded node transport during head registration', async () => {
     const before = upstreamCalls;
