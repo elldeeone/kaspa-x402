@@ -264,7 +264,7 @@ export async function handleGatewayRequest(
       }
       let gateway: { server: DirectModeServer };
       try {
-        gateway = await createGateway(config, state, undefined, 0n, signal);
+        gateway = await createGateway(config, state, undefined, 0n, signal, profile);
       } catch (error) {
         return json(
           { ok: false, error: errorMessage(error) },
@@ -834,35 +834,39 @@ async function createGateway(
   cachedDaa?: string,
   quoteReserveDaa = 0n,
   signal?: AbortSignal,
+  paidProfile?: Profile,
 ): Promise<{ server: DirectModeServer }> {
   signal?.throwIfAborted();
   const book = new ScriptAddressBook();
   const addressCodec = new NativeAddressCodec(book);
   const pnn = configuredPnnClient(config);
   const evidence = new PnnChainEvidence(pnn, book, state, TESTNET_10_CONFIRMATION_THRESHOLD);
-  const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore(signal));
-  signal?.throwIfAborted();
-  if (
-    currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
-    KASPA_LOCK_TIME_THRESHOLD
-  ) {
-    throw new Error(
-      "computed refund DAA crosses the consensus timestamp boundary",
+  let refundTimeoutDaa: bigint | undefined;
+  if (paidProfile !== "exact") {
+    const currentDaa = BigInt(cachedDaa ?? await evidence.getVirtualDaaScore(signal));
+    signal?.throwIfAborted();
+    if (
+      currentDaa + BigInt(config.refundTimeoutDaaDelta) >=
+      KASPA_LOCK_TIME_THRESHOLD
+    ) {
+      throw new Error(
+        "computed refund DAA crosses the consensus timestamp boundary",
+      );
+    }
+    refundTimeoutDaa = BigInt(
+      await state.resolveBatchRefundTimeoutDaa(
+        currentDaa.toString(),
+        config.refundTimeoutDaaDelta,
+        (BigInt(config.minimumRefundLeadDaa) + quoteReserveDaa).toString(),
+        signal,
+      ),
     );
-  }
-  const refundTimeoutDaa = BigInt(
-    await state.resolveBatchRefundTimeoutDaa(
-      currentDaa.toString(),
-      config.refundTimeoutDaaDelta,
-      (BigInt(config.minimumRefundLeadDaa) + quoteReserveDaa).toString(),
-      signal,
-    ),
-  );
-  signal?.throwIfAborted();
-  if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
-    throw new Error(
-      "computed refund DAA crosses the consensus timestamp boundary",
-    );
+    signal?.throwIfAborted();
+    if (refundTimeoutDaa >= KASPA_LOCK_TIME_THRESHOLD) {
+      throw new Error(
+        "computed refund DAA crosses the consensus timestamp boundary",
+      );
+    }
   }
   const verifiedReads = new VerifiedKaspaChainProvider(
     evidence,
@@ -901,7 +905,7 @@ async function createGateway(
     confirmationThreshold: TESTNET_10_CONFIRMATION_THRESHOLD,
     requirePaymentIdentifier: false,
     publicBoundaryController: gatewayPublicBoundary,
-    batch: {
+    batch: refundTimeoutDaa === undefined ? undefined : {
       serverPublicKey: config.serverPublicKey,
       templateId: ESCROW_TEMPLATE_ID,
       minDepositSompi: config.minDepositSompi,
