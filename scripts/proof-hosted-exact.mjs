@@ -285,7 +285,10 @@ async function runHostedExactProof(input) {
         label: "hosted exact cross-resource replay",
       },
     );
-    if (crossResourceReplay.body?.error !== "invalid_transaction_state") {
+    const expectedCrossResourceError = input.exactProfile === "standard-native"
+      ? "exact_settlement_claim_conflict"
+      : "invalid_transaction_state";
+    if (crossResourceReplay.body?.error !== expectedCrossResourceError) {
       throw new Error(
         `hosted exact cross-resource replay returned unexpected error: ${JSON.stringify(crossResourceReplay.body)}`,
       );

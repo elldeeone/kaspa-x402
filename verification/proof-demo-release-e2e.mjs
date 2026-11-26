@@ -29,6 +29,7 @@ const removedReceiptCheckpoint = sha256Hex('removed-receipt-checkpoint');
 let pendingPayment;
 let acceptedOriginMatches = false;
 let acceptanceHistoryUnavailable = false;
+let nodeSnapshotUnavailable = false;
 let recoveryReadbacks = 0;
 let recoveryDagReads = 0;
 let removedRecoveryTipsServed = 0;
@@ -172,6 +173,9 @@ peer.on('connection', ws => { connections++; ws.on('message', raw => {
         chainBlockHeader: recoveryBlockHeader(acceptingBlockHash),
         acceptedTransactions: [transaction],
       }] };
+  } else if (method === 'getBlockDagInfo' && nodeSnapshotUnavailable) {
+    ws.send(JSON.stringify({ id, method, error: 'Fixture node checkpoint temporarily unavailable' }));
+    return;
   } else if (method === 'getServerInfo') {
     result = { networkId: 'testnet-10', isSynced: true, hasUtxoIndex: true, virtualDaaScore: '1000000' };
   } else if (method === 'getUtxosByAddresses') {
@@ -309,9 +313,26 @@ try {
     assert.deepEqual(pendingPayment.submissions, [sequence]);
     assert.equal(recoveryReadbacks, 2);
     assert.equal(removedRecoveryTipsServed, 2);
+    nodeSnapshotUnavailable = true;
+    const upstreamBeforeCachedChecks = upstreamCalls;
+    try {
+      const replayWithoutNode = await pay();
+      assert.equal(replayWithoutNode.status, 200, await replayWithoutNode.clone().text());
+      const crossResourceWithoutNode = await worker.dispatchFetch('https://demo.kaspa-x402.org/exact',
+        { headers: { ...headers, 'payment-signature': pendingPayment.header } });
+      assert.equal(crossResourceWithoutNode.status, 409, await crossResourceWithoutNode.clone().text());
+      assert.deepEqual(await crossResourceWithoutNode.json(), { error: 'exact_settlement_claim_conflict' });
+      assert.equal(crossResourceWithoutNode.headers.get('payment-required'), null);
+      assert.deepEqual(pendingPayment.submissions, [sequence]);
+      assert.equal(upstreamCalls, upstreamBeforeCachedChecks,
+        'settled replay and claimed cross-resource conflict must not query the node');
+    } finally {
+      nodeSnapshotUnavailable = false;
+    }
     return { sequence, transactionId: settlement.transaction, first: first.status,
       recovered: retry.status, replay: replay.status, submissions: pendingPayment.submissions.length, selectedChainReads: recoveryReadbacks,
-      removedCheckpoints: removedRecoveryTipsServed, conflictingOrigin: conflicting.status };
+      removedCheckpoints: removedRecoveryTipsServed, conflictingOrigin: conflicting.status,
+      cachedChecksWithoutNode: true };
   });
   await check('relay preserves the exact sequence in accepted transaction readback', async () => {
     const sessionId = '12345678-1234-4123-8123-123456789013';
