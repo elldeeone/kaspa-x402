@@ -1,3 +1,4 @@
+import { KaspaX402Error } from "@kaspa-x402/core";
 import {
   MAX_DURABLE_HANDLER_RESULT_BYTES,
   durableByteLength,
@@ -194,7 +195,8 @@ export function prepareExactTransition(
     const attempt = normalizeExactSettlementAttempt(command.args[0]);
     if (snapshot.attempt) {
       if (!exactSettlementAttemptsMatch(snapshot.attempt, attempt))
-        throw new Error(
+        throw new KaspaX402Error(
+          "invalid_kaspa_exact_replay",
           "exact transaction is already claimed for a different request",
         );
       return {

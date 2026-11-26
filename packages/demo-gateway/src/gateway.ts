@@ -132,6 +132,9 @@ export async function handleGatewayRequest(
   if (url.pathname.startsWith("/admin/exact-heads")) {
     return exactHeadsAdminResponse(request, url, config, state);
   }
+  if (url.pathname === "/admin/exact-settlements/status") {
+    return exactSettlementStatusResponse(request, url, config, state);
+  }
   if (url.pathname === "/" && request.method === "GET")
     return json(indexBody(url), { headers: corsHeaders(config) });
   if (url.pathname === "/health" && request.method === "GET")
@@ -1349,6 +1352,57 @@ async function exactHeadsAdminResponse(
     { ok: false, error: "not_found" },
     { status: 404, headers: corsHeaders(config) },
   );
+}
+
+async function exactSettlementStatusResponse(
+  request: Request,
+  url: URL,
+  config: GatewayConfig,
+  state: GatewayStateClient,
+): Promise<Response> {
+  const reply = (body: unknown, status = 200) => json(body, {
+    status,
+    headers: { ...corsHeaders(config), "cache-control": "private, no-store, max-age=0" },
+  });
+  if (!config.adminToken) return reply({ ok: false, error: "not_found" }, 404);
+  if (!secureAdminTransport(url)) return reply({ ok: false, error: "https_required" }, 400);
+  if (request.headers.get("authorization") !== `Bearer ${config.adminToken}`)
+    return reply({ ok: false, error: "unauthorized" }, 401);
+  if (request.method !== "GET") return reply({ ok: false, error: "method_not_allowed" }, 405);
+  const transactionId = url.searchParams.get("transactionId");
+  if (!transactionId || url.searchParams.getAll("transactionId").length !== 1 ||
+      !/^[0-9a-fA-F]{64}$/.test(transactionId) ||
+      [...url.searchParams.keys()].some(key => key !== "transactionId"))
+    return reply({ ok: false, error: "invalid_transaction_id" }, 400);
+  const id = transactionId.toLowerCase();
+  const [attempt, payment, receipt] = await Promise.all([
+    state.loadExactSettlementAttempt(id),
+    state.loadExactPayment(id),
+    state.loadPnnEvidence(id),
+  ]);
+  if (!attempt && !payment && !receipt)
+    return reply({ ok: false, error: "not_found" }, 404);
+  return reply({
+    ok: true,
+    transactionId: id,
+    claim: attempt ? {
+      status: attempt.status,
+      createdAt: attempt.createdAt,
+      updatedAt: attempt.updatedAt,
+      authorizationExpiresAt: attempt.authorizationExpiresAt,
+      requiredFinality: attempt.requiredFinality,
+      finality: attempt.finality ?? null,
+      handlerStarted: Boolean(attempt.handlerStartedAt),
+      handlerCompleted: Boolean(attempt.handlerCompletedAt) || attempt.status === "applied",
+      recoveryReason: attempt.recoveryReason ?? null,
+    } : null,
+    payment: payment ? { finality: payment.finality } : null,
+    receipt: receipt ? {
+      checkpoint: receipt.checkpoint,
+      acceptedEvidenceStored: Boolean(receipt.evidence),
+      acceptedTransactionStored: Boolean(receipt.transaction),
+    } : null,
+  });
 }
 
 async function canaryResponse(

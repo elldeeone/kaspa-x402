@@ -2010,6 +2010,7 @@ export class VerifiedExactTransactionVerifier implements ExactTransactionVerifie
       request,
       transactionId,
       authorizationEvidence.publicKey,
+      finality === "accepted" || finality === "confirmed",
     );
 
     const changeOutputs = transaction.outputs.filter(
@@ -2122,6 +2123,7 @@ function verifyExactRequestAuthorization(
   request: ExactTransactionVerificationRequest,
   transactionId: Hash32Hex,
   publicKey: string,
+  acceptedOnChain = false,
 ): ExactTransactionVerification["requestAuthorization"] {
   const authorization = request.authorization;
   if (
@@ -2135,7 +2137,9 @@ function verifyExactRequestAuthorization(
   const expiresAt = Date.parse(authorization.expiresAt);
   if (!Number.isFinite(expiresAt))
     throw invalidTransaction("exact request authorization expiry is invalid");
-  if (expiresAt <= Date.now())
+  if (expiresAt <= Date.now() &&
+      !(request.allowExpiredAuthorizationForRecovery && acceptedOnChain &&
+        request.profile === "standard-native"))
     throw invalidTransaction("exact request authorization has expired");
   const digest = exactRequestAuthorizationDigest({
     network: request.network,

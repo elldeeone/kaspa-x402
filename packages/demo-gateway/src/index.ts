@@ -1,5 +1,5 @@
 import { DurableObject } from "cloudflare:workers";
-import { KASPA_X402_RESOURCE_BUDGET } from "@kaspa-x402/core";
+import { KASPA_X402_RESOURCE_BUDGET, KaspaX402Error } from "@kaspa-x402/core";
 import {
   handleGatewayRequest,
   readRequestJsonWithLimit,
@@ -91,6 +91,9 @@ export class GatewayState extends DurableObject<GatewayEnv> {
       const value = await dispatchGatewayState(this.#ledger, payload, request.signal);
       return Response.json({ ok: true, value });
     } catch (error) {
+      if (error instanceof KaspaX402Error && error.code === "invalid_kaspa_exact_replay") {
+        return Response.json({ ok: false, error: error.message, code: error.code }, { status: 409 });
+      }
       return Response.json(
         {
           ok: false,
